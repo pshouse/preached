@@ -2,6 +2,12 @@
 # Copy next to the library index (for example /cache/index/<library>/privacy.toml)
 # and point PREACHED_PRIVACY at it, or pass Config to redact(..., config=...).
 # Names compare case-insensitively. Every name below is an example.
+#
+# This tool flags names for a human to review; it is not a guarantee. Publish
+# only after privacy.review() and a human skim of the transcript.
+#
+# Changing allow, block or drop does NOT touch sermons that are already
+# imported. Re-import them (--redo) for a change to take effect.
 
 # Names to keep: the pastor and staff who have agreed to be named. Each entry
 # is matched as a whole run of words, so "Pastor Jordan" keeps "Pastor Jordan"
@@ -14,6 +20,9 @@ allow = [
 
 # Words that are always redacted wherever they appear, even when they are
 # also a Bible name or an ordinary word (a member whose surname is "Moses").
+# A multi-word entry is split into single words: blocking "Mary Smith"
+# redacts every "Mary" and every "Smith", including "Mary" in scripture. That
+# errs on the safe side; block one distinctive word when you can.
 block = [
     "Examplesson",
 ]

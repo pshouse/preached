@@ -117,10 +117,28 @@ NER alone redacts almost every Bible name. With the lists it misses far more con
 - **Unknown public figures are redacted.** The list can't hold everyone. These are flagged by `review()`, and `allow` fixes them per library. Erring this way is deliberate.
 - **Lowercase ASR names** are caught only after a strong cue ("pray for brenda"). Lowercase word-names (ray, june, sunny) are missed.
 - **Synthetic data only.** The sets were written to be hard (dense traps, adversarial phrasing). Real sermons will likely have fewer traps per sentence, but that hasn't been measured, and no real congregant data may be used to measure it.
-- **The blind sets were written by LLM agents.** They share some habits with each other and with me. blind3 used a different model to reduce that. Label errors were found in blind1 and blind2, so blind3 likely has a few too. Its frozen score is reported as-is, with no label fixes.
+- **All four eval sets are synthetic and LLM-written** (dev by the author agent, blind1 and blind2 by separate Claude agents, blind3 by an unrecorded LLM). They share some habits with each other and with me. A human-written or human-audited blind set is pending. Label errors were found in blind1 and blind2, so blind3 likely has a few too. Its frozen score is reported as-is, with no label fixes.
 - **Data sources:** SSA names via the `babynames` R package mirror, because ssa.gov returns 403 to scripts. KJV from Project Gutenberg #10, WEB from ebible.org, 12dicts from SourceForge. All are public domain. Raw downloads are in `/cache/privacy/raw` and are not committed.
 - **`drop` windows** need the caller to pass `source=` (the W2-YT hook passes only `words`). Windows without a `source` apply to every input.
 
 ## 5. Dependencies added
 
 None. The module uses only the standard library: `tomllib`, `gzip`, `unicodedata`, `re`, `dataclasses`. spaCy was installed only in a throwaway venv (`/cache/venvs/w3-priv-ner`) to measure the baseline, and is not in `pyproject.toml` or `uv.lock`. `rdata` and `pandas` were used once through `uv run --with` to convert the SSA `.rda` file. They are not dependencies either. No PRC-developed model was used or considered. spaCy's English pipelines come from Explosion AI (Germany).
+
+## Fix-up (CTO review)
+
+Tests: **94** in the full suite (87 before, 7 new in `FixUpTests`), all passing. blind3 rerun unchanged: recall 224/242 = 0.9256, false redaction 55/354 = 0.1554. No eval set edited, no rules re-tuned, no dependencies.
+
+Rerun: `uv run python -m unittest discover -s tests` and `python3 eval/privacy/evaluate.py eval/privacy/blind3.jsonl`.
+
+1. **Must-fix, `redact_text` ignored `PREACHED_PRIVACY`.** `redact_text`, `decide` and `redact_metadata` now resolve config with `default_config()` like `redact` and `review` (`privacy.py`, `redact_text`, `decide`). Test: `test_every_entry_point_honours_block_from_environment` (env file with `block = ["Moses"]`, plus explicit `config=`).
+2. **Segment text.** New `redact_transcript(transcript, config=, source=)` redacts `words`, top-level `text` and `segments[].text` (rebuilt from redacted segment words, else `redact_text`; drop windows remove segments). Test: `test_segment_text_is_redacted`. The W1-A caller must use it.
+3. **Dicts with `text` and `word`.** `_with_text` now redacts every text key, keeping leading/trailing spaces. Test: `test_dict_with_text_and_word_redacts_both`.
+4. **Titles and descriptions.** New `redact_metadata(title, description, *, config=None)`. Test: `test_metadata_title_and_description` ("Baby dedication – the Hendersons"). **W3-PRIV-WIRE must call** `preached.privacy.redact_metadata(video.title, video.description)` in the W2-YT import step, before the title is stored, passed to the embedding's document title, or shown in results; and `redact_transcript` wherever a transcript or sample is saved.
+5. **`review()` output stays private.** It returns `ReviewList` of `ReviewItem` (names hidden in repr). `store.replace_chunks` and `corpus.write_jsonl` refuse them. `write_review_file` writes a 0600 file in a 0700 dir and prints counts only; `delete_review_file` removes it. `.gitignore` gained `review/` and `*.review.jsonl`. Tests: `test_review_items_cannot_reach_the_index`, `test_review_file_is_private_and_prints_no_names`.
+6. **Re-import required.** Stated in the module docstring and `privacy.example.toml`: changing `allow`/`block`/`drop` does not touch imported sermons (`--redo`). The example file also notes multi-word `block` entries split into single words ("Mary Smith" redacts every "Mary", including in scripture).
+7. **Wording.** `privacy.py` docstring now leads with "flag, not guarantee", blind3 numbers and CIs, the silent-miss class (18 missed, 1 flagged) and "publish only after `review()` and a human skim". `redact()` and `review()` docstrings reworded. AGENTS.md section 5 and BRIEF.md edited minimally.
+8. **Eval honesty.** blind3's model is **unrecorded** (commit 40321ad says only "a different model"; nothing else in the repo or `/cache` names it), so it is written as "unrecorded LLM". AGENTS section 3 provenance for blind3 therefore cannot be confirmed; it generated test text only, not shipped code. All four sets are synthetic and LLM-written; real-sermon performance is unmeasured; a human-written or audited set is pending. CIs (CTO): recall 0.926 [0.886, 0.952], false redaction 0.155 [0.121, 0.197]; neither target is inside its interval, and per-word Wilson intervals understate uncertainty because names cluster within sentences.
+9. **Nit, all-caps "JANE DOE" gives "[name] DOE": left open.** "DOE" is a lexicon word; a casing fix risks changing the frozen blind3 numbers.
+
+Still open: lowercase names without a strong cue; the silent-miss class; a human audit of blind3 labels.

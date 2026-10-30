@@ -434,6 +434,10 @@ def chunk_sermon(sermon: dict, config: dict) -> list[dict]:
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
+    from preached.privacy import ReviewItem, ReviewList
+
+    if isinstance(rows, ReviewList) or any(isinstance(r, ReviewItem) for r in rows):
+        raise ValueError("privacy review items hold real names and must never be written to the corpus")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:

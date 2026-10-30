@@ -112,6 +112,10 @@ CHUNK_COLUMNS = (
 
 
 def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
+    from preached.privacy import ReviewItem, ReviewList
+
+    if isinstance(chunks, ReviewList) or any(isinstance(c, ReviewItem) for c in chunks):
+        raise ValueError("privacy review items hold real names and must never be indexed")
     connection.execute("DELETE FROM embeddings")
     connection.execute("DELETE FROM chunks")
     connection.executemany(

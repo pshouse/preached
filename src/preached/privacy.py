@@ -1,12 +1,33 @@
-"""Replace congregants' names in ASR words with ``[name]``.
+"""Flag congregants' names in ASR words and replace them with ``[name]``.
+
+**This is a flag-for-human-review tool, not a guarantee.** It misses some
+private names and redacts some public ones. Measured on a synthetic blind set
+(blind3, scored once on frozen rules): recall on private names 0.926
+[0.886, 0.952] and false redaction of biblical, historical and public names
+0.155 [0.121, 0.197]. The targets (0.98 and 0.02) are NOT met, and neither
+target is inside its interval. The intervals are per-word Wilson intervals,
+which understate the uncertainty because names repeat within sentences. All
+eval sets (dev, blind1, blind2, blind3) are synthetic and LLM-written;
+performance on real sermons is unmeasured.
+
+The silent-miss class: a congregant who shares a Bible name and is mentioned
+next to that Bible story ("Rebecca on the third row") slips through unflagged.
+On blind3, 18 private words were missed and only 1 was listed by ``review()``.
+
+**Publish only after ``review()`` and a human skim of the transcript.** Add
+the church's known members to ``block`` (see ``privacy.example.toml``).
+Changing ``allow``, ``block`` or ``drop`` does not touch sermons already
+imported: re-import them (``--redo``) to apply the change.
 
 ``redact(words) -> words`` is the W2-YT hook (``preached.youtube.privacy``).
 A word is any record that carries ``start``, ``end`` and text: the W2-YT
 ``Word`` dataclass, a W1-C ``(start, end, word)`` tuple or list, or a dict with
-``"text"`` or ``"word"``. The result has the same records in the same order
+``"text"`` and/or ``"word"`` (every text-bearing key is redacted). The result
+has the same records in the same order
 with the same times; only a name's letters change ("Jane's," -> "[name]'s,").
 Words inside a configured drop window are removed. When nothing changes the
-input list itself is returned.
+input list itself is returned. ``redact_transcript`` also redacts
+``segments[].text``, and ``redact_metadata`` redacts a title and description.
 
 Rules, no model. Whisper capitalizes names, so the evidence is the casing,
 the words around a name, and lists built by ``scripts/build_privacy_lists.py``
@@ -344,7 +365,13 @@ def _time(word: Any, key: str, index: int) -> float:
 
 def _with_text(word: Any, text: str) -> Any:
     if isinstance(word, dict):
-        return {**word, ("text" if "text" in word else "word"): text}
+        # Every text-bearing key gets the same replacement, keeping any
+        # leading space ({"text": "Brenda", "word": " Brenda"}).
+        out = dict(word)
+        for key in ("text", "word"):
+            if key in out:
+                out[key] = _mask_like(out[key], text)
+        return out
     if isinstance(word, tuple):
         return (*word[:2], text, *word[3:])
     if isinstance(word, list):
@@ -356,11 +383,24 @@ def _with_text(word: Any, text: str) -> Any:
     return copy
 
 
+def _mask_like(original: Any, masked: str) -> Any:
+    """The masked text with the original's leading and trailing whitespace."""
+    if not isinstance(original, str):
+        return original
+    lead = original[: len(original) - len(original.lstrip())]
+    trail = original[len(original.rstrip()):]
+    return f"{lead}{masked.strip()}{trail}"
+
+
 # ---------------------------------------------------------------- redact
 
 
 def redact(words: list, *, config: Config | None = None, source: str | None = None) -> list:
-    """privacy.redact(words) -> words, with congregant names replaced.
+    """privacy.redact(words) -> words, flagging likely congregant names as ``[name]``.
+
+    Assisted, not guaranteed: some private names slip through and some public
+    names are redacted. Run ``review()`` and have a person skim the result
+    before anything is published (see the module docstring for the numbers).
 
     ``source`` is the video or sermon id that ``drop`` windows name; windows
     without a ``source`` apply to every input.
@@ -378,10 +418,68 @@ def redact(words: list, *, config: Config | None = None, source: str | None = No
 
 
 def redact_text(text: str, config: Config | None = None) -> str:
-    """Plain-text convenience: split on spaces, redact, join."""
-    config = config or Config()
+    """Plain-text convenience: split on spaces, redact, join.
+
+    Resolves ``config`` like ``redact`` (``PREACHED_PRIVACY`` when None), so
+    ``block`` applies on this path too.
+    """
+    config = default_config() if config is None else config
     texts = text.split()
     return " ".join(_mask(t, config.token) if flag else t for t, flag in zip(texts, decide(texts, config)))
+
+
+def redact_metadata(
+    title: str | None = None,
+    description: str | None = None,
+    *,
+    config: Config | None = None,
+) -> tuple[str | None, str | None]:
+    """Redact a video title and description before they are stored, embedded or shown.
+
+    Returns ``(title, description)``; ``None`` stays ``None``. Same rules and
+    same limits as ``redact``: "Baby dedication – the Hendersons" becomes
+    "Baby dedication – the [name]". Whitespace runs collapse to single spaces.
+    """
+    config = default_config() if config is None else config
+    return (
+        None if title is None else redact_text(title, config),
+        None if description is None else redact_text(description, config),
+    )
+
+
+def redact_transcript(transcript: dict, *, config: Config | None = None, source: str | None = None) -> dict:
+    """Redact a W1-A-style transcript: ``words`` and ``segments[].text``.
+
+    A segment's text is rebuilt from its redacted words when it has a
+    ``words`` list (keeping the segment's own leading space), else
+    ``redact_text`` runs on it. Top-level ``text`` is redacted the same way.
+    Drop windows remove words, and segments that lie inside one. Input is not
+    mutated.
+    """
+    config = default_config() if config is None else config
+    out = dict(transcript)
+    if isinstance(out.get("words"), list):
+        out["words"] = redact(out["words"], config=config, source=source)
+    if isinstance(out.get("text"), str):
+        out["text"] = redact_text(out["text"], config)
+    if "segments" not in out:
+        return out
+    segments = []
+    for segment in out["segments"] or []:
+        if config.drop and "start" in segment and "end" in segment and _dropped(segment, config, source):
+            continue
+        segment = dict(segment)
+        if isinstance(segment.get("words"), list) and segment["words"]:
+            segment["words"] = redact(segment["words"], config=config, source=source)
+            texts = [_text(w) for w in segment["words"]]
+            lead = " " if str(segment.get("text", "")).startswith(" ") else ""
+            segment["text"] = lead + " ".join(t.strip() for t in texts)
+        elif isinstance(segment.get("text"), str):
+            lead = segment["text"][: len(segment["text"]) - len(segment["text"].lstrip())]
+            segment["text"] = lead + redact_text(segment["text"], config)
+        segments.append(segment)
+    out["segments"] = segments
+    return out
 
 
 def _dropped(word: Any, config: Config, source: str | None) -> bool:
@@ -404,10 +502,28 @@ def _mask(text: str, token: str) -> str:
 
 def decide(texts: Sequence[str], config: Config | None = None) -> list[bool]:
     """One flag per word: True when the word is (part of) a private name."""
-    return _Pass(texts, config or Config()).run()
+    return _Pass(texts, default_config() if config is None else config).run()
 
 
-def review(words: list, *, config: Config | None = None) -> list[dict]:
+class ReviewItem(dict):
+    """One ``review()`` entry. Its ``text`` is a real name by design.
+
+    Marked so the index writers (``store.replace_chunks``) refuse it, and its
+    repr hides the text so a stray log line or traceback does not print names.
+    """
+
+    def __repr__(self) -> str:
+        return f"ReviewItem(start={self.get('start')}, end={self.get('end')}, reason={self.get('reason')!r}, text=<hidden>)"
+
+
+class ReviewList(list):
+    """The list ``review()`` returns. Keep it out of the index, the repo and logs."""
+
+    def __repr__(self) -> str:
+        return f"ReviewList({len(self)} items, names hidden)"
+
+
+def review(words: list, *, config: Config | None = None) -> ReviewList:
     """Names a person should look at before a sermon is published.
 
     Two kinds: Bible or public names kept although they are also given names
@@ -416,20 +532,53 @@ def review(words: list, *, config: Config | None = None) -> list[dict]:
     the list lacks). Each item has ``start`` and
     ``end`` (seconds), ``text`` (the original words) and ``reason``. Fix a
     wrong call with ``allow`` or ``block`` in privacy.toml and re-import.
+
+    The items hold the original names. Never put them in the index, the repo
+    or a log: write them with ``write_review_file`` and delete the file after
+    approval. Most silent misses are not listed here (1 of 18 on blind3), so
+    this list is a help for the human skim, not a replacement.
     """
     config = default_config() if config is None else config
     texts = [_text(word) for word in words]
     run = _Pass(texts, config)
     run.run()
-    return [
-        {
-            "start": _time(words[a], "start", 0),
-            "end": _time(words[b - 1], "end", 1),
-            "text": " ".join(texts[a:b]),
-            "reason": why,
-        }
+    return ReviewList(
+        ReviewItem(
+            start=_time(words[a], "start", 0),
+            end=_time(words[b - 1], "end", 1),
+            text=" ".join(texts[a:b]),
+            reason=why,
+        )
         for a, b, why in sorted(run.reviews)
-    ]
+    )
+
+
+def write_review_file(items: Iterable[dict], path: str | os.PathLike[str]) -> int:
+    """Write review items as JSON lines to a private file; return the count.
+
+    The directory is created 0700 and the file is 0600, so only the owner can
+    read it. One file per sermon; delete it after approval
+    (``delete_review_file``). Prints a count and the path, never a name. Put
+    the file outside the repo (``review/`` is git-ignored as a backstop).
+    """
+    import json
+
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    count = 0
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        for item in items:
+            handle.write(json.dumps(dict(item), ensure_ascii=False) + "\n")
+            count += 1
+    print(f"wrote {count} review items to {path} (owner-only; delete after approval)")
+    return count
+
+
+def delete_review_file(path: str | os.PathLike[str]) -> None:
+    """Remove a review file once the sermon is approved."""
+    Path(path).unlink(missing_ok=True)
 
 
 @dataclass

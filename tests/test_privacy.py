@@ -18,7 +18,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "eval" / "privacy"))
 
 from preached import privacy  # noqa: E402
-from preached.privacy import Config, decide, load_config, redact, redact_text  # noqa: E402
+from preached.privacy import (  # noqa: E402
+    Config,
+    decide,
+    load_config,
+    redact,
+    redact_metadata,
+    redact_text,
+    redact_transcript,
+    review,
+)
 
 
 @dataclass(frozen=True)
@@ -184,6 +193,100 @@ class ConfigTests(unittest.TestCase):
             Config.from_dict({"alow": ["typo"]})
         with self.assertRaises(ValueError):
             Config.from_dict({"drop": [{"start": 5, "end": 1}]})
+
+
+class FixUpTests(unittest.TestCase):
+    """CTO review fix-ups: config resolution, every text key, segments, metadata, review guard."""
+
+    def _env(self, tmp: str, body: str):
+        path = Path(tmp) / "privacy.toml"
+        path.write_text(body)
+        return mock.patch.dict(os.environ, {privacy.CONFIG_ENV: str(path)})
+
+    def test_every_entry_point_honours_block_from_environment(self) -> None:
+        sentence = "When Moses lifted his rod"
+        with tempfile.TemporaryDirectory() as tmp, self._env(tmp, 'block = ["Moses"]\n'):
+            self.assertNotIn("Moses", redact_text(sentence))
+            self.assertNotIn("Moses", " ".join(w.text for w in redact(words(sentence))))
+            self.assertTrue(decide(sentence.split())[1])
+            self.assertNotIn("Moses", redact_metadata("Moses and the sea", "About Moses")[0])
+            self.assertNotIn("Moses", redact_transcript({"words": [(0, 1, "Moses")]})["words"][0][2])
+        # explicit config, no environment
+        config = Config.from_dict({"block": ["Moses"]})
+        self.assertNotIn("Moses", redact_text(sentence, config))
+        self.assertNotIn("Moses", " ".join(w.text for w in redact(words(sentence), config=config)))
+
+    def test_review_resolves_config_like_redact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self._env(tmp, 'allow = ["Pastor Mike"]\n'):
+            self.assertEqual(review(words("Welcome Pastor Mike")), review(words("Welcome Pastor Mike"), config=load_config(Path(tmp) / "privacy.toml")))
+
+    def test_dict_with_text_and_word_redacts_both(self) -> None:
+        out = redact([{"start": 0, "end": 1, "text": "Brenda", "word": " Brenda"}], config=Config())
+        self.assertEqual(out[0]["text"], "[name]")
+        self.assertEqual(out[0]["word"], " [name]")
+        self.assertNotIn("Brenda", str(out))
+
+    def test_segment_text_is_redacted(self) -> None:
+        transcript = {
+            "text": "Please pray for Brenda Hollis today",
+            "words": [(0.0, 0.2, "Please"), (0.2, 0.4, "pray"), (0.4, 0.6, "for"), (0.6, 0.8, "Brenda"), (0.8, 1.0, "Hollis"), (1.0, 1.2, "today")],
+            "segments": [
+                {"start": 0.0, "end": 1.2, "text": " Please pray for Brenda Hollis today",
+                 "words": [{"start": 0.6, "end": 0.8, "word": " Brenda"}, {"start": 0.8, "end": 1.0, "word": " Hollis"}]},
+                {"start": 2.0, "end": 3.0, "text": "Sister Jane brought food"},
+            ],
+        }
+        out = redact_transcript(transcript, config=Config())
+        blob = str(out)
+        for name in ("Brenda", "Hollis", "Jane"):
+            self.assertNotIn(name, blob)
+        self.assertEqual(out["segments"][1]["text"], "Sister [name] brought food")
+        self.assertIn("Brenda", str(transcript))  # input untouched
+
+    def test_metadata_title_and_description(self) -> None:
+        title, description = redact_metadata(
+            "Baby dedication \u2013 the Hendersons", "Join us as we pray for Sister Jane Doe.", config=Config()
+        )
+        self.assertNotIn("Henderson", title)
+        self.assertNotIn("Jane", description)
+        self.assertEqual(redact_metadata(None, None, config=Config()), (None, None))
+
+    def test_review_items_cannot_reach_the_index(self) -> None:
+        from preached import corpus, store
+
+        items = review(words("Pastor Steve thanked the Mahalia Jackson Fannie Lou Hamer choir"), config=Config())
+        self.assertIsInstance(items, privacy.ReviewList)
+        self.assertNotIn("Hamer", repr(items))
+        for item in items:
+            self.assertNotIn(item["text"], repr(item))
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                corpus.write_jsonl(Path(tmp) / "x.jsonl", list(items) or [privacy.ReviewItem(text="x")])
+            with self.assertRaises(ValueError):
+                corpus.write_jsonl(Path(tmp) / "y.jsonl", items)
+            connection = store.connect(Path(tmp) / "i.sqlite")
+            with self.assertRaises(ValueError):
+                store.replace_chunks(connection, [privacy.ReviewItem(text="x")])
+
+    def test_review_file_is_private_and_prints_no_names(self) -> None:
+        import contextlib
+        import io
+
+        items = [privacy.ReviewItem(start=0.0, end=1.0, text="Zelda Quimby", reason="test")]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "review" / "sermon1.review.jsonl"
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                count = privacy.write_review_file(items, path)
+            self.assertEqual(count, 1)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+            self.assertNotIn("Zelda", buffer.getvalue())
+            self.assertNotIn("Quimby", buffer.getvalue())
+            self.assertIn("1 review items", buffer.getvalue())
+            self.assertIn("Zelda", path.read_text())
+            privacy.delete_review_file(path)
+            self.assertFalse(path.exists())
 
 
 class EvalBarTests(unittest.TestCase):

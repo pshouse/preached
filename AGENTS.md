@@ -33,7 +33,7 @@ Read `BRIEF.md` first. This file holds the rules. If it conflicts with BRIEF.md,
 
 ## 5. Privacy
 
-- **No personal information of church members anywhere** (code, data, samples, reports, commits). Sermons are public teaching, but congregant names in stories get stripped. Use sample data for anything member-related.
+- **No personal information of church members anywhere** (code, data, samples, reports, commits). Sermons are public teaching, but congregant names in stories get flagged and stripped. Stripping is assisted, not guaranteed: publish only after `privacy.review()` and a human skim. Use sample data for anything member-related.
 - Gaston Community Church sermons are not to be used or published until the pastor's permission is confirmed.
 
 ## 6. Git workflow
