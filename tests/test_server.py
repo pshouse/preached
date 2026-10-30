@@ -23,6 +23,7 @@ from app.server import (
     App,
     Searcher,
     build_app,
+    hit_dict,
     load_search,
     make_server,
 )
@@ -512,6 +513,25 @@ class ServerTests(unittest.TestCase):
             self.assertNotIn("cdn.", text.lower())
             self.assertNotIn("fonts.googleapis", text.lower())
             self.assertNotIn("unsafe-inline", text)
+
+    def test_credits_on_the_page(self) -> None:
+        page = (STATIC_DIR / "index.html").read_text()
+        self.assertIn('id="credits-heading"', page)
+        self.assertIn("Sermons on Several Occasions</cite> (public domain)", page)
+        self.assertIn('href="https://ccel.org/ccel/wesley/sermons"', page)
+        self.assertIn('href="https://librivox.org/"', page)
+        self.assertIn("(public domain)", page.split("LibriVox</a>", 1)[1])
+
+    def test_excerpt_hides_paragraph_numbers(self) -> None:
+        from preached.search import Hit
+
+        raw = 'to myself justice!" 8. Nearly related'
+        hit = Hit(
+            rowid=1, score=1.0, chunk_id="c", sermon_id="wesley-001", sermon_title="T",
+            text=raw, start_s=None, end_s=None, source_url=None, scripture=None,
+        )
+        self.assertEqual(hit_dict(hit)["text"], 'to myself justice!" Nearly related')
+        self.assertEqual(hit.text, raw)
 
     def test_methods_host_and_body_limits(self) -> None:
         status, headers, body = self.rich.request("POST", "/api/search?q=zealboundary")
