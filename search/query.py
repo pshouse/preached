@@ -21,7 +21,7 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
-from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
+from preached.store import EmbeddingMismatch, connect, open_readonly, sync_chunks  # noqa: E402
 from preached.youtube.listing import youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
@@ -33,6 +33,49 @@ UNSAFE_URL = "n/a (unsafe URL hidden)"
 def clean(value: object) -> str:
     """Printable text for the terminal: control characters become one space."""
     return CONTROL_RE.sub(" ", str(value))
+
+
+def is_library_file(path: Path) -> bool:
+    """A per-library index (YouTube import or build_library.py), not Wesley's.
+
+    Both writers create a ``videos`` table; build_library.py also records
+    ``library`` in meta. Read-only, so checking never changes the file.
+    """
+    if not path.is_file():
+        return False
+    connection = open_readonly(path)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "videos" in tables:
+            return True
+        return "meta" in tables and connection.execute(
+            "SELECT 1 FROM meta WHERE key = 'library'"
+        ).fetchone() is not None
+    finally:
+        connection.close()
+
+
+def open_index(index: Path | None, library: str | None):
+    """Connect to the index to search. Only the Wesley index file gets the chunk sync.
+
+    --library opens /cache/index/<slug>.sqlite as built. --index must not be a
+    library file: the Wesley sync would replace its chunks and drop its
+    vectors. Any other --index path is searched as it is.
+    """
+    if library is not None:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", library) or not (INDEX_DIR / f"{library}.sqlite").is_file():
+            raise SystemExit(f"error: no library {library!r} under {INDEX_DIR}")
+        return connect(INDEX_DIR / f"{library}.sqlite")
+    path = index if index is not None else INDEX_PATH
+    if is_library_file(path):
+        raise SystemExit(
+            f"error: {path} is a library index, not the Wesley index. "
+            f"Search it with --library {path.stem} (it is never synced with Wesley chunks)."
+        )
+    connection = connect(path)
+    if path.resolve() == INDEX_PATH.resolve():
+        ensure_chunks(connection)
+    return connection
 
 
 def ensure_chunks(connection) -> None:
@@ -109,21 +152,18 @@ def main() -> None:
     parser.add_argument("--fusion", choices=("rrf", "weighted"), default="rrf")
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--dense-weight", type=float, default=0.5)
-    parser.add_argument("--index", type=Path, default=INDEX_PATH)
-    parser.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, talmage, edwards); "
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--index", type=Path, default=None,
+                        help=f"SQLite index (default {INDEX_PATH}, synced with the Wesley chunks; "
+                        "any other path is searched as it is; library files are refused)")
+    target.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, edwards); "
                         "built by search/build_library.py, so no Wesley chunk sync")
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
 
-    if args.library:
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", args.library) or not (INDEX_DIR / f"{args.library}.sqlite").is_file():
-            raise SystemExit(f"error: no library {args.library!r} under {INDEX_DIR}")
-        connection = connect(INDEX_DIR / f"{args.library}.sqlite")
-    else:
-        connection = connect(args.index)
-        ensure_chunks(connection)
+    connection = open_index(args.index, args.library)
     model_name = None
     loaded = None
     vector = None
