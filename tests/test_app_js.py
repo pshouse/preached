@@ -67,10 +67,18 @@ eq(playStart(-Infinity), null, "-inf");
 eq(formatTime(32.81), "0:00:32", "label stays exact");
 
 eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=11s"), "https://www.youtube.com/watch?v=abcdefghijk&t=11s", "stored www");
-eq(youtubeWatchUrl("https://youtube.com/watch?v=abcdefghijk&t=0s"), "https://youtube.com/watch?v=abcdefghijk&t=0s", "apex host");
-eq(youtubeWatchUrl("https://m.youtube.com/watch?v=abcdefghijk&t=3s"), "https://m.youtube.com/watch?v=abcdefghijk&t=3s", "mobile host");
-eq(youtubeWatchUrl("https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s"), "https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s", "stored as-is");
-eq(youtubeWatchUrl("https://www.youtube.com:443/watch?v=abcdefghijk&t=11s"), "https://www.youtube.com:443/watch?v=abcdefghijk&t=11s", "port 443");
+eq(youtubeWatchUrl("https://youtube.com/watch?v=abcdefghijk&t=0s"), "https://www.youtube.com/watch?v=abcdefghijk&t=0s", "apex host rebuilt");
+eq(youtubeWatchUrl("https://m.youtube.com/watch?v=abcdefghijk&t=3s"), "https://www.youtube.com/watch?v=abcdefghijk&t=3s", "mobile host rebuilt");
+eq(youtubeWatchUrl("https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s"), "https://www.youtube.com/watch?v=abc_def-01X&t=11s", "mixed case rebuilt");
+eq(youtubeWatchUrl("https://www.youtube.com:443/watch?v=abcdefghijk&t=11s"), "https://www.youtube.com/watch?v=abcdefghijk&t=11s", "port 443 rebuilt");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=11s#keep"), "https://www.youtube.com/watch?v=abcdefghijk&t=11s", "fragment dropped");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=javascript:alert(1)"), "https://www.youtube.com/watch?v=abcdefghijk", "hostile t dropped");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=11s&redirect=https://evil.example"), "https://www.youtube.com/watch?v=abcdefghijk&t=11s", "extra param dropped");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=86401s"), "https://www.youtube.com/watch?v=abcdefghijk", "t over 24h dropped");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=86400"), "https://www.youtube.com/watch?v=abcdefghijk&t=86400s", "24h kept");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&v="), null, "blank second v");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=&v=abcdefghijk"), null, "blank first v");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&v"), null, "bare second v");
 eq(youtubeWatchUrl("https://www.youtube.com.evil.com/watch?v=abcdefghijk"), null, "evil suffix");
 eq(youtubeWatchUrl("javascript:alert(1)"), null, "javascript");
 eq(youtubeWatchUrl("http://www.youtube.com/watch?v=abcdefghijk"), null, "http youtube");
@@ -95,6 +103,11 @@ function walk(node, out) {
 function playNodes(root, tag) {
   return walk(root, []).filter(function (node) {
     return node.tagName === tag && node.className === "play";
+  });
+}
+function textLinks(root) {
+  return walk(root, []).filter(function (node) {
+    return node.tagName === "A" && node.className !== "play";
   });
 }
 
@@ -157,8 +170,105 @@ var mobile = renderCard({
   end_s: 20,
   audio_url: "https://m.youtube.com/watch?v=abcdefghijk&t=11s",
 });
-eq(playNodes(mobile, "A")[0].href, "https://m.youtube.com/watch?v=abcdefghijk&t=11s", "mobile href as stored");
+eq(playNodes(mobile, "A")[0].href, "https://www.youtube.com/watch?v=abcdefghijk&t=11s", "mobile href rebuilt");
 eq(playNodes(mobile, "A")[0].textContent, "Watch on YouTube at 0:00:12", "mobile label");
+
+eq(textLinks(yt).length, 1, "ccel source stays beside a youtube watch link");
+eq(textLinks(yt)[0].textContent, "Read this sermon on CCEL", "ccel label");
+eq(textLinks(yt)[0].href, "https://www.ccel.org/x", "ccel href");
+eq(textLinks(yt)[0].rel, "noreferrer", "source rel");
+eq(textLinks(archive)[0].textContent, "Read this sermon on CCEL", "archive card ccel label");
+
+var duplicate = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: 95,
+  end_s: 110,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://m.youtube.com/watch?v=abcdefghijk",
+});
+eq(textLinks(duplicate).length, 0, "same video is not a second source link");
+eq(playNodes(duplicate, "A").length, 1, "watch link remains");
+
+var untimed = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: null,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://www.youtube.com/watch?v=abcdefghijk",
+});
+eq(playNodes(untimed, "A").length, 0, "no watch link without a time");
+eq(textLinks(untimed).length, 1, "source stays when there is no watch link");
+eq(textLinks(untimed)[0].textContent, "Watch the source on YouTube", "untimed youtube source");
+eq(textLinks(untimed)[0].href, "https://www.youtube.com/watch?v=abcdefghijk", "untimed source rebuilt");
+
+var otherVideo = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: 95,
+  end_s: 110,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://www.youtube.com/watch?v=zzzzzzzzzzz",
+});
+eq(textLinks(otherVideo).length, 1, "different video is a source");
+eq(textLinks(otherVideo)[0].textContent, "Watch the source on YouTube", "youtube source label");
+eq(textLinks(otherVideo)[0].href, "https://www.youtube.com/watch?v=zzzzzzzzzzz", "source rebuilt");
+
+var hostileSource = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: 95,
+  end_s: 110,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=javascript:alert(1)&redirect=https://evil.example",
+  source_url: "https://www.youtube.com/watch?v=zzzzzzzzzzz&t=javascript:alert(1)&redirect=https://evil.example",
+});
+eq(playNodes(hostileSource, "A")[0].href, "https://www.youtube.com/watch?v=abcdefghijk", "watch drops hostile t");
+eq(playNodes(hostileSource, "A")[0].href.indexOf("javascript"), -1, "watch href has no javascript");
+eq(playNodes(hostileSource, "A")[0].href.indexOf("redirect"), -1, "watch href has no redirect");
+eq(textLinks(hostileSource)[0].href, "https://www.youtube.com/watch?v=zzzzzzzzzzz", "source drops hostile t");
+eq(textLinks(hostileSource)[0].href.indexOf("redirect"), -1, "source href has no redirect");
+
+var plain = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "https://example.com/text",
+});
+eq(textLinks(plain).length, 1, "other https source");
+eq(textLinks(plain)[0].textContent, "Source", "not labeled ccel");
+eq(textLinks(plain)[0].textContent.indexOf("CCEL"), -1, "no ccel word");
+
+var lookalike = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "https://ccel.org.evil.com/x",
+});
+eq(textLinks(lookalike)[0].textContent, "Source", "lookalike host is not ccel");
+
+var apexCcel = renderCard({
+  sermon_title: "Wesley",
+  text: "x",
+  start_s: null,
+  source_url: "https://ccel.org/ccel/wesley/sermons/sermons.v.i.html",
+});
+eq(textLinks(apexCcel)[0].textContent, "Read this sermon on CCEL", "apex ccel");
+
+var scriptSource = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "javascript:alert(1)",
+});
+eq(textLinks(scriptSource).length, 0, "javascript source is not a link");
+
+var httpSource = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "http://ccel.org/ccel/wesley/sermons/sermons.v.i.html",
+});
+eq(textLinks(httpSource).length, 0, "http source is not a link");
 console.log("ok");
 """
 

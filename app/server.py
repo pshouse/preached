@@ -51,6 +51,7 @@ from preached.search import (  # noqa: E402
     _text_or_none,
 )
 from preached.store import EmbeddingMismatch, open_readonly  # noqa: E402
+from preached.youtube.listing import public_audio_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -221,7 +222,7 @@ def hit_dict(hit) -> dict:
         "text": display_excerpt(hit.text),
         "start_s": hit.start_s,
         "end_s": hit.end_s,
-        "audio_url": hit.audio_url,
+        "audio_url": public_audio_url(hit.audio_url),
         "reader": hit.reader,
         "text_source": hit.text_source,
         "source_url": hit.source_url,
