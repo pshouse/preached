@@ -106,6 +106,50 @@ class QueryIndexTargetTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             query.open_index(None, "../edwards")
 
+    def test_plain_sqlite_index_is_opened_read_only(self) -> None:
+        # The CTO repro: a plain SQLite file gained index tables and switched to WAL.
+        path = self.dir / "plain.sqlite"
+        raw = sqlite3.connect(path)
+        raw.execute("CREATE TABLE notes (x TEXT)")
+        raw.execute("INSERT INTO notes VALUES ('keep me')")
+        raw.commit()
+        raw.close()
+        before = path.read_bytes()
+        code, _ = run_main(["q", "--mode", "bm25", "--index", str(path)])
+        self.assertIn("not a search index", str(code))
+        self.assertEqual(path.read_bytes(), before)
+        for suffix in ("-wal", "-shm", "-journal"):
+            self.assertFalse(Path(f"{path}{suffix}").exists(), suffix)
+        self.synced.assert_not_called()
+
+    def test_nonexistent_index_is_refused_and_not_created(self) -> None:
+        path = self.dir / "nope" / "missing.sqlite"
+        code, _ = run_main(["q", "--mode", "bm25", "--index", str(path)])
+        self.assertIn("missing index", str(code))
+        self.assertFalse(path.exists())
+        self.assertFalse(path.parent.exists())
+
+    def test_library_flag_is_read_only_and_allow_listed(self) -> None:
+        path = self.library_file("spurgeon.sqlite")
+        before = path.read_bytes()
+        connection = query.open_index(None, "spurgeon")
+        with self.assertRaises(sqlite3.OperationalError):
+            connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
+        connection.close()
+        # The file is WAL already (build_library.py writes it so). Any reader of a
+        # WAL file may create an empty -wal and the -shm index; no data is written.
+        self.assertEqual(path.read_bytes(), before)
+        wal = Path(f"{path}-wal")
+        self.assertTrue(not wal.exists() or wal.stat().st_size == 0)
+        self.library_file("cc-speech.sqlite")
+        for slug in ("cc-speech", "wesley", "talmage"):
+            with self.subTest(slug=slug):
+                code, _ = run_main(["q", "--mode", "bm25", "--library", slug])
+                self.assertIn("refused", str(code))
+        # Allow-listed but not built yet: refused, not created.
+        code, _ = run_main(["q", "--mode", "bm25", "--library", "edwards"])
+        self.assertIn("missing index", str(code))
+        self.assertFalse((self.dir / "edwards.sqlite").exists())
 
 
 REFUSED = ("wesley", "talmage", "gaston", "unknown-slug", "../spurgeon", "", "SPURGEON")
