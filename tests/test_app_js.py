@@ -97,6 +97,11 @@ function playNodes(root, tag) {
     return node.tagName === tag && node.className === "play";
   });
 }
+function textLinks(root) {
+  return walk(root, []).filter(function (node) {
+    return node.tagName === "A" && node.className !== "play";
+  });
+}
 
 var yt = renderCard({
   sermon_title: "On Mercy",
@@ -159,6 +164,77 @@ var mobile = renderCard({
 });
 eq(playNodes(mobile, "A")[0].href, "https://m.youtube.com/watch?v=abcdefghijk&t=11s", "mobile href as stored");
 eq(playNodes(mobile, "A")[0].textContent, "Watch on YouTube at 0:00:12", "mobile label");
+
+eq(textLinks(yt).length, 1, "ccel source stays beside a youtube watch link");
+eq(textLinks(yt)[0].textContent, "Read this sermon on CCEL", "ccel label");
+eq(textLinks(yt)[0].href, "https://www.ccel.org/x", "ccel href");
+eq(textLinks(yt)[0].rel, "noreferrer", "source rel");
+eq(textLinks(archive)[0].textContent, "Read this sermon on CCEL", "archive card ccel label");
+
+var duplicate = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: 95,
+  end_s: 110,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://m.youtube.com/watch?v=abcdefghijk",
+});
+eq(textLinks(duplicate).length, 0, "same video is not a second source link");
+eq(playNodes(duplicate, "A").length, 1, "watch link remains");
+
+var otherVideo = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: 95,
+  end_s: 110,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://www.youtube.com/watch?v=zzzzzzzzzzz",
+});
+eq(textLinks(otherVideo).length, 1, "different video is a source");
+eq(textLinks(otherVideo)[0].textContent, "Watch the source on YouTube", "youtube source label");
+eq(textLinks(otherVideo)[0].href.indexOf("v=zzzzzzzzzzz") > 0, true, "source video id");
+
+var plain = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "https://example.com/text",
+});
+eq(textLinks(plain).length, 1, "other https source");
+eq(textLinks(plain)[0].textContent, "Source", "not labeled ccel");
+eq(textLinks(plain)[0].textContent.indexOf("CCEL"), -1, "no ccel word");
+
+var lookalike = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "https://ccel.org.evil.com/x",
+});
+eq(textLinks(lookalike)[0].textContent, "Source", "lookalike host is not ccel");
+
+var apexCcel = renderCard({
+  sermon_title: "Wesley",
+  text: "x",
+  start_s: null,
+  source_url: "https://ccel.org/ccel/wesley/sermons/sermons.v.i.html",
+});
+eq(textLinks(apexCcel)[0].textContent, "Read this sermon on CCEL", "apex ccel");
+
+var scriptSource = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "javascript:alert(1)",
+});
+eq(textLinks(scriptSource).length, 0, "javascript source is not a link");
+
+var httpSource = renderCard({
+  sermon_title: "Other",
+  text: "x",
+  start_s: null,
+  source_url: "http://ccel.org/ccel/wesley/sermons/sermons.v.i.html",
+});
+eq(textLinks(httpSource).length, 0, "http source is not a link");
 console.log("ok");
 """
 

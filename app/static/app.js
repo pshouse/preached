@@ -99,6 +99,39 @@ function youtubeWatchUrl(value) {
   return value;
 }
 
+/* CCEL only when the host is ccel.org. A YouTube source that is the same
+   video as the watch link is not shown again. Anything else keeps a plain
+   label. safeUrl still runs first; this does not accept a new scheme. */
+function sourceLinkFor(sourceUrl, watchHref) {
+  var source = safeUrl(sourceUrl);
+  if (!source) return null;
+  var host;
+  try {
+    host = new URL(source).hostname.toLowerCase();
+  } catch (err) {
+    return null;
+  }
+  if (host === "ccel.org" || host.endsWith(".ccel.org")) {
+    return { href: source, text: "Read this sermon on CCEL" };
+  }
+  var youtube = youtubeWatchUrl(sourceUrl);
+  if (youtube) {
+    if (watchHref && sameYoutubeVideo(youtube, watchHref)) return null;
+    return { href: youtube, text: "Watch the source on YouTube" };
+  }
+  /* A watch host that failed the watch rules is not forwarded as a link. */
+  if (YOUTUBE_WATCH_HOSTS[host]) return null;
+  return { href: source, text: "Source" };
+}
+
+function sameYoutubeVideo(a, b) {
+  try {
+    return new URL(a).searchParams.get("v") === new URL(b).searchParams.get("v");
+  } catch (err) {
+    return false;
+  }
+}
+
 function readerLabel(hit, href) {
   var name = typeof hit.reader === "string" ? hit.reader : "";
   var librivox = href ? isArchiveHost(href) : false;
@@ -165,7 +198,6 @@ function renderCard(hit) {
     card.appendChild(el("p", "asr", "Wording follows the recording."));
   }
 
-  var source = safeUrl(hit.source_url);
   var audioHref = safeUrl(hit.audio_url);
   var youtube = youtubeWatchUrl(hit.audio_url);
   var spoken = readerLabel(hit, audioHref);
@@ -203,9 +235,10 @@ function renderCard(hit) {
 
   if (spoken) card.appendChild(el("p", "reader", spoken));
 
-  if (source) {
-    var link = el("a", null, "Read this sermon on CCEL");
-    link.href = source;
+  var described = sourceLinkFor(hit.source_url, youtube);
+  if (described) {
+    var link = el("a", null, described.text);
+    link.href = described.href;
     link.rel = "noreferrer";
     var line = el("p", "text-link");
     line.appendChild(link);
