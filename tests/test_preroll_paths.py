@@ -98,6 +98,8 @@ class PrerollTests(unittest.TestCase):
         self.assertIsNone(play_start(None))
         self.assertIsNone(play_start(-1))
         self.assertIsNone(play_start(float("nan")))
+        self.assertIsNone(play_start(float("inf")))
+        self.assertIsNone(play_start(float("-inf")))
 
     def test_query_play_url(self) -> None:
         spec = importlib.util.spec_from_file_location("preached_query", ROOT / "search" / "query.py")
@@ -110,6 +112,44 @@ class PrerollTests(unittest.TestCase):
         self.assertEqual(query.play_url(None, 3.0), "n/a")
         # The printed time is the exact start, not the seek.
         self.assertEqual(query.fmt_time(32.81), "0:00:32")
+
+    def load_query(self):
+        spec = importlib.util.spec_from_file_location("preached_query2", ROOT / "search" / "query.py")
+        query = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(query)
+        return query
+
+    def test_play_url_hides_unsafe_urls(self) -> None:
+        query = self.load_query()
+        for bad in (
+            "javascript:x",
+            "http://archive.org/download/x/y.mp3",
+            "file:///etc/passwd",
+            "https://evil.example/y.mp3",
+            "https://user:pw@archive.org/y.mp3",
+            "\x1b]0;pwned\x07https://evil.example/y.mp3",
+        ):
+            with self.subTest(url=bad):
+                self.assertEqual(query.play_url(bad, 3.0), query.UNSAFE_URL)
+
+    def test_print_hits_strips_control_characters(self) -> None:
+        import contextlib
+        import io
+        from types import SimpleNamespace
+
+        query = self.load_query()
+        hit = SimpleNamespace(
+            sermon_title="Title\x1b[31m red", chunk_id="c\x07", score=0.5, start_s=1.0,
+            reader="Rea\x9bder", audio_url="https://archive.org/download/x/y.mp3",
+            source_url="https://www.ccel.org/\x1b[2J", text="grace\x1b]0;x\x07 and\nfaith",
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            query.print_hits("q", "bm25", None, [hit])
+        printed = out.getvalue()
+        self.assertFalse(any(ord(c) < 32 and c != "\n" or 0x7F <= ord(c) <= 0x9F for c in printed))
+        self.assertIn("grace ]0;x  and faith", printed)
+        self.assertIn("y.mp3#t=0.25", printed)
 
 
 if __name__ == "__main__":

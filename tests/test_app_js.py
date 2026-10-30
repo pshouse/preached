@@ -40,6 +40,9 @@ eq(playStart(0), 0, "zero");
 eq(playStart(null), null, "no time");
 eq(playStart(-3), null, "negative");
 eq(playStart("abc"), null, "nan");
+eq(playStart(NaN), null, "NaN");
+eq(playStart(Infinity), null, "inf");
+eq(playStart(-Infinity), null, "-inf");
 eq(formatTime(32.81), "0:00:32", "label stays exact");
 console.log("ok");
 """

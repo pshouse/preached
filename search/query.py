@@ -8,10 +8,12 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
@@ -19,6 +21,16 @@ from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
+from manifest import UnsafeRow, check_audio_url  # noqa: E402
+
+# C0 (incl. ESC, newline), DEL and C1 controls: none belong in one terminal line.
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+UNSAFE_URL = "n/a (unsafe URL hidden)"
+
+
+def clean(value: object) -> str:
+    """Printable text for the terminal: control characters become one space."""
+    return CONTROL_RE.sub(" ", str(value))
 
 
 def ensure_chunks(connection) -> None:
@@ -46,6 +58,12 @@ def play_url(audio_url, start_s) -> str:
     seek = max(0, start_s - PREROLL_S). start_s itself stays exact."""
     if not audio_url:
         return "n/a"
+    try:
+        # Same rule as the manifest: https on archive.org, no credentials.
+        check_audio_url(audio_url)
+    except UnsafeRow:
+        return UNSAFE_URL
+    audio_url = clean(audio_url)
     seek = play_start(start_s)
     if seek is None:
         return audio_url
@@ -60,11 +78,11 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
         return
     for rank, hit in enumerate(hits, start=1):
         print(
-            f"\n[{rank}] {hit.sermon_title}  (score {hit.score:.4f}, {hit.chunk_id})\n"
-            f"    at {fmt_time(hit.start_s)} (start_s={hit.start_s})  read by {hit.reader or 'n/a'}\n"
+            f"\n[{rank}] {clean(hit.sermon_title)}  (score {hit.score:.4f}, {clean(hit.chunk_id)})\n"
+            f"    at {fmt_time(hit.start_s)} (start_s={hit.start_s})  read by {clean(hit.reader or 'n/a')}\n"
             f"    play: {play_url(hit.audio_url, hit.start_s)}  ({PREROLL_S:g} s pre-roll)\n"
-            f"    text: {hit.source_url or ''}\n"
-            f"    \"{hit.text}\""
+            f"    text: {clean(hit.source_url or '')}\n"
+            f"    \"{clean(hit.text)}\""
         )
 
 
