@@ -22,7 +22,8 @@ function formatTime(seconds) {
   return hours + ":" + String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
 }
 
-/* Same rule as the CSP: https anywhere, or this page's own origin. */
+/* Same rule as the CSP: https anywhere, or this page's own origin.
+   Userinfo is rejected. evil.com@ccel.org is not a CCEL link. */
 function safeUrl(value) {
   if (typeof value !== "string" || value === "") return null;
   try {
@@ -30,6 +31,7 @@ function safeUrl(value) {
   } catch (err) {
     return null;
   }
+  if (url.username || url.password) return null;
   if (url.protocol === "https:") return url.href;
   if (url.origin === window.location.origin) return url.href;
   return null;

@@ -20,6 +20,7 @@ from preached.store import (
     CHUNK_COLUMNS,
     DuplicateChunkId,
     EmbeddingMismatch,
+    NullTimingRefused,
     connect,
     load_chunk_rows,
     replace_chunks,
@@ -202,6 +203,41 @@ class InPlaceMetadataTests(unittest.TestCase):
         with self.assertRaises(DuplicateChunkId):
             self.resync(dup)
         self.assertEqual(len(load_chunk_rows(self.connection)), 3)
+        self.assertEqual(self.vectors(), 3)
+
+    def test_null_timings_are_refused_unless_forced(self) -> None:
+        # The live index hazard: chunks.jsonl matches ids and text and has
+        # null start_s, end_s, audio_url, and reader. The in-place update
+        # would keep the vectors and wipe every playable time.
+        timed = [dict(c) for c in self.chunks]
+        for index, chunk in enumerate(timed):
+            chunk.update(
+                start_s=10.0 + index,
+                end_s=20.0 + index,
+                audio_url="https://archive.org/download/x/y.mp3",
+                reader="Reader",
+            )
+        self.assertEqual(self.resync(timed), 3)
+        self.assertEqual(self.vectors(), 3)
+        with self.assertRaises(NullTimingRefused):
+            self.resync(self.chunks)
+        row = load_chunk_rows(self.connection)[0]
+        self.assertEqual(row["start_s"], 10.0)
+        self.assertEqual(row["reader"], "Reader")
+        self.assertEqual(self.vectors(), 3)
+        bare_text = [dict(c) for c in self.chunks]
+        bare_text[0]["text"] += " Amended."
+        with self.assertRaises(NullTimingRefused):
+            self.resync(bare_text)
+        self.assertNotIn("Amended", load_chunk_rows(self.connection)[0]["text"])
+        self.assertEqual(self.vectors(), 3)
+        write_jsonl(self.jsonl, self.chunks)
+        self.assertEqual(sync_chunks(self.connection, self.jsonl, force_null_timings=True), 3)
+        wiped = load_chunk_rows(self.connection)[0]
+        self.assertIsNone(wiped["start_s"])
+        self.assertIsNone(wiped["audio_url"])
+        self.assertIsNone(wiped["reader"])
+        # Ids and embedding inputs still match, so the vectors stay.
         self.assertEqual(self.vectors(), 3)
 
 

@@ -21,12 +21,12 @@ from unittest.mock import patch
 
 import numpy as np
 
-from app.server import STATIC_DIR, App, make_server
+from app.server import STATIC_DIR, STALE_NOTE, App, make_server
 from preached.corpus import load_chunk_config
 from preached.models import MODELS
+from preached.library import get_meta, is_your_church, mark_your_church
 from preached.search import PREROLL_S as SEARCH_PREROLL_S
 from preached.search import Searcher
-from preached.library import get_meta, is_your_church, mark_your_church
 from preached.store import connect, load_embeddings, open_readonly, stored_fingerprint
 from preached.youtube.chunking import chunk_words
 from preached.youtube.cli import main
@@ -690,6 +690,140 @@ class ImportTests(unittest.TestCase):
                 finally:
                     server.shutdown()
                     server.server_close()
+            finally:
+                connection.close()
+
+    def test_server_reloads_youtube_library_and_falls_back(self) -> None:
+        """A YouTube library is served, then reloaded, then served as BM25 when vectors go away."""
+        video = Video(
+            "samplevid02",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid02",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                ["https://www.youtube.com/watch?v=samplevid02", "--library", "sample"],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid02.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            path = root / "sample.sqlite"
+
+            readonly = open_readonly(path, check_same_thread=False)
+            try:
+                served = App(
+                    connection=readonly,
+                    searcher=Searcher(readonly),
+                    encode=None,
+                    fallback_note=None,
+                    model_name=None,
+                    hosts={"127.0.0.1", "localhost"},
+                    static_dir=STATIC_DIR,
+                    library="sample",
+                )
+                server = make_server(served, "127.0.0.1", 0)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                port = server.server_address[1]
+                try:
+                    status, body = self._get(port, "/api/search?q=zephyrgrace&library=sample&mode=bm25")
+                    self.assertEqual(status, 200)
+                    hit = json.loads(body)["results"][0]
+                    self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid02&t=11s")
+                    self.assertEqual(hit["text_source"], "asr")
+                    self.assertEqual(hit["sermon_id"], "samplevid02")
+                    self.assertIsNone(hit["reader"])
+                    status, health_body = self._get(port, "/healthz")
+                    self.assertEqual(status, 200)
+                    health = json.loads(health_body)
+                    self.assertEqual(health["library"], "sample")
+                    self.assertIn("backend", health)
+                    self.assertIsNone(health["backend"])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                readonly.close()
+
+            connection = connect(path)
+            try:
+                connection.execute(
+                    "INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa') "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+                )
+                connection.commit()
+
+                def encode(_query: str) -> np.ndarray:
+                    return np.ones(4, dtype=np.float32)
+
+                encode.backend = "onnx"
+                app = App(
+                    connection=connection,
+                    searcher=Searcher(connection, model=MODEL_KEY),
+                    encode=encode,
+                    fallback_note=None,
+                    model_name=MODEL_KEY,
+                    hosts={"127.0.0.1"},
+                    static_dir=STATIC_DIR,
+                    backend="onnx",
+                    library="sample",
+                )
+                first = app.search("zephyrgrace", 5, "dense")
+                self.assertEqual(first["mode"], "dense")
+                self.assertEqual(first["note"], None)
+                self.assertEqual(
+                    first["results"][0]["audio_url"],
+                    "https://www.youtube.com/watch?v=samplevid02&t=11s",
+                )
+                self.assertEqual(first["results"][0]["text_source"], "asr")
+                self.assertEqual(app.health()["backend"], "onnx")
+                self.assertEqual(app.health()["library"], "sample")
+                self.assertTrue(app.health()["dense"])
+
+                connection.execute(
+                    "UPDATE chunks SET text = ? WHERE sermon_id = ?",
+                    ("A prayer for the whole church gathers here.", "samplevid02"),
+                )
+                connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
+                connection.commit()
+                second = app.search("prayer", 5, "bm25")
+                self.assertTrue(any("prayer" in hit["text"] for hit in second["results"]))
+                self.assertEqual(
+                    second["results"][0]["audio_url"],
+                    "https://www.youtube.com/watch?v=samplevid02&t=11s",
+                )
+                self.assertEqual(app.health()["backend"], "onnx")
+
+                connection.execute("DELETE FROM embeddings")
+                connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
+                connection.commit()
+                third = app.search("prayer", 5, "dense")
+                self.assertEqual(third["mode"], "bm25")
+                self.assertEqual(third["note"], STALE_NOTE)
+                self.assertTrue(any("prayer" in hit["text"] for hit in third["results"]))
+                self.assertEqual(
+                    third["results"][0]["audio_url"],
+                    "https://www.youtube.com/watch?v=samplevid02&t=11s",
+                )
+                health = app.health()
+                self.assertFalse(health["dense"])
+                self.assertTrue(health["fallback"])
+                self.assertIsNone(health["backend"])
+                self.assertIsNone(health["model"])
+                self.assertEqual(health["library"], "sample")
             finally:
                 connection.close()
 
