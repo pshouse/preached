@@ -24,6 +24,8 @@ transcribe = [
     "nvidia-cublas-cu12>=12.4,<13",
     "nvidia-cudnn-cu12>=9,<10",
 ]
+# Channel listing and audio download. The stdlib cannot speak YouTube's player.
+youtube = ["yt-dlp==2026.10.26"]
 
 [dependency-groups]
 # Only needed to load models we benchmark but do not ship: EmbeddingGemma 2
