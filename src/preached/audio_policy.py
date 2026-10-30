@@ -98,7 +98,11 @@ def flagged_play(
     seek = max(float(start_s), float(flag_end_s) + SHIFT_MARGIN_S)
     if seek >= float(end_s):
         return False, None
-    return True, round(seek, 2)
+    # Round up, never down: the excluded span [start, seek) may only widen.
+    seek = math.ceil(round(seek * 100, 6)) / 100
+    if seek >= float(end_s):
+        return False, None
+    return True, seek
 
 
 def public_times(

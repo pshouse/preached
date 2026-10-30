@@ -301,6 +301,10 @@ class FlaggedAudioTests(Base):
         self.assertEqual(flagged_play(10.0, 55.0, 20.0, "shifted"), (True, 20.0 + SHIFT_MARGIN_S))
         # Nothing left after the last flagged word: behaves as none.
         self.assertEqual(flagged_play(10.0, 55.0, 54.8, "shifted"), (False, None))
+        # Rounding only widens the excluded span: 20.001 + 0.5 -> 20.51, never 20.50.
+        self.assertEqual(flagged_play(10.0, 55.0, 20.001, "shifted"), (True, 20.51))
+        self.assertGreaterEqual(flagged_play(10.0, 55.0, 20.004, "shifted")[1], 20.004 + SHIFT_MARGIN_S)
+        self.assertEqual(flagged_play(10.0, 55.0, 54.491, "shifted"), (False, None))  # rounds up to 55.0 = end
         for bad in ("", "Play", "mute", None):
             with self.assertRaises(ValueError):
                 check_flagged_audio(bad)
