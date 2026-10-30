@@ -517,7 +517,7 @@ def sermon_flagged(connection: sqlite3.Connection, sermon_id: object) -> bool:
 # ASR word ends run late against the audio, so a flagged word that ends up to
 # this long before the seek still counts. Measured (large-v3-turbo vs forced
 # alignment, clean studio audio): word ends p95 0.12 s late, p99 0.48 s, max
-# 3.58 s. 1.5 = p99 + 0.5 s. Never rounded: seek_time floors toward the name.
+# 3.58 s. p99 + 0.5 s = 0.98 s; 1.5 is that plus headroom. Never rounded: seek_time floors toward the name.
 SEEK_SLACK_S = 1.5
 
 
