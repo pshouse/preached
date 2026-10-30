@@ -312,4 +312,4 @@ The new checks add no `plain` or `plain-blind` flag. The only note is the old on
 
 `uv lock --check`: `Resolved 79 packages`, exit 0.
 
-Head: recorded in the commit that adds this section.
+Head: `d3a3c414346314383a773e2aeaa9037d3b5cefe2` adds this section. This sentence is the commit after it. `git log -1` on `feat/eval-deleak` is the branch head.
