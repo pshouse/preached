@@ -162,12 +162,7 @@ def build_rich_index(path: Path) -> None:
         word_end=620,
     )
     connection.commit()
-    for statement in (
-        "ALTER TABLE chunks ADD COLUMN audio_url TEXT",
-        "ALTER TABLE chunks ADD COLUMN reader TEXT",
-        "ALTER TABLE chunks ADD COLUMN text_source TEXT",
-    ):
-        connection.execute(statement)
+    # connect() creates audio_url, reader and text_source (W1-C).
     connection.execute(
         "UPDATE chunks SET audio_url = ?, reader = ?, text_source = ? WHERE chunk_id = ?",
         (AUDIO, "A. Volunteer", "canonical", "null-time"),

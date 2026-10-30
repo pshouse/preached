@@ -12,7 +12,7 @@ import sys
 import urllib.parse
 from pathlib import Path
 
-from preached.corpus import download, sha256
+from preached.corpus import catalog_text_sha, download, sha256
 from preached.paths import CACHE_ROOT, CCEL_TEXT_URL, SERMONS_TEXT, catalog_path
 
 ROOT = Path(__file__).resolve().parent
@@ -108,9 +108,9 @@ def ccel_text() -> str:
     downloaded with the 32 MiB cap and checked against corpus/catalog.json."""
     if not SERMONS_TEXT.exists():
         download(CCEL_TEXT_URL, SERMONS_TEXT)
-    expected = json.loads(catalog_path().read_text()).get("sha256_text")
+    expected = catalog_text_sha(catalog_path())
     actual = sha256(SERMONS_TEXT)
-    if expected and actual != expected:
+    if actual != expected:
         raise RuntimeError(f"{SERMONS_TEXT} sha256 {actual} != corpus/catalog.json {expected}")
     return SERMONS_TEXT.read_text(encoding="utf-8")
 

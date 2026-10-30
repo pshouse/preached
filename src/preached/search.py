@@ -7,6 +7,7 @@ kept from the same sermon, so a result list does not show those words twice.
 
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -28,6 +29,23 @@ BOUNDARY_WORDS = 8
 # Timestamp fallback when word offsets are missing. Ignore a sub-second
 # touch that is just float rounding.
 TIME_OVERLAP_S = 0.4
+
+# Player pre-roll. start_s stays the true onset of the chunk's first word
+# (honest for citations, same on the canonical and ASR paths); only the play
+# position starts this much earlier. W1-C's measured chunk starts are off by
+# a median 0.42 s and at most 0.76 s against the audio, sometimes late, so
+# 0.75 s keeps the first word. app/static/app.js uses the same value.
+PREROLL_S = 0.75
+
+
+def play_start(start_s: float | None) -> float | None:
+    """Where the player seeks for a passage: max(0, start_s - PREROLL_S)."""
+    if start_s is None:
+        return None
+    value = float(start_s)
+    if not math.isfinite(value) or value < 0:  # NaN, +/-inf or negative: no seek (JS Number.isFinite)
+        return None
+    return max(0.0, round(value - PREROLL_S, 2))
 
 
 @dataclass
