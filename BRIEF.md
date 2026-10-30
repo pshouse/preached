@@ -35,6 +35,13 @@ Track: **Discipleship & Spiritual Growth**.
   names from transcripts (e.g. "my friend Dave in the choir"); stripping is
   assisted, not guaranteed, and a human reviews before publishing. Avoid
   crowd shots. Use sample data for anything member-related.
+  Audio on name passages: Patrick chose: no play link on name passages;
+  announcements, prayer requests and testimonies are excluded (see
+  W3-PRIV-SKIP). Whole sermons are not withheld: a card that does not touch
+  a flagged passage keeps its link, and a listener can still scrub from it
+  to a flagged moment elsewhere in the same sermon. Patrick accepted that
+  residual risk; human review plus the W3-PRIV-SKIP exclusions are the
+  mitigation.
 - Content must be theologically sound, honest about AI, keep humans in the loop.
 - Submission: name, ≤250-word description, track, **demo video ≤5 min**
   (YouTube/Vimeo/Loom); live demo link and repo optional but we'll provide both.
