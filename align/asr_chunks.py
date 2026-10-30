@@ -167,7 +167,7 @@ def church_plan(
     title = redact_metadata(sermon_title or meta.get("title") or sermon_id, config=privacy)[0]
     source = {key: meta[key] for key in SOURCE_META if key in meta}
     runs = [[rows[i] for i in run] for run in kept_runs([r["i"] for r in kept])]
-    records = church_records(runs, config, sermon_id=sermon_id, title=title, meta=source, token=privacy.token, items=items, pause_s=pause_s)
+    records = church_records(runs, config, sermon_id=sermon_id, title=title, meta=source, token=privacy.token, items=items, pause_s=pause_s, count=len(rows))
     return {
         "records": records,
         "items": items,

@@ -77,6 +77,38 @@ def kept_runs(indexes: Sequence[int]) -> list[list[int]]:
     return runs
 
 
+def boundary_flags(runs: Sequence[Sequence[dict]], count: int) -> list[tuple[float | None, float | None]]:
+    """``(head, tail)`` ``flag_end_s`` for the first and last chunk of each kept run.
+
+    A chunk next to an excluded stretch is flagged like a chunk holding a name
+    (CTO round on #19): under ``none`` it gets no link, its sermon loses the
+    untimed links (``search.sermon_flagged``), and ``search.touches_flagged``
+    (the one rule, SEEK_SLACK_S) withholds the link of any later chunk whose
+    seek could reach back into the stretch. Without this the chunk right
+    after a stretch seeks back into it by its pre-roll.
+
+    ``head`` is the start of the run's first word (the stretch before it ends
+    there or earlier); ``tail`` is the start of the next run's first word (the
+    stretch after it ends there or earlier), or the run's own end when the
+    stretch runs to the end of the sermon. None: no stretch on that side.
+    """
+    out = []
+    for number, run in enumerate(runs):
+        head = float(run[0]["s"]) if run and run[0]["i"] > 0 else None
+        tail = None
+        if run and run[-1]["i"] < count - 1:
+            following = runs[number + 1] if number + 1 < len(runs) else None
+            tail = float(following[0]["s"]) if following else float(run[-1]["e"])
+        out.append((head, tail))
+    return out
+
+
+def merge_flag(*values: float | None) -> float | None:
+    """The latest of the given ``flag_end_s`` values, or None when all are None."""
+    present = [v for v in values if v is not None]
+    return max(present) if present else None
+
+
 def word_rows(texts: Sequence[str], starts: Sequence[float], ends: Sequence[float], tokens: Sequence[int] | None = None) -> list[dict]:
     """``{"i", "s", "e", "t", "k"}`` per word (``k``: first token offset, ASR only)."""
     return [
@@ -284,14 +316,14 @@ def _rebuild(connection, video_id, info, remaining, data, digest, base, token, e
     if kind == "youtube":
         from preached.youtube.pipeline import youtube_records
 
-        records = youtube_records(meta, runs, items, token)
+        records = youtube_records(meta, runs, items, token, count=int(info["count"]))
     elif kind == "asr":
         from preached.asr import church_records
         from preached.corpus import load_chunk_config
 
         records = church_records(
             runs, load_chunk_config(), sermon_id=video_id, title=meta["title"], meta=meta["source"],
-            token=token, items=items, pause_s=float(meta["pause_s"]),
+            token=token, items=items, pause_s=float(meta["pause_s"]), count=int(info["count"]),
         )
     else:
         raise Refused(f"{video_id}: unknown kept-words kind {kind!r}")

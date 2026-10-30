@@ -10,6 +10,7 @@ the chunks at approval when the reviewer widened or added a stretch.
 from __future__ import annotations
 
 from preached.corpus import chunk_text, word_tokens
+from preached.exclusions import boundary_flags
 
 PAUSE_S = 1.5
 # ASR chunk ids live in their own namespace. Canonical (CCEL) ids are
@@ -76,14 +77,21 @@ def church_records(
     token: str,
     items: list,
     pause_s: float = PAUSE_S,
+    count: int,
 ) -> list[dict]:
-    """The chunk records for the kept runs of one church sermon, gate-keyed and flagged."""
+    """The chunk records for the kept runs of one church sermon, gate-keyed and flagged.
+
+    ``count`` is the sermon's word count. The chunks on either side of an
+    excluded stretch are flagged too (``exclusions.boundary_flags``).
+    """
     records = []
-    for run in runs:
-        for piece in run_pieces(run, config, pause_s):
+    for run, (head, tail) in zip(runs, boundary_flags(runs, count)):
+        pieces = run_pieces(run, config, pause_s)
+        for number, piece in enumerate(pieces):
             words = run[piece["first"] : piece["last"] + 1]
             ends = [w["e"] for w in words if token in w["t"]]
             ends += [i["end"] for i in items or () if i["start"] < piece["end_s"] and i["end"] > piece["start_s"]]
+            ends += [v for v in (head if number == 0 else None, tail if number == len(pieces) - 1 else None) if v is not None]
             records.append({
                 "chunk_id": asr_chunk_id(sermon_id, len(records)),
                 "sermon_id": sermon_id,

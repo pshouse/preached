@@ -21,7 +21,7 @@ import numpy as np
 
 from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
-from preached.exclusions import approve, base_sha256, excluded_indexes, kept_runs, review_lines, word_rows, words_file, words_file_lines
+from preached.exclusions import approve, base_sha256, boundary_flags, excluded_indexes, kept_runs, merge_flag, review_lines, word_rows, words_file, words_file_lines
 from preached.privacy import Config, ReviewList, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
 from preached.skip import propose
@@ -151,20 +151,27 @@ class Plan:
     meta: dict  # what a rebuild at approval needs
 
 
-def youtube_records(meta: dict, runs: list[list[dict]], items, token: str, policy: str = "none") -> list[dict]:
+def youtube_records(meta: dict, runs: list[list[dict]], items, token: str, policy: str = "none", *, count: int) -> list[dict]:
     """Chunk each kept run on its own; ``word_start``/``word_end`` index the sermon's words.
 
     ``runs`` are consecutive kept words (``{"i", "s", "e", "t"}``), so a chunk
-    never spans an excluded stretch. Also used to rebuild at approval.
+    never spans an excluded stretch; ``count`` is the sermon's word count. The
+    chunks on either side of a stretch are flagged (``boundary_flags``). Also
+    used to rebuild at approval.
     """
     config = load_chunk_config()
     records = []
-    for run in runs:
+    for run, (head, tail) in zip(runs, boundary_flags(runs, count)):
         run_words = [Word(w["s"], w["e"], w["t"]) for w in run]
         offset = run[0]["i"]
-        for piece in chunk_words(run_words, config):
+        pieces = chunk_words(run_words, config)
+        for number, piece in enumerate(pieces):
             local = run_words[piece["word_start"] : piece["word_end"]]
-            flag_end = _flag_end(local, piece["start_s"], piece["end_s"], token, items)
+            flag_end = merge_flag(
+                _flag_end(local, piece["start_s"], piece["end_s"], token, items),
+                head if number == 0 else None,
+                tail if number == len(pieces) - 1 else None,
+            )
             records.append(
                 {
                     **piece,
@@ -220,7 +227,7 @@ def _plan(
     ]
     meta = {"video_id": video.id, "duration_s": video.duration_s, "source_url": video.watch_url()}
     kept_by_run = [[rows[i] for i in run] for run in kept_runs([r["i"] for r in kept])]
-    records = youtube_records(meta, kept_by_run, items, config.token, policy)
+    records = youtube_records(meta, kept_by_run, items, config.token, policy, count=len(rows))
     if not records:
         raise RuntimeError("nothing left to index after the excluded stretches")
     return Plan(records, ReviewList(items), stretches, rows, excluded, meta)
