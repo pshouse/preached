@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from urllib.parse import urlsplit
 
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -22,6 +23,43 @@ BLOCKED_CHANNEL = re.compile(r"gaston\s*community\s*church|gastoncommunitychurch
 
 class ChannelRefused(RuntimeError):
     """The URL or the listing names a channel this task must not fetch."""
+
+
+class BadChannelUrl(ValueError):
+    """The channel URL is not https on a YouTube host."""
+
+
+# yt-dlp will treat a leading dash as an option. Only these hosts, over https.
+YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
+_URL_MESSAGE = (
+    "channel URL must be https on youtube.com, www.youtube.com, m.youtube.com, or youtu.be"
+)
+
+
+def assert_youtube_url(url: str) -> None:
+    """Reject a URL before it is passed to yt-dlp.
+
+    Anything that is not ``https`` on an allowed host is refused, including a
+    value that starts with ``-``. Userinfo and a non-443 port are refused too,
+    so the host the checker saw is the host yt-dlp will open.
+    """
+    if (
+        not isinstance(url, str)
+        or not url
+        or url.startswith("-")
+        or "\\" in url
+        or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)
+    ):
+        raise BadChannelUrl(_URL_MESSAGE)
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in YOUTUBE_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+    ):
+        raise BadChannelUrl(_URL_MESSAGE)
 
 
 def assert_allowed(text: str) -> None:

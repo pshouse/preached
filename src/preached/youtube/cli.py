@@ -9,7 +9,7 @@ from pathlib import Path
 
 from preached.paths import CACHE_ROOT, INDEX_DIR
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
-from preached.youtube.listing import SLUG, ChannelRefused
+from preached.youtube.listing import SLUG, BadChannelUrl, ChannelRefused, assert_youtube_url
 from preached.youtube.pipeline import Settings, run
 from preached.youtube.transcribe import transcribe
 
@@ -61,6 +61,11 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     if args.limit is not None and args.limit < 1:
         print("limit must be at least 1", file=sys.stderr)
         return 2
+    try:
+        assert_youtube_url(args.channel_url)
+    except BadChannelUrl as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     index_root = index_dir or INDEX_DIR
     audio_base = audio_root or (CACHE_ROOT / "youtube")
     settings = Settings(
@@ -84,6 +89,6 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
             downloader=downloader or download_audio,
             metadata=metadata or fetch_metadata,
         )
-    except ChannelRefused as exc:
+    except (ChannelRefused, BadChannelUrl) as exc:
         print(str(exc), file=sys.stderr)
         return 2

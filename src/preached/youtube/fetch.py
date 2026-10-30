@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from preached.youtube.listing import Video, assert_allowed, parse_listing
+from preached.youtube.listing import Video, assert_allowed, assert_youtube_url, parse_listing
 
 # Channel tabs omit upload_date unless this is set. The date is approximate
 # until the full video metadata is fetched at import time.
@@ -29,8 +29,10 @@ _LIST_ARGS = (
 )
 
 
-def _run(args: list[str], *, capture: bool) -> subprocess.CompletedProcess:
-    command = [sys.executable, "-m", "yt_dlp", *args]
+def _run(args: list[str], url: str, *, capture: bool) -> subprocess.CompletedProcess:
+    """Run yt-dlp. ``--`` keeps a user-supplied URL from being read as an option."""
+    assert_youtube_url(url)
+    command = [sys.executable, "-m", "yt_dlp", *args, "--", url]
     return subprocess.run(
         command,
         check=False,
@@ -53,8 +55,9 @@ def _json_from_stdout(stdout: str) -> dict:
 
 def list_channel(url: str) -> list[Video]:
     """Metadata only. No media. Refuses a blocked channel before the call."""
+    assert_youtube_url(url)
     assert_allowed(url)
-    result = _run([*_LIST_ARGS, url], capture=True)
+    result = _run(list(_LIST_ARGS), url, capture=True)
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise RuntimeError(detail or f"yt-dlp exited {result.returncode}")
@@ -63,9 +66,12 @@ def list_channel(url: str) -> list[Video]:
 
 def fetch_metadata(video: Video) -> dict:
     """Full video JSON without downloading media. Includes ``license``."""
-    assert_allowed(video.watch_url())
+    url = video.watch_url()
+    assert_youtube_url(url)
+    assert_allowed(url)
     result = _run(
-        ["--skip-download", "--dump-single-json", "--no-warnings", "--no-playlist", "--no-progress", video.watch_url()],
+        ["--skip-download", "--dump-single-json", "--no-warnings", "--no-playlist", "--no-progress"],
+        url,
         capture=True,
     )
     if result.returncode != 0:
@@ -83,7 +89,9 @@ def fetch_metadata(video: Video) -> dict:
 
 def download_audio(video: Video, dest: Path) -> Path:
     """Audio stream only, resumed if a file for this id is already there."""
-    assert_allowed(video.watch_url())
+    url = video.watch_url()
+    assert_youtube_url(url)
+    assert_allowed(url)
     dest.mkdir(parents=True, exist_ok=True)
     existing = _audio_file(dest, video.id)
     if existing is not None:
@@ -99,8 +107,8 @@ def download_audio(video: Video, dest: Path) -> Path:
             "--no-overwrites",
             "-o",
             template,
-            video.watch_url(),
         ],
+        url,
         capture=False,
     )
     if result.returncode != 0:
