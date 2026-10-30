@@ -1,0 +1,67 @@
+{
+  "revision": "47ea694b257b703fee9253d75c2b1f2985180498",
+  "hf_id": "ibm-granite/granite-embedding-english-r2",
+  "tokenizer": {
+    "checked": 8423,
+    "mismatches": 0,
+    "examples": [],
+    "seconds": 3.3,
+    "revision": "47ea694b257b703fee9253d75c2b1f2985180498"
+  },
+  "spotcheck": {
+    "stored_equals_shipped_cuda_first8": false,
+    "isolated": {
+      "n": 8,
+      "min": 1.0,
+      "mean": 1.0,
+      "p01": 1.0,
+      "max": 1.0000001192092896
+    },
+    "head32": {
+      "n": 32,
+      "min": 0.9999999403953552,
+      "mean": 1.0,
+      "p01": 0.9999999403953552,
+      "max": 1.000000238418579
+    },
+    "stored_norm_mean": 1.0,
+    "torch_threads": 4
+  },
+  "reference_index": "/cache/index/wesley-torch-cpu.sqlite",
+  "variants": {
+    "fp32": {
+      "threads": 4,
+      "documents": {
+        "n": 8383,
+        "min": 0.9999998807907104,
+        "mean": 1.0,
+        "p01": 0.9999999403953552,
+        "max": 1.000000238418579
+      },
+      "queries": {
+        "n": 40,
+        "min": 0.9999999403953552,
+        "mean": 1.0,
+        "p01": 0.9999999403953552,
+        "max": 1.000000238418579
+      }
+    },
+    "int8": {
+      "threads": 4,
+      "documents": {
+        "n": 8383,
+        "min": 0.9242266416549683,
+        "mean": 0.9583143591880798,
+        "p01": 0.9401796460151672,
+        "max": 0.9755600690841675
+      },
+      "queries": {
+        "n": 40,
+        "min": 0.956256628036499,
+        "mean": 0.9713031053543091,
+        "p01": 0.956256628036499,
+        "max": 0.9784764647483826
+      }
+    }
+  }
+}

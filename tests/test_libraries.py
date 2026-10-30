@@ -1,5 +1,5 @@
-"""W3-LIB fix-up: which index gets the Wesley sync, and which slugs may be
-ingested or indexed as public-domain libraries."""
+"""W3-LIB fix-up: which index query.py opens (read-only, never synced), and
+which slugs may be ingested, indexed or served as public-domain libraries."""
 
 from __future__ import annotations
 
@@ -48,12 +48,10 @@ class QueryIndexTargetTests(unittest.TestCase):
         patches = [
             mock.patch.object(query, "INDEX_PATH", self.wesley),
             mock.patch.object(query, "INDEX_DIR", self.dir),
-            mock.patch.object(query, "ensure_chunks"),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        self.synced = query.ensure_chunks
 
     def library_file(self, name: str) -> Path:
         path = self.dir / name
@@ -65,7 +63,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         code, err = run_main(["q", "--mode", "bm25", "--index", str(self.wesley), "--library", "spurgeon"])
         self.assertEqual(code, 2)
         self.assertIn("not allowed with argument", err)
-        self.synced.assert_not_called()
 
     def test_library_style_index_is_refused_unchanged(self) -> None:
         # The CTO repro: a classics file passed as --index became Wesley chunks.
@@ -74,7 +71,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         code, _ = run_main(["q", "--mode", "bm25", "--index", str(path)])
         self.assertIn("is a library index", str(code))
         self.assertIn("--library spurgeon", str(code))
-        self.synced.assert_not_called()
         self.assertEqual(path.read_bytes(), before)
 
     def test_library_marker_in_meta_is_refused(self) -> None:
@@ -86,33 +82,26 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.assertTrue(query.is_library_file(path))
         with self.assertRaises(SystemExit):
             query.open_index(path, None)
-        self.synced.assert_not_called()
-
-    def test_wesley_index_is_synced(self) -> None:
-        connect(self.wesley).close()
-        query.open_index(None, None).close()
-        query.open_index(self.wesley, None).close()
-        self.assertEqual(self.synced.call_count, 2)
-        self.synced.assert_called_with(self.wesley)
 
     def test_wesley_search_connection_is_read_only(self) -> None:
         connect(self.wesley).close()
-        connection = query.open_index(None, None)
-        with self.assertRaises(sqlite3.OperationalError):
-            connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
-        connection.close()
+        before = self.wesley.read_bytes()
+        for index in (None, self.wesley):
+            connection = query.open_index(index, None)
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
+            connection.close()
+        self.assertEqual(self.wesley.read_bytes(), before)
 
-    def test_other_index_path_is_not_synced(self) -> None:
+    def test_other_index_path_is_opened(self) -> None:
         other = self.dir / "wesley-onnx-int8.sqlite"
         connect(other).close()
         self.assertFalse(query.is_library_file(other))
         query.open_index(other, None).close()
-        self.synced.assert_not_called()
 
-    def test_library_flag_never_syncs(self) -> None:
+    def test_library_flag_is_allow_listed_by_slug(self) -> None:
         self.library_file("edwards.sqlite")
         query.open_index(None, "edwards").close()
-        self.synced.assert_not_called()
         with self.assertRaises(SystemExit):
             query.open_index(None, "../edwards")
 
@@ -130,7 +119,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
         for suffix in ("-wal", "-shm", "-journal"):
             self.assertFalse(Path(f"{path}{suffix}").exists(), suffix)
-        self.synced.assert_not_called()
 
     def test_nonexistent_index_is_refused_and_not_created(self) -> None:
         path = self.dir / "nope" / "missing.sqlite"
@@ -160,62 +148,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         code, _ = run_main(["q", "--mode", "bm25", "--library", "edwards"])
         self.assertIn("missing index", str(code))
         self.assertFalse((self.dir / "edwards.sqlite").exists())
-
-
-class WesleySyncReadOnlyTests(unittest.TestCase):
-    """query.py opens the Wesley index read-write only when the chunk sync would change it."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.dir = Path(self.tmp.name)
-        self.wesley = self.dir / "wesley.sqlite"
-        self.chunks = self.dir / "chunks.jsonl"
-        self.write_chunks("grace")
-        patches = [
-            mock.patch.object(query, "INDEX_PATH", self.wesley),
-            mock.patch.object(query, "INDEX_DIR", self.dir),
-            mock.patch.object(query, "index_chunks_jsonl", lambda: self.chunks),
-            mock.patch.object(query, "connect", side_effect=connect),
-        ]
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-
-    def write_chunks(self, text: str) -> None:
-        row = {"chunk_id": "wesley-001-c0", "sermon_id": "wesley-001", "sermon_title": "S", "text": text}
-        self.chunks.write_text(json.dumps(row) + "\n")
-
-    def texts(self, connection) -> list[str]:
-        return [row[0] for row in connection.execute("SELECT text FROM chunks")]
-
-    def test_sync_runs_only_when_needed(self) -> None:
-        connection = query.open_index(None, None)  # missing: created and synced, as on main
-        self.assertEqual(self.texts(connection), ["grace"])
-        connection.close()
-        self.assertEqual(query.connect.call_count, 1)
-        before = self.wesley.read_bytes()
-        connection = query.open_index(None, None)  # current: read-only only
-        self.assertEqual(self.texts(connection), ["grace"])
-        with self.assertRaises(sqlite3.OperationalError):
-            connection.execute("DELETE FROM chunks")
-        connection.close()
-        self.assertEqual(query.connect.call_count, 1)
-        self.assertEqual(self.wesley.read_bytes(), before)
-        self.write_chunks("faith")  # stale: synced again
-        connection = query.open_index(None, None)
-        self.assertEqual(self.texts(connection), ["faith"])
-        connection.close()
-        self.assertEqual(query.connect.call_count, 2)
-
-    def test_missing_late_column_is_synced(self) -> None:
-        query.open_index(None, None).close()
-        raw = sqlite3.connect(self.wesley)
-        raw.execute("ALTER TABLE chunks DROP COLUMN text_source")
-        raw.commit()
-        raw.close()
-        query.open_index(None, None).close()
-        self.assertEqual(query.connect.call_count, 2)
 
 
 REFUSED = ("wesley", "talmage", "gaston", "unknown-slug", "../spurgeon", "", "SPURGEON")

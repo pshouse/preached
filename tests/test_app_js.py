@@ -48,6 +48,11 @@ eq(safeUrl("//evil.example/a.mp3"), null, "protocol-relative http page");
 eq(safeUrl("/fixture/a.mp3"), "http://127.0.0.1:8000/fixture/a.mp3", "same origin");
 eq(safeUrl(""), null, "empty");
 eq(safeUrl(null), null, "null");
+eq(safeUrl("https://evil.com@ccel.org/x"), null, "userinfo");
+eq(safeUrl("https://user:pass@ccel.org/x"), null, "user and password");
+eq(safeUrl("https://user@archive.org/download/x/y.mp3"), null, "audio userinfo");
+eq(safeUrl("http://user@127.0.0.1:8000/fixture/a.mp3"), null, "same-origin userinfo");
+eq(safeUrl("https://ccel.org/ccel/wesley/sermons/sermons.v.i.html"), "https://ccel.org/ccel/wesley/sermons/sermons.v.i.html", "ccel without userinfo");
 eq(mediaUrlAt("https://archive.org/a.mp3", 95), "https://archive.org/a.mp3#t=95", "plain");
 eq(mediaUrlAt("https://archive.org/a.mp3#t=10", 95), "https://archive.org/a.mp3#t=95", "replace t");
 eq(mediaUrlAt("https://archive.org/a.mp3?x=1#frag", 1.5), "https://archive.org/a.mp3?x=1#t=1.5", "replace other");
@@ -269,6 +274,22 @@ var httpSource = renderCard({
   source_url: "http://ccel.org/ccel/wesley/sermons/sermons.v.i.html",
 });
 eq(textLinks(httpSource).length, 0, "http source is not a link");
+
+var userinfo = renderCard({
+  sermon_title: "Spoof",
+  text: "x",
+  start_s: null,
+  source_url: "https://evil.com@ccel.org/x",
+});
+eq(textLinks(userinfo).length, 0, "userinfo is not a ccel link");
+
+var userPass = renderCard({
+  sermon_title: "Spoof",
+  text: "x",
+  start_s: null,
+  source_url: "https://user:pass@ccel.org/ccel/wesley/sermons/sermons.v.i.html",
+});
+eq(textLinks(userPass).length, 0, "user:pass is not a ccel link");
 console.log("ok");
 """
 
