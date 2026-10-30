@@ -278,6 +278,18 @@ class AudioUrlTests(unittest.TestCase):
                 manifest.check_audio_url(bad)
         self.assertEqual(query.play_url("https://evil.com\\.archive.org/a.mp3", 10.0), query.UNSAFE_URL)
 
+    def test_non_ascii_is_refused(self) -> None:
+        # U+2028/U+2029 split a log line; U+200B/U+FEFF are invisible; U+00A0 looks like a space.
+        for char in ("\u2028", "\u2029", "\u200b", "\ufeff", "\u00a0", "\u00e9", "\uff0e"):
+            for bad in (self.GOOD + char, self.GOOD.replace("/download/", f"/download/{char}"),
+                        f"https://archive{char}.org/a.mp3", f"https://evil.com{char}archive.org/a.mp3"):
+                with self.subTest(url=bad), self.assertRaises(manifest.UnsafeRow):
+                    manifest.check_audio_url(bad)
+        self.assertEqual(query.play_url(self.GOOD + "\u2028", 10.0), query.UNSAFE_URL)
+        self.assertEqual(query.play_url(self.GOOD + "\u200b", 10.0), query.UNSAFE_URL)
+        self.assertFalse(libraries._archive_url(self.GOOD + "\u200b"))
+        self.assertTrue(libraries._archive_url(self.GOOD))
+
     def test_play_url_hides_them(self) -> None:
         self.assertEqual(query.play_url(self.GOOD + "\n", 10.0), query.UNSAFE_URL)
         self.assertEqual(query.play_url("https://[gggg::1]/x.mp3", 10.0), query.UNSAFE_URL)
