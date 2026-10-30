@@ -68,3 +68,17 @@ Any other `https` URL that is not a watch URL still gets a Play button. The CSP 
 ## Dependencies
 
 None added.
+
+## Fix-up
+
+Director review of `062a1a3`: `youtube_watch_url` read `urlsplit(url).port`. `.port` raises `ValueError` for a non-numeric or out-of-range port (`https://www.youtube.com:abc/watch?v=abcdefghijk`, `https://www.youtube.com:99999/watch?v=abcdefghijk`). `urlsplit` itself raises `ValueError` for an invalid IPv6 netloc (`https://[gggg::1]/watch?v=abcdefghijk`). A hostile stored `audio_url` crashed `search/query.py` instead of being hidden. `https://[::1]/watch?v=abcdefghijk` did not raise; its hostname is `::1`, which is not a watch host.
+
+`youtube_watch_url` now catches that `ValueError` and returns None. It still never raises. The accepted set is the same: `https`, a watch host, no credentials, port 443 or the default, path `/watch`, one 11-character `v`. The stored string is still returned unchanged.
+
+`check_audio_url` already turns a bad port into `UnsafeRow`, so an archive.org URL with `:abc` or `:99999` already printed `n/a (unsafe URL hidden)`. It does not catch `urlsplit`'s own `ValueError`. `play_url` now treats every `ValueError` from that check like `UnsafeRow` (`UnsafeRow` is a `ValueError`). What archive.org accepts is unchanged. Ingest still lets `check_audio_url` raise; only the CLI play line hides the parser error.
+
+The page's `youtubeWatchUrl` already returned null for these inputs. `new URL` throws on `:abc`, `:99999`, and an invalid bracket host, and that throw is inside the existing `try`. `https://[::1]/watch?v=...` parses; the hostname is `[::1]`, which is not a watch host, so the function returns null without a throw. No page code changed. The Deno checks now include all four URLs.
+
+`uv run python -m unittest discover -s tests` from this worktree: **179 tests, OK, 0 skipped** (2.2 seconds). The new inputs are cases inside the existing listing, CLI play-line, and Deno tests, so the method count is unchanged. Deno is installed, so `tests/test_app_js.py` ran.
+
+No dependencies added.
