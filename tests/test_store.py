@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,6 +68,7 @@ class SyncChunksTests(unittest.TestCase):
     def build_legacy_index(self, chunks: list[dict]) -> None:
         """An index as 7347eb7 built it: chunks and vectors, no chunks_sha256."""
         replace_chunks(self.connection, chunks)
+        self.connection.commit()
         rowids = [int(r["rowid"]) for r in load_chunk_rows(self.connection)]
         write_embeddings(self.connection, "m", rowids, np.eye(len(rowids), 4, dtype=np.float32))
         self.assertIsNone(
@@ -199,6 +203,81 @@ class InPlaceMetadataTests(unittest.TestCase):
             self.resync(dup)
         self.assertEqual(len(load_chunk_rows(self.connection)), 3)
         self.assertEqual(self.vectors(), 3)
+
+
+CRASH_SCRIPT = """
+import os, sys
+from pathlib import Path
+import preached.store as store
+store._after_replace = lambda: os._exit(7)
+c = store.connect(Path(sys.argv[1]))
+store.sync_chunks(c, Path(sys.argv[2]))
+"""
+
+
+class CrashWindowTests(unittest.TestCase):
+    """PR #7 should-fix: a hard exit between the chunk replace and the hash /
+    meta write must leave the index fully old, never half new."""
+
+    KEY = "granite-english-r2"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.db = self.dir / "index.sqlite"
+        self.jsonl = self.dir / "chunks.jsonl"
+        self.old = make_chunks()
+        write_jsonl(self.jsonl, self.old)
+        self.connection = connect(self.db)
+        sync_chunks(self.connection, self.jsonl)
+        rowids = [int(r["rowid"]) for r in load_chunk_rows(self.connection)]
+        write_embeddings(self.connection, self.KEY, rowids, np.eye(3, 4, dtype=np.float32))
+        save_embedding_info(self.connection, self.KEY, {"fingerprint": MODELS[self.KEY].fingerprint()})
+        self.old_hash = self.meta("chunks_sha256")
+
+    def tearDown(self) -> None:
+        self.connection.close()
+        self._tmp.cleanup()
+
+    def meta(self, key: str):
+        row = self.connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return None if row is None else row[0]
+
+    def vectors(self) -> int:
+        return self.connection.execute("SELECT count(*) FROM embeddings").fetchone()[0]
+
+    def test_crash_after_replace_leaves_index_fully_old(self) -> None:
+        self.connection.close()
+        new = [dict(c, text=c["text"] + " Amended.") for c in self.old]
+        write_jsonl(self.jsonl, new)
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        env = {**os.environ, "PYTHONPATH": src}
+        proc = subprocess.run(
+            [sys.executable, "-I", "-c", CRASH_SCRIPT, str(self.db), str(self.jsonl)],
+            env={**env}, capture_output=True, text=True,
+        )
+        self.assertEqual(proc.returncode, 7, proc.stderr)
+        self.connection = connect(self.db)
+        rows = load_chunk_rows(self.connection)
+        self.assertEqual([r["text"] for r in rows], [c["text"] for c in self.old])
+        self.assertEqual(self.meta("chunks_sha256"), self.old_hash)
+        self.assertEqual(self.vectors(), 3)
+        self.assertIsNotNone(self.meta(f"embeddings:{self.KEY}"))
+        Searcher(self.connection, model=self.KEY)  # old fingerprint + old vectors: consistent
+        # The next sync completes the rebuild and ends fully new and consistent.
+        self.assertEqual(sync_chunks(self.connection, self.jsonl), 3)
+        self.assertEqual([r["text"] for r in load_chunk_rows(self.connection)], [c["text"] for c in new])
+        self.assertNotEqual(self.meta("chunks_sha256"), self.old_hash)
+        self.assertEqual(self.vectors(), 0)
+        self.assertIsNone(self.meta(f"embeddings:{self.KEY}"))
+        with self.assertRaises(EmbeddingMismatch):
+            Searcher(self.connection, model=self.KEY)
+
+    def test_replace_chunks_clears_embedding_meta_itself(self) -> None:
+        replace_chunks(self.connection, self.old)
+        self.connection.commit()
+        self.assertIsNone(self.meta(f"embeddings:{self.KEY}"))
+        self.assertEqual(self.vectors(), 0)
 
 
 class FingerprintCheckTests(unittest.TestCase):
