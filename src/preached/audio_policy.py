@@ -7,8 +7,9 @@ policy, so it is configurable (``flagged_audio`` in the privacy TOML, the
 
 - ``play``: the normal link with the usual pre-roll.
 - ``shifted``: start just after the last flagged word of the chunk. If that
-  leaves no audio in the chunk, behave as ``none``.
-- ``none``: no play link; the page shows text only.
+  leaves no audio in the chunk, behave as ``none``. Clients get the play
+  position as ``start_s`` and no ``end_s`` (``public_times``).
+- ``none``: no play link and no times; the page shows text only.
 
 Default ``none``. Unflagged chunks are never affected. No heavy imports here.
 """
@@ -22,7 +23,8 @@ FLAGGED_AUDIO = ("play", "shifted", "none")
 DEFAULT_FLAGGED_AUDIO = "none"
 ENV = "PREACHED_FLAGGED_AUDIO"
 # ASR word times can be late by up to ~0.76 s (W1-C), so start a little after
-# the flagged word's recorded end.
+# the flagged word's recorded end. 0.5 s is a guess, not measured on real
+# church audio; the policy choice itself is pending Patrick (default none).
 SHIFT_MARGIN_S = 0.5
 
 
@@ -63,3 +65,24 @@ def flagged_play(
     if seek >= float(end_s):
         return False, None
     return True, round(seek, 2)
+
+
+def public_times(
+    start_s: float | None,
+    end_s: float | None,
+    flag_end_s: float | None,
+    policy: str,
+) -> tuple[float | None, float | None, float | None, bool]:
+    """What a client may see for one chunk: ``(start_s, end_s, play_from_s, allowed)``.
+
+    Unflagged chunks and ``play`` keep the exact times. Under ``none`` (or a
+    ``shifted`` chunk with no audio left) both times are dropped and audio is
+    withheld. Under ``shifted`` the start becomes the play position and the
+    end is dropped, so no pair of fields brackets the spoken name.
+    """
+    allowed, play_from = flagged_play(start_s, end_s, flag_end_s, policy)
+    if flag_end_s is None or policy == "play":
+        return start_s, end_s, None, allowed
+    if not allowed:
+        return None, None, None, False
+    return play_from, None, play_from, True

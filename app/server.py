@@ -42,9 +42,9 @@ from preached.search import (  # noqa: E402
     _optional_int,
     _text_or_none,
 )
-from preached.audio_policy import flagged_play, resolve_flagged_audio  # noqa: E402
+from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
 from preached.privacy import default_config  # noqa: E402
-from preached.store import EmbeddingMismatch, hidden_rowids, open_readonly  # noqa: E402
+from preached.store import EmbeddingMismatch, open_readonly, pending_review_count, visible_count, visible_sql  # noqa: E402
 from preached.youtube.listing import watch_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
@@ -196,8 +196,9 @@ def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, 
 
 def hit_dict(hit, flagged_audio: str = "none") -> dict:
     """The JSON for one result. A chunk with ``[name]`` or a review flag follows
-    the flagged-audio policy: ``none`` drops the play link, ``shifted`` starts
-    after the flagged words (``play_from_s``), ``play`` is the normal link."""
+    the flagged-audio policy: ``none`` drops the play link and both times,
+    ``shifted`` starts after the flagged words (``start_s`` = ``play_from_s``,
+    no ``end_s``), ``play`` is the normal link. See ``audio_policy.public_times``."""
     payload = {
         "chunk_id": hit.chunk_id,
         "sermon_id": hit.sermon_id,
@@ -216,7 +217,9 @@ def hit_dict(hit, flagged_audio: str = "none") -> dict:
     result = {key: payload[key] for key in RESULT_FIELDS}
     if getattr(hit, "flag_end_s", None) is None:
         return result
-    allowed, play_from = flagged_play(hit.start_s, hit.end_s, hit.flag_end_s, flagged_audio)
+    start_s, end_s, play_from, allowed = public_times(hit.start_s, hit.end_s, hit.flag_end_s, flagged_audio)
+    result["start_s"] = start_s
+    result["end_s"] = end_s
     if not allowed:
         result["audio_url"] = None
         result["audio_withheld"] = True
@@ -274,8 +277,12 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
-        # Unapproved church sermons are never served; see preached.store.hidden_rowids.
-        self.hidden = hidden_rowids(connection)
+        # Any library but wesley is gated. The gate is checked per request in
+        # SQL (preached.store.visible_sql), so an import, --redo or approval
+        # made while this process runs applies to the next request.
+        self.gated = library != LIBRARY
+        if hasattr(searcher, "gated"):
+            searcher.gated = searcher.gated or self.gated
         self.flagged_audio = resolve_flagged_audio(flagged_audio, default_config().flagged_audio)
 
     def host_allowed(self, header_value: str) -> bool:
@@ -283,8 +290,9 @@ class App:
 
     def health(self) -> dict:
         with self.lock:
-            count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0]) - len(self.hidden)
-        return {
+            count = visible_count(self.connection, gated=self.gated)
+            pending = pending_review_count(self.connection) if self.gated else None
+        payload = {
             "ok": True,
             "library": self.library,
             "chunks": count,
@@ -292,6 +300,10 @@ class App:
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
         }
+        if pending is not None:
+            # A count only: sermons imported but not approved. Never ids or titles.
+            payload["pending_review"] = pending
+        return payload
 
     def search(self, query: str, k: int, mode: str) -> dict:
         started = time.perf_counter()
@@ -318,13 +330,9 @@ class App:
         if not SERMON_ID.fullmatch(sermon_id):
             return None
         with self.lock:
-            rows = list(
-                self.connection.execute(
-                    "SELECT rowid AS _rowid, * FROM chunks WHERE sermon_id = ? ORDER BY rowid",
-                    (sermon_id,),
-                )
-            )
-        rows = [row for row in rows if row["_rowid"] not in self.hidden]
+            where = visible_sql(self.connection, "chunks", gated=self.gated)
+            sql = "SELECT * FROM chunks WHERE sermon_id = ?" + (f" AND {where}" if where else "") + " ORDER BY rowid"
+            rows = list(self.connection.execute(sql, (sermon_id,)))
         if not rows:
             return None
         first = rows[0]

@@ -146,6 +146,10 @@ def _refuse_review_items(chunks: list[dict]) -> None:
 
     if isinstance(chunks, ReviewList) or any(isinstance(c, ReviewItem) for c in chunks):
         raise ValueError("privacy review items hold real names and must never be indexed")
+    # Church chunks carry the publish-gate key. This table has no gate, so
+    # loading them here would serve unapproved sermons.
+    if any(isinstance(c, dict) and c.get("video_id") is not None for c in chunks):
+        raise ValueError("church chunks (with video_id) go into a gated library file, never this index")
 
 
 def update_chunk_metadata(connection: sqlite3.Connection, chunks: list[dict]) -> None:
@@ -240,20 +244,31 @@ def load_chunk_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(connection.execute("SELECT * FROM chunks ORDER BY rowid"))
 
 
-def bm25_search(connection: sqlite3.Connection, query: str, limit: int) -> list[tuple[int, float]]:
-    """Return (rowid, higher-is-better score). SQLite bm25() is lower-is-better."""
+def bm25_search(connection: sqlite3.Connection, query: str, limit: int, where: str | None = None) -> list[tuple[int, float]]:
+    """Return (rowid, higher-is-better score). SQLite bm25() is lower-is-better.
+
+    ``where`` is a ``visible_sql(connection, "chunks")`` condition; it filters
+    in the same query, so hidden rows never take a slot.
+    """
     match = to_fts_query(query)
-    try:
-        rows = connection.execute(
-            """
+    if where is None:
+        sql = """
             SELECT rowid, bm25(chunks_fts) AS score
             FROM chunks_fts
             WHERE chunks_fts MATCH ?
             ORDER BY score
             LIMIT ?
-            """,
-            (match, limit),
-        ).fetchall()
+            """
+    else:
+        sql = f"""
+            SELECT chunks_fts.rowid AS rowid, bm25(chunks_fts) AS score
+            FROM chunks_fts JOIN chunks ON chunks.rowid = chunks_fts.rowid
+            WHERE chunks_fts MATCH ? AND {where}
+            ORDER BY score
+            LIMIT ?
+            """
+    try:
+        rows = connection.execute(sql, (match, limit)).fetchall()
     except sqlite3.OperationalError as exc:
         # Do not turn a broken query into "nothing found".
         raise RuntimeError(f"FTS5 query failed for MATCH {match!r}: {exc}") from exc
@@ -348,30 +363,70 @@ def file_bytes(path: Path | None = None) -> int:
     return index_path.stat().st_size if index_path.exists() else 0
 
 
-def hidden_rowids(connection: sqlite3.Connection) -> set[int]:
-    """Rowids that search, the API and the page must not serve.
+def visible_sql(connection: sqlite3.Connection, alias: str = "chunks", *, gated: bool = False) -> str | None:
+    """SQL condition for the chunks a reader may see, or None when nothing is gated.
 
-    A church library's chunks carry a ``video_id``. They are served only when
-    that sermon's ``videos`` row is ``ok`` and a human approved the review file
-    whose sha256 is stored (``approved_sha256 == review_sha256``). A library
-    file without those columns fails closed. Wesley's index has no
-    ``video_id`` column and is never gated.
+    Evaluated against the file as it is now, so callers run it per request:
+    an import, ``--redo`` or approval made while the server runs takes effect
+    on the next request. A church library's chunks carry a ``video_id``; they
+    are served only when that sermon's ``videos`` row is ``ok`` and a human
+    approved the review file whose sha256 is stored (``approved_sha256 ==
+    review_sha256``). A row with a NULL ``video_id`` is never served. A
+    library file without the gate columns fails closed (``"0"``). Wesley's
+    index has no ``video_id`` column and no ``videos`` table and is not gated,
+    unless ``gated`` says this file must be (any library but wesley).
     """
     chunk_cols = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
-    if "video_id" not in chunk_cols:
+    video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
+    if "video_id" not in chunk_cols and not video_cols and not gated:
+        return None
+    if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+        return "0"
+    return (
+        f"{alias}.video_id IS NOT NULL AND EXISTS ("
+        f"SELECT 1 FROM videos v WHERE v.video_id = {alias}.video_id AND v.status = 'ok' "
+        "AND v.approved_sha256 IS NOT NULL AND v.review_sha256 IS NOT NULL "
+        "AND v.approved_sha256 = v.review_sha256)"
+    )
+
+
+def visible_count(connection: sqlite3.Connection, *, gated: bool = False) -> int:
+    where = visible_sql(connection, "chunks", gated=gated)
+    sql = "SELECT count(*) FROM chunks" + (f" WHERE {where}" if where else "")
+    return int(connection.execute(sql).fetchone()[0])
+
+
+def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = False) -> set[int]:
+    """The subset of ``rowids`` that may be served right now."""
+    wanted = [int(r) for r in rowids]
+    if not wanted:
         return set()
+    where = visible_sql(connection, "chunks", gated=gated)
+    found: set[int] = set()
+    for start in range(0, len(wanted), 500):
+        part = wanted[start : start + 500]
+        sql = f"SELECT rowid FROM chunks WHERE rowid IN ({', '.join('?' * len(part))})"
+        if where:
+            sql += f" AND {where}"
+        found.update(int(r[0]) for r in connection.execute(sql, part))
+    return found
+
+
+def pending_review_count(connection: sqlite3.Connection) -> int:
+    """Imported sermons waiting for approval (a count; never ids or titles)."""
     video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
     if not {"review_sha256", "approved_sha256", "status"} <= video_cols:
-        return {int(r[0]) for r in connection.execute("SELECT rowid FROM chunks WHERE video_id IS NOT NULL")}
-    rows = connection.execute(
-        """
-        SELECT c.rowid FROM chunks c
-        WHERE c.video_id IS NOT NULL AND NOT EXISTS (
-            SELECT 1 FROM videos v
-            WHERE v.video_id = c.video_id AND v.status = 'ok'
-              AND v.approved_sha256 IS NOT NULL AND v.review_sha256 IS NOT NULL
-              AND v.approved_sha256 = v.review_sha256
-        )
-        """
-    )
-    return {int(r[0]) for r in rows}
+        return 0
+    row = connection.execute(
+        "SELECT count(*) FROM videos WHERE status = 'ok' "
+        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256)"
+    ).fetchone()
+    return int(row[0])
+
+
+def hidden_rowids(connection: sqlite3.Connection, *, gated: bool = False) -> set[int]:
+    """Rowids that search, the API and the page must not serve right now (see ``visible_sql``)."""
+    where = visible_sql(connection, "chunks", gated=gated)
+    if where is None:
+        return set()
+    return {int(r[0]) for r in connection.execute(f"SELECT rowid FROM chunks WHERE NOT ({where})")}

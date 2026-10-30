@@ -138,12 +138,15 @@ function renderCard(hit) {
   var audioHref = safeUrl(hit.audio_url);
   var spoken = readerLabel(hit, audioHref);
 
-  if (hit.start_s == null) {
+  if (hit.audio_withheld) {
+    /* A passage holding a redacted name: the server sends no times and no link. */
+    card.appendChild(el("p", "timing", "Text only: audio is withheld for this passage."));
+  } else if (hit.start_s == null) {
     card.appendChild(el("p", "timing", "Audio timing coming soon"));
   } else {
     var startLabel = formatTime(hit.start_s);
     /* A chunk holding a redacted name may start later (play_from_s, exact, no
-       pre-roll) or have no audio at all (audio_withheld). */
+       pre-roll; the server then sends start_s = play_from_s and no end_s). */
     var shifted = hit.play_from_s != null ? Number(hit.play_from_s) : null;
     if (shifted != null && !Number.isFinite(shifted)) shifted = null;
     var endLabel = formatTime(hit.end_s);
@@ -163,8 +166,6 @@ function renderCard(hit) {
         else playClip(audioHref, hit.start_s, button, caption);
       });
       card.appendChild(button);
-    } else if (hit.audio_withheld) {
-      card.appendChild(el("p", "timing", "Text only: audio is withheld for this passage."));
     } else {
       card.appendChild(el("p", "timing", "No recording is linked for this passage yet."));
     }

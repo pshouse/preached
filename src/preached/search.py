@@ -7,6 +7,7 @@ kept from the same sermon, so a result list does not show those words twice.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import sqlite3
@@ -14,8 +15,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weighted_fusion
-from preached.store import bm25_search, check_fingerprint, hidden_rowids, load_embeddings
+from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, top_indices, weighted_fusion
+from preached.store import bm25_search, check_fingerprint, load_embeddings, visible_count, visible_rowids, visible_sql
 
 CANDIDATES = 100
 # GET /api/search asks the ranker for this many hits, then de-dups down to k.
@@ -76,21 +77,19 @@ class Searcher:
         connection: sqlite3.Connection,
         model: str | None = None,
         fingerprint: str | None = None,
+        gated: bool = False,
     ):
         """model: a key in search/models.toml. Its stored document vectors
         must carry the fingerprint the config gives now (or `fingerprint`,
         when passed); otherwise EmbeddingMismatch is raised instead of
-        silently mixing old document vectors with new query vectors."""
+        silently mixing old document vectors with new query vectors.
+
+        gated: this file is a church library, so the publish gate applies even
+        if its schema is incomplete (see ``store.visible_sql``)."""
         self.connection = connection
         self.model = model
-        # Unapproved church sermons are never loaded, so no ranker can return
-        # them. Approving a sermon takes effect when the Searcher is rebuilt.
-        self._hidden = hidden_rowids(connection)
-        self._rows = {
-            int(row["rowid"]): row
-            for row in connection.execute("SELECT * FROM chunks")
-            if int(row["rowid"]) not in self._hidden
-        }
+        self.gated = gated
+        self._fingerprint = fingerprint
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
         if model:
@@ -99,39 +98,82 @@ class Searcher:
 
                 if model not in MODELS:
                     raise RuntimeError(f"unknown model {model!r}; see search/models.toml")
-                fingerprint = MODELS[model].fingerprint()
-            check_fingerprint(connection, model, fingerprint)
-            self._rowids, self._matrix = load_embeddings(connection, model)
-            if self._hidden:
-                keep = [i for i, rowid in enumerate(self._rowids) if rowid not in self._hidden]
-                self._rowids = [self._rowids[i] for i in keep]
-                self._matrix = self._matrix[keep]
+                self._fingerprint = MODELS[model].fingerprint()
+            self._load_vectors()
+        self._version = self._data_version()
 
-    def _pack(self, scored: list[tuple[int, float]], limit: int) -> list[Hit]:
-        hits = []
-        for rowid, score in scored[:limit]:
-            row = self._rows.get(rowid)
-            if row is None:
-                continue
-            hits.append(hit_from_row(row, score))
-        return hits
+    # The publish gate is checked on every call, in SQL, against the file as
+    # it is now (store.visible_sql): nothing cached here decides what is
+    # served. Rows are read per call too, so a --redo never serves stale text.
+    # Vectors are cached; when another process commits (an import or an
+    # approval), they are reloaded so new sermons become findable by dense.
 
-    def _lexical(self, query: str, limit: int) -> list[tuple[int, float]]:
-        """BM25 over visible chunks only; asks for extra rows to cover hidden ones."""
-        found = bm25_search(self.connection, query, limit + len(self._hidden))
-        return [item for item in found if item[0] not in self._hidden][:limit]
+    def _data_version(self) -> int:
+        return int(self.connection.execute("PRAGMA data_version").fetchone()[0])
+
+    def _load_vectors(self) -> None:
+        check_fingerprint(self.connection, self.model, self._fingerprint)
+        self._rowids, self._matrix = load_embeddings(self.connection, self.model)
+
+    def _refresh(self) -> None:
+        version = self._data_version()
+        if version == self._version:
+            return
+        self._version = version
+        if self.model:
+            try:
+                self._load_vectors()
+            except Exception:
+                logging.exception("could not reload vectors after the index changed; keeping the old ones")
+
+    def _where(self) -> str | None:
+        return visible_sql(self.connection, "chunks", gated=self.gated)
+
+    def _pack(self, scored: list[tuple[int, float]], limit: int, where: str | None) -> list[Hit]:
+        scored = scored[:limit]
+        if not scored:
+            return []
+        rows = {}
+        wanted = [rowid for rowid, _ in scored]
+        sql = f"SELECT * FROM chunks WHERE rowid IN ({', '.join('?' * len(wanted))})"
+        if where:
+            sql += f" AND {where}"
+        for row in self.connection.execute(sql, wanted):
+            rows[int(row["rowid"])] = row
+        return [hit_from_row(rows[rowid], score) for rowid, score in scored if rowid in rows]
+
+    def _lexical(self, query: str, limit: int, where: str | None) -> list[tuple[int, float]]:
+        """BM25 over chunks visible now; the gate is part of the query."""
+        return bm25_search(self.connection, query, limit, where)
+
+    def _semantic(self, vector: np.ndarray, limit: int, where: str | None) -> list[tuple[int, float]]:
+        scores = dense_scores(vector, self._matrix)
+        if where is None:
+            return dense_hits(self._rowids, scores, limit)
+        # Walk the full ranking and keep the first ``limit`` rows visible now.
+        order = top_indices(scores, scores.shape[0])
+        kept: list[tuple[int, float]] = []
+        for start in range(0, len(order), max(limit, 1) * 4):
+            batch = [(self._rowids[int(i)], float(scores[int(i)])) for i in order[start : start + max(limit, 1) * 4]]
+            visible = visible_rowids(self.connection, [rowid for rowid, _ in batch], gated=self.gated)
+            kept.extend(item for item in batch if item[0] in visible)
+            if len(kept) >= limit:
+                break
+        return kept[:limit]
 
     def bm25(self, query: str, limit: int) -> list[Hit]:
-        return self._pack(self._lexical(query, limit), limit)
+        where = self._where()
+        return self._pack(self._lexical(query, limit, where), limit, where)
 
     def visible_count(self) -> int:
-        return len(self._rows)
+        return visible_count(self.connection, gated=self.gated)
 
     def dense(self, vector: np.ndarray, limit: int) -> list[Hit]:
+        self._refresh()
         if self._matrix is None or self._rowids is None:
             raise RuntimeError("dense search needs a model index")
-        scores = dense_scores(vector, self._matrix)
-        return self._pack(dense_hits(self._rowids, scores, limit), limit)
+        where = self._where()
+        return self._pack(self._semantic(vector, limit, where), limit, where)
 
     def hybrid(
         self,
@@ -143,11 +185,12 @@ class Searcher:
         dense_weight: float = 0.5,
         candidates: int = CANDIDATES,
     ) -> list[Hit]:
+        self._refresh()
         if self._matrix is None or self._rowids is None:
             raise RuntimeError("hybrid search needs a model index")
-        lexical = self._lexical(query, candidates)
-        scores = dense_scores(vector, self._matrix)
-        semantic = dense_hits(self._rowids, scores, candidates)
+        where = self._where()
+        lexical = self._lexical(query, candidates, where)
+        semantic = self._semantic(vector, candidates, where)
         if fusion == "weighted":
             fused = weighted_fusion(semantic, lexical, dense_weight=dense_weight)
         elif fusion == "rrf":
@@ -157,7 +200,7 @@ class Searcher:
             )
         else:
             raise RuntimeError(f"unknown fusion {fusion}")
-        return self._pack(fused, limit)
+        return self._pack(fused, limit, where)
 
 
 def row_value(row: sqlite3.Row, key: str):
