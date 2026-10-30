@@ -218,7 +218,7 @@ Transcribe extra, unchanged from main, opt-in: faster-whisper, av, nvidia-cublas
 - Install with `uv sync` and do not pass `--group bench` or `--extra transcribe`.
 - No Dockerfile in this task.
 
-YouTube import (`feat/w2-youtube`, not on this branch) embeds in `src/preached/youtube/pipeline.py` `_embed_on_cpu`, which calls `preached.embed.load_model` and `encode_documents`. Swap that for `load_embedder("granite-english-r2", "onnx")` and `encode_documents(texts, titles)`. Granite's document template is empty, so titles are ignored, same as today. The returned matrix is float32 and L2-normalized, which is what `library.py` stores. That call does not import torch.
+YouTube import embeds through the same ONNX loader. See "Merge with #4" below. `_embed_on_cpu` calls `load_embedder("granite-english-r2", "onnx")` and `encode_documents(texts, titles)`. Granite's document template is empty, so titles do not change the encoded text. The matrix is float32 and L2-normalized, which is what `library.py` stores. That call does not import torch. Install the import tool with `uv sync --extra youtube`. Transcription is still `uv sync --extra transcribe`. Neither extra installs torch.
 
 ## Fix-up (CTO review of `7c6b330`)
 
@@ -237,6 +237,27 @@ Checked read-only against `/cache/index/wesley.sqlite` and the two chunk files. 
 | `OnnxEmbedder.load` builds the ORT session and the tokenizer from the verified bytes (`InferenceSession` bytes, `Tokenizer.from_buffer`). | `ee6e29d` | `RealOnnxTests.test_fp32_directory_without_int8_loads`, `test_fp32_query_is_unit_normalized` |
 
 Fresh runtime check after this fix-up: `UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-runtime-check uv sync --frozen --no-default-groups` installed 21 packages (numpy 2.5.4, onnxruntime 1.31.1, tokenizers 0.23.3, and the huggingface-hub stack). No `torch`, no `nvidia-*`, no `sentence-transformers`. Importing `app.server` and `preached.search` in that venv did not put `torch` on `sys.modules`.
+
+## Merge with #4
+
+Merged `origin/main` at `9c3e303` (no rebase). That is PR #4, YouTube import, at `23bc496`, plus PR #8, privacy, at `9c3e303`. Merge commit `59258b6`.
+
+Conflicts were `app/server.py` and `uv.lock`. Everything else auto-merged, including `src/preached/store.py` (null-timing refusal and the privacy review-item refusal both stayed).
+
+`app/server.py` keeps both sides. From this branch: the ONNX `default_loader`, `--embed-backend` / `--onnx-variant` / `--ort-threads`, per-request reload when the chunk hash or embedding records change, BM25 fallback, and the `/healthz` `backend` field. From main: `--library`, the index path `/cache/index/<slug>.sqlite`, `parse_search_args(..., library=app.library)`, sermon ids that are either a Wesley slug or an 11-character YouTube id, and the CSP string exactly as main has it (archive.org in `media-src`, no YouTube host). `pyproject.toml` keeps the runtime dependencies (numpy, onnxruntime, tokenizers), `default-groups = []`, the `bench` group, and main's `youtube` extra (`yt-dlp==2026.10.26`).
+
+`uv.lock` was not hand-merged. It was replaced with `origin/main`'s lock and regenerated with `uv lock`. `uv lock --check` passed. Direct runtime dependencies are numpy, onnxruntime, and tokenizers. Torch, `nvidia-*`, and sentence-transformers stay in the opt-in bench group. yt-dlp stays in the youtube extra.
+
+`_embed_on_cpu` in `src/preached/youtube/pipeline.py` no longer calls `preached.embed.load_model`. It calls `load_embedder("granite-english-r2", "onnx")` and `encode_documents(texts, titles)` (commit `0dba208`). The library writer still stores float32 L2-normalized blobs. The chunk columns, watch URL (`t=` is the stored start minus 0.75 s, truncated, never below 0), `text_source=asr`, and empty `reader` are unchanged.
+
+Tests, `uv run python -m unittest discover -s tests`: 235 ran, 0 skipped, 0 failed. Main alone was 173 plus 3 skipped. The three `AppJsTests` ran here because deno is installed. The real fp32 checks ran because `/cache` has `model.fp32.onnx` (`ImportGuardTests.test_youtube_embed_path_does_not_import_torch`, `RealOnnxTests.test_fp32_directory_without_int8_loads`, `test_fp32_query_is_unit_normalized`, `test_cached_fp32_and_tokenizer_match_the_pins`). The new YouTube guard encodes two passages in a subprocess: shape `(2, 768)`, dtype `float32`, L2 norm 1, and `torch` is not in `sys.modules`. `ImportTests.test_server_reloads_youtube_library_and_falls_back` serves a fixture library over HTTP (watch URL, `asr`, library `sample`, `backend` null while BM25), then reloads the text when `chunks_sha256` changes and falls back to BM25 with the stale-vector note when the embedding rows are deleted. No YouTube download and no network in the tests.
+
+Fresh environments under `/cache/w3-cpu/`, not the shipped index:
+
+- `UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-merge2-runtime uv sync --frozen --no-default-groups` installed 21 packages. No `torch`, no `nvidia-*`, no `sentence-transformers`. In that interpreter, `app.server`, `preached.search`, and `_embed_on_cpu` did not import torch. Two passages came back `(2, 768)` float32 with L2 norm 1 (load 2.7 s, encode 0.2 s).
+- `UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-merge2-youtube uv sync --frozen --extra youtube --no-default-groups` installed those 21 plus `yt-dlp==2026.10.26`. Still no torch.
+
+No new dependency. yt-dlp was already justified on main: the stdlib cannot speak YouTube's player.
 
 ## Open issues
 
