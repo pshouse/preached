@@ -74,3 +74,49 @@ Dependencies added: none.
 - With the gate on, dense search scores all stored vectors, then checks visibility in batches of 4×k rows. That is fine for a church library; Wesley skips this path.
 - When vectors are reloaded after an import, a failed fingerprint check keeps the old vectors and logs it. The gate does not depend on the vectors.
 - Under `shifted`, the text and the play position still show that a name was spoken just before `start_s`, and the YouTube video itself is public.
+
+## Merge with main after PR #11 (W3-POLISH) and PR #13 (W2-YT-PLAY)
+
+`origin/main` at `e2ddbc7` (#11 merged as `6a16b1f`, #13 as `e2ddbc7`) was merged into this branch with a merge commit, **`225eb16`** (parents `9b2a3fb`, `e2ddbc7`). There was no rebase and no force-push. The fix is a separate commit, **`052e3c2`**.
+
+### Conflicts and how they were resolved (both behaviours kept)
+| File | #12 side | main side | Resolution |
+|---|---|---|---|
+| `src/preached/search.py` | `Hit.video_id`, `Hit.flag_end_s` | `Hit.merged_ids`, `chunk_ids` (#11 dedupe merge) | All four kept. |
+| `app/server.py` | `App`/`build_app(flagged_audio=)`, `hit_dict(hit, policy)` | `floor=` (abstain), `chunk_ids`, `abstain`, `confidence` | Both signatures merged. The API returns #11's fields and #12's policy fields. |
+| `search/query.py` | `--flagged-audio`, `public_times`, `hit_play` | abstain rule, `--hide-low-confidence`, #13's validated YouTube play line | Both kept. `print_hits` gets the policy on both the normal path and the hidden-results path. |
+| `app/static/app.js` | "Text only" for `audio_withheld`; `play_from_s` exact seek | "Watch on YouTube at m:ss" link | `audio_withheld` is checked first, so it renders no link. The YouTube label and the audio button both use the shifted start when there is one. |
+| `tests/test_youtube.py` | `_chunks_for` returns `(records, review_items)` | 11-character sample id `samplevid01` | Both changes kept. #12's `--ack-review samplevid001` line now uses `samplevid01`. |
+
+Director must-fixes for the merge, all in `225eb16`:
+- **Policy `none` gives no link.** The server nulls `audio_url` and, when it is a YouTube URL, `source_url` too, so no YouTube link renders.
+- **`shifted` jumps past the name.** The server and the CLI never pass the stored link through: its `t=` was set at import time under that time's policy and may sit on the name. `listing.chunk_video_id` takes the 11-character id from the stored `audio_url` or `source_url`, and only when it is a valid watch URL. The two must agree with each other and with the chunk's `video_id`. `listing.watch_url` then builds `https://www.youtube.com/watch?v=<id>&t=<int>s`, where `t` = ceil(shifted start), from the validated id and an `int`. If a YouTube link cannot be rebuilt, audio is withheld (fails closed). `watch_url` now returns None for an id that is not 11 characters.
+- **The label uses the shifted start**: "Watch on YouTube at m:ss".
+
+After the merge: **282 tests, all pass**.
+
+### CTO must-fix: dedupe merged a flagged neighbour into an unflagged card (`052e3c2`)
+- **`merge_overlapping` never merges when either chunk has `flag_end_s`, and requires the same `video_id`.** The flagged neighbour is dropped (as in #11's drop rule), not folded in.
+- **Defence in depth: `search.touches_flagged(connection, hit)`.** A card counts as touching when its word span overlaps any flagged chunk of the same sermon. If word offsets are missing it uses the time span; if there is no span at all, any flagged chunk in the sermon counts. Under `none`, the API (`App.search` → `hit_dict(near_flag=)`) and the CLI (`print_hits(connection=)`) give such a card no link and no times. I read the CTO's "word span touches a flagged chunk" literally. An unflagged chunk next to a flagged one holds none of the flagged words, but a link to it keeps playing into the name. **This is a behaviour change: under `none`, more cards near a name are now text only.** `shifted` and `play` are unchanged for unflagged cards.
+- Under `none` and `shifted`, a flagged YouTube card also drops its `source_url`, because that watch link starts at 0:00.
+
+**Finding: YouTube chunks never merge, on main or here.** #11 merges only chunks with the same `audio_url`, and each YouTube chunk stores its own `&t=` link. So the CTO's bug was reachable only on the church ASR path (W1-C), where every chunk of a sermon shares one audio file. The end-to-end tests therefore cover both paths.
+
+Tests: `tests/test_privacy_merge.py`, 13 new.
+- (a) `MergeGuardTests`: a candidate pair with a flagged neighbour stays separate, and the flagged chunk gets no link under `none`. A flagged kept card absorbs nothing. Different `video_id`s never merge. A seeded property test (5,000 lists, about 25% of chunks flagged) checks that no merged card contains a flagged chunk, that each card's flag equals "holds a flagged chunk", and #11's invariants: no repeats, no word twice, the 300-word cap, idempotence.
+- (b) `ServedTests` (YouTube import, imported under `play` so the stored links point at the names) and `ChurchAsrServedTests` (W1-C index, where merges happen): 14 queries × k ∈ {1, 3, 5, 10, 20} through `App.search` under the default policy. Every card whose word span touches a flagged chunk has `audio_url` null, `audio_withheld` true, no times, no `play_from_s` and no YouTube URL anywhere in its JSON. Clear cards keep their link. No merged card contains a flagged chunk, under `none` or `play`.
+- Policy `none` gives no link on the page (Deno `renderCard` over the served cards: "Text only", no "Watch on YouTube"/"Play from", no href) and in the CLI (`print_hits`: "audio withheld", no `youtube`).
+- `shifted`: the API link is `…&t=<int>s` with `t > flag_end_s`, `t = ceil(play_from_s)`, and differs from the stored link. The page label is "Watch on YouTube at <shifted m:ss>" with exactly that href. The CLI prints the same rebuilt link. A YouTube link that is malformed or carries a mismatched id is withheld.
+- **The tests catch the bug:** with only the merge guard removed, 5 tests fail, plus many runs of the property test.
+
+### Results
+- Full suite (`uv run python -m unittest discover -s tests`): **295 tests, all pass** (282 after the merge plus 13 new; the Deno tests ran).
+- #11's dedupe property test (`test_dedupe.DedupePropertyTests`, 20k lists) passes.
+- `scripts/check_dedupe.py` (56 queries × 5 mode/model lists = 280 lists, `/cache/index/wesley.sqlite`): **0 overlapping pairs, 0 non-idempotent**. Merged counts and card lengths are the same as #11's report §6.3 (for example, Granite hybrid merged 95/560, median 125, mean 133, max 300).
+- `search/bench.py --dedupe --models granite-english-r2` (results written to `/tmp`, not committed): **Granite hybrid RRF R@5 0.657**, MRR@10 0.540, nDCG@10 0.590, the same as #11. Every per-question entry, including the top-10 lists, is identical to the committed `eval/results/2026-10-30-w3polish-dedupe.json` for dense, hybrid_rrf, hybrid_weighted and BM25. Wesley has no flagged chunks, so the guard never fires there.
+- `uv lock --check`: `Resolved 75 packages`, lockfile unchanged. **No dependencies added.** No LLM.
+
+### Open issues
+- **The whole video and the sermon-level link stay public.** A clear card's YouTube link (and the `/api/sermon/<id>` `audio_url`) plays from its `t=` onward. A clear card's YouTube `source_url` plays from 0:00, so it can play an opening name. Only cards that touch a flagged chunk lose their links. Closing this fully means withholding YouTube links per sermon whenever any of its chunks is flagged. That is a product call for Patrick, together with the pending `flagged_audio` decision.
+- `touches_flagged` runs one SQL query per card under `none` (on Wesley too, where it finds nothing). That is fine at k ≤ 50 and was not timed separately. I did not repeat the byte-identical Wesley API check from the fix-up section; the bench per-question identity covers the ranking, not the JSON.
+- The page still labels a YouTube `source_url` "Read this sermon on CCEL". That predates this merge (#13).
