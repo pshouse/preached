@@ -102,7 +102,7 @@ def report(name: str, t: dict) -> None:
         print(f"    {category}: full {v['full']}/{v['stretches']}")
     print(f"  word recall: {t['gold_hit_words']}/{t['gold_words']} = {t['gold_hit_words'] / t['gold_words']:.3f}")
     print(f"  over-exclusion: {t['other_excluded']}/{t['other_words']} non-gold words = {t['other_excluded'] / t['other_words']:.3f}")
-    print(f"  proposed stretches: {t['proposed']}, of which false (<10% gold): {t['false_stretches']}")
+    print(f"  proposed stretches: {t['proposed']}, of which false (<10% gold): {t.get('false_stretches', 0)}")
 
 
 def main() -> None:

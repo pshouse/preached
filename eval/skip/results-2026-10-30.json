@@ -1,0 +1,57 @@
+{
+  "dev.jsonl": {
+    "any": 8,
+    "by_category": {
+      "announcements": {
+        "full": 4,
+        "stretches": 4
+      },
+      "prayer": {
+        "full": 2,
+        "stretches": 2
+      },
+      "testimony": {
+        "full": 2,
+        "stretches": 2
+      }
+    },
+    "docs": 8,
+    "full": 8,
+    "gold_hit_words": 636,
+    "gold_stretches": 8,
+    "gold_words": 636,
+    "ninety": 8,
+    "other_excluded": 119,
+    "other_words": 1412,
+    "proposed": 8,
+    "words": 2048
+  },
+  "test.jsonl": {
+    "any": 13,
+    "by_category": {
+      "announcements": {
+        "full": 7,
+        "stretches": 8
+      },
+      "prayer": {
+        "full": 3,
+        "stretches": 3
+      },
+      "testimony": {
+        "full": 1,
+        "stretches": 3
+      }
+    },
+    "docs": 12,
+    "false_stretches": 1,
+    "full": 11,
+    "gold_hit_words": 635,
+    "gold_stretches": 14,
+    "gold_words": 730,
+    "ninety": 11,
+    "other_excluded": 444,
+    "other_words": 1656,
+    "proposed": 10,
+    "words": 2386
+  }
+}
