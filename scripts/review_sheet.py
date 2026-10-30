@@ -27,6 +27,10 @@ from preached.paths import INDEX_PATH, questions_path  # noqa: E402
 
 COLUMNS = ["#", "question id", "group", "rewrite_of", "question", "original question", "expected sermon",
            "grade-2 passage", "proposed grade-1 passages", "answerable?", "Verdict", "Notes"]
+# Leading comment. The header row and columns stay as they are. No loader reads this file.
+NOTE = ("# Proposed passages in this sheet were proposed by an LLM agent (Claude, found_by "
+        "llm-proposed:claude) and need human confirmation. The plain-blind questions were written "
+        "by an LLM agent (Grok, provenance llm-written:grok) and are unconfirmed by a human.")
 
 
 def mark(text: str, quote: str) -> str:
@@ -56,6 +60,7 @@ def main() -> None:
     by_id = {q["id"]: q for q in questions}
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as handle:
+        handle.write(NOTE + "\r\n")
         writer = csv.writer(handle)
         writer.writerow(COLUMNS)
         for n, q in enumerate(questions, start=1):

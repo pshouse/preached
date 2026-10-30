@@ -106,6 +106,8 @@ def check_file(data: dict, chunks: dict[str, dict], existing: list[dict]) -> tup
 
 
 def label_record(family: str, n: int, label: dict, pool: str) -> dict:
+    """One proposed label. ``pool`` names the pool file; ``found_by`` names the LLM that proposed it."""
+    del pool  # retained so ``--pool`` still selects the file the run read; not stored on the label
     c = label["chunk"]
     return {
         "passage_id": f"{family}-g{label['grade']}-{n:02d}",
@@ -118,7 +120,7 @@ def label_record(family: str, n: int, label: dict, pool: str) -> dict:
         "chunk_ids": label["chunk_ids"],
         "status": "proposed",
         "reason": label["reason"],
-        "found_by": pool,
+        "found_by": "llm-proposed:claude",
     }
 
 
@@ -183,7 +185,10 @@ def main() -> int:
             cand = candidates[family]
             item = {"id": family, "query": cand["question"],
                     "type": "unanswerable" if data.get("answerable") is False else "conceptual",
-                    "group": "plain-blind", "relevant": [] if data.get("excluded") else records,
+                    "group": "plain-blind",
+                    # Grok wrote the blind questions before reading the corpus. Unconfirmed by a human.
+                    "provenance": cand.get("provenance", "llm-written:grok"),
+                    "relevant": [] if data.get("excluded") else records,
                     "answerable_guess": cand.get("answerable_guess")}
             if data.get("answerable") is False:
                 item["unanswerable_reason"] = data["unanswerable_reason"]

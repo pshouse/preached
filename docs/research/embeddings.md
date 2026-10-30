@@ -272,7 +272,7 @@ The 35-question column reproduces the audit rerun exactly for every model and mo
 
 ### Wider grading and blind questions (EVAL-GRADE, labels proposed)
 
-Most of the `plain` zero was narrow labels. EVAL-GRADE added 558 proposed grade-1 labels from a pool: the top 20 of every ranker, read by a grader. It also added 30 questions written blind to the corpus (`plain-blind`). Nothing below is confirmed by a person yet, and nothing was tuned on it.
+Most of the `plain` zero was narrow labels. EVAL-GRADE added 558 proposed grade-1 labels from a pool: the top 20 of every ranker, read and proposed by an LLM agent (Claude, `found_by` `llm-proposed:claude`). They are unconfirmed by a human. It also added 30 questions written blind to the corpus by an LLM agent (Grok, `provenance` `llm-written:grok`, group `plain-blind`). Those questions are unconfirmed by a human. Nothing below is confirmed by a person yet, and nothing was tuned on it.
 
 Granite hybrid RRF (default), strict → lenient, with sermon-level hits:
 
