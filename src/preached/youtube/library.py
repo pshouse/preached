@@ -11,13 +11,14 @@ same trigger-maintained ``chunks_fts`` table. There is no vector database.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import date, datetime, timezone
 
 import numpy as np
 
-from preached.models import DEFAULT_MODEL
-from preached.store import connect
+from preached.models import DEFAULT_MODEL, MODELS
+from preached.store import connect, save_embedding_info
 
 # Columns the Wesley index does not have. Added on the library file only.
 EXTRA_COLUMNS = (
@@ -215,8 +216,27 @@ def index_video(
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (MODEL_KEY,),
         )
-        connection.commit()
+        _stamp_fingerprint(connection)
     except Exception:
         connection.rollback()
         raise
     return rowids
+
+
+def _stamp_fingerprint(connection: sqlite3.Connection) -> None:
+    """Record the models.toml fingerprint for the vectors just written.
+
+    Searcher refuses a model key whose stored fingerprint does not match.
+    ``save_embedding_info`` commits this transaction with the chunks.
+    """
+    expected = MODELS[MODEL_KEY].fingerprint()
+    key = f"embeddings:{MODEL_KEY}"
+    row = connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    if row is not None:
+        stored = json.loads(row[0]).get("fingerprint")
+        if stored != expected:
+            raise RuntimeError(
+                f"stored vectors for {MODEL_KEY} have fingerprint {stored}, "
+                f"but search/models.toml gives {expected}"
+            )
+    save_embedding_info(connection, MODEL_KEY, {"fingerprint": expected})
