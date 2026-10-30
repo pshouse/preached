@@ -151,6 +151,9 @@ def index_video(
     matrix: np.ndarray,
     review_sha256: str | None = None,
     privacy_sha256: str | None = None,
+    reader: str | None = None,
+    sermon_number: int | None = None,
+    librivox_id: str | None = None,
 ) -> list[int]:
     """Replace any earlier attempt at this video and commit chunks plus vectors.
 
@@ -199,15 +202,15 @@ def index_video(
                     "text": chunk["text"],
                     "start_s": chunk["start_s"],
                     "end_s": chunk["end_s"],
-                    "sermon_number": None,
+                    "sermon_number": sermon_number,
                     "scripture": None,
                     "source_url": chunk["source_url"],
                     "word_count": chunk["word_count"],
                     "word_start": chunk["word_start"],
                     "word_end": chunk["word_end"],
-                    "librivox_id": None,
+                    "librivox_id": librivox_id,
                     "audio_url": chunk["audio_url"],
-                    "reader": None,
+                    "reader": reader,
                     "text_source": "asr",
                     "video_id": video_id,
                     "title": title,
