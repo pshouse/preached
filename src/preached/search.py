@@ -497,6 +497,22 @@ def api_search(
     return dedupe_adjacent(ranked(searcher, query, vector, mode, max(pool, k)), k)
 
 
+def sermon_flagged(connection: sqlite3.Connection, sermon_id: object) -> bool:
+    """Whether any chunk of this sermon is flagged (``flag_end_s`` set), visible or not.
+
+    Patrick's link rule: such a sermon keeps the timed links of its
+    unflagged passages, but its untimed sermon-level links (a ``source_url``,
+    a watch link with no ``t=``, an audio file with no seek) all play from
+    0:00 and are dropped everywhere. Wesley's index has no ``flag_end_s``.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    if "flag_end_s" not in columns:
+        return False
+    return connection.execute(
+        "SELECT 1 FROM chunks WHERE sermon_id = ? AND flag_end_s IS NOT NULL LIMIT 1", (sermon_id,)
+    ).fetchone() is not None
+
+
 def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
     """Whether a card's span touches any flagged chunk of its sermon.
 

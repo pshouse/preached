@@ -24,7 +24,7 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
-from preached.search import PREROLL_S, Searcher, play_start, touches_flagged  # noqa: E402
+from preached.search import PREROLL_S, Searcher, play_start, sermon_flagged, touches_flagged  # noqa: E402
 from preached.store import (  # noqa: E402
     EmbeddingMismatch,
     chunks_in_sync,
@@ -206,13 +206,18 @@ def play_url(audio_url, start_s) -> str:
     return f"{audio_url.split('#')[0]}#t={seek:g}"
 
 
-def hit_play(hit, policy: str, near_flag: bool = False) -> str:
+UNTIMED = "n/a (withheld: this sermon has a redacted name and this link would play from 0:00)"
+
+
+def hit_play(hit, policy: str, near_flag: bool = False, sermon_flagged: bool = False) -> str:
     """The play line for a hit. A chunk with ``[name]`` or a review flag follows the flagged-audio policy.
 
     A flagged YouTube chunk gets a link rebuilt from validated parts (the
     stored one may point at the name): ``t=`` is the shifted start under
     ``shifted``. If it cannot be rebuilt, audio is withheld. ``near_flag``
     (``search.touches_flagged``) withholds audio under ``none``, as the API does.
+    ``sermon_flagged`` (``search.sermon_flagged``): an unflagged passage in a
+    sermon with a flagged one keeps only its own timed link, as in the API.
     """
     flag_end_s = getattr(hit, "flag_end_s", None)
     if near_flag and policy == "none":
@@ -231,6 +236,16 @@ def hit_play(hit, policy: str, near_flag: bool = False) -> str:
             return f"{clean(url)}  ({note})"
     if play_from is not None:
         return f"{play_url(hit.audio_url, play_from + PREROLL_S)}  (starts after the redacted name)"
+    if sermon_flagged and flag_end_s is None and policy != "play":
+        source_url = getattr(hit, "source_url", None)
+        if youtube_like(hit.audio_url) or youtube_like(source_url):
+            vid = chunk_video_id(getattr(hit, "video_id", None), hit.audio_url, source_url)
+            url = policy_watch_url(vid, hit.start_s, getattr(hit, "end_s", None), None, "none")
+            if url is None or "&t=" not in url:
+                return UNTIMED
+            return f"{clean(url)}  ({PREROLL_S:g} s pre-roll)"
+        if play_start(hit.start_s) is None:
+            return UNTIMED
     return f"{play_url(hit.audio_url, hit.start_s)}  ({PREROLL_S:g} s pre-roll)"
 
 
@@ -239,13 +254,16 @@ def youtube_like(url) -> bool:
     return isinstance(url, str) and ("youtube" in url.lower() or "youtu.be" in url.lower())
 
 
-def hit_text_link(hit, policy: str, near_flag: bool = False) -> str:
-    """The text line. A flagged passage's YouTube source link is a watch link, so it is hidden unless the policy is play."""
+def hit_text_link(hit, policy: str, near_flag: bool = False, sermon_flagged: bool = False) -> str:
+    """The text line: the sermon's source link, untimed (it plays from 0:00).
+
+    Hidden for any sermon with a flagged passage unless the policy is play,
+    for flagged and unflagged passages alike (same rule as the API).
+    """
     source_url = getattr(hit, "source_url", None)
-    flagged = near_flag or getattr(hit, "flag_end_s", None) is not None
-    if youtube_like(source_url) and flagged and policy != "play":
-        # A watch link from 0:00 would play the name (same rule as the API).
-        return "n/a"
+    flagged = sermon_flagged or near_flag or getattr(hit, "flag_end_s", None) is not None
+    if source_url and flagged and policy != "play":
+        return "n/a (withheld: this sermon has a redacted name)"
     return clean(source_url or "")
 
 
@@ -260,13 +278,14 @@ def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "no
         # A flagged chunk under none/shifted shows no exact chunk start (see audio_policy.public_times).
         start_s, _, _, _ = public_times(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
         near = connection is not None and policy == "none" and touches_flagged(connection, hit)
+        in_flagged = connection is not None and sermon_flagged(connection, hit.sermon_id)
         if near:
             start_s = None
         print(
             f"\n[{rank}] {clean(hit.sermon_title)}  (score {hit.score:.4f}, {clean(hit.chunk_id)})\n"
             f"    at {fmt_time(start_s)} (start_s={start_s})  read by {clean(hit.reader or 'n/a')}\n"
-            f"    play: {hit_play(hit, policy, near)}\n"
-            f"    text: {hit_text_link(hit, policy, near)}\n"
+            f"    play: {hit_play(hit, policy, near, in_flagged)}\n"
+            f"    text: {hit_text_link(hit, policy, near, in_flagged)}\n"
             f"    \"{clean(hit.text)}\""
         )
 

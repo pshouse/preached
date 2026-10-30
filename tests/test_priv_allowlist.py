@@ -483,7 +483,12 @@ class ChurchAsrSermonTests(unittest.TestCase):
         return make_app(connection, "church").sermon("church-1")
 
     def test_stored_url_goes_through_public_audio_url(self) -> None:
-        self.assertEqual(self.sermon()["audio_url"], self.AUDIO)
+        # The sermon opens with names (flagged), so the link is the first clear
+        # chunk's own seek, never the bare file (which plays from 0:00).
+        sermon = self.sermon()
+        self.assertTrue(sermon["audio_url"].startswith(self.AUDIO + "#t="))
+        self.assertGreater(float(sermon["audio_url"].split("#t=")[1]), 0)
+        self.assertIsNone(sermon["source_url"])
         for bad in ("javascript:alert(1)", "http://archive.org/download/x.mp3", "data:audio/mp3;base64,AA",
                     "https://www.youtube.com/watch?v=short&t=javascript:"):
             with self.subTest(bad=bad):

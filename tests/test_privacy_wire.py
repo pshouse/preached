@@ -380,6 +380,8 @@ class FlaggedAudioTests(Base):
         clear = default["zephyrgrace"]
         self.assertNotIn("[name]", clear["text"])
         self.assertTrue(clear["audio_url"].startswith("https://www.youtube.com/watch?v="))
+        self.assertIn("&t=", clear["audio_url"])  # its own timed link stays (Patrick's rule)
+        self.assertIsNone(clear["source_url"])  # the 0:00 watch link goes: this sermon has a flagged passage
         self.assertNotIn("audio_withheld", clear)
         shifted = self.served("shifted")
         self.assertIn("&t=", shifted["soup"]["audio_url"])
@@ -388,7 +390,8 @@ class FlaggedAudioTests(Base):
         played = self.served("play")
         self.assertTrue(played["soup"]["audio_url"])
         self.assertNotIn("play_from_s", played["soup"])
-        self.assertEqual(played["zephyrgrace"], clear)
+        # play (tests only) keeps every link, including the sermon's source link.
+        self.assertEqual({**played["zephyrgrace"], "source_url": None}, clear)
 
     def test_invalid_policy_is_rejected(self) -> None:
         self.assertEqual(self.importer()[0], 0)

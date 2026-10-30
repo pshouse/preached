@@ -40,6 +40,8 @@ from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
     Searcher,
     display_excerpt,
+    play_start,
+    sermon_flagged,
     touches_flagged,
     row_value,
     _optional_int,
@@ -211,7 +213,22 @@ def _youtube_like(url) -> bool:
     return isinstance(url, str) and ("youtube" in url.lower() or "youtu.be" in url.lower())
 
 
-def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False) -> dict:
+def timed_link(hit) -> str | None:
+    """This passage's own seeked link, or None when it would be untimed (play from 0:00).
+
+    A YouTube link is rebuilt by ``policy_watch_url`` and must carry ``t=``.
+    Any other URL must pass ``public_audio_url`` and the passage must have a
+    start the page can seek to (``play_start``).
+    """
+    if _youtube_like(hit.audio_url) or _youtube_like(hit.source_url):
+        vid = chunk_video_id(getattr(hit, "video_id", None), hit.audio_url, hit.source_url)
+        url = policy_watch_url(vid, hit.start_s, hit.end_s, None, "none")
+        return url if url is not None and "&t=" in url else None
+    url = public_audio_url(hit.audio_url)
+    return url if url is not None and play_start(hit.start_s) is not None else None
+
+
+def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_flagged: bool = False) -> dict:
     """The JSON for one result. A chunk with ``[name]`` or a review flag follows
     the flagged-audio policy: ``none`` drops the play link and both times,
     ``shifted`` starts after the flagged words (``start_s`` = ``play_from_s``,
@@ -219,7 +236,12 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False) -> dict:
     ``near_flag`` (``search.touches_flagged``) withholds audio under ``none``
     for a card whose span touches a flagged chunk. A YouTube link on a flagged
     card is rebuilt from validated parts, and under ``none`` or ``shifted`` its
-    YouTube source link (a watch link from 0:00) is dropped."""
+    YouTube source link (a watch link from 0:00) is dropped.
+
+    ``sermon_flagged`` (``search.sermon_flagged``): Patrick's link rule. In a
+    sermon with any flagged passage, an unflagged card keeps only its own
+    timed link (``timed_link``); its ``source_url`` and any untimed link are
+    dropped, since they play from 0:00."""
     payload = {
         "chunk_id": hit.chunk_id,
         "chunk_ids": hit.chunk_ids,
@@ -240,6 +262,11 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False) -> dict:
     flag_end_s = getattr(hit, "flag_end_s", None)
     if flag_end_s is None:
         if not (near_flag and flagged_audio == "none"):
+            if sermon_flagged and flagged_audio != "play":
+                result["source_url"] = None
+                result["audio_url"] = timed_link(hit)
+                if result["audio_url"] is None:
+                    result["audio_withheld"] = True
             return result
         # Unflagged, but its span touches a flagged chunk (search.touches_flagged):
         # under none a play link would run on into the name, so withhold it too.
@@ -249,9 +276,10 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False) -> dict:
     result["start_s"] = start_s
     result["end_s"] = end_s
     youtube = _youtube_like(hit.audio_url) or _youtube_like(hit.source_url)
-    if youtube and flagged_audio != "play":
-        # A YouTube source link is a watch link from 0:00, which would play
-        # the name; under none or shifted only the rebuilt link may remain.
+    if flagged_audio != "play":
+        # This sermon has a flagged passage: its source link (a YouTube watch
+        # link or an archive.org page) plays from 0:00, which would reach the
+        # name; under none or shifted only the rebuilt link may remain.
         result["source_url"] = None
     if not allowed:
         result["audio_url"] = None
@@ -372,11 +400,14 @@ class App:
             vector = None if effective == "bm25" else self.encode(query)
             kept, confidence = search_with_confidence(self.searcher, query, vector, effective, k, self.floor)
             nears = [self.flagged_audio == "none" and touches_flagged(self.connection, hit) for hit in kept]
+            flagged = {sid: sermon_flagged(self.connection, sid) for sid in {hit.sermon_id for hit in kept}}
         return {
             "query": query,
             "mode": effective,
             "took_ms": int(round((time.perf_counter() - started) * 1000)),
-            "results": [hit_dict(hit, self.flagged_audio, near) for hit, near in zip(kept, nears)],
+            "results": [
+                hit_dict(hit, self.flagged_audio, near, flagged[hit.sermon_id]) for hit, near in zip(kept, nears)
+            ],
             "note": note,
             # True when the page should say nothing strong was found. The
             # closest passages stay in results so a person can still look.
@@ -416,17 +447,20 @@ class App:
         The stored ``audio_url`` is never passed through: it goes through
         ``public_audio_url``, and a YouTube link is rebuilt by
         ``policy_watch_url`` (the stored ``t=`` was set at import time and may
-        sit on a name). A flagged chunk is skipped unless the policy is
-        ``play``, and under ``none`` so is a chunk that touches a flagged
-        chunk (``touches_flagged``). The first chunk left gives the link; if
-        none is left there is no link. A YouTube ``source_url`` (a watch link
-        from 0:00) is dropped when any chunk of the sermon is flagged.
+        sit on a name).
+
+        Patrick's link rule, when any chunk of the sermon is flagged (unless
+        the policy is ``play``): ``source_url`` is dropped, flagged chunks
+        and (under ``none``) chunks that touch one (``touches_flagged``) give
+        no link, and ``audio_url`` is the first remaining chunk's own timed
+        link (``timed_link``: a YouTube ``t=``, or ``#t=<seek>`` on an audio
+        file), never an untimed link that plays from 0:00. If no chunk has
+        one there is no link. A sermon with no flagged chunk is unchanged:
+        the first chunk's link and its ``source_url``.
         """
         policy = self.flagged_audio
-        flagged_any = any(row_value(row, "flag_end_s") is not None for row in rows)
-        source_url = _text_or_none(row_value(rows[0], "source_url"))
-        if flagged_any and policy != "play" and _youtube_like(source_url):
-            source_url = None
+        flagged_any = policy != "play" and any(row_value(row, "flag_end_s") is not None for row in rows)
+        source_url = None if flagged_any else _text_or_none(row_value(rows[0], "source_url"))
         for row in rows:
             card = SimpleNamespace(
                 sermon_id=row["sermon_id"],
@@ -435,20 +469,25 @@ class App:
                 word_end=row_value(row, "word_end"),
                 start_s=row_value(row, "start_s"),
                 end_s=row_value(row, "end_s"),
+                video_id=row_value(row, "video_id"),
+                audio_url=_text_or_none(row_value(row, "audio_url")),
+                source_url=_text_or_none(row_value(row, "source_url")),
             )
-            if card.flag_end_s is not None and policy != "play":
+            if card.audio_url is None:
                 continue
-            if flagged_any and policy == "none" and touches_flagged(self.connection, card):
-                continue
-            stored = _text_or_none(row_value(row, "audio_url"))
-            if stored is None:
-                continue
-            row_source = _text_or_none(row_value(row, "source_url"))
-            if _youtube_like(stored) or _youtube_like(row_source):
-                vid = chunk_video_id(row_value(row, "video_id"), stored, row_source)
+            if flagged_any:
+                if card.flag_end_s is not None:
+                    continue
+                if policy == "none" and touches_flagged(self.connection, card):
+                    continue
+                url = timed_link(card)
+                if url is not None and not _youtube_like(url):
+                    url = f"{url.split('#')[0]}#t={play_start(card.start_s):g}"
+            elif _youtube_like(card.audio_url) or _youtube_like(card.source_url):
+                vid = chunk_video_id(card.video_id, card.audio_url, card.source_url)
                 url = policy_watch_url(vid, card.start_s, card.end_s, card.flag_end_s, policy)
             else:
-                url = public_audio_url(stored)
+                url = public_audio_url(card.audio_url)
             if url is not None:
                 return url, source_url
         return None, source_url
