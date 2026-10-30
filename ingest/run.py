@@ -6,7 +6,7 @@
     uv run --extra transcribe ingest/run.py --library spurgeon --all   # see ingest/classics.py
 
 Finished transcripts are skipped; each is written atomically, so a crash loses
-at most the file in flight. Progress goes to $PREACHED_CACHE/transcripts/wesley/progress.log
+at most the file in flight. Progress goes to $PREACHED_CACHE/transcripts/<library>/progress.log
 (PREACHED_CACHE defaults to /cache).
 """
 
@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -27,7 +28,6 @@ import manifest  # noqa: E402
 import transcribe  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
 
-LOG = transcribe.TRANSCRIPT_DIR / "progress.log"
 META_KEYS = [
     "id", "author", "work", "series", "sermon_number", "wesley_sermon_number", "kind",
     "title", "scripture", "scripture_text", "reader", "audio_url", "ia_url",
@@ -35,10 +35,10 @@ META_KEYS = [
 ]
 
 
-def log(msg: str) -> None:
+def log(path: Path, msg: str) -> None:
     line = f"{dt.datetime.now().isoformat(timespec='seconds')} {msg}"
     print(line, flush=True)
-    with LOG.open("a") as fh:
+    with path.open("a") as fh:
         fh.write(line + "\n")
 
 
@@ -70,9 +70,9 @@ class VramPeak:
         return p
 
 
-def out_path(row: dict) -> Path:
+def out_path(row: dict, transcript_dir: Path) -> Path:
     manifest.check_name(row["id"], manifest.ID_RE)
-    return manifest.safe_child(transcribe.TRANSCRIPT_DIR, f"{row['id']}.json")
+    return manifest.safe_child(transcript_dir, f"{row['id']}.json")
 
 
 def check_library(slug: str) -> str:
@@ -85,13 +85,29 @@ def check_library(slug: str) -> str:
     return slug
 
 
-def use_library(slug: str) -> None:
-    """Point manifest, audio and transcript folders at one public-domain library."""
-    global LOG
+@dataclass(frozen=True)
+class LibraryPaths:
+    """Where one library's manifest, audio, transcripts and progress log live."""
+
+    manifest: Path
+    audio_dir: Path
+    transcript_dir: Path
+
+    @property
+    def log(self) -> Path:
+        return self.transcript_dir / "progress.log"
+
+
+def library_paths(slug: str | None = None) -> LibraryPaths:
+    """Wesley's paths for None, else one allow-listed public-domain library's."""
+    if slug is None:
+        return LibraryPaths(manifest.MANIFEST, fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR)
     check_library(slug)
-    fetch.AUDIO_DIR = fetch.CACHE_ROOT / "audio" / slug
-    transcribe.TRANSCRIPT_DIR = transcribe.CACHE_ROOT / "transcripts" / slug
-    LOG = transcribe.TRANSCRIPT_DIR / "progress.log"
+    return LibraryPaths(
+        manifest.MANIFEST.with_name(f"{slug}.jsonl"),
+        fetch.CACHE_ROOT / "audio" / slug,
+        transcribe.CACHE_ROOT / "transcripts" / slug,
+    )
 
 
 def voice_note(row: dict) -> str:
@@ -100,7 +116,7 @@ def voice_note(row: dict) -> str:
     return f"Read by LibriVox volunteer {row['reader']}; not {row['author']}'s voice."
 
 
-def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe.Transcriber) -> None:
+def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe.Transcriber, dest: Path) -> None:
     marks = transcribe.mark_boilerplate(segments, info["duration_s"])
     doc = {
         "meta": {
@@ -120,7 +136,6 @@ def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe
         **marks,
         "segments": segments,  # words: [[start, end, word], ...] seconds from file start
     }
-    dest = out_path(row)
     tmp = dest.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(doc, ensure_ascii=False, separators=(",", ":")))
     os.replace(tmp, dest)
@@ -138,22 +153,21 @@ def main() -> int:
     ap.add_argument("--download-only", action="store_true")
     args = ap.parse_args()
 
-    if args.library is not None:
-        use_library(args.library)
-    rows = manifest.load(manifest.MANIFEST.with_name(f"{args.library or 'wesley'}.jsonl"))
+    paths = library_paths(args.library)
+    rows = manifest.load(paths.manifest)
     if args.limit:
         rows = rows[: args.limit]
     elif args.ids:
         rows = [r for r in rows if r["id"] in set(args.ids)]
-    transcribe.TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-    todo = [r for r in rows if args.redo or not out_path(r).exists()]
+    paths.transcript_dir.mkdir(parents=True, exist_ok=True)
+    todo = [r for r in rows if args.redo or not out_path(r, paths.transcript_dir).exists()]
     total_h = sum(r["duration_s"] for r in todo) / 3600
-    log(f"start: {len(rows)} selected, {len(rows) - len(todo)} already done, {len(todo)} to do ({total_h:.2f} h audio)")
+    log(paths.log, f"start: {len(rows)} selected, {len(rows) - len(todo)} already done, {len(todo)} to do ({total_h:.2f} h audio)")
 
     if args.download_only:
         for r in todo:
-            fetch.ensure_audio(r)
-        log("downloads complete")
+            fetch.ensure_audio(r, audio_dir=paths.audio_dir)
+        log(paths.log, "downloads complete")
         return 0
 
     tr = transcribe.Transcriber()
@@ -163,37 +177,38 @@ def main() -> int:
     t_run = time.time()
     # Download the next file while the GPU works on the current one.
     with ThreadPoolExecutor(max_workers=1) as pool:
-        nxt = pool.submit(fetch.ensure_audio, todo[0]) if todo else None
+        nxt = pool.submit(fetch.ensure_audio, todo[0], audio_dir=paths.audio_dir) if todo else None
         for i, row in enumerate(todo):
             try:
                 path = nxt.result()
             except Exception as e:
                 failures += 1
-                log(f"FAIL download {row['id']}: {e!r}")
+                log(paths.log, f"FAIL download {row['id']}: {e!r}")
                 path = None
-            nxt = pool.submit(fetch.ensure_audio, todo[i + 1]) if i + 1 < len(todo) else None
+            nxt = pool.submit(fetch.ensure_audio, todo[i + 1], audio_dir=paths.audio_dir) if i + 1 < len(todo) else None
             if path is None:
                 continue
             try:
                 t0 = time.time()
                 prompt = f"{row['work']}, by {row['author']}."
                 segments, info = tr.transcribe(path, prompt)
-                write_transcript(row, segments, info, tr)
+                write_transcript(row, segments, info, tr, out_path(row, paths.transcript_dir))
                 wall = time.time() - t0
                 done_audio += info["duration_s"]
                 rate = done_audio / (time.time() - t_run)
                 left = sum(r["duration_s"] for r in todo[i + 1 :])
                 log(
+                    paths.log,
                     f"done {i + 1}/{len(todo)} {row['id']} audio={info['duration_s']:.0f}s wall={wall:.1f}s "
                     f"x{info['duration_s'] / wall:.0f} vram_peak={vram.take()}MiB "
                     f"setting={transcribe.LADDER[tr.rung]} eta={left / rate / 60:.0f}min"
                 )
             except Exception as e:
                 failures += 1
-                log(f"FAIL transcribe {row['id']}: {e!r}")
+                log(paths.log, f"FAIL transcribe {row['id']}: {e!r}")
     wall = time.time() - t_run
     if todo:
-        log(f"finished: {len(todo) - failures}/{len(todo)} ok, {done_audio / 3600:.2f} h audio in "
+        log(paths.log, f"finished: {len(todo) - failures}/{len(todo)} ok, {done_audio / 3600:.2f} h audio in "
             f"{wall / 3600:.2f} h wall = {done_audio / max(wall, 1e-9):.1f} audio-h per wall-h")
     return 1 if failures else 0
 

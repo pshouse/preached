@@ -45,19 +45,25 @@ class ManifestTests(unittest.TestCase):
     def test_clean_title(self):
         self.assertEqual(classics.clean_title("03 - Christ's Agony, pt. 2"), "Christ's Agony, pt 2")
 
-    def test_use_library_points_dirs(self):
+    def test_library_paths_are_passed_not_rebound(self):
         import fetch
         import transcribe
 
-        old = (fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR, run.LOG)
-        try:
-            run.use_library("spurgeon")
-            self.assertEqual(fetch.AUDIO_DIR.name, "spurgeon")
-            self.assertEqual(transcribe.TRANSCRIPT_DIR.name, "spurgeon")
-            with self.assertRaises(SystemExit):
-                run.use_library("../x")
-        finally:
-            fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR, run.LOG = old
+        before = (fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR)
+        paths = run.library_paths("spurgeon")
+        self.assertEqual(paths.manifest, manifest.MANIFEST.with_name("spurgeon.jsonl"))
+        self.assertEqual(paths.audio_dir, fetch.CACHE_ROOT / "audio" / "spurgeon")
+        self.assertEqual(paths.transcript_dir, transcribe.CACHE_ROOT / "transcripts" / "spurgeon")
+        self.assertEqual(paths.log, paths.transcript_dir / "progress.log")
+        self.assertEqual((fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR), before)  # no module globals touched
+        wesley = run.library_paths(None)
+        self.assertEqual((wesley.manifest, wesley.audio_dir, wesley.transcript_dir),
+                         (manifest.MANIFEST, fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR))
+        row = manifest.load(paths.manifest)[0]
+        self.assertEqual(fetch.audio_path(row, paths.audio_dir).parent, paths.audio_dir.resolve())
+        self.assertEqual(run.out_path(row, paths.transcript_dir).parent, paths.transcript_dir.resolve())
+        with self.assertRaises(SystemExit):
+            run.library_paths("../x")
 
 
 class BuildTests(unittest.TestCase):
