@@ -55,7 +55,6 @@ from preached.store import (  # noqa: E402
     check_query_variant,
     index_stamp,
     open_readonly,
-    owner_only_problem,
     pending_review_count,
     public_domain_file,
     visible_count,
@@ -1017,8 +1016,6 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
         return
     if library != LIBRARY:
         problem = classic_index_problem(library, index, INDEX_DIR)
-        for path in (INDEX_DIR, os.path.realpath(INDEX_DIR), os.path.realpath(index)):
-            problem = problem or owner_only_problem(path)
         if problem is not None:
             raise SystemExit(f"error: {problem}")
         if marker != library:
@@ -1084,10 +1081,9 @@ def main(argv: list[str] | None = None) -> None:
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
-    # Every library but wesley is gated (App.gated). A church library is
-    # served only with that gate on and a privacy config loaded.
-    gated = library != LIBRARY
-    church = gated and not is_public_domain(library)
+    # Every library but wesley is gated (App.gated, no switch turns it off).
+    # A church library is served only with a privacy config loaded.
+    church = library != LIBRARY and not is_public_domain(library)
     church_gate = False
     if church:
         try:
@@ -1099,7 +1095,7 @@ def main(argv: list[str] | None = None) -> None:
             ) from exc
         except (ValueError, OSError) as exc:
             raise SystemExit(f"error: privacy config: {exc}") from exc
-        church_gate = gated
+        church_gate = True
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
@@ -1140,9 +1136,6 @@ def main(argv: list[str] | None = None) -> None:
         library=library,
         servable=servable,
     )
-    if church and not app.gated:
-        connection.close()
-        raise SystemExit("error: refusing to serve a church library with the publish gate off")
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)
     elif app.encode is None:

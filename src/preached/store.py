@@ -7,9 +7,7 @@ Search is brute force in numpy. There is no vector database.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import stat
 from pathlib import Path
 
 import numpy as np
@@ -493,49 +491,22 @@ def database_path(connection: sqlite3.Connection) -> str | None:
     return None
 
 
-def owner_only_problem(path: str | os.PathLike[str]) -> str | None:
-    """Why ``path`` is not safe from other users, or None.
-
-    It must be owned by this process's user and not writable by group or
-    others. Checked with ``lstat``, so a symlink is never followed.
-    """
-    try:
-        info = os.lstat(path)
-    except OSError as exc:
-        return f"cannot stat {path} ({exc.strerror})"
-    if stat.S_ISLNK(info.st_mode):
-        return f"{path} is a symlink"
-    if info.st_uid != os.geteuid():
-        return f"{path} is owned by uid {info.st_uid}, not {os.geteuid()}"
-    if info.st_mode & 0o022:
-        return f"{path} is writable by group or others (mode {stat.S_IMODE(info.st_mode):o})"
-    return None
-
-
 def classic_file_problem(connection: sqlite3.Connection, library: object, index_dir: Path | None = None) -> str | None:
     """Why the file behind ``connection`` may not be served as the classic ``library``, or None.
 
     The file the connection actually opened (``PRAGMA database_list``, not a
     path the caller claims) must pass ``libraries.classic_index_problem``
     (allow-listed slug, canonical INDEX_DIR/<slug>.sqlite, no symlinks,
-    realpath equality); then that file and INDEX_DIR itself must be owned by
-    this user and not group/other-writable (``owner_only_problem``). So a
-    library marker in a file anyone else could have written is not trusted.
-    ``index_dir`` defaults to ``preached.paths.INDEX_DIR`` read at call time.
+    realpath equality, owner and mode, one link, sidecar files), the one
+    owner/mode gate. So a library marker in a file anyone else could have
+    written is not trusted. ``index_dir`` defaults to
+    ``preached.paths.INDEX_DIR`` read at call time.
     """
     index_dir = paths.INDEX_DIR if index_dir is None else Path(index_dir)
     path = database_path(connection)
     if path is None:
         return "not a file on disk"
-    problem = classic_index_problem(library, Path(path), index_dir)
-    if problem is not None:
-        return problem
-    # INDEX_DIR as named (not a symlink) and as resolved, then the file itself.
-    for checked in (index_dir, os.path.realpath(index_dir), os.path.realpath(path)):
-        problem = owner_only_problem(checked)
-        if problem is not None:
-            return problem
-    return None
+    return classic_index_problem(library, Path(path), index_dir)
 
 
 def public_domain_file(connection: sqlite3.Connection, library: str | None) -> bool:

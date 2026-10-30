@@ -708,7 +708,7 @@ def write_review_file_sha256(items: Iterable[dict], path: str | os.PathLike[str]
         info = os.fstat(dir_fd)
         if not stat.S_ISDIR(info.st_mode):
             raise RuntimeError(f"review directory {folder} is not a plain directory")
-        if info.st_uid != os.getuid():
+        if info.st_uid != os.geteuid():
             raise RuntimeError(f"review directory {folder} belongs to another user")
         if stat.S_IMODE(info.st_mode) != 0o700:
             os.fchmod(dir_fd, 0o700)

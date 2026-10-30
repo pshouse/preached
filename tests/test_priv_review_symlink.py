@@ -116,7 +116,7 @@ class WritePrivateReviewTests(unittest.TestCase):
     def test_directory_owned_by_another_user_is_refused(self) -> None:
         review = self.root / "review"
         review.mkdir(mode=0o700)
-        with patch("preached.privacy.os.getuid", return_value=os.getuid() + 1), self.assertRaises(RuntimeError):
+        with patch("preached.privacy.os.geteuid", return_value=os.geteuid() + 1), self.assertRaises(RuntimeError):
             self.write(review / "s1.review.jsonl")
         self.assertEqual(list(review.iterdir()), [])
 

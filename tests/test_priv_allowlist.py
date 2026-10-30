@@ -255,7 +255,7 @@ class ForgedMarkerTests(ClassicsBase):
 
     def test_another_owner_is_not_exempt(self) -> None:
         real = os.geteuid()
-        with patch("preached.store.os.geteuid", return_value=real + 1):
+        with patch("preached.libraries.os.geteuid", return_value=real + 1):
             self.assert_gated(self.connection())
 
     def test_in_memory_or_unknown_file_is_not_exempt(self) -> None:
