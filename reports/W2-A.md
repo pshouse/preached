@@ -4,7 +4,7 @@
 
 A read-only web app on top of the W1-B index. The embedder is still `ibm-granite/granite-embedding-english-r2`. Hybrid search is reciprocal rank fusion with k=60 over the top 100 of BM25 and dense. The ranker call is the one `search/query.py` makes, but the list the API returns is not: the API takes the ranker's top 100 and removes overlapping neighbors down to `k` (see Overlap rule). That changes the eval numbers a little, so W1-B's raw top-10 metrics are not the shipped numbers. The shipped-path numbers are under Results. No new model, no vector database, no generated text.
 
-`app/server.py` is `ThreadingHTTPServer` from the standard library. It binds `127.0.0.1:8000` unless `--host` or `--port` is set. The model loads once, on CPU (`CUDA_VISIBLE_DEVICES` is cleared first so this process does not take the GPU from Whisper). If the model or the Granite vectors fail to load, search continues on BM25 and every search response sets `note` to "Embedding model failed to load; results are BM25 only." `--bm25-only` skips the load on purpose. Asking for hybrid or dense in that mode still returns BM25 and says embeddings are not loaded.
+`app/server.py` is `ThreadingHTTPServer` from the standard library. It binds `127.0.0.1:8000` unless `--host` or `--port` is set. The model loads once, on CPU (`CUDA_VISIBLE_DEVICES` is cleared first so this process does not take the GPU from Whisper). If the model or the Granite vectors fail to load, search continues on BM25 and every search response sets `note` to "Embedding model failed to load; results are BM25 only." If the stored Granite vectors' fingerprint (model id, pinned revision, document settings) does not match `search/models.toml`, the server refuses them before loading weights and serves BM25 with the note "Stored passage vectors do not match the configured model; results are BM25 only." It never pairs new query vectors with old document vectors. `--bm25-only` skips the load on purpose. Asking for hybrid or dense in that mode still returns BM25 and says embeddings are not loaded.
 
 The index is opened `mode=ro` with `PRAGMA query_only`. There are no write routes. `POST`, `PUT`, `PATCH`, and `DELETE` return 405.
 
@@ -46,12 +46,12 @@ Open http://127.0.0.1:8000. The index is `/cache/index/wesley.sqlite`. Weights u
 
 ```bash
 uv run python -m unittest discover -s tests
-uv run search/bench.py --models granite-english-r2 --skip-latency --dedupe
+uv run search/bench.py --models granite-english-r2 --dedupe
 uv run python scripts/smoke_server.py
 uv run python scripts/bench_api.py
 ```
 
-`bench.py --dedupe` scores what `GET /api/search` returns (top 100, `dedupe_adjacent`, top 10) and writes `reports/bench_results_dedupe.json`. Without `--dedupe` it scores the raw ranker top 10, as in W1-B. `smoke_server.py` binds port 0, searches "Christian perfection" with BM25, and prints the first sermon. `--embed` loads Granite. `bench_api.py` loads Granite, warms one eval query, then times all 40.
+`bench.py --dedupe` scores what `GET /api/search` returns (top 100, `dedupe_adjacent`, top 10) and writes `eval/results/YYYY-MM-DD-dedupe[-N].{json,md}`. Like every bench run it never overwrites an earlier file, and the `-dedupe` stem keeps API-path runs apart from raw-ranker runs. Without `--dedupe` it scores the raw ranker top 10, as in W1-B, into `eval/results/YYYY-MM-DD[-N]`. The current API-path run is `eval/results/2026-10-30-dedupe.{json,md}`. The first `--dedupe` run, in the old bench format, is kept as `eval/results/2026-10-30-w2a-dedupe-original.json`. `smoke_server.py` binds port 0, searches "Christian perfection" with BM25, and prints the first sermon. `--embed` loads Granite. `bench_api.py` loads Granite, warms one eval query, then times all 40.
 
 Checked by hand:
 
@@ -63,11 +63,11 @@ That returns Wesley's words. The first hit on this index is sermon 50, "The Use 
 
 ## Results
 
-45 tests, `unittest`, all passing. The previous 14 (corpus, FTS, fusion, metrics, the Nomic mask shim) still pass. The W2-A tests cover validation, the result schema, null timestamps, a missing audio column, the overlap rule, static traversal, security headers, a hidden 500, and the BM25 fallback. The review fixes added 9: the API path (pool of 100, then de-dup to k), `bench.py --dedupe` producing exactly that list, paragraph-number removal and what it must leave alone, the credits, and the `app.js` URL rules (https or same origin, fragment replaced). The `app.js` checks run the real file in Deno when `deno` is on the PATH (it is in the sandbox) and skip otherwise. No new dependency. Tests build a small SQLite file. They do not fetch audio and they do not load Granite.
+64 tests, `unittest`, all passing, after merging PR #2 (`feat/w1-retrieval` at `aaee310`). Before the merge it was 45. The previous 14 (corpus, FTS, fusion, metrics, the Nomic mask shim) still pass. The W2-A tests cover validation, the result schema, null timestamps, a missing audio column, the overlap rule, static traversal, security headers, a hidden 500, and the BM25 fallback. The review fixes added 9: the API path (pool of 100, then de-dup to k), `bench.py --dedupe` producing exactly that list, paragraph-number removal and what it must leave alone, the credits, and the `app.js` URL rules (https or same origin, fragment replaced). The `app.js` checks run the real file in Deno when `deno` is on the PATH (it is in the sandbox) and skip otherwise. No new dependency. Tests build a small SQLite file. They do not fetch audio and they do not load Granite. The merge brought PR #2's tests (index sync, legacy-index migration, query-time fingerprint check) and added two server tests: stale vectors fall back to BM25 with their own note, before the weights load; and a real FTS5 MATCH error (PR #2 now raises instead of returning nothing) returns a clean 500 `{"error": "internal error"}` with no traceback or MATCH text, in BM25 and hybrid, and the next request gets 200 (the search lock is released).
 
 ### Shipped-path metrics (de-dup)
 
-Granite, CPU query vectors, the 35 answerable eval questions. "Raw" is the ranker's top 10, which is what W1-B reported and what `reports/bench_results.json` holds (rerun today: identical). "API" is `search/bench.py --dedupe`: top 100, `dedupe_adjacent`, top 10, the list `GET /api/search` returns. A live check sent all 105 searches (35 questions, three modes) through the running server and got the same 10 chunk ids, in the same order, as the benchmark for every one.
+Granite, CPU query vectors, the 35 answerable eval questions. "Raw" is the ranker's top 10, which is what W1-B reported and what the Granite rows of `eval/results/2026-10-30.json` hold. "API" is `search/bench.py --dedupe`: top 100, `dedupe_adjacent`, top 10, the list `GET /api/search` returns. A live check sent all 105 searches (35 questions, three modes) through the running server and got the same 10 chunk ids, in the same order, as the benchmark for every one. After the merge with PR #2, `bench.py --dedupe` (commit `921b928`, clean tree, CPU, fp32) reproduced every number below and all 140 top-10 lists (35 questions × BM25, dense, hybrid RRF, hybrid weighted) exactly: `eval/results/2026-10-30-dedupe.json`.
 
 | mode | R@5 raw → API | MRR@10 raw → API | nDCG@10 raw → API | distinct sermons in top 5 |
 | --- | --- | --- | --- | --- |
@@ -84,7 +84,7 @@ Hybrid, per question (9 of 35 change):
 - Gained: `q-communion` (hit moves from rank 6 to rank 4, R@5 0 → 1) and `q-salvation` (no hit in the raw top 10, rank 10 after de-dup).
 - Ranked higher, same recall: `q-forgiveness` (5 → 3), `q-self-denial` (4 → 3), `q-wilderness` (5 → 4), `q-heaviness` and `q-temptation` (9 → 7).
 
-Dense gains 3 questions at R@5 (`q-forgiveness`, `q-mourning`, `q-communion`) and loses `q-sin-believers`. BM25 gains `q-communion` and loses 3 (`q-sin-believers`, `q-catholic-spirit`, `q-backsliders`). Every change is listed per question in `reports/bench_results_dedupe.json` (`per_query`, with each mode's `top10` chunk ids).
+Dense gains 3 questions at R@5 (`q-forgiveness`, `q-mourning`, `q-communion`) and loses `q-sin-believers`. BM25 gains `q-communion` and loses 3 (`q-sin-believers`, `q-catholic-spirit`, `q-backsliders`). Every change is listed per question in `eval/results/2026-10-30-dedupe.json` (`per_query`, with each mode's `top10` chunk ids).
 
 On balance this is close to neutral for the default mode (−0.015 R@5, −0.009 MRR@10), and users see more distinct sermons and no repeated words. It stays. Later benchmarks should use `--dedupe`, because that is what users get.
 
@@ -111,7 +111,7 @@ The Granite snapshot on disk is `model.safetensors` at 298,041,696 bytes (284 Mi
 
 - Text chunks still have null `start_s` and `end_s`, and the index has no `audio_url`, `reader`, or `text_source` columns. The page says timing is coming and links to CCEL. W1-C can fill the columns. The server already reads them.
 - The locked torch is `2.15.0+cu132`. The torch package in this venv is 1.08 GiB and the NVIDIA CUDA libraries beside it are 2.96 GiB. A Sprite image that installs this lockfile has to hold that download even though search never uses the GPU. Process RSS after load is 1.5 GiB, not the full wheel size. A CPU-only torch wheel would be the smaller install. This branch does not change the lockfile, because `search/bench.py` still measures the other models on GPU.
-- Pillow, torchvision, and einops are still dependencies from W1-B. Granite does not import them. They stay so EmbeddingGemma and Nomic can still load for the benchmark. A Granite-only image can drop those three.
+- After the merge with PR #2, Pillow and torchvision are in the `bench` dependency group only (EmbeddingGemma 2 needs them to load), and einops is gone with Nomic. The runtime install is numpy, sentence-transformers and torch.
 - ONNX is the way off torch. This snapshot does not ship an ONNX file, so it would be an export, then `onnxruntime` on CPU. That runtime wheel is tens of megabytes. It is not added here. The 284 MiB safetensors file is the weight that export would start from. fp32 in memory is larger than that file because the checkpoint is not fp32.
 - Neighbors are dropped, not merged. A listener hears the higher-scoring window, not the union of the two overlapping windows. That is what costs `q-sin-believers` and `q-perfection` their hit. Two possible fixes, not built here: merge the dropped neighbor's span into the kept hit, or keep whichever of the two contains more query terms. Either changes what the page shows, so either should be scored with `bench.py --dedupe` first.
 - The repo has no LICENSE yet. Patrick chooses it. The page credits the public-domain text and recordings.
@@ -120,7 +120,7 @@ The Granite snapshot on disk is `model.safetensors` at 298,041,696 bytes (284 Mi
 
 ## Dependencies added
 
-None. HTTP, JSON, tests, and the smoke and bench scripts are the standard library. The existing lockfile is unchanged: numpy, sentence-transformers, torch, torchvision, pillow, einops. Why those are there is in `reports/W1-B.md`.
+None. HTTP, JSON, tests, and the smoke and bench scripts are the standard library. The lockfile is PR #2's: runtime numpy, sentence-transformers and torch, plus a `bench` group with Pillow and torchvision. Why those are there is in `reports/W1-B.md` and `docs/research/embeddings.md`.
 
 ## YouTube channel import (not built)
 

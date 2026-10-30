@@ -595,6 +595,26 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn(b"SECRET_TRACEBACK_TOKEN", body)
         self.assertNotIn(b"Traceback", body)
 
+    def test_real_fts_failure_is_a_clean_500_and_releases_the_lock(self) -> None:
+        # PR #2 makes an FTS5 error raise instead of returning "nothing found".
+        # Force a real SQLite MATCH syntax error through the shipped path.
+        import preached.store as store
+
+        original = store.to_fts_query
+        store.to_fts_query = lambda _query: '"UNTERMINATED_MATCH_TOKEN'
+        try:
+            for mode in ("bm25", "hybrid"):
+                status, headers, body = self.rich.request("GET", f"/api/search?q=zealboundary&k=3&mode={mode}")
+                self.assertEqual(status, 500, mode)
+                self.assert_secure(headers)
+                self.assertEqual(json.loads(body), {"error": "internal error"})
+                self.assertNotIn(b"UNTERMINATED_MATCH_TOKEN", body)
+                self.assertNotIn(b"Traceback", body)
+        finally:
+            store.to_fts_query = original
+        status, _headers, _body = self.rich.request("GET", "/api/search?q=zealboundary&k=3&mode=bm25")
+        self.assertEqual(status, 200)
+
     def test_stale_vectors_fall_back_to_bm25_before_loading_weights(self) -> None:
         connection = reopen(self.rich_path)
         try:
