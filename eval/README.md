@@ -1,8 +1,17 @@
 # Wesley retrieval eval
 
-Sixty questions a church member might ask of John Wesley's *Sermons on Several Occasions* (Jackson numbering, CCEL text): the original 40 plus 20 plain-language rewrites added in EVAL-DELEAK. The file is `questions.jsonl`.
+Ninety-three questions a church member might ask of John Wesley's *Sermons on Several Occasions* (Jackson numbering, CCEL text): the original 40, 23 plain-language rewrites (EVAL-DELEAK and EVAL-GRADE), and 30 questions written blind to the corpus (EVAL-PLAINQ, group `plain-blind`). The file is `questions.jsonl`.
 
-Each line has `id`, `query`, `type`, `group`, and `relevant`; rewrites also have `rewrite_of`. Types are `conceptual` (45), `keyword` (10), and `unanswerable` (5). A relevant passage has `passage_id`, `sermon_id`, `sermon_title`, `grade`, `quote`, `source_url`, and `chunk_ids`. Grade 2 means the passage directly answers the question. Grade 1 means it is on the same subject but is not the passage that answers it. Unanswerable items have `relevant: []`.
+Each line has `id`, `query`, `type`, `group`, and `relevant`; rewrites also have `rewrite_of`. A relevant passage has `passage_id`, `sermon_id`, `sermon_title`, `grade`, `quote`, `source_url`, and `chunk_ids`. Grade 2 means the passage directly answers the question. Grade 1 means it is also acceptable: Wesley substantially addresses the question there too. Unanswerable items have `relevant: []`.
+
+**Proposed labels (EVAL-GRADE).** A label with `"status": "proposed"` was added by wider grading and has not been confirmed by a person. It also has a one-line `reason` and `found_by` (the pool file). All grade-1 labels added by pooling, and every label on a `plain-blind` question, are proposed. Labels without `status` are the earlier ones. `search/bench.py` scores three label sets: the plain metric names use the labels as they stood before wider grading (every label except proposed grade-1), `_strict` uses grade 2 only, and `_lenient` adds the proposed grade-1 labels. Nothing is fitted or tuned on proposed labels. Patrick confirms or rejects them in `eval/review/review-YYYY-MM-DD.csv`.
+
+## Wider grading (EVAL-GRADE): how to rerun the pool
+
+1. `uv run --group bench eval/pool.py` takes, for every answerable question and every `plain_candidates.jsonl` question, the top 20 chunks from BM25 and from each enabled model in each bench mode (dense, hybrid RRF, hybrid weighted). These are the same calls as the bench, and the top 10 matched the bench's lists on all 550 question × ranker pairs. A rewrite and its original are one family with one pool. It writes `eval/pool/pool-YYYY-MM-DD.jsonl` (ids and ranks) and `/cache/eval-pool/YYYY-MM-DD/<family>.md` (texts, then the rest of the grade-2 sermon for a reading pass).
+2. A reader judges every pooled chunk against the bar in `eval/pool/BRIEF.md`. For `plain-blind` questions the reader also searches the corpus beyond the pool. The output is one JSON per family.
+3. `uv run python eval/apply_grades.py --check DIR` validates the judgments: each quote is in its chunk, 6–60 words, a one-line reason, and no two labels share a chunk. `uv run python eval/apply_grades.py DIR` then writes them into `questions.jsonl` as proposed. It is idempotent and removes earlier proposals first.
+4. `uv run python scripts/review_sheet.py` writes the review CSV.
 
 ## Groups (title leakage)
 
@@ -10,15 +19,16 @@ Many of the original questions named the expected sermon's title ("What did Wesl
 
 | group | n | what it is |
 | --- | --- | --- |
-| `plain` | 25 | Everyday-language questions that share no content word with the expected sermon's title and avoid its signature term or scripture phrase. 20 are `-plain` rewrites of `names-topic` items (same `relevant`, byte for byte, `rewrite_of` points back); 5 were title-free from the start (`q-worry`, `q-assurance`, `q-prayer`, `q-forgiveness`, `q-faith-works`). |
-| `names-topic` | 20 | Original conceptual questions that name the topic or title. Unchanged. |
+| `plain` | 25 | Everyday-language questions that share no content word (or listed synonym) with the expected sermon's title, avoid its signature term, and share no two-word phrase with the grade-2 quote or the sermon's key scripture. 23 are `-plain` rewrites of `names-topic` items (same `relevant` list as the original, `rewrite_of` points back). `q-prayer` and `q-forgiveness` were clean from the start. |
+| `plain-blind` | 30 | Written by another agent before it read the corpus (`plain_candidates.jsonl`, EVAL-PLAINQ). Wording is frozen. All labels are proposed (EVAL-GRADE). Items judged unanswerable have `type: "unanswerable"` and an `unanswerable_reason`. |
+| `names-topic` | 23 | Original conceptual questions that name the topic or title, or (`q-worry`, `q-assurance`, `q-faith-works`, moved in EVAL-GRADE) borrow a phrase from the gold quote or key scripture. Unchanged apart from `group`. |
 | `title-keyword` | 3 | Keyword queries equal to a title: `k-christian-perfection`, `k-means-of-grace`, `k-witness-of-the-spirit`. |
 | `scripture-keyword` | 7 | The other keyword queries: six scripture references and `k-gain-all-you-can` (a phrase from sermon 50, not a title). |
 | `unanswerable` | 5 | No answer in Wesley. |
 
 `names-topic` is the 15 questions Patrick listed plus five the lint found (`q-money`, `q-heaviness`, `q-communion`, `q-justification`, `q-backsliders`), which share a title word too.
 
-**Lint:** `uv run python scripts/check_title_leak.py` exits 1 if a `plain` question shares a content word (longer than 3 letters, not a stopword, light suffix stemming) with any of its sermons' titles, or contains a signature phrase listed for that sermon. `tests/test_eval_leak.py` runs it. The `-plain` rewrites were written by the EVAL-DELEAK coding agent (an LLM, Claude), committed before any model was run on them, and not reviewed by a person. Results and the old vs new headline: `docs/research/embeddings.md`, "Title leakage", and `reports/EVAL-DELEAK.md`.
+**Lint:** `uv run python scripts/check_title_leak.py` exits 1 if a `plain` question shares a content word (3+ letters, not a stopword, light suffix stemming) or a listed synonym with any of its sermons' titles, contains a signature phrase listed for that sermon, or shares two consecutive content words with its grade-2 quote or the key scripture of its grade-2 sermon (`key_scripture.json`, rebuilt with `--write-scripture`). `plain-blind` overlaps are printed as notes and do not fail. `tests/test_eval_leak.py` runs it. The `-plain` rewrites were written by the EVAL-DELEAK coding agent (an LLM, Claude), committed before any model was run on them, and not reviewed by a person. Results and the old vs new headline: `docs/research/embeddings.md`, "Title leakage", and `reports/EVAL-DELEAK.md`.
 
 ## How the labels were made
 
@@ -26,7 +36,7 @@ Many of the original questions named the expected sermon's title ("What did Wesl
 
 **Human review.**
 
-- Status: pending: Patrick to review all 60 items (including the 20 `-plain` rewrites) before submission.
+- Status: pending: Patrick to review all 93 items (the 23 `-plain` rewrites, the 30 `plain-blind` questions, and every proposed label) in `eval/review/review-2026-10-30.csv` before submission.
 - Reviewer:
 - Date:
 - Changes made in review:
