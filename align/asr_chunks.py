@@ -11,12 +11,20 @@ optional ``searchable_start`` / ``searchable_end`` and ``meta``. A pause of
 break near a natural boundary instead of only at ``max_words``.
 
     python3 align/asr_chunks.py /cache/transcripts/wesley/wesley-s1-01.json --out /tmp/asr.jsonl
+
+Names are redacted only when a privacy config is in effect for the library:
+``--privacy <toml>`` or ``$PREACHED_PRIVACY``, with ``--library`` other than
+``wesley``. Wesley's LibriVox audio is public domain and is never redacted.
+Without a config the output is byte-identical to before. A redacted chunk also
+gets ``flag_end_s``, the end of its last ``[name]`` word, for the flagged-audio
+policy (``preached.audio_policy``).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -24,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from preached.corpus import chunk_text, load_chunk_config, word_tokens, write_jsonl  # noqa: E402
+from preached.privacy import Config, default_config, load_config, redact, redact_metadata  # noqa: E402
 
 PAUSE_S = 1.5
 # ASR chunk ids live in their own namespace. Canonical (CCEL) ids are
@@ -56,10 +65,14 @@ def asr_chunks(
     sermon_id: str | None = None,
     sermon_title: str | None = None,
     pause_s: float = PAUSE_S,
+    privacy: Config | None = None,
 ) -> list[dict]:
+    """``privacy`` None leaves the words alone (Wesley). A Config redacts them and the title."""
     meta = transcript.get("meta", {})
     sermon_id = sermon_id or meta["id"]
     words = transcript_words(transcript)
+    if privacy is not None:
+        words = redact(words, config=privacy, source=sermon_id)
     # Token index -> Whisper word index. Tokens never cross a space, so the
     # tokens of the joined text are the tokens of each word in order.
     owner: list[int] = []
@@ -78,10 +91,13 @@ def asr_chunks(
     for index, piece in enumerate(chunk_text(text, config)):
         first = words[owner[piece["word_start"]]]
         last = words[owner[piece["word_end"] - 1]]
+        title = sermon_title or meta.get("title") or sermon_id
+        if privacy is not None:
+            title = redact_metadata(title, config=privacy)[0]
         records.append({
             "chunk_id": asr_chunk_id(sermon_id, index),
             "sermon_id": sermon_id,
-            "sermon_title": sermon_title or meta.get("title") or sermon_id,
+            "sermon_title": title,
             "text": piece["text"],
             "start_s": first[0],
             "end_s": last[1],
@@ -96,7 +112,22 @@ def asr_chunks(
             "word_end": piece["word_end"],
             "librivox_id": None,
         })
+        if privacy is not None:
+            ends = [w[1] for w in words[owner[piece["word_start"]] : owner[piece["word_end"] - 1] + 1] if privacy.token in w[2]]
+            records[-1]["flag_end_s"] = max(ends) if ends else None
     return records
+
+
+def privacy_for(library: str, path: Path | None) -> Config | None:
+    """The config in effect for ``library``: ``--privacy``, else ``$PREACHED_PRIVACY``. Never for wesley."""
+    if library == "wesley":
+        if path is not None:
+            raise SystemExit("library wesley is public domain and is never redacted; drop --privacy")
+        return None
+    if path is not None:
+        return load_config(path)
+    config = default_config()
+    return config if os.environ.get("PREACHED_PRIVACY") else None
 
 
 def main() -> None:
@@ -104,11 +135,14 @@ def main() -> None:
     parser.add_argument("transcripts", nargs="+", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--pause", type=float, default=PAUSE_S, help="seconds of silence that start a paragraph")
+    parser.add_argument("--library", default="wesley", help="library slug; privacy never applies to wesley")
+    parser.add_argument("--privacy", type=Path, default=None, help="privacy TOML; defaults to $PREACHED_PRIVACY (not for wesley)")
     args = parser.parse_args()
+    privacy = privacy_for(args.library, args.privacy)
     config = load_chunk_config(ROOT / "corpus" / "chunk_config.json")
     rows = []
     for path in args.transcripts:
-        rows.extend(asr_chunks(json.loads(path.read_text()), config, pause_s=args.pause))
+        rows.extend(asr_chunks(json.loads(path.read_text()), config, pause_s=args.pause, privacy=privacy))
     write_jsonl(args.out, rows)
     print(f"wrote {len(rows)} asr chunks from {len(args.transcripts)} transcripts to {args.out}")
 
