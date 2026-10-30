@@ -30,12 +30,29 @@ Branch `feat/w1-ingest`. Code in `ingest/`. Report written 2026-10-30.
     URLs: CC0 / PD mark); Wesley's text (d. 1791) is public domain.
   - Every row and every transcript says the voice is a **volunteer LibriVox
     reader, not Wesley** (`reader`, `license_note`, `voice_note`).
-- **Download** (`ingest/fetch.py`, stdlib): to `/cache/audio/wesley/` (143
-  files, ~1.9 GB). Skips files already present with the right size, resumes
-  `.part` files with HTTP Range, verifies **size + md5** against archive.org
-  metadata, renames atomically, and retries 4×.
-- **Transcription** (`ingest/transcribe.py`): faster-whisper **large-v3-turbo**,
-  fp16, per file:
+- **Download** (`ingest/fetch.py`, stdlib): to `$PREACHED_CACHE/audio/wesley/`
+  (default `/cache`; 143 files, ~1.9 GB). Reuses a file already present only
+  if its size **and md5** match, resumes `.part` files with HTTP Range,
+  verifies **size + md5** against archive.org metadata, renames atomically,
+  and retries 4×. Hardened after CTO review:
+  - `manifest.load()` validates every row: `file_name` must match
+    `^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$` with no `..`, `id` must match
+    `^[a-z0-9][a-z0-9-]{0,99}$`, and the resolved audio/transcript path must
+    sit directly inside its folder (`manifest.safe_child`). `../x.mp3`,
+    absolute paths, `sub/dir`, `..\x`, `C:\x`, NUL and symlink escapes are refused.
+  - Only `https://` URLs on `archive.org` or a subdomain are fetched: checked
+    before the request, on every redirect (a custom redirect handler; the
+    opener has no http/file/ftp/data handlers at all), and on the final URL.
+  - A download that exceeds the manifest `size` is stopped and its `.part`
+    deleted at once, and isn't retried.
+  - Metadata fetches in `manifest.py` use PR #2's capped atomic download
+    (8 MiB for archive.org/LibriVox JSON; neither publishes a checksum). The
+    CCEL text is the search corpus's own copy (`$PREACHED_CACHE/corpus/wesley/sermons.txt`,
+    32 MiB cap), checked against `corpus/catalog.json` `sha256_text`, so
+    there's no second unverified copy. `wer_check.py` reads the same file.
+- **Transcription** (`ingest/transcribe.py`): faster-whisper **large-v3-turbo**
+  (`mobiuslabsgmbh/faster-whisper-large-v3-turbo`, pinned to revision
+  `0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf`; see §2), fp16, per file:
   1. **Main pass**: `BatchedInferencePipeline` (Silero VAD chunks), batch 8,
      beam 5, `word_timestamps=True`, **`without_timestamps=False`**, English, and a
      one-line prompt `"<work title>, by John Wesley."`.
@@ -55,7 +72,8 @@ Branch `feat/w1-ingest`. Code in `ingest/`. Report written 2026-10-30.
     kept for the rest of the run.
 - **Transcript JSON** `/cache/transcripts/wesley/<id>.json`, compact:
   `meta` (all manifest fields, reader, voice note, duration, model, runtime
-  versions/settings, `gaps_filled`, `repaired_segments`, created),
+  versions/settings, `gaps_filled`, `repaired_segments`, created; from now on
+  also `model_repo` and `model_revision`, in `meta` and `meta.runtime`),
   `searchable_start`, `searchable_end`, `boilerplate_intro`,
   `boilerplate_outro`, and `segments[]` with `start, end, text,
   words: [[start, end, word], ...]`, plus optional flags `boilerplate`,
@@ -121,14 +139,44 @@ uv run --extra transcribe ingest/run.py --ids wesley-s2-06 --redo
 uv run --extra transcribe ingest/run.py --all --download-only
 uv run ingest/qa.py                                # sanity report over transcripts
 uv run ingest/wer_check.py /cache/transcripts/wesley/wesley-s1-01.json
+uv run ingest/summary.py                           # rewrite reports/W1-A-transcripts.tsv
+uv run python -m unittest tests.test_ingest        # ingest unit tests (no GPU, no network)
 tail -f /cache/transcripts/wesley/progress.log
 ```
 
-Weights download on first use to `$HF_HOME` (`/cache/huggingface`):
-`mobiuslabsgmbh/faster-whisper-large-v3-turbo`, a CTranslate2 conversion of
-OpenAI's `whisper-large-v3-turbo` by Mobius Labs (Berlin). OpenAI Whisper is
-allowed under AGENTS.md §3. `Systran/faster-whisper-large-v3` (~3 GB) is also
-in the cache from the model comparison and can be deleted.
+All paths honour `PREACHED_CACHE` (default `/cache`).
+
+**Weights (pinned).** `WhisperModel("mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+revision="0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf")`, downloaded on first use
+to `$HF_HOME` (`/cache/huggingface`). This is a CTranslate2 conversion of
+OpenAI's `whisper-large-v3-turbo`. It was published by Mobius Labs (Berlin);
+the Hugging Face repo **has since moved to `dropbox-dash/faster-whisper-large-v3-turbo`**
+and the old id redirects. Lineage is unchanged (OpenAI Whisper), so it's
+allowed under AGENTS.md §3. The code keeps the old id because that's where
+the weights are cached; the commit pin makes the owner change irrelevant.
+Voice-activity detection is **Silero VAD** (the ONNX file bundled with
+faster-whisper, run by onnxruntime); Silero isn't a PRC organisation.
+
+Verified on Fri Oct 30 2026 (ET):
+- `/cache/huggingface/hub/models--mobiuslabsgmbh--faster-whisper-large-v3-turbo`
+  holds exactly **one snapshot, `0a363e9…`**, and `refs/main` points to it.
+  The cache was created at 09:07 ET, before every transcript (created 10:48 AM
+  to 12:08 PM ET), and `HF_HOME` was this cache for the whole run.
+- Every file in that snapshot matches the Hub's listing for
+  `dropbox-dash/faster-whisper-large-v3-turbo` at `0a363e9…` (still `main`,
+  last modified 2025-11-05): `model.bin` sha256
+  `e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da` (1,617,884,929 bytes);
+  config/tokenizer/vocabulary/preprocessor git blob ids match.
+- faster-whisper 1.2.1 maps `"large-v3-turbo"` to this repo, so the 143
+  existing transcripts (which record `"model": "large-v3-turbo"` but no
+  revision) were produced with revision `0a363e9…`. They were not
+  re-transcribed. `reports/W1-A-transcripts.tsv` marks their revision as
+  `hf-cache`; new transcripts record it in `meta.model_revision` (`meta`).
+- The pinned load resolves to the cached snapshot offline
+  (`local_files_only=True`) and online, with no new download.
+
+`Systran/faster-whisper-large-v3` (~3 GB) is also in the cache from the model
+comparison and can be deleted.
 
 ## 3. Results
 
@@ -166,6 +214,20 @@ count as errors):
 | wesley-s3to5-25 Death of John Fletcher | 3–5 / Larry Wilson | 2.13% |
 | wesley-s3to5-33 On the Holy Spirit | 3–5 / Larry Wilson | 1.67% |
 | **mean of 12** | | **2.0%** |
+
+**Verification table** `reports/W1-A-transcripts.tsv` (40 KB, written by
+`ingest/summary.py`): one row per transcript with duration, segment and word
+counts, first/last word time, searchable window, gap-fill/re-decode/
+boilerplate counts, created time, timestamp mode (all 143:
+`without_timestamps=False`), model repo + revision and the transcript's
+**sha256**, so the 142 transcripts not in the repo can be checked against
+`/cache` (or a re-run) without the data. The committed sample's sha256
+matches its row.
+
+**Timestamp accuracy (CTO, independent).** On `wesley-s2-20`, 14 segments
+spot-checked against `small.en` clips: median |Δ| 0.04 s, p90 0.30 s, worst
+0.74 s, almost all on a segment's **first word**. W1-C should seek
+0.5–1.0 s before a passage's first word.
 
 Sample transcript committed: `ingest/samples/wesley-s2-20.json` ("Of Hell",
 read by Bill Mosley; 145 KB). It shows the marked intro (5 gap-filled
@@ -219,12 +281,14 @@ only the missing files (~1 min wall per 1 h of audio).
 ## 5. Dependencies added
 
 All are in the optional extra **`transcribe`**, so the search app / Sprite
-never installs them (`dependencies = []` for the app so far). Versions are
-pinned in `uv.lock`.
+never installs them. (The app's own runtime dependencies, `numpy`,
+`sentence-transformers` and `torch`, come from W1-B/PR #2 on `main`; W1-A
+adds none.) Versions are pinned in `uv.lock`. No dependencies were added by
+the review fixes (stdlib `urllib`/`hashlib`/`unittest` only).
 
 | Package | Why | Footprint |
 |---|---|---|
-| `faster-whisper` 1.2.1 | Whisper on CTranslate2: word timestamps, batched VAD pipeline, int8/fp16 | small; pulls `ctranslate2` (~40 MB), `tokenizers`, `huggingface-hub`, `onnxruntime` (Silero VAD), `av` |
+| `faster-whisper` 1.2.1 | Whisper on CTranslate2: word timestamps, batched VAD pipeline, int8/fp16 | small; pulls `ctranslate2` (~40 MB), `tokenizers`, `huggingface-hub`, `onnxruntime` (Microsoft; runs the bundled Silero VAD model), `av` |
 | `av` 18.1 (pinned `<19`) | audio decode (FFmpeg bindings) used by faster-whisper; **av 19 removed `metadata_errors=`, which faster-whisper 1.2.1 passes**, so it breaks decoding | ~35 MB wheel |
 | `nvidia-cublas-cu12` 12.9, `nvidia-cudnn-cu12` 9.x (+ `nvidia-cuda-nvrtc-cu12`) | CTranslate2 needs CUDA 12 cuBLAS + cuDNN 9; this box has the driver but no system CUDA. `transcribe.py` preloads them from the venv, so no `LD_LIBRARY_PATH` | ~2.2 GB in `.venv` (not in repo) |
 
