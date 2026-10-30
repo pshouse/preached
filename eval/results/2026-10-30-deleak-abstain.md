@@ -2,7 +2,7 @@
 
 API path (hybrid RRF, top 100, `dedupe_adjacent`, k=10). Rule: `src/preached/abstain.py`. Questions: 55 answerable, 5 unanswerable (LLM-written labels, pending human review). Commit `bbb7fb219b42f44475e8cebf5632c00a3660ff72`.
 
-Headline is leave-one-out (LOO): each question is judged with a floor fitted on the other 39. An abstained answerable question counts as a miss.
+Headline is leave-one-out (LOO): each question is judged with a floor fitted on all the others. An abstained answerable question counts as a miss.
 
 | model | eval | floor | abstain precision | abstain recall | flagged (weak or none) recall | false abstain | weak on answerable | R@5 → with abstain | MRR@10 → with abstain |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

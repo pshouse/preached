@@ -20,7 +20,7 @@ the same pool and de-dup. Those runs write eval/results/YYYY-MM-DD-dedupe[-N]
 .json and .md, so they never overwrite or mix with raw-ranker runs.
 
 --abstain evaluates the "nothing found" rule (src/preached/abstain.py) on the
-API path, hybrid, k=10, per model: in-sample (floor fitted on all 40
+API path, hybrid, k=10, per model: in-sample (floor fitted on all the
 questions) and leave-one-out (floor refitted without the held-out question).
 An abstained answerable question counts as a miss for R@5 and MRR@10. It
 writes eval/results/YYYY-MM-DD-abstain[-N].json and .md. Add
@@ -539,7 +539,7 @@ def abstain_markdown(report: dict) -> str:
         "(LLM-written labels, pending human review). Commit "
         f"`{report['environment']['git_commit']}`" + (" (dirty)" if report["environment"]["git_dirty"] else "") + ".",
         "",
-        "Headline is leave-one-out (LOO): each question is judged with a floor fitted on the other 39. "
+        "Headline is leave-one-out (LOO): each question is judged with a floor fitted on all the others. "
         "An abstained answerable question counts as a miss.",
         "",
         "| model | eval | floor | abstain precision | abstain recall | flagged (weak or none) recall | "
