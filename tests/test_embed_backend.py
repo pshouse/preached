@@ -19,8 +19,10 @@ import numpy as np
 from preached.artifacts import (
     GRANITE_HF_ID,
     GRANITE_REVISION,
+    THREADS_ENV,
     ArtifactError,
     artifact_dir,
+    resolve_threads,
     sha256_file,
     verify_manifest,
 )
@@ -104,6 +106,18 @@ class BackendTests(unittest.TestCase):
     def test_unknown_backend_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             normalize_backend("cuda")
+
+    def test_default_ort_threads_is_one(self) -> None:
+        from preached.artifacts import DEFAULT_ORT_THREADS
+
+        previous = os.environ.pop(THREADS_ENV, None)
+        try:
+            self.assertEqual(DEFAULT_ORT_THREADS, 1)
+            self.assertEqual(resolve_threads(None), 1)
+            self.assertEqual(resolve_threads(4), 4)
+        finally:
+            if previous is not None:
+                os.environ[THREADS_ENV] = previous
 
 
 class PoolingTests(unittest.TestCase):

@@ -25,7 +25,9 @@ VARIANT_ENV = "PREACHED_ONNX_VARIANT"
 THREADS_ENV = "PREACHED_ORT_INTRA_OP_THREADS"
 
 DEFAULT_ONNX_ROOT = Path("/cache/models/granite-english-r2-onnx")
-DEFAULT_ORT_THREADS = 4
+# One intra-op thread. A 1-vCPU Sprite with 4 threads was slower (134 ms
+# p50 vs 56 ms). Set PREACHED_ORT_INTRA_OP_THREADS=4 on a larger CPU.
+DEFAULT_ORT_THREADS = 1
 VARIANTS = ("fp32", "int8")
 
 
