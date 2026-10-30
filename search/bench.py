@@ -12,6 +12,12 @@ Corpus: GPU if present, else CPU. Queries: always CPU at dtype_cpu, the way
 one Sprite will run them; the same load measures CPU latency. Metrics are
 Recall@5, MRR@10, nDCG@10 on answerable questions, each with a bootstrap 95%
 interval, plus a paired bootstrap against the reference row in models.toml.
+
+--dedupe scores the list GET /api/search returns instead of the raw ranker:
+api_search (src/preached/search.py), which takes the top SEARCH_POOL (100) and
+runs dedupe_adjacent down to 10. hybrid_weighted is not an API mode; it gets
+the same pool and de-dup. Those runs write eval/results/YYYY-MM-DD-dedupe[-N]
+.json and .md, so they never overwrite or mix with raw-ranker runs.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ from preached.embed import (  # noqa: E402
 from preached.metrics import mrr_at, ndcg_at, recall_at  # noqa: E402
 from preached.models import EXCLUDED, MODELS, REFERENCE, config_path  # noqa: E402
 from preached.paths import CHUNKS_JSONL, INDEX_PATH, chunk_config_path, questions_path, repo_root  # noqa: E402
-from preached.search import Searcher  # noqa: E402
+from preached.search import SEARCH_POOL, Searcher, api_search, dedupe_adjacent  # noqa: E402
 from preached.stats import bootstrap_ci, paired_bootstrap  # noqa: E402
 from preached.store import (  # noqa: E402
     connect,
@@ -159,7 +165,18 @@ def ensure_chunks(connection) -> int:
     return sync_chunks(connection, CHUNKS_JSONL)
 
 
-def run_mode(searcher: Searcher, query: str, vector, mode: str) -> list:
+API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
+
+
+def run_mode(searcher: Searcher, query: str, vector, mode: str, dedupe: bool = False) -> list:
+    if dedupe:
+        # The shipped path. hybrid_weighted is not an API mode; give it the same pool and de-dup.
+        if mode in API_MODE:
+            return api_search(searcher, query, vector, API_MODE[mode], 10)
+        if mode == "hybrid_weighted":
+            pool = searcher.hybrid(query, vector, SEARCH_POOL, fusion="weighted", dense_weight=0.5)
+            return dedupe_adjacent(pool, 10)
+        raise RuntimeError(mode)
     if mode == "bm25":
         return searcher.bm25(query, 10)
     if mode == "dense":
@@ -180,17 +197,18 @@ def score(hits: list, quotes: list[dict]) -> dict:
         "recall@5": recall_at(texts, quotes, 5),
         "mrr@10": mrr_at(texts, quotes, 10),
         "ndcg@10": ndcg_at(texts, quotes, 10),
+        "top10": [h.chunk_id for h in hits[:10]],
     }
 
 
-def evaluate(searcher: Searcher, questions: list[dict], modes, encode=None) -> dict:
+def evaluate(searcher: Searcher, questions: list[dict], modes, encode=None, dedupe: bool = False) -> dict:
     """Per-question metrics for answerable items, top-1 score for unanswerable ones."""
     per_query: dict[str, dict] = {m: {} for m in modes}
     negative: dict[str, dict] = {m: {} for m in modes}
     for q in questions:
         vector = encode(q["query"]) if encode else None
         for mode in modes:
-            hits = run_mode(searcher, q["query"], vector, mode)
+            hits = run_mode(searcher, q["query"], vector, mode, dedupe)
             if q["relevant"]:
                 per_query[mode][q["id"]] = score(hits, q["relevant"])
             else:
@@ -240,19 +258,19 @@ def embed_corpus(spec, rows, batch_size: int, connection) -> dict:
     return stats
 
 
-def cpu_eval(spec, connection, questions) -> tuple[dict, dict]:
+def cpu_eval(spec, connection, questions, dedupe: bool = False) -> tuple[dict, dict]:
     """Metrics with CPU query vectors, then CPU latency (query embed + search)."""
     loaded = load_model(spec, device="cpu", batch_size=1)
     try:
         searcher = Searcher(connection, model=spec.key)
-        result = evaluate(searcher, questions, MODES, encode=lambda q: encode_query(loaded, q))
+        result = evaluate(searcher, questions, MODES, encode=lambda q: encode_query(loaded, q), dedupe=dedupe)
         for q in questions[:2]:  # warmup
             searcher.hybrid(q["query"], encode_query(loaded, q["query"]), 5)
         timings: dict[str, list[float]] = {m: [] for m in MODES}
         for q in questions:
             for mode in MODES:
                 started = time.perf_counter()
-                run_mode(searcher, q["query"], encode_query(loaded, q["query"]), mode)
+                run_mode(searcher, q["query"], encode_query(loaded, q["query"]), mode, dedupe)
                 timings[mode].append((time.perf_counter() - started) * 1000)
         latency = {
             m: {"p50_ms": round(percentile(v, 50), 1), "p95_ms": round(percentile(v, 95), 1), "n": len(v)}
@@ -266,12 +284,13 @@ def cpu_eval(spec, connection, questions) -> tuple[dict, dict]:
 
 # ---------- output ----------
 
-def output_paths(results_dir: Path, today: str) -> tuple[Path, Path]:
+def output_paths(results_dir: Path, today: str, tag: str = "") -> tuple[Path, Path]:
     results_dir.mkdir(parents=True, exist_ok=True)
-    stem, n = today, 1
+    base = f"{today}-{tag}" if tag else today
+    stem, n = base, 1
     while (results_dir / f"{stem}.json").exists() or (results_dir / f"{stem}.md").exists():
         n += 1
-        stem = f"{today}-{n}"
+        stem = f"{base}-{n}"
     return results_dir / f"{stem}.json", results_dir / f"{stem}.md"
 
 
@@ -292,6 +311,8 @@ def markdown(report: dict) -> str:
     lines = [
         f"# Retrieval benchmark, {report['started_at']}",
         "",
+        *(["Scored list: the API path (`--dedupe`): top 100, `dedupe_adjacent`, top 10, "
+           "as `GET /api/search` returns it.", ""] if report.get("dedupe") else []),
         f"Questions: {report['n_answerable']} answerable, {report['n_unanswerable']} unanswerable. "
         f"Chunks: {report['chunks']}. Commit `{report['environment']['git_commit']}`"
         + (" (dirty)" if report["environment"]["git_dirty"] else "") + ".",
@@ -345,6 +366,8 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--results-dir", type=Path, default=repo_root() / "eval" / "results")
     parser.add_argument("--note", default="", help="free text stored with the run")
+    parser.add_argument("--dedupe", action="store_true",
+                        help="score the API path: top SEARCH_POOL, then dedupe_adjacent to 10")
     args = parser.parse_args()
 
     started = dt.datetime.now().astimezone()
@@ -355,10 +378,11 @@ def main() -> None:
     rows = list(connection.execute("SELECT rowid, sermon_title, scripture, text FROM chunks ORDER BY rowid"))
 
     models = list(dict.fromkeys(args.models + ([REFERENCE["model"]] if REFERENCE["model"] in MODELS else [])))
-    json_path, md_path = output_paths(args.results_dir, started.date().isoformat())
+    json_path, md_path = output_paths(args.results_dir, started.date().isoformat(), "dedupe" if args.dedupe else "")
     report = {
         "started_at": started.isoformat(timespec="seconds"),
         "note": args.note,
+        "dedupe": args.dedupe,
         "chunks": n_chunks,
         "n_answerable": len(answerable),
         "n_unanswerable": len(questions) - len(answerable),
@@ -368,9 +392,9 @@ def main() -> None:
         "excluded_models": EXCLUDED,
         "models": {},
     }
-    print(f"chunks={n_chunks} questions={len(questions)} -> {json_path}", flush=True)
+    print(f"chunks={n_chunks} questions={len(questions)} dedupe={args.dedupe} -> {json_path}", flush=True)
 
-    bm = evaluate(Searcher(connection), questions, ("bm25",))
+    bm = evaluate(Searcher(connection), questions, ("bm25",), dedupe=args.dedupe)
     report["bm25"] = {
         "summary": summarize(bm["per_query"]["bm25"]),
         "per_query": bm["per_query"]["bm25"],
@@ -390,7 +414,7 @@ def main() -> None:
                 row = connection.execute("SELECT value FROM meta WHERE key = ?", (f"embeddings:{key}",)).fetchone()
                 entry["embed"] = {**json.loads(row[0]), "cached": True}
                 print("corpus vectors cached (fingerprint matches)", flush=True)
-            result, latency = cpu_eval(spec, connection, questions)
+            result, latency = cpu_eval(spec, connection, questions, args.dedupe)
             entry["cpu_dtype"] = result["cpu_dtype"]
             entry["per_query"] = result["per_query"]
             entry["negative_top1"] = result["negative_top1"]
