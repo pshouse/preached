@@ -270,6 +270,14 @@ class AudioUrlTests(unittest.TestCase):
         for slug in ("wesley", "spurgeon", "edwards"):
             self.assertTrue(manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl")))
 
+    def test_backslash_host_is_refused(self) -> None:
+        # urlsplit sees host "evil.com\\.archive.org"; a browser opens evil.com.
+        for bad in ("https://evil.com\\.archive.org/a.mp3", "https://archive.org\\@evil.com/a.mp3",
+                    "https://archive.org/download\\x/a.mp3"):
+            with self.subTest(url=bad), self.assertRaises(manifest.UnsafeRow):
+                manifest.check_audio_url(bad)
+        self.assertEqual(query.play_url("https://evil.com\\.archive.org/a.mp3", 10.0), query.UNSAFE_URL)
+
     def test_play_url_hides_them(self) -> None:
         self.assertEqual(query.play_url(self.GOOD + "\n", 10.0), query.UNSAFE_URL)
         self.assertEqual(query.play_url("https://[gggg::1]/x.mp3", 10.0), query.UNSAFE_URL)

@@ -31,6 +31,9 @@ AUDIO_HOSTS = ("archive.org",)  # plus any subdomain, e.g. dn720708.ca.archive.o
 # urlsplit silently drops tab/CR/LF, so "https://archive.org/x.mp3\n" would pass.
 # C0 (incl. newline), space, DEL and C1 never belong in a stored audio URL.
 URL_CONTROL_RE = re.compile(r"[\x00-\x20\x7f-\x9f]")
+# urlsplit reads "https://evil.com\.archive.org/a.mp3" as host
+# "evil.com\.archive.org", but browsers treat "\" as "/" and open evil.com.
+# No stored audio URL needs a backslash.
 
 
 class UnsafeRow(ValueError):
@@ -55,11 +58,13 @@ def safe_child(base: Path, name: object, pattern: re.Pattern = FILE_NAME_RE) -> 
 
 def check_audio_url(url: object) -> str:
     """https only, archive.org or a subdomain, default port, no credentials,
-    no control characters or spaces. Every refusal is UnsafeRow."""
+    no control characters, spaces or backslashes. Every refusal is UnsafeRow."""
     if not isinstance(url, str):
         raise UnsafeRow(f"bad URL {url!r}")
     if URL_CONTROL_RE.search(url):
         raise UnsafeRow(f"control character or space in URL {url!r}")
+    if "\\" in url:
+        raise UnsafeRow(f"backslash in URL {url!r}")
     try:
         # Raises ValueError for e.g. an invalid IPv6 netloc or an NFKC-changed host.
         parts = urllib.parse.urlsplit(url)
