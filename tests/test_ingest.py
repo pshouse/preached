@@ -82,11 +82,11 @@ class PathSafetyTests(unittest.TestCase):
                 manifest.safe_child(base, "link.mp3")
 
     def test_transcript_path_stays_inside(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(transcribe, "TRANSCRIPT_DIR", Path(tmp)):
-            self.assertEqual(run.out_path(_row()), Path(tmp).resolve() / "wesley-s1-01.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(run.out_path(_row(), Path(tmp)), Path(tmp).resolve() / "wesley-s1-01.json")
             for ident in BAD_IDS:
                 with self.subTest(ident=ident), self.assertRaises(manifest.UnsafeRow):
-                    run.out_path(_row(id=ident))
+                    run.out_path(_row(id=ident), Path(tmp))
 
     def test_committed_manifest_is_valid(self) -> None:
         rows = manifest.load()

@@ -28,6 +28,12 @@ META_MAX_BYTES = 8 * 1024 * 1024  # archive.org/LibriVox metadata is ~150 KB
 FILE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}")
 ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 AUDIO_HOSTS = ("archive.org",)  # plus any subdomain, e.g. dn720708.ca.archive.org
+# urlsplit silently drops tab/CR/LF, so "https://archive.org/x.mp3\n" would pass.
+# C0 (incl. newline), space, DEL and C1 never belong in a stored audio URL.
+URL_CONTROL_RE = re.compile(r"[\x00-\x20\x7f-\x9f]")
+# urlsplit reads "https://evil.com\.archive.org/a.mp3" as host
+# "evil.com\.archive.org", but browsers treat "\" as "/" and open evil.com.
+# No stored audio URL needs a backslash.
 
 
 class UnsafeRow(ValueError):
@@ -51,14 +57,23 @@ def safe_child(base: Path, name: object, pattern: re.Pattern = FILE_NAME_RE) -> 
 
 
 def check_audio_url(url: object) -> str:
-    """https only, archive.org or a subdomain, default port, no credentials."""
+    """https only, archive.org or a subdomain, default port, no credentials,
+    ASCII only, no control characters, spaces or backslashes. Every refusal is UnsafeRow."""
     if not isinstance(url, str):
         raise UnsafeRow(f"bad URL {url!r}")
-    parts = urllib.parse.urlsplit(url)
+    if URL_CONTROL_RE.search(url):
+        raise UnsafeRow(f"control character or space in URL {url!r}")
+    if "\\" in url:
+        raise UnsafeRow(f"backslash in URL {url!r}")
+    if not url.isascii():
+        # e.g. U+2028 LINE SEPARATOR or U+200B ZERO WIDTH SPACE: invisible in a terminal or log.
+        raise UnsafeRow(f"non-ASCII character in URL {url!r}")
     try:
+        # Raises ValueError for e.g. an invalid IPv6 netloc or an NFKC-changed host.
+        parts = urllib.parse.urlsplit(url)
         port = parts.port
     except ValueError:
-        raise UnsafeRow(f"bad port in {url!r}") from None
+        raise UnsafeRow(f"unparseable URL or bad port: {url!r}") from None
     host = (parts.hostname or "").lower().rstrip(".")
     ok_host = any(host == h or host.endswith("." + h) for h in AUDIO_HOSTS)
     if parts.scheme != "https" or not ok_host or port not in (None, 443) or parts.username or parts.password:

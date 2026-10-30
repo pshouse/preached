@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -32,6 +33,8 @@ if str(SRC) not in sys.path:
 
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
+from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -41,7 +44,7 @@ from preached.search import (  # noqa: E402
     _optional_int,
     _text_or_none,
 )
-from preached.store import EmbeddingMismatch, open_readonly  # noqa: E402
+from preached.store import EmbeddingMismatch, check_query_variant, index_stamp, open_readonly  # noqa: E402
 from preached.youtube.listing import public_audio_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
@@ -87,6 +90,8 @@ SERMON_ID = re.compile(r"^(?:[a-z0-9][a-z0-9-]{0,63}|[A-Za-z0-9_-]{11})$")
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
+INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
+REFUSED_ERROR = "index unavailable"
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -212,29 +217,66 @@ def hit_dict(hit) -> dict:
     return {key: payload[key] for key in RESULT_FIELDS}
 
 
-def default_loader(connection, model_key: str):
-    """Load Granite on CPU. The GPU stays with the Whisper job."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    from preached.embed import encode_query, load_model, unload
+def default_loader(
+    connection,
+    model_key: str,
+    embed_backend: str | None = None,
+    ort_threads: int | None = None,
+    variant: str | None = None,
+):
+    """Load the query embedder on CPU. The GPU stays with the Whisper job.
 
-    spec = MODELS[model_key]
-    # Check the stored vectors' fingerprint before paying for the weights.
+    The stored-vector fingerprint is checked before the weights load.
+    ``embed_backend`` is ``onnx`` (the default) or ``torch``. Torch is
+    imported only when that backend is selected.
+    """
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    from preached.backends import load_embedder
+
     searcher = Searcher(connection, model=model_key)
-    loaded = load_model(spec, device="cpu", batch_size=1)
+    embedder = load_embedder(
+        model_key,
+        embed_backend,
+        variant=variant,
+        ort_threads=ort_threads,
+        device="cpu",
+        batch_size=1,
+    )
+    check_query_variant(connection, model_key, getattr(embedder, "variant", None))
 
     def encode(query: str):
-        return encode_query(loaded, query)
+        return embedder.encode_queries([query])[0]
 
+    encode.backend = embedder.backend
+    encode.variant = getattr(embedder, "variant", None)
+    encode.threads = getattr(embedder, "threads", None)
     return searcher, encode
 
 
-def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=None):
+def load_search(
+    connection,
+    model_key: str,
+    *,
+    bm25_only: bool = False,
+    loader=None,
+    embed_backend: str | None = None,
+    ort_threads: int | None = None,
+    variant: str | None = None,
+):
     """Return (searcher, encode_or_none, fallback_note_or_none)."""
     if bm25_only:
         return Searcher(connection), None, None
-    loader = loader or default_loader
     try:
-        searcher, encode = loader(connection, model_key)
+        if loader is None:
+            searcher, encode = default_loader(
+                connection,
+                model_key,
+                embed_backend=embed_backend,
+                ort_threads=ort_threads,
+                variant=variant,
+            )
+        else:
+            searcher, encode = loader(connection, model_key)
     except EmbeddingMismatch:
         # Never pair new query vectors with old document vectors.
         logging.exception("stored vectors do not match search/models.toml; serving BM25 only")
@@ -246,25 +288,152 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
 
 
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, floor=None, library: str = LIBRARY):
+    def __init__(
+        self,
+        connection,
+        searcher,
+        encode,
+        fallback_note,
+        model_name,
+        hosts,
+        static_dir,
+        floor=None,
+        backend=None,
+        library: str = LIBRARY,
+        servable=None,
+    ):
+        """``servable(connection)`` raises SystemExit when the file may not be
+        served (main passes ``check_servable``). It runs again before every
+        searcher a reload builds; None skips it (tests)."""
         self.connection = connection
+        self._servable = servable
+        # Why the index is refused, or None. While set, nothing is served.
+        self.refused = None
         self.searcher = searcher
+        self._encode = encode
         self.encode = encode
+        self._configured_model = model_name
+        self._weights_ok = encode is not None
         self.fallback_note = fallback_note
         self.model_name = model_name if encode is not None else None
-        # Abstain floor for this model (search/abstain.toml). None: never abstain
-        # on dense evidence; see preached.abstain.
-        self.floor = floor if encode is not None else None
+        self.backend = None if encode is None else (backend if backend is not None else getattr(encode, "backend", None))
+        # Abstain floor for this embedder (search/abstain.toml). None: never
+        # abstain on dense evidence. Dropped while a BM25 fallback is in
+        # effect, and put back when a later reload finds the vectors again.
+        self._floor = floor if encode is not None else None
+        self.floor = self._floor
         self.hosts = frozenset(host.lower() for host in hosts)
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
+        self._stamp = self._capture_stamp()
+        # A failed read must not let the next success adopt a stamp without
+        # reloading. Init counts: the searcher was built before this read.
+        self._status_failed = self._stamp is None
+
+    def _capture_stamp(self):
+        try:
+            model = self._configured_model if self._weights_ok else None
+            return index_stamp(self.connection, model)
+        except Exception:
+            logging.exception("could not read the index stamp")
+            return None
+
+    def _refuse_unless_servable(self) -> bool:
+        """Re-run the serve gate on the open file. On failure drop every
+        cached row and serve nothing (fail closed); True when refused."""
+        if self._servable is None:
+            self.refused = None
+            return False
+        try:
+            self._servable(self.connection)
+        except SystemExit as exc:
+            problem = str(exc.code)
+        except Exception as exc:
+            problem = f"the index could not be checked ({exc})"
+        else:
+            self.refused = None
+            return False
+        logging.error("refusing to serve after reload: %s", problem)
+        self.refused = problem
+        self.searcher = None
+        self.encode = None
+        self.model_name = None
+        self.backend = None
+        self.floor = None
+        return True
+
+    def _serve_keyword_only(self, note: str) -> None:
+        self.searcher = Searcher(self.connection)
+        self.encode = None
+        self.model_name = None
+        self.backend = None
+        self.floor = None
+        self.fallback_note = note
+
+    def _reload_cached_index(self) -> None:
+        """Rebuild cached rows. fp32 pairing is checked again on this path."""
+        if not self._weights_ok:
+            self.searcher = Searcher(self.connection)
+            return
+        try:
+            self.searcher = Searcher(self.connection, model=self._configured_model)
+            check_query_variant(
+                self.connection,
+                self._configured_model,
+                getattr(self._encode, "variant", None),
+            )
+        except (EmbeddingMismatch, RuntimeError):
+            self._serve_keyword_only(STALE_NOTE)
+            return
+        self.encode = self._encode
+        self.model_name = self._configured_model
+        self.backend = getattr(self._encode, "backend", None)
+        self.floor = self._floor
+        self.fallback_note = None
+
+    def _refresh_if_stale(self) -> None:
+        """Reload cached rows and vectors when the chunk hash or embeddings changed.
+
+        The searcher keeps both in memory from startup. A rebuild in the same
+        file would otherwise keep serving the old text and deleted vectors
+        until the process restarts. Missing or mismatched vectors fall back
+        to BM25. The weights stay loaded so a later rebuild can use them.
+
+        A failed status read drops this process to keyword search. The next
+        successful read reloads, even when the stamp matches the last good
+        one. It does not adopt the new stamp and keep the old rows.
+
+        Every searcher built here is built only after ``servable`` passes on
+        the open file. A refusal keeps ``_status_failed`` set, so the gate
+        runs again on the next request.
+        """
+        stamp = self._capture_stamp()
+        if stamp is None:
+            self._status_failed = True
+            if not self._refuse_unless_servable():
+                self._serve_keyword_only(INDEX_READ_NOTE)
+            return
+        if not self._status_failed and stamp == self._stamp:
+            return
+        self._stamp = stamp
+        if self._refuse_unless_servable():
+            self._status_failed = True
+            return
+        self._status_failed = False
+        self._reload_cached_index()
+
+    def _check_refused(self) -> None:
+        if self.refused is not None:
+            raise BadRequest(REFUSED_ERROR, 503)
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
 
     def health(self) -> dict:
         with self.lock:
+            self._refresh_if_stale()
+            self._check_refused()
             count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
         return {
             "ok": True,
@@ -273,6 +442,7 @@ class App:
             "model": self.model_name,
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
+            "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
         }
 
@@ -281,6 +451,8 @@ class App:
         note = None
         effective = mode
         with self.lock:
+            self._refresh_if_stale()
+            self._check_refused()
             if self.encode is None:
                 if self.fallback_note:
                     note = self.fallback_note
@@ -305,6 +477,8 @@ class App:
         if not SERMON_ID.fullmatch(sermon_id):
             return None
         with self.lock:
+            self._refresh_if_stale()
+            self._check_refused()
             rows = list(
                 self.connection.execute(
                     "SELECT * FROM chunks WHERE sermon_id = ? ORDER BY rowid",
@@ -335,7 +509,19 @@ class App:
 
 
 def build_app(
-    connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, floor=None, library: str = LIBRARY
+    connection,
+    *,
+    model_key: str,
+    bm25_only: bool,
+    hosts,
+    static_dir,
+    loader=None,
+    floor=None,
+    embed_backend: str | None = None,
+    ort_threads: int | None = None,
+    variant: str | None = None,
+    library: str = LIBRARY,
+    servable=None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -343,6 +529,9 @@ def build_app(
         model_key,
         bm25_only=bm25_only,
         loader=loader,
+        embed_backend=embed_backend,
+        ort_threads=ort_threads,
+        variant=variant,
     )
     if floor is None and encode is not None:
         try:
@@ -368,6 +557,7 @@ def build_app(
         hosts=hosts,
         static_dir=static_dir,
         library=library,
+        servable=servable,
     )
 
 
@@ -574,6 +764,109 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
+# The Wesley index schema (store.connect), lower-cased: every table and view
+# it may have, and every column each may have. Anything else (a church
+# import's video_id, a review column, a side table) means it is not Wesley.
+# Older indexes may lack the late columns, so a subset is fine.
+WESLEY_SCHEMA = {
+    "chunks": frozenset({
+        "rowid", "chunk_id", "sermon_id", "sermon_title", "text", "start_s", "end_s", "sermon_number",
+        "scripture", "source_url", "word_count", "word_start", "word_end", "librivox_id", "audio_url",
+        "reader", "text_source",
+    }),
+    "chunks_fts": frozenset({"text", "sermon_title", "scripture"}),
+    "chunks_fts_config": frozenset({"k", "v"}),
+    "chunks_fts_data": frozenset({"id", "block"}),
+    "chunks_fts_docsize": frozenset({"id", "sz"}),
+    "chunks_fts_idx": frozenset({"segid", "term", "pgno"}),
+    "embeddings": frozenset({"rowid", "model", "dim", "vector"}),
+    "meta": frozenset({"key", "value"}),
+}
+
+
+def foreign_schema(connection) -> list[str]:
+    """Tables, views and columns the Wesley index does not have, compared case-insensitively.
+
+    SQLite's own ``sqlite_*`` tables (e.g. sqlite_stat1) are ignored.
+    """
+    foreign = []
+    names = connection.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
+    for (name,) in list(names):
+        key = name.lower()
+        if key.startswith("sqlite_"):
+            continue
+        allowed = WESLEY_SCHEMA.get(key)
+        if allowed is None:
+            foreign.append(name)
+            continue
+        quoted = name.replace('"', '""')
+        for row in connection.execute(f'PRAGMA table_info("{quoted}")'):
+            if row[1].lower() not in allowed:
+                foreign.append(f"{name}.{row[1]}")
+    return foreign
+
+
+def file_identity(path: Path) -> tuple[int, int] | None:
+    """(st_dev, st_ino) of ``path``, following symlinks; None when it cannot be read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino
+
+
+def check_servable(connection, library: str, index: Path) -> None:
+    """SystemExit unless this file is the Wesley index or an allow-listed public-domain library.
+
+    Nothing else is served: church libraries (YouTube imports) have no
+    redaction or approval gate yet, so they are refused (fail closed) until
+    PR #12 lands.
+
+    A classic (``--library spurgeon``/``edwards``) is served only from its
+    canonical INDEX_DIR/<slug>.sqlite (``libraries.classic_index_problem``:
+    realpath equality, no symlinks, owner and mode, one link), and that file
+    must carry the matching
+    ``library`` marker. A marker anywhere else is not trusted.
+
+    Wesley must look like the Wesley index: chunks, every sermon id
+    ``wesley-*``, no ``videos`` table, no ``library`` marker, and only the
+    tables and columns in WESLEY_SCHEMA (case-insensitive), so no column a
+    church import or the review gate adds, in chunks or a side table.
+    """
+    tables = {row[0].lower() for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    marker = None
+    if "meta" in tables:
+        row = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
+        marker = row[0] if row is not None else None
+    allowed = f"allowed: {', '.join((LIBRARY, *PUBLIC_DOMAIN))}"
+    if library != LIBRARY:
+        problem = classic_index_problem(library, index, INDEX_DIR)
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
+        if marker != library:
+            raise SystemExit(f"error: {index} is not marked as the {library!r} library (marker {marker!r})")
+        return
+    if "videos" in tables or marker is not None:
+        if marker is not None and is_public_domain(marker):
+            raise SystemExit(f"error: {index} is the {marker!r} library; serve it with --library {marker}")
+        raise SystemExit(
+            f"error: {index} is not a public-domain library ({allowed}). Church libraries are not "
+            "served until redaction and approval are in place."
+        )
+    foreign = foreign_schema(connection)
+    if foreign:
+        raise SystemExit(
+            f"error: {index} has church-import columns or tables ({', '.join(foreign)}); "
+            "it is not the Wesley index. "
+            "Church libraries are not served until redaction and approval are in place."
+        )
+    wesley = "chunks" in tables and connection.execute(
+        "SELECT count(*) > 0 AND count(*) = sum(sermon_id GLOB 'wesley-*') FROM chunks"
+    ).fetchone()[0]
+    if not wesley:
+        raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
+
+
 def main(argv: list[str] | None = None) -> None:
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -594,19 +887,49 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the embedding model and serve keyword search",
     )
+    parser.add_argument(
+        "--embed-backend",
+        choices=("onnx", "torch"),
+        default=None,
+        help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
+    )
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
+    parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     args = parser.parse_args(argv)
     if args.model not in MODELS:
         raise SystemExit(f"unknown model {args.model}")
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
+    if library != LIBRARY and not is_public_domain(library):
+        raise SystemExit(
+            f"error: --library {library!r} refused: only {', '.join((LIBRARY, *PUBLIC_DOMAIN))} are served. "
+            "Church libraries are not served until redaction and approval are in place."
+        )
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    # The file checked must be the file opened: same (st_dev, st_ino) before
+    # the open and after the checks, and again before every reload.
+    identity = file_identity(index)
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
+
+    def servable(conn) -> None:
+        check_servable(conn, library, index)
+        if identity is None or file_identity(index) != identity:
+            raise SystemExit(f"error: {index} was replaced while it was being opened or served; refused")
+
+    try:
+        servable(connection)
+    except sqlite3.DatabaseError as exc:
+        connection.close()
+        raise SystemExit(f"error: {index} is not a SQLite index ({exc})") from exc
+    except BaseException:
+        connection.close()
+        raise
     hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
     bound = args.host.strip().lower()
     if bound not in {"0.0.0.0", "::", ""}:
@@ -617,12 +940,23 @@ def main(argv: list[str] | None = None) -> None:
         bm25_only=args.bm25_only,
         hosts=hosts,
         static_dir=STATIC_DIR,
+        embed_backend=args.embed_backend,
+        ort_threads=args.ort_threads,
+        variant=args.onnx_variant,
         library=library,
+        servable=servable,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)
     elif app.encode is None:
         logging.info("BM25 only; the embedding model was not loaded")
+    else:
+        logging.info(
+            "embed backend=%s variant=%s threads=%s",
+            getattr(app.encode, "backend", None),
+            getattr(app.encode, "variant", None),
+            getattr(app.encode, "threads", None),
+        )
     server = make_server(app, args.host, args.port)
     try:
         serve_forever(server)

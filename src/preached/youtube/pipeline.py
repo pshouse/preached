@@ -75,28 +75,28 @@ def format_dry_run(videos: list[Video]) -> str:
 
 
 def _embed_on_cpu(titles: list[str], texts: list[str]) -> np.ndarray:
-    """Granite on CPU. The GPU stays with Whisper, matching the search server."""
+    """Granite ONNX on CPU. The lean runtime does not install torch.
+
+    ``load_embedder(..., "onnx")`` returns float32 L2-normalized vectors.
+    Granite's document template is empty, so titles do not change the text
+    that is encoded. The library writer stores this matrix as-is.
+    """
     import os
 
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    from preached.embed import encode_documents, load_model, unload
-    from preached.models import MODELS
-    from preached.youtube.library import MODEL_KEY
+    from preached.backends import load_embedder
 
     started = time.perf_counter()
-    loaded = load_model(MODELS[MODEL_KEY], device="cpu", batch_size=8)
+    embedder = load_embedder("granite-english-r2", "onnx", device="cpu", batch_size=8)
     loaded_s = time.perf_counter() - started
-    try:
-        encoded = time.perf_counter()
-        matrix = encode_documents(loaded, titles, texts)
-        print(
-            f"embed load_s={loaded_s:.1f} encode_s={time.perf_counter() - encoded:.1f} chunks={len(texts)}",
-            file=sys.stderr,
-            flush=True,
-        )
-        return matrix
-    finally:
-        unload(loaded)
+    encoded = time.perf_counter()
+    matrix = np.asarray(embedder.encode_documents(texts, titles), dtype=np.float32)
+    print(
+        f"embed load_s={loaded_s:.1f} encode_s={time.perf_counter() - encoded:.1f} chunks={len(texts)}",
+        file=sys.stderr,
+        flush=True,
+    )
+    return matrix
 
 
 def _apply_metadata(video: Video, meta: dict) -> Video:

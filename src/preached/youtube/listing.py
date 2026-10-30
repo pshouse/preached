@@ -169,8 +169,10 @@ def public_audio_url(url: object) -> str | None:
     A YouTube watch URL is rebuilt from the video id and an integer ``t=``.
     A watch host that fails those rules is dropped, so ``t=javascript:`` and
     extra parameters are not forwarded raw. Any other ``https`` URL is kept,
-    matching ``safeUrl``, as is a same-origin path. ``javascript:``, ``data:``,
-    and ``http:`` are dropped. Never raises.
+    matching ``safeUrl``, as is a same-origin path. Userinfo (``user@host``
+    or ``user:pass@host``) is dropped, so ``evil.com@ccel.org`` is not a
+    CCEL URL. ``javascript:``, ``data:``, and ``http:`` are dropped. Never
+    raises.
     """
     rebuilt = youtube_watch_url(url)
     if rebuilt is not None:
@@ -188,9 +190,13 @@ def public_audio_url(url: object) -> str | None:
     try:
         parsed = urlsplit(url)
         hostname = parsed.hostname
+        username = parsed.username
+        password = parsed.password
         # .port raises ValueError for a non-numeric or out-of-range port.
         parsed.port
     except ValueError:
+        return None
+    if username is not None or password is not None:
         return None
     if parsed.scheme != "https" or not hostname:
         return None
