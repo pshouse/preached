@@ -1,0 +1,28 @@
+# Per-library privacy settings for preached.privacy.redact.
+# Copy next to the library index (for example /cache/index/<library>/privacy.toml)
+# and point PREACHED_PRIVACY at it, or pass Config to redact(..., config=...).
+# Names compare case-insensitively. Every name below is an example.
+
+# Names to keep: the pastor and staff who have agreed to be named. Each entry
+# is matched as a whole run of words, so "Pastor Jordan" keeps "Pastor Jordan"
+# but not a congregant called Jordan.
+allow = [
+    "Pastor Jordan",
+    "Jordan Example",
+    "Brother Sam",
+]
+
+# Words that are always redacted wherever they appear, even when they are
+# also a Bible name or an ordinary word (a member whose surname is "Moses").
+block = [
+    "Examplesson",
+]
+
+# Stretches to remove entirely, in seconds on the source timeline: the
+# announcements or a testimony recorded inside the sermon window. "source" is
+# the video or sermon id passed as redact(..., source=...); a window without
+# a source applies to every input.
+[[drop]]
+source = "VIDEOID0001"
+start = 1820.0
+end = 1915.5

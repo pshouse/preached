@@ -557,7 +557,9 @@ class _Pass:
             cue = self._cue_before(i)
             following = toks[i + 1].lower if i + 1 < len(toks) and not tok.breaks_after else ""
             if cue in ("title", "relation", "verb", "appositive", "family") and tok.name not in DIVINE:
-                tok.seed = kind not in ("term", "word") or given or kind == "word" and self._family(i)
+                # "pray for Grace" is a person; "pray for Israel" is a place.
+                place = tok.name in L.places and cue in ("verb", "family")
+                tok.seed = not place and (kind not in ("term", "word") or given or kind == "word" and self._family(i))
                 tok.joinable = True
             elif kind == "term":
                 verbs = AGENT_VERBS if tok.name in L.places else HUMAN_VERBS
