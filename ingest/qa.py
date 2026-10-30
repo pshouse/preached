@@ -2,8 +2,8 @@
 
     uv run ingest/qa.py
 
-Reports per-file and total: coverage gaps (long untranscribed stretches),
-repetition loops, prompt leakage, and boilerplate detection counts.
+Reports per-file and total: coverage gaps (untranscribed stretches > 8 s),
+unrepaired repetition loops, prompt leakage, and boilerplate detection counts.
 """
 
 import json
@@ -16,8 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import manifest  # noqa: E402
 import transcribe  # noqa: E402
 
-GAP_S = 20.0  # silence/untranscribed stretch inside the searchable window worth a look
-LOOP_MAX_N = 8  # an n-gram (n <= 8) repeated 3x back-to-back suggests a decoding loop
+GAP_S = 8.0  # silence/untranscribed stretch inside the searchable window worth a look
 
 
 def main() -> None:
@@ -41,18 +40,13 @@ def main() -> None:
         gaps = [(round(a[1]), round(b[0] - a[1])) for a, b in zip(inside, inside[1:]) if b[0] - a[1] > GAP_S]
         if gaps:
             notes.append(f"gaps(at,len)={gaps}")
-        toks = [re.sub(r"\W", "", w[2].lower()) for w in words]
-        # Back-to-back only: Wesley legitimately repeats his text across a sermon.
-        loops = sorted({
-            " ".join(toks[i : i + n])
-            for n in range(2, LOOP_MAX_N + 1)
-            for i in range(len(toks) - 3 * n)
-            if toks[i : i + n] == toks[i + n : i + 2 * n] == toks[i + 2 * n : i + 3 * n]
-        })
+        loops = [" ".join(seg["text"].split()[:12]) for seg in t["segments"]
+                 if not seg.get("boilerplate") and transcribe.has_loop(seg["words"])]
         if loops:
             notes.append(f"repeats={loops[:2]}")
         text = " ".join(s["text"] for s in t["segments"]).lower()
-        if text.count("several occasions") > 2:
+        # Readers say the work title in intro + outro; more may be prompt leakage.
+        if text.count("several occasions") > 3:
             notes.append(f"prompt_leak={text.count('several occasions')}")
         lead = t["searchable_start"]
         tail = t["meta"]["duration_s"] - t["searchable_end"]

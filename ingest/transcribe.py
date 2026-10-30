@@ -13,7 +13,7 @@ TRANSCRIPT_DIR = Path("/cache/transcripts/wesley")
 MODEL = "large-v3-turbo"  # OpenAI Whisper, CTranslate2 conversion (mobiuslabsgmbh)
 
 SR = 16000
-INTRO_PROBE_S = 60.0
+GAP_FILL_S = 4.0  # re-decode untranscribed stretches longer than this
 
 # (compute_type, batch_size) tried in order; on CUDA OOM we step down the ladder.
 LADDER = [("float16", 8), ("float16", 4), ("int8_float16", 4), ("int8_float16", 1)]
@@ -41,44 +41,63 @@ def _word(w, offset: float) -> list:
     return [round(w.start + offset, 2), round(w.end + offset, 2), w.word.strip()]
 
 
+def _segment(s, offset: float) -> dict:
+    return {
+        "start": round(s.start + offset, 2),
+        "end": round(s.end + offset, 2),
+        "text": s.text.strip(),
+        "words": [_word(w, offset) for w in s.words or []],
+    }
+
+
+LOOP_MAX_N = 4
+LOOP_MIN_REPS = 4  # "Holy, holy, holy" (3) and "Lord, Lord" are legitimate
+
+
+def _loop_at(toks: list[str], i: int) -> int:
+    """Length n of an n-gram starting at i repeated LOOP_MIN_REPS+ times back-to-back, else 0."""
+    for n in range(1, LOOP_MAX_N + 1):
+        if i + n * LOOP_MIN_REPS > len(toks):
+            break
+        if all(toks[i + k * n : i + (k + 1) * n] == toks[i : i + n] for k in range(1, LOOP_MIN_REPS)):
+            return n
+    return 0
+
+
+def has_loop(words: list[list]) -> bool:
+    toks = [_norm(w[2]) for w in words]
+    return any(_loop_at(toks, i) for i in range(len(toks)))
+
+
+def collapse_loops(words: list[list]) -> list[list]:
+    """Keep the first two repeats of any looping n-gram, drop the rest."""
+    toks = [_norm(w[2]) for w in words]
+    out, i = [], 0
+    while i < len(words):
+        n = _loop_at(toks, i)
+        if not n:
+            out.append(words[i])
+            i += 1
+            continue
+        j = i
+        while toks[j : j + n] == toks[i : i + n]:
+            j += n
+        out.extend(words[i : i + 2 * n])
+        i = j
+    return out
+
+
+def _hallucinated(seg: dict) -> bool:
+    """Whisper invents stock phrases on near-silence ("We'll be right back.",
+    "Next slide, please."). Seen only in gap fills, always with an impossible
+    speaking rate or low confidence."""
+    span = seg["words"][-1][1] - seg["words"][0][0]
+    rate = len(seg["words"]) / max(span, 1e-3)
+    return span < 0.5 or rate > 6.0 or seg["_nsp"] > 0.6 or seg["_lp"] < -1.0
+
+
 def _norm(word: str) -> str:
     return re.sub(r"[^a-z0-9]", "", word.lower())
-
-
-def find_intro_cut(words: list[list], title_hint: str | None) -> float:
-    """Seconds where the sermon proper starts (0.0 if no LibriVox intro found).
-
-    LibriVox readers say: "Section N of <work>. This is a LibriVox recording...
-    Recording by <reader>. <work> by <author>. <title>..." We cut just before the
-    *last* announcement of the work title in the probe window. Fallback: after
-    the last boilerplate phrase, at the first pause > 0.5 s (end of the name).
-    """
-    toks = [_norm(w[2]) for w in words]
-    key = [_norm(t) for t in (title_hint or "").split()[:3] if _norm(t)]
-    idx = None
-    if key:
-        for i in range(len(toks) - len(key) + 1):
-            if toks[i : i + len(key)] == key and words[i][0] > 5.0:
-                idx = i
-    if idx is None:
-        text = " ".join(w[2] for w in words)
-        offs, pos = [], 0
-        for w in words:
-            offs.append(pos)
-            pos += len(w[2]) + 1
-        hits = [m.end() for m in _BOILER.finditer(text)]
-        if not hits:
-            return 0.0
-        k = max(i for i, o in enumerate(offs) if o < hits[-1])
-        limit = min(k + MAX_CREDIT_WORDS, len(words) - 1)
-        while k < limit and words[k + 1][0] - words[k][1] <= 0.5:
-            k += 1
-        idx = k + 1
-        if idx >= len(words):
-            return round(words[-1][1], 2)
-    if idx == 0:
-        return round(max(words[0][0] - 0.3, 0.0), 2)
-    return round((words[idx - 1][1] + words[idx][0]) / 2, 2)
 
 
 def is_oom(exc: BaseException) -> bool:
@@ -122,64 +141,117 @@ class Transcriber:
         print(f"[oom] backing off to {LADDER[self.rung]}", file=sys.stderr, flush=True)
         time.sleep(10)  # let the other GPU tenant's spike pass
 
-    def transcribe(self, audio_path: Path, prompt: str | None = None,
-                   title_hint: str | None = None) -> tuple[list[dict], dict]:
-        """Two passes, both on the original timeline.
+    def transcribe(self, audio_path: Path, prompt: str | None = None) -> tuple[list[dict], dict]:
+        """One batched pass over the whole file, with Whisper timestamp tokens on.
 
-        1. Intro probe: the first INTRO_PROBE_S seconds, sequential and
-           unprompted, to find where the LibriVox disclaimer + reader credit end
-           (see `find_intro_cut`). Words before the cut are kept as boilerplate.
-        2. Main pass: batched, prompted, on audio[cut:], with `cut` added back
-           to every timestamp.
-
-        Why: batched Whisper drops the spoken disclaimer, and the word aligner
-        then smears the following words back over the disclaimer audio
-        (timestamps up to ~18 s early). Starting the main pass after the
-        disclaimer avoids that. `prompt` is a short punctuated line: without
-        one, batched Whisper emits lowercase, unpunctuated text.
+        `without_timestamps=False` matters: faster-whisper's batched default
+        decodes without timestamp tokens, and when Whisper skips speech (it
+        routinely drops the spoken LibriVox disclaimer, and sometimes a
+        Scripture reading) the word aligner smears the remaining words over the
+        skipped audio: up to ~18 s early, plus 25 s of lost content in one file.
+        `prompt` is a short punctuated line: without one, batched Whisper emits
+        lowercase, unpunctuated text.
         """
         from faster_whisper import decode_audio
 
         audio = decode_audio(str(audio_path))
+
+        def run():
+            segs, info = self._pipe.transcribe(
+                audio,
+                language="en",
+                batch_size=self.batch_size,
+                word_timestamps=True,
+                without_timestamps=False,
+                beam_size=5,
+                initial_prompt=prompt,
+            )
+            segments = [_segment(s, 0.0) for s in segs]  # generator: errors surface here
+            return segments, {"duration_s": round(len(audio) / SR, 2), "language": info.language}
+
+        segments, info = self._oom_retry(run)
+        info["gaps_filled"] = self.fill_gaps(audio, segments, prompt)
+        info["repaired"] = self.repair_loops(audio, segments, prompt)
+        for seg in segments:
+            seg.pop("_nsp", None)
+            seg.pop("_lp", None)
+        return segments, info
+
+    def _decode(self, audio, t0: float, t1: float, prompt: str | None, vad: bool) -> list[dict]:
+        """Sequential decode of audio[t0:t1] (has temperature/compression fallback)."""
+
+        def run():
+            out, _ = self._model.transcribe(
+                audio[int(t0 * SR) : int(t1 * SR)],
+                language="en",
+                word_timestamps=True,
+                beam_size=5,
+                vad_filter=vad,
+                condition_on_previous_text=False,
+                initial_prompt=prompt,
+            )
+            return [{**_segment(s, t0), "_nsp": s.no_speech_prob, "_lp": s.avg_logprob} for s in out]
+
+        return [s for s in self._oom_retry(run) if s["words"]]
+
+    def fill_gaps(self, audio, segments: list[dict], prompt: str | None) -> int:
+        """Re-decode untranscribed stretches longer than GAP_FILL_S (incl. the head
+        and tail of the file). Batched Whisper occasionally skips speech: a
+        sentence or two mid-sermon, and nearly always the LibriVox disclaimer.
+        VAD is on here, so a real pause yields nothing; only words inside the
+        gap are inserted. Filled segments are flagged `gap_filled`. Edits
+        `segments` in place; returns the number of gaps that yielded words."""
+        duration = len(audio) / SR
+        bounds = [0.0] + [x for seg in segments for x in (seg["start"], seg["end"])] + [duration]
+        gaps = [(bounds[k], bounds[k + 1]) for k in range(0, len(bounds), 2)
+                if bounds[k + 1] - bounds[k] > GAP_FILL_S]
+        filled = 0
+        for t0, t1 in gaps:
+            new = []
+            for seg in self._decode(audio, t0, t1, prompt, vad=True):
+                seg["words"] = [w for w in seg["words"] if w[0] >= t0 - 0.05 and w[1] <= t1 + 0.05]
+                if seg["words"] and not _hallucinated(seg):
+                    seg.update(start=seg["words"][0][0], end=seg["words"][-1][1],
+                               text=" ".join(w[2] for w in seg["words"]), gap_filled=True)
+                    new.append(seg)
+            if new:
+                filled += 1
+                segments.extend(new)
+        segments.sort(key=lambda seg: seg["start"])
+        return filled
+
+    def repair_loops(self, audio, segments: list[dict], prompt: str | None) -> int:
+        """Re-decode segments caught in a repetition loop (e.g. "Toe, Toe, Toe, ..."
+        where a reader voices Greek). Batched decoding has no temperature
+        fallback; sequential decoding does (compression-ratio check). The span
+        runs to the next segment's start so words cut off by the loop are
+        recovered. If the loop survives, repeats are collapsed and the segment is
+        flagged `asr_suspect`. Edits `segments` in place; returns segments fixed."""
+        fixed = 0
+        i = 0
+        while i < len(segments):
+            seg = segments[i]
+            if seg.get("boilerplate") or not has_loop(seg["words"]):
+                i += 1
+                continue
+            t1 = segments[i + 1]["start"] if i + 1 < len(segments) else len(audio) / SR
+            new = self._decode(audio, seg["start"], t1, prompt, vad=False)
+            for s in new:
+                s["redecoded"] = True
+                if has_loop(s["words"]):
+                    s["words"] = collapse_loops(s["words"])
+                    s["text"] = " ".join(w[2] for w in s["words"])
+                    s["asr_suspect"] = True
+            segments[i : i + 1] = new
+            fixed += 1
+            i += max(len(new), 1)
+        return fixed
+
+    def _oom_retry(self, fn):
         while True:
             self._load()
             try:
-                probe, _ = self._model.transcribe(
-                    audio[: int(INTRO_PROBE_S * SR)],
-                    language="en",
-                    word_timestamps=True,
-                    beam_size=5,
-                    vad_filter=False,
-                    condition_on_previous_text=False,
-                )
-                probe_words = [_word(w, 0.0) for s in probe for w in s.words or []]
-                cut = find_intro_cut(probe_words, title_hint)
-                intro = [w for w in probe_words if w[1] <= cut]
-                segs, info = self._pipe.transcribe(
-                    audio[int(cut * SR) :],
-                    language="en",
-                    batch_size=self.batch_size,
-                    word_timestamps=True,
-                    beam_size=5,
-                    initial_prompt=prompt,
-                )
-                segments = [
-                    {
-                        "start": round(s.start + cut, 2),
-                        "end": round(s.end + cut, 2),
-                        "text": s.text.strip(),
-                        "words": [_word(w, cut) for w in s.words or []],
-                    }
-                    for s in segs  # generator: errors surface here
-                ]
-                if intro:
-                    segments.insert(0, {
-                        "start": intro[0][0], "end": intro[-1][1],
-                        "text": " ".join(w[2] for w in intro), "words": intro,
-                        "boilerplate": True,
-                    })
-                duration = round(len(audio) / SR, 2)
-                return segments, {"duration_s": duration, "language": info.language, "intro_cut_s": cut}
+                return fn()
             except RuntimeError as e:
                 if not is_oom(e):
                     raise
@@ -197,6 +269,7 @@ class Transcriber:
             "batch_size": self.batch_size,
             "beam_size": 5,
             "vad": "silero (BatchedInferencePipeline default)",
+            "timestamps": "without_timestamps=False",
         }
 
 
@@ -205,13 +278,13 @@ class Transcriber:
 # All LibriVox recordings are in the public domain. For more information or to
 # volunteer, please visit librivox.org. Recording by X."
 # Outro: "End of section 1. Recording by X, <place>. This recording is in the public domain."
-# Batched Whisper usually drops these phrases itself; when it does transcribe
-# them we mark them. We never cut audio or shift timestamps: we only mark the
+# Whisper usually drops the intro itself (and often the outro); whatever it
+# does transcribe we mark. We never cut audio or shift timestamps: we only mark the
 # searchable window [searchable_start, searchable_end) on the original timeline.
 
 _BOILER = re.compile(
     r"libri ?vox|public domain|to volunteer|for more information|please visit|"
-    r"\b(read|recorded|recording) (by|for)\b|"
+    r"\b(read|reading|recorded|recording) (by|for)\b|"
     r"\bend of (the )?(sermon|section|chapter|preface|discourse|book)\b|"
     r"\b(sermon|section|chapter) \S+ of sermons on several occasions\b",
     re.I,
@@ -249,11 +322,10 @@ def mark_boilerplate(segments: list[dict], duration: float) -> dict:
 
     hits = [(word_at(m.start()), word_at(max(m.end() - 1, m.start()))) for m in _BOILER.finditer(text)]
 
-    # Intro: words from segments already flagged by the intro probe; otherwise
-    # the sentence end after the last hit inside the intro window.
-    first = sum(len(seg["words"]) for seg in segments if seg.get("boilerplate"))
+    # Intro ends at the sentence end after the last hit inside the intro window.
+    first = 0
     intro_hits = [h for h in hits if words[h[0]][0] <= INTRO_WINDOW_S]
-    if first == 0 and intro_hits:
+    if intro_hits:
         k = intro_hits[-1][1]
         limit = min(k + MAX_CREDIT_WORDS, len(words) - 1)
         while k < limit and not _ends_sentence(words[k][2]):
