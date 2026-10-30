@@ -1,20 +1,20 @@
 # W3-SIDE: classic library beside your church
 
-Branch `feat/w3-side`, from `origin/main` at `e2ddbc7`, then merged with `origin/main` at `4129646` (YouTube watch links rebuilt from the video id and `t=`). No new dependencies. No new models. Gaston Community Church was not imported, stored, or shown. The church column in tests is fixture text, and a library whose slug is `sample` (or whose meta `sample` is `1`) is labelled sample data.
+Branch `feat/w3-side`. Merged `origin/main` at `2ad5550` (PR #10, ONNX fp32) in `0f0eeef`. PR #14 and PR #12 were not on main at that fetch, so this fix does not call `check_servable` and does not add a second check. No new dependencies. No new models. Gaston Community Church was not imported, stored, or shown. The church column in tests is fixture text, and a library whose slug is `sample` (or whose meta `sample` is `1`) is labelled sample data.
 
 ## What was done
 
-One question, two libraries. Each library is still its own SQLite file under `/cache/index/<slug>.sqlite`. A search reads one connection, so a hit from the other file cannot appear in that list. That is the same layout Wesley and a YouTube import already use. A combined table would have been a new way for rows to leak.
+One question, two libraries. Each library is still its own SQLite file under `/cache/index/<slug>.sqlite`. A search reads one connection, so a hit from the other file cannot appear in that list.
 
-The church mark is one row in the `meta` table that file already has: `role` = `church`. `import/youtube.py --your-church` sets it after a real import (not `--dry-run`) and clears the mark on any other file in the index directory, so only one library stays marked. The slug `sample` also writes `sample` = `1`. Siblings are opened for writing only when they are already marked, so a Wesley file in the same directory is not migrated just to be inspected.
+The church mark is one row in the `meta` table that file already has: `role` = `church`. `import/youtube.py --your-church` sets it only when the import returns 0 (every selected video imported or skipped on purpose). `--dry-run` writes nothing. A failed or partial import leaves the mark unset and leaves a sibling mark in place. The slug `sample` also writes `sample` = `1`.
 
-The server still has one classic library (`--library`, default `wesley`). It also opens a church file when `--church-index` or `--church-library` names one, or when exactly one other index in `/cache/index` is marked `church`. Zero matches, several matches, or a missing file does not stop the server and does not pick a file at random. That side is empty.
+Clearing a sibling uses a plain `sqlite3` connection: no schema migration and no `journal_mode=WAL`. `wesley`, `spurgeon`, `edwards`, and the canonical classic paths (`INDEX_PATH` and `/cache/index/<slug>.sqlite` for those slugs) are skipped, including a copy whose file stem is one of those names. Marking one of those files raises `ValueError` and leaves its bytes as they were.
 
-`GET /api/search?library=<slug>` searches only an open library. Any other slug is a 400 (`library must be wesley` when that is the only open file, so the old error text still holds). Omitting `library` still searches the classic file.
+The server still has one classic library (`--library`, default `wesley`). Until PR #12's publish gate is on main, it does not open or search a church file. `prepare_church` resolves the path so a bad name can be refused, then the process serves only the classic index. An explicit `--church-library` or `--church-index` of wesley, spurgeon, or edwards (including `Wesley.sqlite`, and including a missing file with that stem) is `SystemExit`. A classic file that only showed up because it was marked `role=church` is ignored, so that mark does not stop the classic server. Several marks are logged and the side stays empty.
 
-`GET /api/side` runs that same search once per side and returns the top `k` hits from each (default 10, max 25). Each hit has the same fields as `/api/search` (`chunk_id`, sermon, scripture, excerpt, `start_s`, `end_s`, `audio_url`, `reader`, `text_source`, `source_url`, `score`). Each side has its own `mode`, `note`, `abstain`, and `confidence`, using `search_with_confidence`. A church file with no usable vectors falls back to BM25 on that side only. The classic side keeps its own searcher.
+`GET /api/search?library=<slug>` searches the classic library. Any other slug, including a church slug, is a 400 (`library must be wesley`). Omitting `library` still searches the classic file. That search still reloads when the classic index stamp changes (PR #10).
 
-A missing church file is HTTP 200:
+`GET /api/side` searches the classic library once and returns the church column a process with no church file returns:
 
 ```json
 {
@@ -32,11 +32,13 @@ A missing church file is HTTP 200:
 }
 ```
 
-`abstain` stays false there because no search ran. A church file that was searched and found nothing still abstains (`confidence.level` is `none`), and `message` is the same sentence. The page shows that sentence instead of the low-confidence banner when there are no passages. When a side does return passages, the existing strong / weak / low-confidence rules apply to that side only. Low-confidence passages stay visible under the banner unless the person hides them.
+The key `present` stays `false`, which is the body the page already uses for a missing church. The response does not include a church hit, a timed YouTube link, or a church `source_url`. `/healthz` keeps `"church": null`. A process started with `--church-library sample` returns the same `/api/side`, `/api/search`, and `/healthz` JSON as a process with no church file (`took_ms` aside).
 
-The page adds a View control: John Wesley, or Side by side. Side by side calls `/api/side?k=5`. The single-library view still calls `/api/search?library=wesley&k=10`. Both columns use `renderCard`. An archive.org hit is the audio player. A YouTube hit is a watch link rebuilt from the video id and an integer `t=` (the API does the same rebuild in `public_audio_url` before the page sees `audio_url`). On a phone the columns stack, each under its heading. At 800px and wider they sit next to each other. Sample data is titled `Your church (sample data)`. CSP is unchanged: no inline script, no new host. YouTube is still a link, not `media-src`.
+`search/query.py --side` prints the classic section, then `## Your church` and `Nothing from your church yet.` It does not open the church file. `--church-library wesley` (or spurgeon, or edwards) exits before the index is opened. The CLI still prints the ranker's raw top `-k` (default 5). The API still de-dupes.
 
-`search/query.py --side` prints the same two sections. `--church-index` or `--church-library` names the church file; otherwise it uses the single marked file under `/cache/index`. A missing file prints `Nothing from your church yet.` and exits 0. The CLI still prints the ranker's raw top `-k` (default 5). The API still de-dupes, as it did before this branch.
+Church confidence, for the search the gate will turn on later, is `abstain.church_confidence`: `unrated` when there are passages, and `none` with `calibrated` false and no floor when the list is empty. The Wesley floor in `search/abstain.toml` is not applied. While serving is off, the HTTP church object keeps `confidence: null`, same as the missing-church body.
+
+The page's View control is unchanged. Side by side still calls `/api/side?k=5`. The single-library view still calls `/api/search?library=wesley&k=10`. On a phone the columns stack. At 800px and wider they sit next to each other. CSP is unchanged.
 
 ## How to run it
 
@@ -44,13 +46,14 @@ From `/work/preached/.worktrees/feat/w3-side`:
 
 ```bash
 uv run python -m unittest discover -s tests
+uv lock --check
 uv run search/query.py "what did Wesley say about worry" --mode bm25 --side
 uv run app/server.py
 ```
 
-Open http://127.0.0.1:8000 and choose View → Side by side. Or open `/?view=side&q=Romans%208:16`.
+Open http://127.0.0.1:8000 and choose View → Side by side. The church column says nothing is there yet.
 
-Mark a fixture library (this does not fetch Gaston Community Church; that channel is still refused before yt-dlp):
+Mark a fixture library (this does not fetch Gaston Community Church; that channel is still refused before yt-dlp). The mark is stored. The server still leaves that column empty:
 
 ```bash
 uv run --extra youtube import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library sample --your-church
@@ -58,33 +61,38 @@ uv run app/server.py --church-library sample
 uv run search/query.py "mercy" --mode bm25 --side --church-library sample
 ```
 
-`GET /api/side?q=mercy&mode=bm25&k=5` returns both columns. `GET /api/search?q=mercy&library=sample&mode=bm25` returns only that file.
+`GET /api/side?q=mercy&mode=bm25&k=5` returns the classic hits and the empty church column. `GET /api/search?q=mercy&library=sample&mode=bm25` is a 400, `library must be wesley`.
 
 ## Results
 
-`uv run python -m unittest discover -s tests`, after the merge of `origin/main`: **255 tests, all passing** (14.0s). Deno is installed; the page test ran the card renderer, the watch link, the archive player, the empty church sentence, the sample-data heading, and the per-side low-confidence toggle. There is no browser in this environment, so the layout was not clicked through in a real viewport. The CSS test checks that two columns appear only inside the `min-width: 800px` rule.
+`uv run python -m unittest discover -s tests` after this fix-up: **304 tests, all passing** (19.5s). `uv lock --check` passed. The lock was not regenerated. No dependency was added.
 
-New coverage:
+Deno is installed; the page test still runs the card renderer, the watch link, the archive player, the empty church sentence, the sample-data heading, and the per-side low-confidence toggle. Those fixtures are page inputs. The API does not send them. There is no browser in this environment, so the stacked phone layout was not clicked through in a real viewport. That check is still open and is not this job. The CSS test checks that two columns appear only inside the `min-width: 800px` rule.
 
-- A token that exists in only one library is absent from the other library's `/api/search` results, including play URLs and sermon ids.
-- An unknown `library` slug is a 400 and returns no rows.
-- `/api/side` abstains on the side that has no hits and does not abstain on the side that has BM25 hits.
-- With a fixture floor of 0.5, the same query is `strong` on the classic vectors and `weak` on the orthogonal church vectors.
-- A missing church file is 200 with `Nothing from your church yet.`
-- A church file with no matching vectors does not drop the classic side; that column is BM25 and says so.
-- `search/query.py --side` prints both headings and does not mix excerpts. A missing `--church-index` is the empty sentence, not an error.
-- `--your-church` on a dry-run writes nothing. On a real import it marks that file, sets `sample` for the slug `sample`, and clears the mark on a sibling.
+## Fix-up (CTO review of `6443b40`)
+
+`origin/main` was `2ad5550` (PR #10). PR #14 was not on main, so the church side is refused here by leaving it empty, not by adding a parallel of `check_servable`.
+
+| item | commit | test |
+| --- | --- | --- |
+| Church side stays empty until PR #12. `/api/side`, `/api/search?library=sample`, `/healthz`, and `search/query.py --side` match a process with no church file. `present` stays false. `/healthz` `"church"` stays null. No church hit, watch URL, or church `source_url`. | `f2f02d8` | `SideApiTests.test_search_stays_inside_one_library`, `test_side_by_side_abstains_per_side_and_labels_sample_data`, `test_configured_church_matches_the_no_church_responses`, `test_low_confidence_is_per_side`, `test_missing_church_is_an_empty_side_not_an_error`, `test_church_without_vectors_does_not_drop_the_classic_side`, `SideCliTests.test_side_flag_prints_both_columns` |
+| `mark_your_church_exclusive` skips wesley, spurgeon, edwards, and canonical classic paths. A sibling mark is cleared with a plain `sqlite3` connection (no migration, no WAL). A wesley copy's bytes stay identical. | `b4395de` (clear/skip); test in `f2f02d8` | `MarkTests.test_classic_copy_bytes_are_unchanged_and_a_sibling_is_cleared_without_wal` |
+| Church confidence is `unrated` when there are hits, and `none` / uncalibrated / no floor when there are none. The Wesley abstain floor is not applied. HTTP stays `confidence: null` while the side is empty. | `f2f02d8` | `SideCliTests.test_church_confidence_is_unrated_not_the_wesley_floor` |
+| Explicit wesley, spurgeon, or edwards as the church is `SystemExit` (server and `search/query.py`), including a missing file and `Wesley.sqlite`. An auto-detected classic mark does not stop the server. `import/youtube.py --your-church` returns 2 for those slugs and writes no file. | `b4395de` (importer); `f2f02d8` (server and CLI) | `ChurchRefusalTests.test_explicit_classic_slug_is_refused_and_a_marked_copy_is_not_opened`, `SideCliTests.test_classic_church_slug_is_refused`, `ImportTests.test_classic_slugs_are_refused_as_your_church` |
+| The church mark is written only when the import returns 0, the run is not a dry-run, and the sqlite file exists. A failed import does not mark that file and does not clear a sibling. | `b4395de` | `ImportTests.test_failed_import_does_not_mark_the_church`, `ImportTests.test_your_church_mark_is_exclusive_and_dry_run_writes_nothing` |
+
+Full suite after both commits: 304 tests, 0 failures. `uv lock --check` passed (79 packages). The health stub in `SchemaTests.test_health_keeps_existing_keys` accepts the label read added when the classic column title is resolved (`f2f02d8`).
 
 ## Open issues
 
-- If more than one file is marked `church` and the process is not given `--church-library` or `--church-index`, the church side is empty. The server logs the slugs. It does not guess.
+- **TODO (after PR #12 is on main):** turn the church searcher back on. It gets #12's gate and per-request `visible_sql`, audio withheld on flagged passages, and the `source_url` rule covering hits, plus #10's index-stamp reload on that file. Confidence stays `abstain.church_confidence` (unrated) until a floor is fitted on a church library. `load_church_searcher` is still in `app/server.py` and is unused. If #14 is on main by then, a church file passed as `--library` is refused with #14's `check_servable`. Do not add a parallel check. The classic searcher already reloads.
+- If more than one non-classic file is marked `church` and the process is not given `--church-library` or `--church-index`, the church side is empty. The server logs the slugs. It does not guess.
 - The single-library page still sends `library=wesley`. A server started with `--library` set to something else will reject that request, as it did before.
 - The page asks for 5 hits per side. The API default remains 10, matching `/api/search`.
 - The CLI list is not de-duplicated. The API list is. That split is the one `README.md` already describes for a single search.
-- Empty church passages are a real abstain in the JSON. The page and the CLI show the empty sentence and skip the low-confidence banner, because there is nothing to read.
 - No congregation archive is connected. Do not point `--church-library` at Gaston Community Church audio until the pastor's permission is confirmed. The importer still refuses that channel before any fetch.
-- A browser pass of the stacked layout was not run here.
+- A real-browser pass of the stacked phone layout was not run. That check is still open and is not this job.
 
 ## Dependencies
 
-None. The standard library, the existing SQLite file per library, and the existing Deno test (skipped when `deno` is missing). No model was added.
+None. `uv lock --check` passed; `uv.lock` was not changed. The standard library, the existing SQLite file per library, and the existing Deno test (skipped when `deno` is missing). No model was added.
