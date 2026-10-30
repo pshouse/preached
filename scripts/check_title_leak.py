@@ -181,7 +181,10 @@ def leaks(question: dict, key_scripture: dict[str, dict] | None = None) -> list[
     """Each title word, synonym, signature phrase, and quote/scripture phrase the question shares."""
     query = question["query"]
     found = []
-    titles = {p["sermon_id"]: p["sermon_title"] for p in question["relevant"]}
+    # Proposed grade-1 labels (wider grading) come from many sermons; a title
+    # leak is about the sermons the question was written for.
+    expected = [p for p in question["relevant"] if p.get("status") != "proposed" or int(p.get("grade", 0)) == 2]
+    titles = {p["sermon_id"]: p["sermon_title"] for p in expected}
     for sermon_id, title in sorted(titles.items()):
         for qw in sorted(content_words(query)):
             for tw in sorted(content_words(title)):

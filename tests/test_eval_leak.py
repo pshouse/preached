@@ -103,6 +103,12 @@ class TitleLeakTest(unittest.TestCase):
             {"passage_id": "l-p2", "sermon_id": "x", "sermon_title": "Y", "grade": 1, "quote": "Jesus love me"}]}
         self.assertEqual(lint.leaks(loose, {}), [])
 
+    def test_proposed_grade1_titles_are_not_checked(self):
+        q = {"query": "Will God take me back?", "relevant": [
+            {"sermon_id": "wesley-086", "sermon_title": "A Call to Backsliders", "grade": 2, "quote": "x"},
+            {"sermon_id": "wesley-019", "sermon_title": "Born of God", "grade": 1, "quote": "y", "status": "proposed"}]}
+        self.assertEqual(lint.leaks(q, {}), [])
+
     def test_plain_blind_leaks_do_not_fail(self):
         q = {"id": "p-x", "group": "plain-blind", "query": "Is the devil after me?", "relevant": [
             {"sermon_id": "wesley-042", "sermon_title": "Satan's Devices", "grade": 2, "quote": "x"}]}
