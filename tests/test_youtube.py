@@ -485,22 +485,32 @@ class ImportTests(unittest.TestCase):
         listed = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"entries":[]}', stderr="")
         with patch("preached.youtube.fetch.subprocess.run", return_value=listed) as run:
             self.assertEqual(list_channel(url), [])
-        command = run.call_args.args[0]
-        self.assertEqual(command[:3], [sys.executable, "-m", "yt_dlp"])
-        self.assertEqual(command[-2:], ["--", url])
+        self._assert_yt_dlp_hardened(run.call_args.args[0], url)
 
         video = Video("BGoD6CIpLWQ", "Talk", 10, None, "https://www.youtube.com/watch?v=BGoD6CIpLWQ")
         meta = subprocess.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
         with patch("preached.youtube.fetch.subprocess.run", return_value=meta) as run:
             self.assertEqual(fetch_metadata(video), {})
-        self.assertEqual(run.call_args.args[0][-2:], ["--", video.watch_url()])
+        self._assert_yt_dlp_hardened(run.call_args.args[0], video.watch_url())
 
         failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
         with tempfile.TemporaryDirectory() as tmp:
             with patch("preached.youtube.fetch.subprocess.run", return_value=failed) as run:
                 with self.assertRaises(RuntimeError):
                     download_audio(video, Path(tmp))
-        self.assertEqual(run.call_args.args[0][-2:], ["--", video.watch_url()])
+        self._assert_yt_dlp_hardened(run.call_args.args[0], video.watch_url())
+
+    def _assert_yt_dlp_hardened(self, command: list[str], url: str) -> None:
+        """The four lock-down options sit before ``--`` and the URL."""
+        self.assertEqual(command[:3], [sys.executable, "-m", "yt_dlp"])
+        self.assertEqual(command[-2:], ["--", url])
+        before = command[:-2]
+        self.assertNotIn("--", before)
+        for option in ("--ignore-config", "--no-plugin-dirs", "--no-remote-components"):
+            self.assertIn(option, before)
+        extractors = before.index("--use-extractors")
+        self.assertEqual(before[extractors + 1], "youtube,youtube:tab")
+        self.assertLess(extractors, len(before) - 1)
 
     def test_case_sensitive_sermon_id_on_the_fixture_library(self) -> None:
         video_id = "BGoD6CIpLWQ"

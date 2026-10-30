@@ -28,11 +28,22 @@ _LIST_ARGS = (
     "youtubetab:approximate_date",
 )
 
+# On every call, before the caller's args and before ``--``. A config file
+# can add ``--exec``. Plugins and the remote JS challenge solver must not
+# load. The Generic extractor would follow a redirect off YouTube.
+_SAFE_ARGS = (
+    "--ignore-config",
+    "--no-plugin-dirs",
+    "--no-remote-components",
+    "--use-extractors",
+    "youtube,youtube:tab",
+)
+
 
 def _run(args: list[str], url: str, *, capture: bool) -> subprocess.CompletedProcess:
     """Run yt-dlp. ``--`` keeps a user-supplied URL from being read as an option."""
     assert_youtube_url(url)
-    command = [sys.executable, "-m", "yt_dlp", *args, "--", url]
+    command = [sys.executable, "-m", "yt_dlp", *_SAFE_ARGS, *args, "--", url]
     return subprocess.run(
         command,
         check=False,
