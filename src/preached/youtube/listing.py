@@ -8,6 +8,7 @@ metadata, which the import fetches only for videos it is about to keep.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -170,20 +171,61 @@ class Video:
     url: str
 
     def watch_url(self) -> str:
-        return f"https://www.youtube.com/watch?v={self.id}"
+        return _watch_link(self.id, None)
 
 
-def watch_url(video_id: str, start_s: float | None = None) -> str:
+def _seek_cap(duration_s: float | None) -> int:
+    """Whole seconds the seek may reach: the sermon length, and never past 24 h.
+
+    A missing, non-positive, or non-finite duration leaves the 24 h ceiling.
+    """
+    if (
+        duration_s is None
+        or isinstance(duration_s, bool)
+        or not isinstance(duration_s, (int, float))
+        or not math.isfinite(duration_s)
+        or duration_s <= 0
+    ):
+        return MAX_T_S
+    if duration_s >= MAX_T_S:
+        return MAX_T_S
+    return int(duration_s)
+
+
+def watch_url(
+    video_id: str,
+    start_s: float | None = None,
+    *,
+    duration_s: float | None = None,
+) -> str:
     """YouTube watch URL. ``t=`` is the play position, not the stored onset.
 
     ``start_s`` is the first word. The player starts ``PREROLL_S`` earlier.
-    YouTube's ``t=`` parameter is a whole number of seconds.
+    YouTube's ``t=`` parameter is a whole number of seconds. A non-finite or
+    negative ``start_s`` is omitted (no ``t=``), which is also what ``inf``
+    and ``1e300`` used to do badly: ``int(inf)`` raises ``OverflowError`` and
+    ``int(1e300)`` is a huge ``t=``. The seek is capped at ``duration_s`` when
+    that is a positive finite sermon length, and always at 24 h.
+
+    This is the only function that turns a start time into a watch link, so a
+    later shifted start can be another argument here. The flagged-audio policy
+    is not on main, and this function does not apply it.
     """
-    base = f"https://www.youtube.com/watch?v={video_id}"
     if start_s is None:
-        return base
-    seconds = int(max(0, start_s - PREROLL_S))
-    return f"{base}&t={seconds}s"
+        return _watch_link(video_id, None)
+    if isinstance(start_s, bool) or not isinstance(start_s, (int, float)):
+        return _watch_link(video_id, None)
+    if not math.isfinite(start_s) or start_s < 0:
+        return _watch_link(video_id, None)
+    # Cap in float before int(). int(1e300) succeeds and is enormous;
+    # int(inf) raises OverflowError.
+    cap = _seek_cap(duration_s)
+    seconds = start_s - PREROLL_S
+    if seconds < 0:
+        seconds = 0.0
+    if seconds > cap:
+        seconds = float(cap)
+    return _watch_link(video_id, int(seconds))
 
 
 def parse_date(value) -> date | None:

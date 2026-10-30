@@ -141,6 +141,21 @@ class ListingTests(unittest.TestCase):
     def test_watch_url_preroll_clamps_at_zero(self) -> None:
         self.assertEqual(watch_url("abcdefghijk", 0.5), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
 
+    def test_watch_url_drops_non_finite_and_negative_and_caps(self) -> None:
+        base = "https://www.youtube.com/watch?v=abcdefghijk"
+        for bad in (float("inf"), float("-inf"), float("nan"), -1, -0.01):
+            with self.subTest(start=bad):
+                self.assertEqual(watch_url("abcdefghijk", bad), base)
+        # int(1e300) is a huge integer. The seek stops at 24 h, or the sermon.
+        self.assertEqual(watch_url("abcdefghijk", 1e300), base + "&t=86400s")
+        self.assertEqual(watch_url("abcdefghijk", 1e300, duration_s=40), base + "&t=40s")
+        self.assertEqual(watch_url("abcdefghijk", 100, duration_s=40), base + "&t=40s")
+        self.assertEqual(watch_url("abcdefghijk", 12.2, duration_s=40), base + "&t=11s")
+        self.assertEqual(watch_url("abcdefghijk", 1e300, duration_s=100_000), base + "&t=86400s")
+        self.assertEqual(watch_url("abcdefghijk", 12.2, duration_s=float("inf")), base + "&t=11s")
+        self.assertEqual(watch_url("abcdefghijk", 12.2, duration_s=float("nan")), base + "&t=11s")
+        self.assertEqual(watch_url("abcdefghijk", 0), base + "&t=0s")
+
     def test_preroll_is_the_search_constant(self) -> None:
         self.assertIs(PREROLL_S, SEARCH_PREROLL_S)
         self.assertEqual(PREROLL_S, 0.75)
@@ -225,6 +240,12 @@ class ListingTests(unittest.TestCase):
         self.assertEqual(
             records[0]["audio_url"],
             "https://www.youtube.com/watch?v=samplevid01&t=11s",
+        )
+        late = _chunks_for(video, sample_words(100), {})
+        self.assertAlmostEqual(late[0]["start_s"], 100)
+        self.assertEqual(
+            late[0]["audio_url"],
+            "https://www.youtube.com/watch?v=samplevid01&t=40s",
         )
 
     def test_blocked_channel_name_is_refused(self) -> None:
