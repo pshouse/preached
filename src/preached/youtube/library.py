@@ -108,6 +108,7 @@ def checkpoint(connection: sqlite3.Connection) -> None:
     old pages (and any words a delete removed) are still in ``-wal``.
     """
     previous = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    db_path = next((row[2] for row in connection.execute("PRAGMA database_list") if row[1] == "main"), "") or "(in memory)"
     connection.execute(f"PRAGMA busy_timeout = {int(CHECKPOINT_BUSY_MS)}")
     try:
         for wait in (*CHECKPOINT_WAITS, None):
@@ -121,7 +122,7 @@ def checkpoint(connection: sqlite3.Connection) -> None:
         connection.execute(f"PRAGMA busy_timeout = {int(previous)}")
     raise CheckpointBusy(
         f"the WAL checkpoint did not finish after {len(CHECKPOINT_WAITS) + 1} tries (a reader such as the "
-        "server held it); removed words may still be in the -wal file. Stop the reader and run it again"
+        f"server held it); removed words may still be in {db_path} or {db_path}-wal. Stop the reader and run it again"
     )
 
 

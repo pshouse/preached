@@ -53,6 +53,31 @@ def raw(index: Path) -> bytes:
     return index.read_bytes() + (wal.read_bytes() if wal.exists() else b"")
 
 
+def free_pages(index: Path) -> list[tuple[int, bytes]]:
+    """Every freelist page (trunk and leaf) as (number, bytes).
+
+    SQLite reuses the first free page as the trunk without wiping it, so a
+    trunk keeps the old b-tree page's header and cell-pointer array (offsets,
+    no text). Those first 64 bytes are left out; cell content sits at the
+    page end and must be zero.
+    """
+    data = index.read_bytes()
+    size = int.from_bytes(data[16:18], "big")
+    size = 65536 if size == 1 else size
+    trunk = int.from_bytes(data[32:36], "big")
+    pages = []
+    while trunk:
+        page = data[(trunk - 1) * size : trunk * size]
+        following = int.from_bytes(page[0:4], "big")
+        count = int.from_bytes(page[4:8], "big")
+        for i in range(count):
+            leaf = int.from_bytes(page[8 + 4 * i : 12 + 4 * i], "big")
+            pages.append((leaf, data[(leaf - 1) * size : leaf * size]))
+        pages.append((trunk, page[64:]))
+        trunk = following
+    return pages
+
+
 def chunk(i: int, text: str) -> dict:
     return {"chunk_id": f"v-c{i:04d}", "text": text, "start_s": float(i), "end_s": i + 0.9, "source_url": None,
             "word_count": len(text.split()), "word_start": i * 10, "word_end": i * 10 + 10, "audio_url": None}
@@ -180,12 +205,29 @@ class YouTubeFixupTests(Base):
         self.assertNotIn(CANARY.encode(), raw(self.index))
 
     def test_redo_canary_removed_from_db_and_wal(self) -> None:
-        # The first import holds the canary; the --redo transcript does not.
-        self.assertEqual(self.run_import()[0], 0)
+        # The first import is long and holds the canary; the --redo transcript is
+        # much shorter and has none, so the redo frees pages that held it.
+        self.assertEqual(self.run_import(SERVICE + FILLER * 40)[0], 0)
         self.assertIn(CANARY.encode(), raw(self.index))
-        code, _out, err = self.run_import(SERVICE.replace(CANARY, "plainword"), ["--redo"])
+        seen = []
+        real_open = library.open_library
+
+        def spy(path):
+            connection = real_open(path)
+            seen.append(connection.execute("PRAGMA secure_delete").fetchone()[0])
+            return connection
+
+        with patch.object(library, "open_library", spy), patch("preached.youtube.pipeline.open_library", spy):
+            code, _out, err = self.run_import(SERVICE.replace(CANARY, "plainword"), ["--redo"])
         self.assertEqual(code, 0, err)
-        self.assertNotIn(CANARY.encode(), raw(self.index))
+        self.assertTrue(seen and all(v == 1 for v in seen), seen)  # PRAGMA secure_delete is on for the --redo connection
+        self.assertNotIn(CANARY.encode(), self.index.read_bytes())
+        wal = Path(f"{self.index}-wal")
+        self.assertNotIn(CANARY.encode(), wal.read_bytes() if wal.exists() else b"")
+        free = free_pages(self.index)
+        self.assertTrue(free, "the shrinking redo should have freed pages")
+        for number, page in free:
+            self.assertFalse(any(page), f"free page {number} holds stale bytes")
 
     def test_redo_word_only_line_on_a_changed_transcript_is_refused(self) -> None:
         self.assertEqual(self.run_import()[0], 0)
@@ -204,6 +246,9 @@ class YouTubeFixupTests(Base):
             code, _out, err = self.run_import(SERVICE.replace(CANARY, "plainword"), ["--redo"])
         self.assertEqual(code, 1)
         self.assertIn("checkpoint", err)
+        self.assertIn(str(self.index), err)
+        self.assertIn(f"{self.index}-wal", err)
+        self.assertIn(f"sermon {ID_A} is now offline until re-reviewed", err)
 
     def test_ack_with_a_concurrent_reader_exits_nonzero_then_retries(self) -> None:
         self.assertEqual(self.run_import()[0], 0)

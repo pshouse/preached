@@ -171,3 +171,20 @@ uv run python eval/skip/evaluate.py eval/skip/dev.jsonl eval/skip/test.jsonl
 - **Kept:** the stretch-neighbour `flag_end_s` rule, `secure_delete`, the checked checkpoint, eval provenance labels and the "listen through the whole recording" text. #19 still uses #12's shared `touches_flagged` with `SEEK_SLACK_S = 1.5` and has no margin of its own (`tests/test_priv_skip_links.py` and `tests/test_priv_seek.py` assert against that constant).
 - **Checks:** full suite **512 tests, all pass**. `uv lock --check`: 79 packages, unchanged. Wesley API byte-identical to `origin/main`: 261 responses (40 questions × bm25/dense/hybrid at k=10, plus `sermon()` for 141 ids; `took_ms` removed), same sha256 prefix `a71689a08fee816f` in both trees. Wesley ASR chunks identical: 8,265 chunks, sha256 `5f624dd5…` for both.
 - **New head:** see the commit that adds this section (`git log -1`).
+
+## Fix-up round 3: CTO final gate on #19 at e08a9da
+
+Merged `origin/main` (98e2e9a, merge commit, no rebase). Product code unchanged apart from two messages and one path resolve.
+
+| Item | Change | Test |
+|---|---|---|
+| **Must-fix**: redo canary test passed without secure_delete | `test_redo_canary_removed_from_db_and_wal` now imports a long transcript (`SERVICE + FILLER*40`), then `--redo`s a much shorter one, so pages are freed. It asserts the canary is absent from the raw db and `-wal`, that every free page is all zero (`free_pages`: leaves whole; a trunk page's first 64 bytes, which are old b-tree header and cell offsets that SQLite does not wipe, are skipped), and that `PRAGMA secure_delete` is 1 on every connection `open_library` returns during the `--redo`. | same test |
+| Mutation | With the `secure_delete = ON` line removed from `open_library`, the test fails on the pragma assertion (`[0]`). With that assertion also disabled, it still fails on "free page 16 holds stale bytes". Restored afterwards. | |
+| `create=False` guard (`privacy.py` `_open_private_dir`) | New test: a missing directory raises `FileNotFoundError` and nothing is created, for `_open_private_dir` and `read_private_file`. With the guard removed, it fails. | `test_create_false_never_makes_a_missing_directory` |
+| Checkpoint error names db and `-wal` | `library.checkpoint` message now includes both paths. | asserted in `test_redo_with_a_busy_reader_fails_loudly` |
+| `asr_chunks --out` resolved | `Path(out).resolve()` instead of `abspath`. | existing ASR out tests |
+| Refused `--redo` takes the sermon offline | The CLI prints `sermon <id> is now offline until re-reviewed (--redo failed, so it is marked error)`. | asserted in the busy-reader test |
+
+- **Tests:** full suite 528 pass (includes the merged main tests).
+- **Wesley ASR chunks vs `origin/main`:** 8,265 chunks over 143 transcripts, `cmp` identical, sha256 `5f624dd5…` for both. No change under `app/`, `search/`, `store.py`, `search.py`.
+- **`uv lock --check`:** passes, 79 packages, no new dependencies.

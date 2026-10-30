@@ -391,6 +391,12 @@ def run(
             except Exception as exc:
                 failures += 1
                 print(f"fail {video.id} {exc}", file=sys.stderr, flush=True)
+                if settings.redo:
+                    print(
+                        f"sermon {video.id} is now offline until re-reviewed (--redo failed, so it is marked error)",
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 try:
                     mark_video(
                         connection,

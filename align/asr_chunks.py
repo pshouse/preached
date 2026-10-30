@@ -249,7 +249,7 @@ def private_sermon(
     review_file = review_root / f"{sermon_id}.review.jsonl"
     plan = church_plan(transcript, chunk_config, privacy, pause_s=pause_s, previous=previous_excludes(review_file))
     if out is not None:
-        plan["meta"]["out"] = os.path.abspath(out)
+        plan["meta"]["out"] = str(Path(out).resolve())
     original_title = meta.get("title") or sermon_id
     header = {
         "field": "title",
