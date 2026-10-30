@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from preached.search import PREROLL_S
 
+from preached.audio_policy import flagged_play
+
 # A YouTube video id is 11 characters. That is also the form /api/sermon/<id> accepts.
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -247,7 +249,10 @@ def watch_url(
     start_s: float | None = None,
     *,
     duration_s: float | None = None,
-) -> str:
+    end_s: float | None = None,
+    flag_end_s: float | None = None,
+    policy: str = "none",
+) -> str | None:
     """YouTube watch URL. ``t=`` is the play position, not the stored onset.
 
     ``start_s`` is the first word. The player starts ``PREROLL_S`` earlier.
@@ -257,10 +262,19 @@ def watch_url(
     ``int(1e300)`` is a huge ``t=``. The seek is capped at ``duration_s`` when
     that is a positive finite sermon length, and always at 24 h.
 
-    This is the only function that turns a start time into a watch link, so a
-    later shifted start can be another argument here. The flagged-audio policy
-    is not on main, and this function does not apply it.
+    ``flag_end_s`` (end of the last redacted or review-flagged word in the
+    chunk) applies the flagged-audio policy: ``none`` returns None, ``play`` is
+    the normal link. Without ``flag_end_s`` nothing changes.
+
+    This is the only function that turns a start time into a watch link, and
+    the string itself comes from ``_watch_link``: an 11-character
+    ``video_id`` and an integer ``t``. Any other id returns None.
     """
+    if not isinstance(video_id, str) or not VIDEO_ID.fullmatch(video_id):
+        return None
+    if not flagged_play(start_s, end_s, flag_end_s, policy):
+        return None
+    cap = _seek_cap(duration_s)
     if start_s is None:
         return _watch_link(video_id, None)
     if isinstance(start_s, bool) or not isinstance(start_s, (int, float)):
@@ -269,13 +283,56 @@ def watch_url(
         return _watch_link(video_id, None)
     # Cap in float before int(). int(1e300) succeeds and is enormous;
     # int(inf) raises OverflowError.
-    cap = _seek_cap(duration_s)
     seconds = start_s - PREROLL_S
     if seconds < 0:
         seconds = 0.0
     if seconds > cap:
         seconds = float(cap)
     return _watch_link(video_id, int(seconds))
+
+
+def watch_video_id(url: object) -> str | None:
+    """The ``v`` of a validated YouTube watch URL (``youtube_watch_url``), else None."""
+    rebuilt = youtube_watch_url(url)
+    if rebuilt is None:
+        return None
+    return parse_qs(urlsplit(rebuilt).query)["v"][0]
+
+
+def chunk_video_id(video_id: object, audio_url: object, source_url: object) -> str | None:
+    """The YouTube id of a chunk, from validated parts only, or None.
+
+    Taken from the ``v`` of the stored ``audio_url`` or, when that is empty
+    (an import under ``none`` stores no link), of ``source_url``; both must
+    be valid watch URLs. If the chunk's ``video_id`` is a YouTube id it must
+    agree, and when the URLs disagree with each other the answer is None.
+    """
+    ids = {vid for vid in (watch_video_id(audio_url), watch_video_id(source_url)) if vid is not None}
+    if len(ids) != 1:
+        return None
+    vid = ids.pop()
+    if isinstance(video_id, str) and VIDEO_ID.fullmatch(video_id) and video_id != vid:
+        return None
+    return vid
+
+
+def policy_watch_url(
+    vid: str | None,
+    start_s: float | None,
+    end_s: float | None,
+    flag_end_s: float | None,
+    policy: str,
+) -> str | None:
+    """Rebuild a chunk's YouTube link under ``policy`` (``vid`` from ``chunk_video_id``).
+
+    The stored ``audio_url`` was built at import time, possibly under another
+    policy, so its ``t=`` may sit on the name; callers must use this instead.
+    It goes through ``watch_url``, so the id and ``t`` are validated the same
+    way. None when there is no id or the policy withholds audio.
+    """
+    if vid is None:
+        return None
+    return watch_url(vid, start_s, end_s=end_s, flag_end_s=flag_end_s, policy=policy)
 
 
 def parse_date(value) -> date | None:

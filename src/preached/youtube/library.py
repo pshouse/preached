@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from datetime import date, datetime, timezone
 
 import numpy as np
@@ -28,9 +29,33 @@ EXTRA_COLUMNS = (
     ("video_id", "TEXT"),
     ("title", "TEXT"),
     ("published", "TEXT"),
+    ("flag_end_s", "REAL"),
+)
+
+# Publish gate, on the videos table. A sermon is served only when
+# approved_sha256 equals review_sha256 (see preached.store.hidden_rowids).
+VIDEO_EXTRA_COLUMNS = (
+    ("review_sha256", "TEXT"),
+    ("approved_sha256", "TEXT"),
+    ("approved_at", "TEXT"),
+    # preached.privacy.config_sha256 of the config the import ran under.
+    ("privacy_sha256", "TEXT"),
+    # sha256 of the review file without its "exclude" lines (preached.exclusions):
+    # the reviewer may widen or add exclusions, and nothing else.
+    ("review_base_sha256", "TEXT"),
 )
 
 MODEL_KEY = DEFAULT_MODEL
+
+# Seconds to wait between WAL checkpoint attempts. A reader (the server in the
+# middle of a query) keeps a TRUNCATE checkpoint from finishing; each attempt
+# also waits CHECKPOINT_BUSY_MS for it. About 8 s in all, then refused.
+CHECKPOINT_WAITS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0)
+CHECKPOINT_BUSY_MS = 200
+
+
+class CheckpointBusy(RuntimeError):
+    """The WAL could not be checkpointed: deleted words may still be in ``-wal``."""
 
 
 def ensure_library(connection: sqlite3.Connection) -> None:
@@ -53,13 +78,64 @@ def ensure_library(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    have_videos = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
+    for name, kind in VIDEO_EXTRA_COLUMNS:
+        if name not in have_videos:
+            connection.execute(f"ALTER TABLE videos ADD COLUMN {name} {kind}")
     connection.commit()
 
 
 def open_library(path) -> sqlite3.Connection:
+    """Open a church library file for writing, with SQLite ``secure_delete`` on.
+
+    Every delete (``--redo``, a rebuild at approval) then zeroes the freed
+    content, so removed words do not survive in free pages. Raises when this
+    SQLite cannot turn it on.
+    """
     connection = connect(path)
+    if connection.execute("PRAGMA secure_delete = ON").fetchone()[0] != 1:
+        connection.close()
+        raise RuntimeError("SQLite secure_delete could not be enabled; refusing to write a church library")
     ensure_library(connection)
     return connection
+
+
+def checkpoint(connection: sqlite3.Connection) -> None:
+    """``wal_checkpoint(TRUNCATE)``, checked: retried with backoff, else ``CheckpointBusy``.
+
+    The pragma reports ``(busy, wal frames, frames checkpointed)``; it only
+    finished when busy is 0 and every frame was copied back. Until then the
+    old pages (and any words a delete removed) are still in ``-wal``.
+    """
+    previous = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    db_path = next((row[2] for row in connection.execute("PRAGMA database_list") if row[1] == "main"), "") or "(in memory)"
+    connection.execute(f"PRAGMA busy_timeout = {int(CHECKPOINT_BUSY_MS)}")
+    try:
+        for wait in (*CHECKPOINT_WAITS, None):
+            busy, frames, done = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if busy == 0 and frames == done:
+                return
+            if wait is None:
+                break
+            time.sleep(wait)
+    finally:
+        connection.execute(f"PRAGMA busy_timeout = {int(previous)}")
+    raise CheckpointBusy(
+        f"the WAL checkpoint did not finish after {len(CHECKPOINT_WAITS) + 1} tries (a reader such as the "
+        f"server held it); removed words may still be in {db_path} or {db_path}-wal. Stop the reader and run it again"
+    )
+
+
+def scrub(connection: sqlite3.Connection) -> None:
+    """After a delete: merge the FTS index, commit, then a checked checkpoint.
+
+    Old FTS segments keep removed words until they are merged; with
+    ``secure_delete`` the freed pages are zeroed, and the checkpoint moves
+    the zeroed pages into the main file and empties ``-wal``.
+    """
+    connection.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('optimize')")
+    connection.commit()
+    checkpoint(connection)
 
 
 def imported_ok(connection: sqlite3.Connection) -> set[str]:
@@ -132,14 +208,24 @@ def index_video(
     uploader: str | None,
     chunks: list[dict],
     matrix: np.ndarray,
+    review_sha256: str | None = None,
+    privacy_sha256: str | None = None,
+    review_base_sha256: str | None = None,
     reader: str | None = None,
     sermon_number: int | None = None,
     librivox_id: str | None = None,
 ) -> list[int]:
     """Replace any earlier attempt at this video and commit chunks plus vectors.
 
+    The video lands unpublished: ``review_sha256`` is stored and any earlier
+    approval is cleared, so a re-import needs a new approval
+    (``preached.exclusions.approve``).
+
     One transaction so a crash does not leave chunks without embeddings.
-    The next run then sees the video is not ``ok`` and tries again.
+    The next run then sees the video is not ``ok`` and tries again. When
+    earlier rows were replaced (``--redo``, a rebuild), ``scrub`` runs after
+    the commit, so the old words leave the file and ``-wal``
+    (``CheckpointBusy`` if the checkpoint cannot finish).
     """
     if len(chunks) != len(matrix):
         raise RuntimeError("embedding rows do not match chunks")
@@ -156,7 +242,7 @@ def index_video(
             "DELETE FROM embeddings WHERE rowid IN (SELECT rowid FROM chunks WHERE video_id = ?)",
             (video_id,),
         )
-        connection.execute("DELETE FROM chunks WHERE video_id = ?", (video_id,))
+        replaced = connection.execute("DELETE FROM chunks WHERE video_id = ?", (video_id,)).rowcount
         rowids: list[int] = []
         for chunk in chunks:
             cursor = connection.execute(
@@ -165,12 +251,12 @@ def index_video(
                     chunk_id, sermon_id, sermon_title, text, start_s, end_s,
                     sermon_number, scripture, source_url, word_count, word_start,
                     word_end, librivox_id, audio_url, reader, text_source,
-                    video_id, title, published
+                    video_id, title, published, flag_end_s
                 ) VALUES (
                     :chunk_id, :sermon_id, :sermon_title, :text, :start_s, :end_s,
                     :sermon_number, :scripture, :source_url, :word_count, :word_start,
                     :word_end, :librivox_id, :audio_url, :reader, :text_source,
-                    :video_id, :title, :published
+                    :video_id, :title, :published, :flag_end_s
                 )
                 """,
                 {
@@ -193,6 +279,7 @@ def index_video(
                     "video_id": video_id,
                     "title": title,
                     "published": published_text,
+                    "flag_end_s": chunk.get("flag_end_s"),
                 },
             )
             rowids.append(int(cursor.lastrowid))
@@ -215,6 +302,11 @@ def index_video(
             error=None,
         )
         connection.execute(
+            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, review_base_sha256 = ?, "
+            "approved_sha256 = NULL, approved_at = NULL WHERE video_id = ?",
+            (review_sha256, privacy_sha256, review_base_sha256, video_id),
+        )
+        connection.execute(
             "INSERT INTO meta (key, value) VALUES ('embed_model', ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (MODEL_KEY,),
@@ -223,6 +315,8 @@ def index_video(
     except Exception:
         connection.rollback()
         raise
+    if replaced:
+        scrub(connection)
     return rowids
 
 

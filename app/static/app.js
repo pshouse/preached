@@ -229,28 +229,32 @@ function renderCard(hit) {
   var spoken = readerLabel(hit, audioHref);
   var watchHref = null;
 
-  if (hit.start_s == null) {
+  if (hit.audio_withheld) {
+    /* A passage holding a redacted name: the server sends no times and no link. */
+    card.appendChild(el("p", "timing", "Text only: audio is withheld for this passage."));
+  } else if (hit.start_s == null) {
     card.appendChild(el("p", "timing", "Audio timing coming soon"));
   } else {
     var startLabel = formatTime(hit.start_s);
     var endLabel = formatTime(hit.end_s);
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
-    if (youtube && startLabel) {
+    var playLabel = startLabel;
+    if (youtube && playLabel) {
       watchHref = youtube;
       /* Rebuilt watch URL, including a validated &t= pre-roll. Not loaded in <audio>. */
-      var watch = el("a", "play", "Watch on YouTube at " + startLabel);
+      var watch = el("a", "play", "Watch on YouTube at " + playLabel);
       watch.href = youtube;
       watch.target = "_blank";
       watch.rel = "noopener noreferrer";
       card.appendChild(watch);
-    } else if (audioHref && startLabel) {
-      var button = el("button", "play", "Play from " + startLabel);
+    } else if (audioHref && playLabel) {
+      var button = el("button", "play", "Play from " + playLabel);
       button.type = "button";
       var sermonName = hit.sermon_number != null ? "sermon " + hit.sermon_number : (hit.sermon_title || "this sermon");
-      button.setAttribute("aria-label", "Play " + sermonName + " from " + startLabel);
+      button.setAttribute("aria-label", "Play " + sermonName + " from " + playLabel);
       var caption = (hit.sermon_title || "Sermon");
-      if (startLabel) caption += " · " + startLabel;
+      if (playLabel) caption += " · " + playLabel;
       if (spoken) caption += " · " + spoken;
       button.addEventListener("click", function () {
         playClip(audioHref, hit.start_s, button, caption);

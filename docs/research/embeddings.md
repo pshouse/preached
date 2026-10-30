@@ -1,14 +1,16 @@
 # Embedding model research for Preached
 
-Last run: 2026-10-30 (America/New_York). Results file: [`eval/results/2026-10-30.json`](../../eval/results/2026-10-30.json) ([table](../../eval/results/2026-10-30.md)). This document covers task W1-B (first benchmark, by the Grok CLI agent), the audit of that benchmark, and the rerun. It is meant to be rerun as models improve. See [How to rerun or add a model](#how-to-rerun-or-add-a-model).
+Last run: 2026-10-30 (America/New_York), task EVAL-DELEAK, on the 60-question grouped eval set. Results file: [`eval/results/2026-10-30-deleak.json`](../../eval/results/2026-10-30-deleak.json) ([table](../../eval/results/2026-10-30-deleak.md)); abstain check [`2026-10-30-deleak-abstain`](../../eval/results/2026-10-30-deleak-abstain.md). The previous headline run (40 questions) is [`eval/results/2026-10-30.json`](../../eval/results/2026-10-30.json). This document covers task W1-B (first benchmark, by the Grok CLI agent), the audit of that benchmark, the rerun, and the [title-leakage fix](#title-leakage). It is meant to be rerun as models improve. See [How to rerun or add a model](#how-to-rerun-or-add-a-model).
 
 ## Summary
+
+**Read [Title leakage](#title-leakage) first.** The numbers in the bullets below were measured on the 35 original answerable questions, most of which name their sermon's title. They still reproduce exactly, but on questions written in everyday words (group `plain`) every model finds the graded passage almost never (nDCG@10 ≤ 0.11) and the right sermon in the top 5 only 20–52% of the time.
 
 - **Ship `ibm-granite/granite-embedding-english-r2` with hybrid search (BM25 + dense, reciprocal rank fusion, k=60).** That was the W1-B recommendation, and it still holds after the audit, but the margin is much smaller than first reported.
 - **The first run handicapped EmbeddingGemma 2.** Each chunk was encoded as `title: <sermon title> (<scripture>) | text: ...`. The other models saw the bare chunk. With the model card's `title: none | text: ...` prefix, EmbeddingGemma 2 dense Recall@5 rose from 0.357 to 0.586, and hybrid RRF rose from 0.500 (first run) to 0.643. Precision was not the cause (bf16 and fp32 vectors agree to cosine ≥ 0.9995).
 - **Corrected, Granite and EmbeddingGemma 2 are tied within noise in hybrid mode.** The paired bootstrap difference in nDCG@10 (Gemma minus Granite) is −0.039, 95% CI [−0.12, +0.04]. Recall@5 is +0.014 [−0.11, +0.14]. Granite is ahead on ranking (MRR, nDCG), smaller (149M vs 270M text parameters), and faster per CPU query (p50 115 ms vs 130 ms). It is also the only clean-lineage candidate whose hybrid nDCG point estimate is the highest.
 - **Hybrid reliably beats BM25 alone.** Granite hybrid RRF minus BM25: nDCG@10 +0.157 [+0.06, +0.26], MRR@10 +0.173 [+0.07, +0.28].
-- **The eval set is small and its labels are an LLM agent's.** There are 35 answerable questions. Human review by Patrick is pending. Read every number with that in mind.
+- **The eval set is small and its labels are an LLM agent's.** There were 35 answerable questions; EVAL-DELEAK adds 20 rewrites (55 answerable, 25 of them `plain`). Human review by Patrick is pending. Read every number with that in mind.
 
 ## Question and constraints
 
@@ -43,6 +45,7 @@ The machine-readable version is `search/models.toml`: `[models.*]` for runnable 
 | item | value |
 | --- | --- |
 | code | `feat/w1-retrieval` at commit `73f39d9` (harness and models.toml in `8583581`, EmbeddingGemma 2 prefix fix in `73f39d9`) |
+| EVAL-DELEAK rerun | `feat/eval-deleak` at commit `bbb7fb2` (per-group reporting). Same models, revisions, prompts, dtype, fusion settings, and seed. Chunks: `/cache/corpus/wesley/chunks_aligned.jsonl` (8,383 chunks, the index since W1-CLI); the 35 original questions give identical numbers on it. Granite and Gemma 2 corpus vectors were cached (fingerprints match); Arctic was re-embedded (146 s on the 3060). |
 | libraries | Python 3.12, torch 2.15.0+cu132, transformers 5.22.1, sentence-transformers 6.2.0, numpy 2.5.4 (pinned in `uv.lock`) |
 | hardware | Corpus: NVIDIA RTX 3060 12 GB (driver 615.78.08), shared with a Whisper job. Queries: Intel i9-12900K CPU, torch default threads |
 | dtype | **fp32 for every model, on GPU and CPU**, so precision is not a variable. The EmbeddingGemma cards forbid fp16 (NaN or silently degraded vectors). bf16 is allowed, and we measured it equivalent (below). |
@@ -76,20 +79,22 @@ Search: SQLite FTS5 BM25 (porter, unicode61) over chunk text, sermon title, and 
 
 ## Eval set and how it was labeled
 
-`eval/questions.jsonl` has 40 items: 25 conceptual questions, 10 keyword queries (scripture references and named doctrines), and 5 with no answer in Wesley (`relevant: []`).
+`eval/questions.jsonl` has 60 items (40 before EVAL-DELEAK): 45 conceptual questions, 10 keyword queries (scripture references and named doctrines), and 5 with no answer in Wesley (`relevant: []`). Each item has a `group`: `plain` (25), `names-topic` (20), `title-keyword` (3), `scripture-keyword` (7), `unanswerable` (5). The 20 added items are `-plain` rewrites of the `names-topic` questions with identical labels. See [Title leakage](#title-leakage) and `eval/README.md`.
 
 **The labels are an LLM agent's work.** The Grok CLI coding agent wrote all 40 questions and chose every relevant passage and its grade (2 = directly answers, 1 = related). It found candidates with ordinary text search and then read the surrounding paragraph. Every quote is a verbatim CCEL span, machine-checked to be inside at least one chunk (`eval/validate.py`). No embedding model under test was used to pick labels, and no model judges relevance at search time. The relevance calls are still a model's, not a person's. **Human review is pending: Patrick is to review all 40 items before submission** (the field is in `eval/README.md`). Until then, do not call this set human-labeled or human-verified.
 
 Known biases:
 
 1. **Keyword-search bias.** Candidates were found by text search, so passages that share words with the question are over-represented. This favors BM25 and hybrid modes, and it may understate dense models on paraphrased questions.
-2. **Title-word reuse.** 23 of the 35 answerable questions share a content word with the answering sermon's title (for example "Christian perfection", "means of grace", "witness of the Spirit", "riches", "temptation"). FTS5 indexes titles. Absolute scores are therefore optimistic for anything with a lexical component.
+2. **Title-word reuse.** 23 of the 35 answerable questions share a content word with the answering sermon's title (for example "Christian perfection", "means of grace", "witness of the Spirit", "riches", "temptation"). FTS5 indexes titles. Absolute scores are therefore optimistic for anything with a lexical component. EVAL-DELEAK keeps these questions as groups `names-topic` and `title-keyword` and adds title-free rewrites; report the `plain` group separately (see [Title leakage](#title-leakage)).
 3. **Small n.** With 35 answerable questions, one question moves a mean by about 0.03. Confidence intervals are wide (below).
 4. **Quote-level strictness.** A hit means the exact graded quote is inside a returned chunk. "Right sermon, next paragraph" scores 0. `sermon@5` is reported as a looser check.
 
 ## Metrics
 
-All metrics are computed on the 35 answerable questions. Unanswerable questions are reported only as top-1 scores, for a future "nothing strong found" threshold.
+All metrics are computed on the answerable questions (35 before EVAL-DELEAK, 55 after), overall and per `group`. Unanswerable questions are reported only as top-1 scores here; the abstain rule (`--abstain`) uses them.
+
+- **Per group**: `bench.py` reports every metric, and the paired Δ against the reference, separately for each `group` in `eval/questions.jsonl`. The bootstrap uses the same seed on each group's questions.
 
 - **Recall@5**: the fraction of a question's graded quotes (grade ≥ 1) found in the top 5 chunks, averaged over questions.
 - **MRR@10**: 1/rank of the first chunk that contains any graded quote, or 0 if it is not in the top 10.
@@ -97,7 +102,7 @@ All metrics are computed on the 35 answerable questions. Unanswerable questions 
 - **sermon@5**: 1 if any top-5 chunk comes from a sermon that holds a top-grade quote.
 - **95% CI**: percentile bootstrap over questions, 10,000 resamples, seed 20261030.
 - **Paired Δ**: the bootstrap of the per-question difference against the reference row (Granite hybrid RRF), using the same resampled questions for both systems. The tables give wins/ties/losses per question. `p_le_zero` in the JSON is the share of resamples where the row is not better than the reference.
-- **CPU latency**: one query embed plus the search, model on CPU in fp32, over the 40 eval queries, warmup excluded, p50 and p95.
+- **CPU latency**: one query embed plus the search, model on CPU in fp32, over all eval queries (60 since EVAL-DELEAK), warmup excluded, p50 and p95.
 
 ## Audit of the first run (2026-10-30)
 
@@ -129,7 +134,9 @@ EmbeddingGemma 2 sensitivity to the prompt setup, fp32. This is a diagnostic onl
 | `title: none \| text:` | search prompt for all | 0.529 | 0.361 | 0.443 | 0.643 | 0.532 |
 | no prefix | no prefix | 0.500 | 0.323 | 0.393 | 0.643 | 0.524 |
 
-## Results (2026-10-30 rerun, all fp32, pinned revisions)
+## Results (2026-10-30 rerun, all fp32, pinned revisions, 35 original questions)
+
+These are the pre-EVAL-DELEAK headline numbers, on the 35 original answerable questions. The EVAL-DELEAK rerun reproduces every row exactly on that subset (`scripts/leak_subsets.py`). The new per-group numbers are under [Title leakage](#title-leakage).
 
 Cells are the mean with a 95% bootstrap CI. Δ is the paired nDCG@10 difference against Granite hybrid RRF (wins/ties/losses per question).
 
@@ -188,6 +195,94 @@ Superseded first run (commit 7347eb7, unpinned revisions, fp16/bf16 GPU, GPU que
 | arctic-embed-l | 0.486 | 0.309 | 0.600 | 0.426 | 0.492 |
 | nomic-embed-text-v2-moe | 0.429 | 0.277 | 0.529 | 0.414 | 0.474 |
 
+## Title leakage
+
+### The issue
+
+Patrick (2026-10-30): many eval questions name the expected sermon's title, so they test title lookup, not understanding. "What did Wesley say about the wilderness state?" finds *The Wilderness State* because FTS5 indexes the title column and every embedding model sees the same rare words in the chunk. A searcher in trouble would say "I used to feel close to God and now everything feels dark" instead. The old headline (Granite hybrid RRF nDCG@10 0.558) was measured mostly on questions like the first one.
+
+### The fix (task EVAL-DELEAK)
+
+1. **Originals kept, unchanged, and grouped.** Every question has a `group`: `names-topic` (conceptual questions that name the topic), `title-keyword` (keyword queries equal to a title: `k-christian-perfection`, `k-means-of-grace`, `k-witness-of-the-spirit`), `scripture-keyword` (the other 7 keyword queries; `k-gain-all-you-can` is a phrase from sermon 50, not scripture, but is not a title), `unanswerable` (5), and `plain`.
+2. **Plain rewrites.** Each `names-topic` question has a `-plain` twin (`rewrite_of` points back) with the same `relevant` list, byte for byte. It is written the way a hurting or curious layperson would ask, and it avoids every content word of the sermon's title and the sermon's signature term or scripture phrase ("born again", "means of grace", "wilderness", "deny yourself", "way to escape", and so on). The 5 conceptual questions that were already title-free are also `plain` (25 in total).
+3. **Five more than the brief listed.** Patrick listed 15 leaky conceptual questions. The lint (next item) found five of the remaining ten also share a title word: `q-money` ("money" / *The Use of Money*), `q-heaviness` ("heaviness", "heavy" / *Heaviness through Manifold Temptations*), `q-communion` ("communion" / *The Duty of Constant Communion*), `q-justification` ("justified" / *Justification by Faith*), `q-backsliders` ("backsliders" / *A Call to Backsliders*). They were treated the same way: original tagged `names-topic`, `-plain` rewrite added. So `names-topic` has 20 items, not 15.
+4. **Lint.** `scripts/check_title_leak.py` fails if any `plain` question shares a content word (longer than 3 letters, not a stopword, light suffix stemming, prefix match for stems of 5+ letters) with the title of any sermon in its `relevant` list, or contains a signature phrase listed for that sermon. `tests/test_eval_leak.py` runs it, checks that every item has a known group, that every `names-topic` item has a `-plain` twin with identical labels, and that the lint catches each original.
+5. **No other change.** Labels, chunks, models, revisions, prompts, dtype, RRF k=60, weighted mix 0.5, and bootstrap seed 20261030 are the same as the audit rerun. `bench.py` now also reports every metric per group. The rewrites were written and committed before any model was run on them and were not edited after.
+
+Who wrote the rewrites: the EVAL-DELEAK coding agent (an LLM, Claude), not reviewed by a person. They inherit the "pending human review" status of the whole set.
+
+### Results by group (2026-10-30, EVAL-DELEAK rerun)
+
+Each cell is nDCG@10 / R@5 / MRR@10. `n` is the number of answerable questions. Full CIs and paired Δ per group are in [`2026-10-30-deleak.md`](../../eval/results/2026-10-30-deleak.md).
+
+| model | mode | plain (25) | names-topic (20) | scripture-keyword (7) | title-keyword (3) | overall (55) |
+| --- | --- | --- | --- | --- | --- | --- |
+| BM25 | bm25 | 0.004 / 0.000 / 0.007 | 0.313 / 0.400 / 0.216 | 0.876 / 1.000 / 0.833 | 0.544 / 0.667 / 0.500 | 0.257 / 0.309 / 0.215 |
+| embeddinggemma-2 | dense | 0.028 / 0.000 / 0.012 | 0.342 / 0.575 / 0.236 | 0.842 / 1.000 / 0.786 | 0.544 / 0.667 / 0.500 | 0.274 / 0.373 / 0.219 |
+| embeddinggemma-2 | hybrid RRF | 0.013 / 0.000 / 0.005 | 0.478 / 0.675 / 0.395 | 0.947 / 1.000 / 0.929 | 0.544 / 0.667 / 0.500 | 0.330 / 0.409 / 0.292 |
+| embeddinggemma-2 | hybrid weighted | 0.000 / 0.000 / 0.000 | 0.463 / 0.575 / 0.364 | 0.947 / 1.000 / 0.929 | 0.667 / 0.667 / 0.667 | 0.325 / 0.373 / 0.287 |
+| granite-english-r2 | dense | 0.078 / 0.040 / 0.043 | 0.414 / 0.500 / 0.354 | 0.704 / 0.857 / 0.655 | 1.000 / 1.000 / 1.000 | 0.330 / 0.364 / 0.286 |
+| **granite-english-r2** | **hybrid RRF (default)** | **0.028 / 0.040 / 0.013** | **0.543 / 0.600 / 0.475** | **0.895 / 1.000 / 0.857** | **0.667 / 0.667 / 0.667** | **0.361 / 0.400 / 0.324** |
+| granite-english-r2 | hybrid weighted | 0.025 / 0.000 / 0.010 | 0.504 / 0.550 / 0.424 | 0.895 / 1.000 / 0.857 | 0.767 / 0.667 / 0.704 | 0.350 / 0.364 / 0.306 |
+| arctic-embed-l ⚠ | dense | 0.105 / 0.120 / 0.100 | 0.434 / 0.550 / 0.371 | 0.313 / 0.571 / 0.226 | 0.649 / 0.667 / 0.542 | 0.281 / 0.364 / 0.239 |
+| arctic-embed-l ⚠ | hybrid RRF | 0.030 / 0.040 / 0.015 | 0.484 / 0.600 / 0.392 | 0.847 / 1.000 / 0.798 | 0.544 / 0.667 / 0.500 | 0.327 / 0.400 / 0.278 |
+| arctic-embed-l ⚠ | hybrid weighted | 0.062 / 0.120 / 0.043 | 0.521 / 0.675 / 0.431 | 0.876 / 1.000 / 0.833 | 0.667 / 0.667 / 0.667 | 0.366 / 0.464 / 0.319 |
+
+⚠ Arctic v1: lineage unclear, eval-only. Unanswerable (abstain) is below.
+
+The `plain` group in detail, with 95% bootstrap CIs and the paired Δ against Granite hybrid RRF (wins/ties/losses). `sermon@5` (any top-5 chunk from the sermon holding a grade-2 quote) is the looser check and the more informative one here:
+
+| model | mode | nDCG@10 | R@5 | MRR@10 | sermon@5 | Δ nDCG@10 vs Granite RRF | Δ sermon@5 vs Granite RRF |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| BM25 | bm25 | 0.004 [0.00, 0.01] | 0.000 [0.00, 0.00] | 0.007 [0.00, 0.02] | 0.200 [0.04, 0.36] | -0.024 [-0.07, +0.01] (1/22/2) | -0.240 [-0.40, -0.08] (0/19/6) |
+| embeddinggemma-2 | dense | 0.028 [0.00, 0.07] | 0.000 [0.00, 0.00] | 0.012 [0.00, 0.03] | 0.480 [0.28, 0.68] | -0.001 [-0.06, +0.06] (2/21/2) | +0.040 [-0.16, +0.24] (4/18/3) |
+| embeddinggemma-2 | hybrid_rrf | 0.013 [0.00, 0.04] | 0.000 [0.00, 0.00] | 0.005 [0.00, 0.01] | 0.400 [0.20, 0.60] | -0.015 [-0.04, +0.00] (0/23/2) | -0.040 [-0.16, +0.08] (1/22/2) |
+| embeddinggemma-2 | hybrid_weighted | 0.000 [0.00, 0.00] | 0.000 [0.00, 0.00] | 0.000 [0.00, 0.00] | 0.360 [0.16, 0.56] | -0.028 [-0.07, +0.00] (0/23/2) | -0.080 [-0.24, +0.08] (1/21/3) |
+| granite-english-r2 | dense | 0.078 [0.02, 0.15] | 0.040 [0.00, 0.12] | 0.043 [0.01, 0.09] | 0.400 [0.20, 0.60] | +0.050 [+0.01, +0.10] (4/20/1) | -0.040 [-0.28, +0.20] (4/16/5) |
+| granite-english-r2 | hybrid_rrf | 0.028 [0.00, 0.07] | 0.040 [0.00, 0.12] | 0.013 [0.00, 0.03] | 0.440 [0.24, 0.64] | +0.000 [+0.00, +0.00] (0/25/0) | +0.000 [+0.00, +0.00] (0/25/0) |
+| granite-english-r2 | hybrid_weighted | 0.025 [0.00, 0.06] | 0.000 [0.00, 0.00] | 0.010 [0.00, 0.03] | 0.440 [0.24, 0.64] | -0.003 [-0.01, +0.00] (1/23/1) | +0.000 [-0.16, +0.16] (2/21/2) |
+| arctic-embed-l ⚠ | dense | 0.105 [0.00, 0.24] | 0.120 [0.00, 0.28] | 0.100 [0.00, 0.22] | 0.520 [0.32, 0.72] | +0.077 [-0.02, +0.20] (3/21/1) | +0.080 [-0.20, +0.36] (7/13/5) |
+| arctic-embed-l ⚠ | hybrid_rrf | 0.030 [0.00, 0.07] | 0.040 [0.00, 0.12] | 0.015 [0.00, 0.04] | 0.520 [0.32, 0.72] | +0.002 [-0.04, +0.04] (2/22/1) | +0.080 [-0.12, +0.28] (4/19/2) |
+| arctic-embed-l ⚠ | hybrid_weighted | 0.062 [0.00, 0.14] | 0.120 [0.00, 0.28] | 0.043 [0.00, 0.10] | 0.440 [0.24, 0.64] | +0.034 [-0.03, +0.10] (3/21/1) | +0.000 [-0.24, +0.20] (4/17/4) |
+
+### Old vs new headline
+
+| system | old headline: 35 original questions | new overall: 55 answerable | plain (25) | the 20 rewrites only | their 20 originals |
+| --- | --- | --- | --- | --- | --- |
+| Granite hybrid RRF nDCG@10 / R@5 / MRR@10 / sermon@5 | 0.558 / 0.629 / 0.506 / 0.971 | 0.361 / 0.400 / 0.324 / 0.745 | 0.028 / 0.040 / 0.013 / 0.440 | 0.016 / 0.000 / 0.006 / 0.350 | 0.543 / 0.600 / 0.475 / 1.000 |
+| EmbeddingGemma 2 hybrid RRF | 0.518 / 0.643 / 0.458 / 0.943 | 0.330 / 0.409 / 0.292 / 0.727 | 0.013 / 0.000 / 0.005 / 0.400 | 0.000 / 0.000 / 0.000 / 0.350 | 0.478 / 0.675 / 0.395 / 1.000 |
+| BM25 | 0.401 / 0.486 / 0.333 / 0.886 | 0.257 / 0.309 / 0.215 / 0.618 | 0.004 / 0.000 / 0.007 / 0.200 | 0.005 / 0.000 / 0.008 / 0.150 | 0.313 / 0.400 / 0.216 / 0.950 |
+
+The 35-question column reproduces the audit rerun exactly for every model and mode. Asked in plain words, the same 20 needs drop from finding the right sermon every time (sermon@5 1.000) to about a third of the time (0.350), and the graded passage almost never reaches the top 10. The 5 questions that were title-free from the start also score near zero at quote level (Granite RRF nDCG@10 0.077), so the old headline was carried by questions that name their topic and by keyword queries. `scripts/leak_subsets.py` prints this table for every model.
+
+### Abstain floor (0.8129) on the new set
+
+`bench.py --abstain --models granite-english-r2 embeddinggemma-2` refits the floor on all 60 questions. **It still holds**: the refit is 0.8129 for Granite and 0.7413 for EmbeddingGemma 2, the same as `search/abstain.toml` (not rewritten). No answerable question in any group is abstained (false abstain 0, in-sample and leave-one-out). Unanswerable: Granite abstains on 4 of 5 in-sample and 3 of 5 leave-one-out, and flags 4 of 5 weak or none, exactly as before. The margin is thinner than it looks: the lowest Granite top cosine on a `plain` question is 0.8224, 0.0095 above the floor, and 3 of 25 `plain` questions sit below EmbeddingGemma 2's floor (they are rated `weak`, not `none`, only because BM25 and dense agree on a shown passage). Every `plain` question has agreement, which is what keeps them out of `none`.
+
+### Is Granite still the best choice on `plain`?
+
+**Granite is still the best clean-lineage model on `plain`, but hybrid RRF (the default mode) is not the best mode there, and no row is reliably good.**
+
+- In the default mode (hybrid RRF), Granite (nDCG@10 0.028) is ahead of EmbeddingGemma 2 (0.013; Δ −0.015 [−0.04, +0.00]) and level with Arctic (0.030; +0.002 [−0.04, +0.04]).
+- The best clean row on `plain` is **Granite dense alone**: nDCG@10 0.078, Δ **+0.050 [+0.01, +0.10]** over the default (4 wins, 20 ties, 1 loss). It is the only `plain` difference whose CI excludes zero. It rests on 4 wins (mourning, communion, wandering thoughts, evil-speaking) against 1 loss (forgiveness), and on sermon@5 Granite dense is not better (0.400 vs 0.440, Δ −0.04 [−0.28, +0.20]). On every other group, dense alone is worse than the default (names-topic −0.129 [−0.26, −0.01]).
+- The best row overall on `plain` is **Arctic v1 dense** (lineage unclear, eval-only): nDCG@10 0.105, +0.077 [−0.02, +0.20] over the default, sermon@5 0.520 vs 0.440 (+0.08 [−0.20, +0.36]). Within noise, and Arctic dense is far worse on scripture keywords (−0.581 [−0.74, −0.45]).
+- Hybrid fusion adds little on `plain` because BM25 is near zero there (nDCG@10 0.004, sermon@5 0.200): it mostly pulls the title-word chunks up.
+
+**The default is not changed** (`default = "granite-english-r2"`, hybrid RRF). Whether to weight dense more for natural-language questions, or to switch modes by query type, is Patrick's call; this set is too small to tune it on.
+
+### Wider grading and blind questions (EVAL-GRADE, labels proposed)
+
+Most of the `plain` zero was narrow labels. EVAL-GRADE added 558 proposed grade-1 labels from a pool: the top 20 of every ranker, read and proposed by an LLM agent (Claude, `found_by` `llm-proposed:claude`). They are unconfirmed by a human. It also added 30 questions written blind to the corpus by an LLM agent (Grok, `provenance` `llm-written:grok`, group `plain-blind`). Those questions are unconfirmed by a human. Nothing below is confirmed by a person yet, and nothing was tuned on it.
+
+Granite hybrid RRF (default), strict → lenient, with sermon-level hits:
+
+| group | nDCG@10 strict | nDCG@10 lenient | hit@10 strict | hit@10 lenient | sermon@10 | sermon@50 |
+| --- | --- | --- | --- | --- | --- | --- |
+| plain (25) | 0.028 | 0.132 | 0.08 | 0.72 | 0.56 | 0.84 |
+| plain-blind (28) | 0.032 | 0.027 | 0.07 | 0.11 | 0.36 | 0.82 |
+
+On `plain-blind`, Granite dense alone beats the default on lenient hit@10 by +0.29 [+0.14, +0.46] (8 wins, 0 losses). The abstain floor no longer holds on that group. Full tables: `reports/EVAL-GRADE.md` and `eval/results/2026-10-30-grade.md`.
+
 ## Decision
 
 **Keep Granite English R2 + BM25 hybrid RRF (k=60) as the default** (`default` in `search/models.toml`). The reasons:
@@ -201,11 +296,15 @@ Superseded first run (commit 7347eb7, unpinned revisions, fp16/bf16 GPU, GPU que
 
 Arctic v1 stays benchmark-only until Patrick rules on its lineage. Nomic v2-MoE is excluded.
 
+**After EVAL-DELEAK (unchanged default, open question for Patrick).** On the 55-question set Granite hybrid RRF is still the best or tied-best clean row overall (nDCG@10 0.361; Gemma 2 RRF −0.031 [−0.08, +0.02]). On the `plain` group, Granite is still the best clean model, but Granite *dense alone* beats the default mode by +0.050 nDCG@10 [+0.01, +0.10] (4 wins, 1 loss) while losing on `names-topic`. Arctic v1 dense (eval-only) has the highest `plain` point estimate (+0.077 [−0.02, +0.20]). Every row is near zero at quote level on `plain`. The default was not changed. See [Is Granite still the best choice on `plain`?](#is-granite-still-the-best-choice-on-plain).
+
 ## Caveats and open issues
 
 - **Labels are pending human review** (see above). If Patrick changes labels, rerun. Results files record `questions_sha256`.
-- **Small n.** With 35 answerable questions, most model-vs-model differences are inside the CIs. Growing the set to at least 100 questions, with a share written without keyword search, would tighten them and reduce the lexical bias.
-- **Lexical optimism.** 23 of 35 questions reuse words from the answering sermon's title.
+- **Small n.** With 55 answerable questions (25 `plain`), most model-vs-model differences are inside the CIs. Growing the set to at least 100 questions, with a share written without keyword search, would tighten them and reduce the lexical bias.
+- **Lexical optimism.** 23 of the 35 original questions reuse words from the answering sermon's title (`names-topic` and `title-keyword`). Read the `plain` group for natural-language quality.
+- **Plain rewrites are an LLM agent's and the labels were chosen with keyword search.** The graded passages were picked for the titled wording (for example the sentence that says "heaviness of soul"). For a plain question a different paragraph of the right sermon may answer as well, and scores 0. That is why `sermon@5` is the better `plain` signal. Labels were not changed (Patrick's instruction); adding grade-1 passages for the plain rewrites is a human-review item.
+- **The abstain margin on `plain` is thin.** Granite's lowest `plain` top cosine is 0.8224 against a 0.8129 floor; 3 `plain` questions are below EmbeddingGemma 2's floor and are saved from `none` only by agreement.
 - **No tuning on this set.** RRF k, the weighted mix, and prompt variants were not tuned on it. The sensitivity table is diagnostic only.
 - **Result diversity.** The top 5 averaged only 2.3 distinct sermons (CTO review). Sermon-level dedupe is open.
 - **Transcripts.** These are text-derived chunks. The Wesley index will use canonical text aligned to the audio (W1-C), so numbers should carry over. Church sermons with ASR-only text may differ, so rerun when ASR chunks exist.
@@ -224,6 +323,21 @@ uv run --group bench search/bench.py --note "why this run"
 - Corpus vectors are cached in `/cache/index/wesley.sqlite` under a fingerprint of the revision, GPU dtype, dim, and document prefix. A rerun re-embeds only models whose fingerprint changed. `--reembed` forces it. Query-time search checks it too: `Searcher` (used by `search/query.py` and the app) raises `EmbeddingMismatch` when the stored fingerprint differs from `search/models.toml` (for example a revision bump without a rerun) instead of mixing old document vectors with new query vectors. BM25 mode needs no vectors. On a 3060, a full re-embed takes about 1.5 to 3 minutes per model at fp32.
 - Query vectors are always computed on CPU, as on one Sprite.
 - `--models granite-english-r2 embeddinggemma-2` runs a subset. The reference model (Granite) is always included, so paired deltas are comparable.
+- Every run reports each metric and paired Δ per `group` (plain, names-topic, title-keyword, scripture-keyword) in both the JSON (`by_group`, `vs_reference_by_group`) and the Markdown.
+
+The EVAL-DELEAK run, exactly:
+
+```bash
+uv run python scripts/check_title_leak.py                       # lint: exit 1 if a plain question leaks
+uv run python eval/validate.py                                  # every graded quote is in a chunk
+uv run --group bench search/bench.py --note "..."               # all enabled models + BM25
+uv run --group bench search/bench.py --abstain --models granite-english-r2 embeddinggemma-2 --note "..."
+uv run python scripts/leak_subsets.py eval/results/<run>.json   # old 35 vs rewrites vs originals
+```
+
+`--abstain` without `--write-calibration` only reports the refit floor; the shipped `search/abstain.toml` is untouched. The EVAL-DELEAK result files were renamed after the run to `2026-10-30-deleak*.{json,md}`, as earlier tasks did.
+
+When adding eval questions: give each a `group`. A natural-language question goes in `plain` only if `scripts/check_title_leak.py` passes; otherwise put it in `names-topic`.
 - Without a GPU, the corpus embeds on CPU (slow: about 8 chunks/s for Gemma 2).
 
 To add a model, add one table to `search/models.toml`:

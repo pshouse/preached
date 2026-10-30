@@ -11,7 +11,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -568,12 +568,20 @@ class SideApiTests(unittest.TestCase):
     def test_classic_side_covers_spurgeon_and_edwards(self) -> None:
         """Spurgeon and edwards are classic libraries. The church column stays empty."""
         for slug in ("spurgeon", "edwards"):
-            with self.subTest(slug=slug), tempfile.TemporaryDirectory() as tmp:
+            with self.subTest(slug=slug), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
                 root = Path(tmp)
                 classic_path = root / f"{slug}.sqlite"
                 church_path = root / "sample.sqlite"
                 build_library(classic_path, *classic_rows())
                 build_library(church_path, *church_rows(), church=True, sample=True)
+                # #12 gates a public-domain slug unless the file is its own
+                # canonical owner-only build (store.public_domain_file). A temp
+                # dir is not; stand in for that check so the classic is served.
+                marked = sqlite3.connect(classic_path)
+                marked.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('library', ?)", (slug,))
+                marked.commit()
+                marked.close()
+                stack.enter_context(patch("preached.store.classic_file_problem", return_value=None))
                 connection = reopen(classic_path)
                 app = App(
                     connection=connection,
@@ -782,8 +790,11 @@ class SideCliTests(unittest.TestCase):
 
         module = _load_query()
 
+        built: list[dict] = []
+
         class FakeSearcher:
-            def __init__(self, connection, model=None):
+            def __init__(self, connection, model=None, **gate):
+                built.append(gate)
                 self.connection = connection
                 self._matrix = np.ones((1, 4), dtype=np.float32)
                 self._rowids = [1]
@@ -822,6 +833,7 @@ class SideCliTests(unittest.TestCase):
             )
         self.assertEqual(confidence.level, "unrated")
         self.assertEqual(floors, [])
+        self.assertEqual(built, [{"gated": True, "library": None}])
         with (
             patch.object(module, "Searcher", FakeSearcher),
             patch.object(module, "compute_signals", lambda *_a, **_k: signals),

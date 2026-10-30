@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 
 from preached.fts import to_fts_query
+from preached import paths
+from preached.libraries import classic_index_problem, is_public_domain
 from preached.paths import INDEX_PATH
 
 SCHEMA = """
@@ -155,6 +157,18 @@ def _refuse_review_items(chunks: list[dict]) -> None:
 
     if isinstance(chunks, ReviewList) or any(isinstance(c, ReviewItem) for c in chunks):
         raise ValueError("privacy review items hold real names and must never be indexed")
+    # Church chunks carry the publish-gate key. This table has no gate, so
+    # loading them here would serve unapproved sermons.
+    if any(isinstance(c, dict) and c.get("video_id") is not None for c in chunks):
+        raise ValueError("church chunks (with video_id) go into a gated library file, never this index")
+    # Only Wesley's own chunks: every sermon id wesley-*, and nothing flagged
+    # (a flag means a redacted church name; this index has no audio policy).
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not str(chunk.get("sermon_id") or "").startswith("wesley-"):
+            sermon = chunk.get("sermon_id") if isinstance(chunk, dict) else None
+            raise ValueError(f"only wesley-* sermons go into this index (got {str(sermon)[:40]!r})")
+        if chunk.get("flag_end_s") is not None:
+            raise ValueError("flagged chunks (flag_end_s) go into a gated library file, never this index")
 
 
 def update_chunk_metadata(connection: sqlite3.Connection, chunks: list[dict]) -> None:
@@ -296,20 +310,31 @@ def load_chunk_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(connection.execute("SELECT * FROM chunks ORDER BY rowid"))
 
 
-def bm25_search(connection: sqlite3.Connection, query: str, limit: int) -> list[tuple[int, float]]:
-    """Return (rowid, higher-is-better score). SQLite bm25() is lower-is-better."""
+def bm25_search(connection: sqlite3.Connection, query: str, limit: int, where: str | None = None) -> list[tuple[int, float]]:
+    """Return (rowid, higher-is-better score). SQLite bm25() is lower-is-better.
+
+    ``where`` is a ``visible_sql(connection, "chunks")`` condition; it filters
+    in the same query, so hidden rows never take a slot.
+    """
     match = to_fts_query(query)
-    try:
-        rows = connection.execute(
-            """
+    if where is None:
+        sql = """
             SELECT rowid, bm25(chunks_fts) AS score
             FROM chunks_fts
             WHERE chunks_fts MATCH ?
             ORDER BY score
             LIMIT ?
-            """,
-            (match, limit),
-        ).fetchall()
+            """
+    else:
+        sql = f"""
+            SELECT chunks_fts.rowid AS rowid, bm25(chunks_fts) AS score
+            FROM chunks_fts JOIN chunks ON chunks.rowid = chunks_fts.rowid
+            WHERE chunks_fts MATCH ? AND {where}
+            ORDER BY score
+            LIMIT ?
+            """
+    try:
+        rows = connection.execute(sql, (match, limit)).fetchall()
     except sqlite3.OperationalError as exc:
         # Do not turn a broken query into "nothing found".
         raise RuntimeError(f"FTS5 query failed for MATCH {match!r}: {exc}") from exc
@@ -452,3 +477,148 @@ def embedding_bytes(connection: sqlite3.Connection, model: str) -> int:
 def file_bytes(path: Path | None = None) -> int:
     index_path = path or INDEX_PATH
     return index_path.stat().st_size if index_path.exists() else 0
+
+
+def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def database_path(connection: sqlite3.Connection) -> str | None:
+    """The file behind the connection's main database, or None (in-memory, temp)."""
+    for row in connection.execute("PRAGMA database_list"):
+        if row[1] == "main":
+            return row[2] or None
+    return None
+
+
+def classic_file_problem(connection: sqlite3.Connection, library: object, index_dir: Path | None = None) -> str | None:
+    """Why the file behind ``connection`` may not be served as the classic ``library``, or None.
+
+    The file the connection actually opened (``PRAGMA database_list``, not a
+    path the caller claims) must pass ``libraries.classic_index_problem``
+    (allow-listed slug, canonical INDEX_DIR/<slug>.sqlite, no symlinks,
+    realpath equality, owner and mode, one link, sidecar files), the one
+    owner/mode gate. So a library marker in a file anyone else could have
+    written is not trusted. ``index_dir`` defaults to
+    ``preached.paths.INDEX_DIR`` read at call time.
+    """
+    index_dir = paths.INDEX_DIR if index_dir is None else Path(index_dir)
+    path = database_path(connection)
+    if path is None:
+        return "not a file on disk"
+    return classic_index_problem(library, Path(path), index_dir)
+
+
+def public_domain_file(connection: sqlite3.Connection, library: str | None) -> bool:
+    """True when ``library`` is exempt from the publish gate for this file.
+
+    Keyed on the slug and the file, never on a missing column. All must hold:
+    the slug is on the public-domain allow-list (``preached.libraries``:
+    spurgeon, edwards); the file is that library's canonical
+    INDEX_DIR/<slug>.sqlite, owned by root or this server's euid in a
+    directory nobody else can write, sidecars included (``classic_file_problem``); and it is that library's own build:
+    meta ``library`` equals the slug (``search/build_library.py`` writes it),
+    no sermon carries a review hash and no chunk is flagged. So a forged
+    marker in any other file (``--index /tmp/x.sqlite``), a church file served
+    as ``--library spurgeon``, or church chunks written into a classics file
+    stay gated. Anything else returns False.
+    """
+    if not is_public_domain(library):
+        return False
+    if classic_file_problem(connection, library) is not None:
+        return False
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "meta" not in tables or "chunks" not in tables:
+        return False
+    marker = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
+    if marker is None or marker[0] != library:
+        return False
+    if "review_sha256" in _columns(connection, "videos") and connection.execute(
+        "SELECT 1 FROM videos WHERE review_sha256 IS NOT NULL LIMIT 1"
+    ).fetchone():
+        return False
+    if "flag_end_s" in _columns(connection, "chunks") and connection.execute(
+        "SELECT 1 FROM chunks WHERE flag_end_s IS NOT NULL LIMIT 1"
+    ).fetchone():
+        return False
+    return True
+
+
+def visible_sql(
+    connection: sqlite3.Connection,
+    alias: str = "chunks",
+    *,
+    gated: bool = False,
+    library: str | None = None,
+) -> str | None:
+    """SQL condition for the chunks a reader may see, or None when nothing is gated.
+
+    Evaluated against the file as it is now, so callers run it per request:
+    an import, ``--redo`` or approval made while the server runs takes effect
+    on the next request. A church library's chunks carry a ``video_id``; they
+    are served only when that sermon's ``videos`` row is ``ok`` and a human
+    approved the review file whose sha256 is stored (``approved_sha256 ==
+    review_sha256``). A row with a NULL ``video_id`` is never served. A
+    library file without the gate columns fails closed (``"0"``). Wesley's
+    index has no ``video_id`` column and no ``videos`` table and is not gated,
+    unless ``gated`` says this file must be (any library but wesley).
+
+    ``library`` is the slug the file is served as. The public-domain classics
+    (``public_domain_file``) are not gated, which is re-checked on every call.
+    """
+    if library is not None and public_domain_file(connection, library):
+        return None
+    chunk_cols = _columns(connection, "chunks")
+    video_cols = _columns(connection, "videos")
+    if "video_id" not in chunk_cols and not video_cols and not gated:
+        return None
+    if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+        return "0"
+    return (
+        f"{alias}.video_id IS NOT NULL AND EXISTS ("
+        f"SELECT 1 FROM videos v WHERE v.video_id = {alias}.video_id AND v.status = 'ok' "
+        "AND v.approved_sha256 IS NOT NULL AND v.review_sha256 IS NOT NULL "
+        "AND v.approved_sha256 = v.review_sha256)"
+    )
+
+
+def visible_count(connection: sqlite3.Connection, *, gated: bool = False, library: str | None = None) -> int:
+    where = visible_sql(connection, "chunks", gated=gated, library=library)
+    sql = "SELECT count(*) FROM chunks" + (f" WHERE {where}" if where else "")
+    return int(connection.execute(sql).fetchone()[0])
+
+
+def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = False, library: str | None = None) -> set[int]:
+    """The subset of ``rowids`` that may be served right now."""
+    wanted = [int(r) for r in rowids]
+    if not wanted:
+        return set()
+    where = visible_sql(connection, "chunks", gated=gated, library=library)
+    found: set[int] = set()
+    for start in range(0, len(wanted), 500):
+        part = wanted[start : start + 500]
+        sql = f"SELECT rowid FROM chunks WHERE rowid IN ({', '.join('?' * len(part))})"
+        if where:
+            sql += f" AND {where}"
+        found.update(int(r[0]) for r in connection.execute(sql, part))
+    return found
+
+
+def pending_review_count(connection: sqlite3.Connection) -> int:
+    """Imported sermons waiting for approval (a count; never ids or titles)."""
+    video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
+    if not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+        return 0
+    row = connection.execute(
+        "SELECT count(*) FROM videos WHERE status = 'ok' "
+        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256)"
+    ).fetchone()
+    return int(row[0])
+
+
+def hidden_rowids(connection: sqlite3.Connection, *, gated: bool = False, library: str | None = None) -> set[int]:
+    """Rowids that search, the API and the page must not serve right now (see ``visible_sql``)."""
+    where = visible_sql(connection, "chunks", gated=gated, library=library)
+    if where is None:
+        return set()
+    return {int(r[0]) for r in connection.execute(f"SELECT rowid FROM chunks WHERE NOT ({where})")}
