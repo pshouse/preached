@@ -12,7 +12,10 @@
 # PREACHED_LIBRARY           wesley (default), spurgeon, or edwards
 # PREACHED_INDEX             sqlite to copy (default /cache/index/<library>.sqlite)
 # PREACHED_ONNX_DIR          model root (default /cache/models/granite-english-r2-onnx)
-# PREACHED_BUNDLE_SKIP_PINS  honored only when the parent process is the unit tests
+#
+# The ONNX files must match the pins in src/preached/artifacts.py. There is
+# no switch that skips that check. The tests build from a copy of the source
+# whose artifacts.py pins their own small fixture files.
 
 set -euo pipefail
 
@@ -92,76 +95,28 @@ for name in "${MODEL_FILES[@]}"; do
   fi
 done
 
-# SKIP_PINS is for stand-in files in the unit tests. A shell that exports it
-# still has to match the pins, unless the parent command line looks like the
-# unit tests. That parent check can be faked. The manifest records whether
-# the pins were skipped, and the server refuses a skipped bundle unless the
-# server process itself is the unit tests. The parent command line is
-# checked by name only; it is not printed.
-pins_required=1
-if [ "${PREACHED_BUNDLE_SKIP_PINS:-}" = "1" ] && [ -r "/proc/${PPID}/cmdline" ]; then
-  parent=$(tr '\0' ' ' < "/proc/${PPID}/cmdline" || true)
-  case "$parent" in
-    *unittest*|*test_deploy*|*tests/test_deploy.py*)
-      pins_required=0
-      ;;
-  esac
+actual_fp32=$(sha256sum "$MODEL_SRC/model.fp32.onnx" | awk 'NR==1 {print $1}')
+actual_tok=$(sha256sum "$MODEL_SRC/tokenizer.json" | awk 'NR==1 {print $1}')
+if [ "$actual_fp32" != "$FP32_SHA" ] || [ "$actual_tok" != "$TOK_SHA" ]; then
+  echo "ONNX sha256 does not match the pin in artifacts.py" >&2
+  exit 1
 fi
-if [ "$pins_required" -eq 1 ]; then
-  actual_fp32=$(sha256sum "$MODEL_SRC/model.fp32.onnx" | awk 'NR==1 {print $1}')
-  actual_tok=$(sha256sum "$MODEL_SRC/tokenizer.json" | awk 'NR==1 {print $1}')
-  if [ "$actual_fp32" != "$FP32_SHA" ] || [ "$actual_tok" != "$TOK_SHA" ]; then
-    echo "ONNX sha256 does not match the pin in artifacts.py" >&2
-    exit 1
-  fi
-fi
-
 if [ -e "$OUT" ] && [ -n "$(find "$OUT" -mindepth 1 -print -quit)" ]; then
   echo "output directory is not empty" >&2
   exit 2
 fi
 mkdir -p "$OUT"
 
-# Serve-time code only. Torch, Whisper, the YouTube importer, and ingest stay
-# out, except the classics manifests check_servable's allow-list reads.
-CODE_FILES=(
-  pyproject.toml
-  uv.lock
-  README.md
-  AGENTS.md
-  .python-version
-  app/__init__.py
-  app/server.py
-  app/static/index.html
-  app/static/app.js
-  app/static/app.css
-  app/static/favicon.svg
-  src/preached/__init__.py
-  src/preached/env.py
-  src/preached/abstain.py
-  src/preached/artifacts.py
-  src/preached/backends.py
-  src/preached/fts.py
-  src/preached/libraries.py
-  src/preached/models.py
-  src/preached/onnx_embed.py
-  src/preached/paths.py
-  src/preached/pooling.py
-  src/preached/prefixes.py
-  src/preached/rank.py
-  src/preached/search.py
-  src/preached/store.py
-  src/preached/text_tokens.py
-  src/preached/youtube/__init__.py
-  src/preached/youtube/listing.py
-  ingest/manifest/spurgeon.jsonl
-  ingest/manifest/spurgeon.provenance.json
-  ingest/manifest/edwards.jsonl
-  ingest/manifest/edwards.provenance.json
-  search/models.toml
-  search/abstain.toml
-  scripts/serve.sh
-)
+# Serve-time code only, derived from what the server imports (plus the
+# fixed non-Python files listed in bundle_files.py). Torch, Whisper, the
+# YouTube importer, and ingest stay out. `python -I -B`: no PYTHONPATH, no
+# current directory on the path, no bytecode written into the source.
+CODE_LIST=$("$PY" -I -B "$SOURCE/scripts/bundle_files.py" list "$SOURCE")
+mapfile -t CODE_FILES <<< "$CODE_LIST"
+if [ "${#CODE_FILES[@]}" -lt 2 ]; then
+  echo "could not list the bundle files" >&2
+  exit 1
+fi
 
 for rel in "${CODE_FILES[@]}"; do
   if [ ! -f "$SOURCE/$rel" ]; then
@@ -188,16 +143,10 @@ PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from script
 PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
   "$INDEX" "$OUT/index/${LIBRARY}.sqlite"
 
-# The bundle must import. Wesley hits this even when the library is wesley,
-# because app.server imports preached.libraries.
-PYTHONPATH="$OUT/src:$OUT" PREACHED_CACHE="$OUT" "$PY" - <<'PY'
-import app.server
-import preached.libraries
-
-for slug in ("spurgeon", "edwards"):
-    if not preached.libraries.is_public_domain(slug):
-        raise SystemExit(f"bundle cannot load the {slug} manifest")
-PY
+# The bundle must import on its own: run from the bundle with `python -I`
+# (the source tree is not on the path) and require every app/preached
+# module that loads to come from inside the bundle.
+(cd "$OUT" && PREACHED_CACHE="$OUT" "$PY" -I -B "$SOURCE/scripts/bundle_files.py" check "$OUT")
 
 # Pinned third-party set for `uv sync --frozen --no-dev`. No extras, no bench group.
 uv export --project "$SOURCE" --frozen --no-dev --no-default-groups \
@@ -214,11 +163,7 @@ chmod 0755 "$OUT/scripts/serve.sh"
 chmod 0444 "$OUT/index/${LIBRARY}.sqlite"
 find "$OUT/model" -type f -exec chmod 0444 {} +
 
-manifest_args=("$OUT")
-if [ "$pins_required" -eq 0 ]; then
-  manifest_args+=(--pins-skipped)
-fi
-PYTHONPATH="$SOURCE" "$PY" "$SOURCE/scripts/bundle_manifest.py" "${manifest_args[@]}" >/dev/null
+PYTHONPATH="$SOURCE" "$PY" "$SOURCE/scripts/bundle_manifest.py" "$OUT" >/dev/null
 chmod 0644 "$OUT/MANIFEST.sha256"
 
 # Tar a private snapshot. A reflink of a live index or model still changes

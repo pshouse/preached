@@ -19,11 +19,16 @@ Security choices:
 - access logs keep the path, drop the query string, and escape controls
 - a group- or world-writable bundle is refused; modes are not repaired
 - a 405, or any earlier error, that leaves a body unread closes the connection
+- any Transfer-Encoding, or a repeated or non-digit Content-Length, is refused
+  and the connection closed
+- from a bundle, MANIFEST.sha256 must parse and match and the index must be
+  the bundle's own, or the server does not start
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -1578,55 +1583,110 @@ def writable_problem(index: Path) -> str | None:
     return None
 
 
-# Written by scripts/bundle_manifest.py. sha256sum -c ignores a leading '#'.
-PINS_CHECKED_LINE = "# preached-pins-skipped: 0"
-PINS_SKIPPED_LINE = "# preached-pins-skipped: 1"
+# A built bundle has these at its root. A source checkout has none of them.
+BUNDLE_MARKERS = ("MANIFEST.sha256", "index", "model", "requirements-serve.txt")
+# "<sha256>  <relative path>", as scripts/bundle_manifest.py writes it.
+MANIFEST_LINE = re.compile(r"([0-9a-f]{64})  ([^\x00-\x1f\x7f\\]+)")
 
 
-def _server_process_is_unit_tests() -> bool:
-    """True when this process is the unit-test runner.
+def is_bundle(root: Path = ROOT) -> bool:
+    """True when this code is running from a built bundle, not a checkout."""
+    return any(os.path.lexists(Path(root) / name) for name in BUNDLE_MARKERS)
 
-    Only ``sys.argv[0]`` counts. The parent command line is not read:
-    ``build-bundle.sh`` can be fooled by a parent whose argv contains
-    ``unittest``, and that must not make a served bundle acceptable.
-    ``serve.sh`` starts ``python app/server.py`` (and the preflight as
-    ``python -``). Neither argv[0] is the test runner.
+
+def _manifest_entries(manifest: Path) -> dict[str, str] | str:
+    """Path -> sha256 from MANIFEST.sha256, or why it is unusable.
+
+    Every line must be a hash and a relative path, sorted, no repeats, and
+    the file must end with a newline. There are no comment lines.
     """
-    if not sys.argv:
-        return False
-    argv0 = sys.argv[0]
-    if "unittest" in argv0:
-        return True
-    name = Path(argv0).name
-    return name.startswith("test_") and name.endswith(".py")
-
-
-def pins_skip_problem(index: Path) -> str | None:
-    """Refuse a bundle whose manifest says the ONNX pins were skipped.
-
-    The parent-cmdline allow in ``build-bundle.sh`` can be faked, so the
-    bundle records the skip and the server refuses that bundle. The unit-test
-    process itself may open one (stand-in models). A server started by
-    ``serve.sh`` is not that process.
-    """
-    index = Path(index)
-    if index.parent.name != "index":
-        return None
-    manifest = index.parent.parent / "MANIFEST.sha256"
-    if not manifest.is_file():
-        return None
+    if manifest.is_symlink() or not manifest.is_file():
+        return f"{manifest} is missing"
     try:
-        lines = manifest.read_text(encoding="utf-8").splitlines()
+        text = manifest.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         return f"cannot read {manifest} ({type(exc).__name__})"
-    if PINS_SKIPPED_LINE not in lines:
+    if not text.endswith("\n") or text == "\n":
+        return f"{manifest} is not a bundle manifest"
+    entries: dict[str, str] = {}
+    previous = ""
+    for number, line in enumerate(text[:-1].split("\n"), 1):
+        match = MANIFEST_LINE.fullmatch(line)
+        if match is None:
+            return f"{manifest} line {number} is not '<sha256>  <path>'"
+        digest, rel = match.groups()
+        parts = rel.split("/")
+        if rel.startswith("/") or any(part in ("", ".", "..") for part in parts):
+            return f"{manifest} line {number} is not a plain relative path"
+        if rel <= previous:
+            return f"{manifest} line {number} is out of order or repeated"
+        previous = rel
+        entries[rel] = digest
+    return entries
+
+
+def _sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def bundle_problem(index: Path, root: Path = ROOT) -> str | None:
+    """Why a bundle may not serve ``index``, or None. A checkout returns None.
+
+    Run once at start, before the index is opened. From a bundle,
+    MANIFEST.sha256 must exist and parse, every file it lists must be a
+    regular file with that sha256, no other file may sit in the tree (only
+    ``.venv/``, ``__pycache__``, ``*.pyc`` and the kill file ``KILL`` are
+    allowed beside it), and the index must resolve to a listed file under
+    ``index/`` in this bundle. Nothing here can be switched off: there is no
+    marker, flag or environment variable that skips it.
+    """
+    root = Path(root)
+    if not is_bundle(root):
         return None
-    if _server_process_is_unit_tests():
-        return None
-    return (
-        "bundle was built with PREACHED_BUNDLE_SKIP_PINS "
-        "(MANIFEST records preached-pins-skipped: 1); refusing to serve it"
-    )
+    root = root.resolve()
+    manifest = root / "MANIFEST.sha256"
+    entries = _manifest_entries(manifest)
+    if isinstance(entries, str):
+        return f"bundle {root}: {entries}; refusing to serve"
+    real = Path(os.path.realpath(index))
+    try:
+        rel_index = real.relative_to(root).as_posix()
+    except ValueError:
+        return f"index {index} is outside the bundle {root}; refusing to serve"
+    if not rel_index.startswith("index/") or rel_index not in entries:
+        return f"index {index} is not a bundled index listed in {manifest}; refusing to serve"
+    for rel, digest in entries.items():
+        path = root / rel
+        try:
+            st = os.lstat(path)
+        except OSError:
+            return f"bundle file {rel} is missing; refusing to serve"
+        if not stat.S_ISREG(st.st_mode):
+            return f"bundle file {rel} is not a regular file; refusing to serve"
+        try:
+            actual = _sha256_of(path)
+        except OSError as exc:
+            return f"cannot read bundle file {rel} ({type(exc).__name__}); refusing to serve"
+        if actual != digest:
+            return f"bundle file {rel} does not match {manifest}; refusing to serve"
+    for current, dirs, files in os.walk(root):
+        here = Path(current)
+        # os.walk lists a symlink to a directory under dirs and does not
+        # follow it. It is not a listed file, so it counts as unlisted.
+        # ``.venv`` at the root is uv's (a directory or a link to one).
+        dirs[:] = [name for name in dirs if not (here == root and name == ".venv")]
+        linked = [name for name in dirs if (here / name).is_symlink()]
+        dirs[:] = sorted(name for name in dirs if name not in linked and name != "__pycache__")
+        for name in files + linked:
+            rel = (here / name).relative_to(root).as_posix()
+            if rel in entries or rel in ("MANIFEST.sha256", "KILL") or name.endswith(".pyc"):
+                continue
+            return f"bundle file {rel} is not in {manifest}; refusing to serve"
+    return None
 
 
 def check_servable(connection, library: str, index: Path, *, church_gate: bool = False) -> None:
@@ -1650,16 +1710,12 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
     tables and columns in WESLEY_SCHEMA (case-insensitive), so no column a
     church import or the review gate adds, in chunks or a side table.
 
-    A group- or world-writable bundle is refused, not repaired. A manifest
-    that records ``preached-pins-skipped: 1`` is refused outside the unit
-    tests.
+    A group- or world-writable bundle is refused, not repaired. The bundle
+    manifest is checked once at start by ``bundle_problem``, not here.
     """
     problem = writable_problem(index)
     if problem is not None:
         raise SystemExit(f"error: {problem}")
-    skipped = pins_skip_problem(index)
-    if skipped is not None:
-        raise SystemExit(f"error: {skipped}")
     tables = {row[0].lower() for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     marker = None
     if "meta" in tables:
@@ -1761,6 +1817,11 @@ def main(argv: list[str] | None = None) -> None:
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    # From a bundle: MANIFEST.sha256 must parse and match, and the index must
+    # be the bundle's own. A checkout skips this (it has no bundle markers).
+    problem = bundle_problem(index)
+    if problem is not None:
+        raise SystemExit(f"error: {problem}")
     # The file checked must be the file opened: same (st_dev, st_ino) before
     # the open and after the checks, and again before every reload.
     identity = file_identity(index)

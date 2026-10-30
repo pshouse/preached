@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -26,6 +28,7 @@ from app.server import (  # noqa: E402
     MAX_HEADER_BYTES,
     STATIC_DIR,
     App,
+    bundle_problem,
     RateLimiter,
     main,
     make_server,
@@ -434,7 +437,6 @@ class BundleTests(unittest.TestCase):
     def _env(self, **extra) -> dict:
         env = os.environ.copy()
         env.update(extra)
-        env.setdefault("PREACHED_BUNDLE_SKIP_PINS", "1")
         return env
 
     def _stand_in(self, root: Path) -> tuple[Path, Path]:
@@ -450,6 +452,52 @@ class BundleTests(unittest.TestCase):
         connection.commit()
         connection.close()
         return model.parent, index
+
+    def _fixture_source(self, root: Path) -> tuple[Path, Path, Path]:
+        """A copy of the source tree whose artifacts.py pins the stand-in files.
+
+        The build checks the real pins; there is no switch that skips them.
+        The tests build from this copy, so the fixture model is "pinned" by
+        the code that ships with it, the same way a real bundle is.
+        """
+        onnx_root, index = self._stand_in(root)
+        source = root / "source"
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+        for rel in ("app", "src", "scripts", "search", "ingest/manifest"):
+            shutil.copytree(ROOT / rel, source / rel, ignore=ignore)
+        for rel in ("pyproject.toml", "uv.lock", "README.md", "AGENTS.md", ".python-version"):
+            shutil.copy2(ROOT / rel, source / rel)
+        (source / ".venv").symlink_to(ROOT / ".venv")
+        model = onnx_root / GRANITE_REVISION
+        pins = {
+            "FP32_ONNX_SHA256": hashlib.sha256((model / "model.fp32.onnx").read_bytes()).hexdigest(),
+            "TOKENIZER_SHA256": hashlib.sha256((model / "tokenizer.json").read_bytes()).hexdigest(),
+        }
+        artifacts = source / "src" / "preached" / "artifacts.py"
+        lines = artifacts.read_text().splitlines(keepends=True)
+        for number, line in enumerate(lines):
+            for name, digest in pins.items():
+                if line.startswith(f"{name} = "):
+                    lines[number] = f'{name} = "{digest}"\n'
+        artifacts.write_text("".join(lines))
+        for name, digest in pins.items():
+            self.assertIn(f'{name} = "{digest}"', artifacts.read_text())
+        return source, onnx_root, index
+
+    def _build(self, source: Path, out: Path, onnx_root: Path, index: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(source / "scripts" / "build-bundle.sh"), str(out)],
+            cwd=source,
+            env=self._env(
+                PREACHED_LIBRARY="wesley",
+                PREACHED_INDEX=str(index),
+                PREACHED_ONNX_DIR=str(onnx_root),
+            ),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
 
     def test_refuses_church_and_youtube_libraries(self) -> None:
         script = ROOT / "scripts" / "build-bundle.sh"
@@ -502,51 +550,42 @@ class BundleTests(unittest.TestCase):
             self.assertIn("error:", renamed.stderr)
 
     def test_bundle_is_reproducible_and_serve_only(self) -> None:
-        script = ROOT / "scripts" / "build-bundle.sh"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            onnx_root, index = self._stand_in(root)
-            env = self._env(
-                PREACHED_LIBRARY="wesley",
-                PREACHED_INDEX=str(index),
-                PREACHED_ONNX_DIR=str(onnx_root),
-            )
+            source, onnx_root, index = self._fixture_source(root)
             first = root / "one"
             second = root / "two"
             for dest in (first, second):
-                result = subprocess.run(
-                    ["bash", str(script), str(dest)],
-                    cwd=ROOT,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=60,
-                )
+                result = self._build(source, dest, onnx_root, index)
                 self.assertEqual(result.returncode, 0, result.stderr)
             manifest_a = (first / "MANIFEST.sha256").read_bytes()
             manifest_b = (second / "MANIFEST.sha256").read_bytes()
             self.assertEqual(manifest_a, manifest_b)
             self.assertEqual((Path(str(first) + ".tar.gz")).read_bytes(), (Path(str(second) + ".tar.gz")).read_bytes())
-            # Stand-in models skip the pin check, and the manifest says so.
-            # sha256sum -c ignores the comment line.
-            self.assertIn("# preached-pins-skipped: 1\n", manifest_a.decode())
-            names = [
-                line.split("  ", 1)[1].strip()
-                for line in manifest_a.decode().splitlines()
-                if "  " in line and not line.startswith("#")
-            ]
+            # No comment or marker lines: every line is a hash and a path.
+            self.assertNotIn("#", manifest_a.decode())
+            self.assertNotIn("pins", manifest_a.decode())
+            names = [line.split("  ", 1)[1] for line in manifest_a.decode().splitlines()]
             joined = "\n".join(names)
             self.assertIn(f"model/{GRANITE_REVISION}/model.fp32.onnx", names)
             self.assertIn("index/wesley.sqlite", names)
             self.assertIn("requirements-serve.txt", names)
             self.assertIn("app/server.py", names)
             self.assertIn("src/preached/libraries.py", names)
+            # Merged from main (#17, #19): imported by app.server, so derived.
+            self.assertIn("src/preached/audio_policy.py", names)
+            self.assertIn("src/preached/privacy.py", names)
+            self.assertIn("src/preached/privacy_data/lexicon.txt.gz", names)
+            self.assertIn("scripts/serve.sh", names)
+            self.assertIn("app/static/app.js", names)
             self.assertIn("ingest/manifest/spurgeon.provenance.json", names)
             self.assertIn("ingest/manifest/edwards.provenance.json", names)
             self.assertNotIn("model.int8.onnx", joined)
             self.assertNotIn("torch_embed.py", joined)
             self.assertNotIn("transcribe.py", joined)
+            self.assertNotIn("src/preached/asr.py", joined)
+            self.assertNotIn("src/preached/embed.py", joined)
+            self.assertNotIn("__pycache__", joined)
             self.assertNotIn("cc-speech", joined)
             requirements = (first / "requirements-serve.txt").read_text().lower()
             for package in FORBIDDEN_REQUIREMENTS:
@@ -585,10 +624,9 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(journal, "delete")
 
     def test_int8_is_removed_from_the_bundled_manifest(self) -> None:
-        script = ROOT / "scripts" / "build-bundle.sh"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            onnx_root, index = self._stand_in(root)
+            source, onnx_root, index = self._fixture_source(root)
             folder = onnx_root / GRANITE_REVISION
             manifest = {
                 "hf_id": "ibm-granite/granite-embedding-english-r2",
@@ -602,51 +640,45 @@ class BundleTests(unittest.TestCase):
             (folder / "manifest.json").write_text(json.dumps(manifest))
             (folder / "model.int8.onnx").write_bytes(b"int8 stand-in\n")
             out = root / "out"
-            result = subprocess.run(
-                ["bash", str(script), str(out)],
-                cwd=ROOT,
-                env=self._env(
-                    PREACHED_LIBRARY="wesley",
-                    PREACHED_INDEX=str(index),
-                    PREACHED_ONNX_DIR=str(onnx_root),
-                ),
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=60,
-            )
+            result = self._build(source, out, onnx_root, index)
             self.assertEqual(result.returncode, 0, result.stderr)
             shipped = json.loads((out / "model" / GRANITE_REVISION / "manifest.json").read_text())
             self.assertNotIn("int8", shipped["variants"])
             self.assertNotIn("model.int8.onnx", shipped["files"])
             self.assertFalse((out / "model" / GRANITE_REVISION / "model.int8.onnx").exists())
 
-    def test_skip_pins_is_ignored_outside_the_tests(self) -> None:
+    def test_build_checks_the_real_pins_with_no_switch(self) -> None:
+        # Stand-in files do not match the pins in the real artifacts.py.
+        # The old PREACHED_BUNDLE_SKIP_PINS no longer exists: set or not,
+        # and with the unittest process as the direct parent, the build fails.
+        for name in ("scripts/build-bundle.sh", "app/server.py", "scripts/bundle_manifest.py"):
+            text = (ROOT / name).read_text()
+            self.assertNotIn("SKIP_PINS", text, name)
+            self.assertNotIn("pins-skipped", text, name)
         script = ROOT / "scripts" / "build-bundle.sh"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             onnx_root, index = self._stand_in(root)
-            out = root / "out"
-            # Parent of the build script is bash, not the unittest process.
-            # `set -e` keeps the build script's status; a trailing `true`
-            # stops bash from exec-replacing itself with the script, which
-            # would make PPID the unittest process and skip the pins.
-            result = subprocess.run(
-                ["bash", "-c", 'set -e; bash "$1" "$2"; true', "bash", str(script), str(out)],
-                cwd=ROOT,
-                env=self._env(
-                    PREACHED_LIBRARY="wesley",
-                    PREACHED_INDEX=str(index),
-                    PREACHED_ONNX_DIR=str(onnx_root),
-                    PREACHED_BUNDLE_SKIP_PINS="1",
-                ),
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=60,
-            )
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("pin", result.stderr)
+            for extra in ({}, {"PREACHED_BUNDLE_SKIP_PINS": "1"}):
+                with self.subTest(extra=extra):
+                    out = root / ("out" + str(len(extra)))
+                    result = subprocess.run(
+                        ["bash", str(script), str(out)],
+                        cwd=ROOT,
+                        env=self._env(
+                            PREACHED_LIBRARY="wesley",
+                            PREACHED_INDEX=str(index),
+                            PREACHED_ONNX_DIR=str(onnx_root),
+                            **extra,
+                        ),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=60,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("pin", result.stderr)
+                    self.assertFalse(out.exists())
 
     def test_serve_sh_drops_secret_names(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -769,7 +801,10 @@ class BundleTests(unittest.TestCase):
         )
         self.assertIn("whole recording", text)
         self.assertIn("0.870", text)
-        self.assertIn("preached-pins-skipped", text)
+        self.assertNotIn("PREACHED_BUNDLE_SKIP_PINS", text)
+        self.assertNotIn("pins-skipped", text)
+        self.assertIn("refuses to start", text)
+        self.assertIn("An index outside the bundle is refused.", text)
         script = (ROOT / "scripts" / "serve.sh").read_text()
         self.assertNotIn("chmod", script)
         self.assertGreaterEqual(script.count("env -i"), 2)
@@ -880,101 +915,154 @@ class BundleTests(unittest.TestCase):
                 self.assertIn(required, names)
             self.assertNotEqual(result.returncode, 0)
 
-    def test_skipped_pins_are_recorded_and_refused_outside_the_tests(self) -> None:
-        from app.server import check_servable
-        from preached.store import open_readonly
+    def _start(self, bundle: Path, **extra: str) -> tuple[bool, int | None, str]:
+        """Run the bundle's serve.sh; (listening, exit code or None, output)."""
+        log = bundle.parent / f"{bundle.name}.log"
+        env = self._serve_env(
+            PREACHED_LIBRARY="wesley",
+            PREACHED_HOST="127.0.0.1",
+            PREACHED_PORT="0",
+            **extra,
+        )
+        with log.open("w") as handle:
+            proc = subprocess.Popen(
+                ["bash", str(bundle / "scripts" / "serve.sh")],
+                cwd=bundle,
+                env=env,
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+            )
+        try:
+            for _ in range(300):
+                if proc.poll() is not None:
+                    break
+                if "PREACHED_LISTENING" in log.read_text(errors="replace"):
+                    return True, None, log.read_text(errors="replace")
+                time.sleep(0.1)
+            return False, proc.poll(), log.read_text(errors="replace")
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
 
-        script = ROOT / "scripts" / "build-bundle.sh"
+    def _built_bundle(self, root: Path) -> Path:
+        source, onnx_root, index = self._fixture_source(root)
+        out = root / "out"
+        result = self._build(source, out, onnx_root, index)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (out / ".venv").symlink_to(ROOT / ".venv")
+        return out
+
+    def _copy(self, bundle: Path, name: str) -> Path:
+        dest = bundle.parent / name
+        shutil.copytree(bundle, dest, symlinks=True)
+        return dest
+
+    def test_bundle_serves_only_with_its_own_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            onnx_root, index = self._stand_in(root)
-            out = root / "out"
-            # Parent cmdline contains "unittest" but the parent is bash -c,
-            # not the test runner. That is enough to skip the pins today.
-            # The manifest has to record the skip, and a server that is not
-            # the test process has to refuse the bundle.
-            built = subprocess.run(
-                [
-                    "bash",
-                    "-c",
-                    'set -e; bash "$1" "$2"; true',
-                    "python -m unittest test_deploy",
-                    str(script),
-                    str(out),
-                ],
-                cwd=ROOT,
-                env=self._env(
-                    PREACHED_LIBRARY="wesley",
-                    PREACHED_INDEX=str(index),
-                    PREACHED_ONNX_DIR=str(onnx_root),
-                    PREACHED_BUNDLE_SKIP_PINS="1",
-                ),
+            out = self._built_bundle(root)
+            index = out / "index" / "wesley.sqlite"
+            self.assertIsNone(bundle_problem(index, root=out))
+            listening, _code, log = self._start(out)
+            self.assertTrue(listening, log[-2000:])
+
+            missing = self._copy(out, "missing")
+            (missing / "MANIFEST.sha256").unlink()
+            listening, code, log = self._start(missing)
+            self.assertFalse(listening, log[-2000:])
+            self.assertNotEqual(code, 0)
+            self.assertIn("MANIFEST.sha256 is missing", log)
+
+            outside = root / "elsewhere" / "index" / "wesley.sqlite"
+            outside.parent.mkdir(parents=True)
+            shutil.copy2(index, outside)
+            listening, code, log = self._start(out, PREACHED_INDEX=str(outside))
+            self.assertFalse(listening, log[-2000:])
+            self.assertNotEqual(code, 0)
+            self.assertIn("outside the bundle", log)
+
+    def test_manifest_variants_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            text = (out / "MANIFEST.sha256").read_text()
+            first = text.splitlines()[0]
+            edits = {
+                "old marker line": text + "# preached-pins-skipped: 0\n",
+                "marker, other spelling": text + "#Preached-Pins-Skipped: 01\n",
+                "blank line": text + "\n",
+                "trailing space": text.replace(first, first + " ", 1),
+                "one space": text.replace(first, first.replace("  ", " ", 1), 1),
+                "upper-case hash": text.replace(first, first[:64].upper() + first[64:], 1),
+                "no final newline": text[:-1],
+                "empty": "",
+                "not utf-8": None,
+                "repeated line": first + "\n" + text,
+                "dot-dot path": text + "0" * 64 + "  ../escape\n",
+            }
+            for name, body in edits.items():
+                with self.subTest(case=name):
+                    case = self._copy(out, "case-" + name.replace(" ", "-").replace(",", ""))
+                    manifest = case / "MANIFEST.sha256"
+                    if body is None:
+                        manifest.write_bytes(b"\xff\xfe" + text.encode())
+                    else:
+                        manifest.write_text(body)
+                    problem = bundle_problem(case / "index" / "wesley.sqlite", root=case)
+                    self.assertIsNotNone(problem)
+                    self.assertIn("refusing to serve", problem)
+
+            tampered = self._copy(out, "tampered")
+            (tampered / "search" / "models.toml").write_text("# changed\n")
+            problem = bundle_problem(tampered / "index" / "wesley.sqlite", root=tampered)
+            self.assertIn("does not match", problem or "")
+
+            extra = self._copy(out, "extra")
+            (extra / "src" / "preached" / "sitecustomize.py").write_text("")
+            problem = bundle_problem(extra / "index" / "wesley.sqlite", root=extra)
+            self.assertIn("not in", problem or "")
+
+            linked = self._copy(out, "linked")
+            (linked / "index" / "other.sqlite").symlink_to(out / "index" / "wesley.sqlite")
+            problem = bundle_problem(linked / "index" / "other.sqlite", root=linked)
+            self.assertIsNotNone(problem)
+
+            # A checkout (no bundle markers) is not checked here.
+            self.assertIsNone(bundle_problem(out / "index" / "wesley.sqlite", root=ROOT))
+
+    def test_bundle_import_check_uses_the_bundle_only(self) -> None:
+        # Drop a module the server imports. The check runs from the bundle
+        # with python -I, so PYTHONPATH at the source tree cannot hide it.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            checker = ROOT / "scripts" / "bundle_files.py"
+            ok = subprocess.run(
+                [sys.executable, "-I", "-B", str(checker), "check", str(out)],
+                cwd=out,
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=60,
             )
-            self.assertEqual(built.returncode, 0, built.stderr)
-            manifest = (out / "MANIFEST.sha256").read_text()
-            self.assertIn("# preached-pins-skipped: 1\n", manifest)
-            checked = subprocess.run(
-                ["sha256sum", "-c", "MANIFEST.sha256"],
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            (out / "src" / "preached" / "audio_policy.py").unlink()
+            broken = subprocess.run(
+                [sys.executable, "-I", "-B", str(checker), "check", str(out)],
                 cwd=out,
+                env={**os.environ, "PYTHONPATH": f"{ROOT / 'src'}:{ROOT}"},
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=60,
             )
-            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-            bundled = out / "index" / "wesley.sqlite"
-            # This process is the unit-test runner, so the gate allows it.
-            connection = open_readonly(bundled, check_same_thread=False)
-            try:
-                check_servable(connection, "wesley", bundled)
-            finally:
-                connection.close()
-            probe = (
-                "import sys\n"
-                "from pathlib import Path\n"
-                "root = Path(sys.argv[1])\n"
-                "sys.path[:0] = [str(root), str(root / 'src')]\n"
-                "from app.server import check_servable\n"
-                "from preached.store import open_readonly\n"
-                "index = Path(sys.argv[2])\n"
-                "connection = open_readonly(index, check_same_thread=False)\n"
-                "try:\n"
-                "    check_servable(connection, 'wesley', index)\n"
-                "finally:\n"
-                "    connection.close()\n"
-                "print('served')\n"
-            )
-            refused = subprocess.run(
-                [sys.executable, "-c", probe, str(ROOT), str(bundled)],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-            self.assertNotEqual(refused.returncode, 0, refused.stderr)
-            self.assertIn("pins", refused.stderr)
-            self.assertNotIn("served", refused.stdout)
-            (out / ".venv").symlink_to(ROOT / ".venv")
-            served = subprocess.run(
-                ["bash", str(out / "scripts" / "serve.sh")],
-                cwd=out,
-                env=self._serve_env(
-                    PREACHED_LIBRARY="wesley",
-                    PREACHED_HOST="127.0.0.1",
-                    PREACHED_PORT="0",
-                ),
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-            self.assertNotEqual(served.returncode, 0, served.stderr)
-            self.assertIn("preached-pins-skipped", served.stderr)
-            self.assertNotIn("PREACHED_LISTENING", served.stdout + served.stderr)
+            self.assertNotEqual(broken.returncode, 0)
+            self.assertIn("audio_policy", broken.stderr)
 
 
 class UnreadBodyTests(unittest.TestCase):

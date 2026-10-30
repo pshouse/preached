@@ -113,14 +113,32 @@ uv sync --frozen --no-dev --no-default-groups
 `default-groups` is already empty. Do not pass `--extra transcribe`,
 `--extra youtube`, or `--group bench`.
 
-`PREACHED_BUNDLE_SKIP_PINS` does not skip the ONNX pin check unless the
-parent command line looks like the unit tests. A deploy shell that exports
-it still checks the pins. That parent check can be faked. The bundle
-records the truth in `MANIFEST.sha256` as a comment line,
-`# preached-pins-skipped: 0` or `# preached-pins-skipped: 1`
-(`sha256sum -c` ignores the comment). The server refuses a bundle whose
-manifest says the pins were skipped, unless the server process itself is
-the unit tests. `scripts/serve.sh` is not that process.
+The build always checks the ONNX files against the pins in
+`src/preached/artifacts.py`. There is no switch that skips that check. The
+unit tests build from a copy of the source whose `artifacts.py` pins small
+fixture files.
+
+The bundled code is derived, not hand-listed: `scripts/bundle_files.py list`
+imports the serve entry points and ships every `app`/`preached` module they
+load, the data directories inside those packages (`preached/privacy_data`),
+and a short list of non-Python files. After the copy, the build re-imports
+the server from the bundle with `python -I` and fails unless every loaded
+`app`/`preached` module comes from inside the bundle.
+
+When `app/server.py` runs from a bundle (its root has `MANIFEST.sha256`,
+`index/`, `model/` or `requirements-serve.txt`), it checks the bundle once at
+start and refuses to start unless all of these hold:
+
+- `MANIFEST.sha256` exists and every line is `<sha256>  <relative path>`,
+  sorted, with no comments, blank lines or repeats;
+- every listed file is a regular file with that sha256;
+- no other file is in the tree (only `.venv/`, `__pycache__/`, `*.pyc` and
+  the kill file `KILL` are allowed beside it);
+- the index (`PREACHED_INDEX` or the default) resolves to a listed file
+  under the bundle's own `index/`. An index outside the bundle is refused.
+
+Hashing the bundle (index plus fp32 model) adds a few seconds to start.
+A source checkout has none of those root entries and skips this check.
 
 ## Run it locally
 

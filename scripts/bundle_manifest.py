@@ -4,8 +4,8 @@
 Every regular file except the manifest itself is listed as
 ``<sha256><two spaces><relative posix path>``, sorted by path. The same
 bytes produce the same manifest. Modes and mtimes are not recorded.
-A final ``# preached-pins-skipped: 0`` or ``: 1`` line records whether the
-ONNX pin check was skipped. ``sha256sum -c`` ignores that comment.
+There are no comment lines: the server (``app.server.bundle_problem``)
+refuses any line that is not a hash and a path.
 
 Also copies an index with SQLite's backup API (so a WAL is included) and
 strips int8 from a bundled ONNX manifest.
@@ -45,11 +45,8 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def manifest_text(root: Path, *, pins_skipped: bool = False) -> str:
-    lines = [f"{sha256(root / rel)}  {rel}\n" for rel in iter_files(root)]
-    flag = "1" if pins_skipped else "0"
-    lines.append(f"# preached-pins-skipped: {flag}\n")
-    return "".join(lines)
+def manifest_text(root: Path) -> str:
+    return "".join(f"{sha256(root / rel)}  {rel}\n" for rel in iter_files(root))
 
 
 def copy_index(source: Path, dest: Path) -> None:
@@ -119,18 +116,14 @@ def strip_int8_manifest(path: Path) -> None:
 
 def main(argv: list[str]) -> int:
     args = argv[1:]
-    pins_skipped = False
-    if "--pins-skipped" in args:
-        pins_skipped = True
-        args = [arg for arg in args if arg != "--pins-skipped"]
     if len(args) != 1:
-        print("usage: bundle_manifest.py DIRECTORY [--pins-skipped]", file=sys.stderr)
+        print("usage: bundle_manifest.py DIRECTORY", file=sys.stderr)
         return 2
     root = Path(args[0]).resolve()
     if not root.is_dir():
         print("not a directory", file=sys.stderr)
         return 2
-    text = manifest_text(root, pins_skipped=pins_skipped)
+    text = manifest_text(root)
     target = root / "MANIFEST.sha256"
     target.write_text(text)
     print(hashlib.sha256(text.encode()).hexdigest())
