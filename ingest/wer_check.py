@@ -25,7 +25,7 @@ def norm(text: str) -> list[str]:
 
 def ccel_body(n: int) -> str:
     body = CCEL_TXT.read_text().split("First Series\n     ___", 1)[1]
-    m = re.search(rf"\nSermon {n}(?: \[\d+\])?\n(.*?)(?=\nSermon {n + 1}(?: \[\d+\])?\n)", body, re.S)
+    m = re.search(rf"\nSermon {n}(?: \[\d+\])?\n(.*?)(?=\nSermon {n + 1}(?: \[\d+\])?\n|\Z)", body, re.S)
     blocks = re.split(r"\n\s*\n", re.sub(r"\n\s*_{5,}.*", "", m.group(1), flags=re.S))
     # Skip the heading (title, epigraph, reference): readers voice it in varying ways.
     skip = 1

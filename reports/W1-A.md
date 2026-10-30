@@ -68,7 +68,7 @@ Branch `feat/w1-ingest`. Code in `ingest/`. Report written 2026-10-30.
     and a Wesley dateline ("Preached at Balham, February 19th, 1790") right
     before "End of section 11" stays searchable. Segments wholly outside the
     window get `boilerplate: true`.
-  - Sample: `ingest/samples/<id>.json` (one full transcript, < 200 KB).
+  - Sample: `ingest/samples/wesley-s2-20.json` (one full transcript, 145 KB).
 - **One command**, resumable and idempotent (`ingest/run.py`): skips finished
   transcripts, writes each one atomically (`.tmp` + rename, so a crash loses
   at most the file in flight), prefetches the next download while the GPU
@@ -132,7 +132,48 @@ in the cache from the model comparison and can be deleted.
 
 ## 3. Results
 
-RESULTS_PLACEHOLDER
+**Run complete: 143/143 files, 71.14 h of audio, 0 failures, 0 OOM back-offs.**
+
+| Metric | Value |
+|---|---|
+| Files / audio | 143 MP3s (2.0 GB in `/cache/audio/wesley`), **71.14 h** |
+| Transcripts | 143 JSON files, 20.4 MB total (median 142 KB), 16,676 segments, **657,033 words** |
+| Throughput, final pipeline | **53.9 audio-h per wall-h** for the whole run (71.14 h in 1.32 h; mean per-file speed 63×). The GPU was shared with another tenant for parts of the run; uncontested files ran at 65–80× |
+| Throughput, first 3-file test | 73.5 audio-h/wall-h (before timestamp tokens + repair passes); estimate then was ~58 min for 71 h |
+| VRAM | **3.26 GB peak** (fp16, batch 8) on every file, under the 7 GB budget; the OOM ladder was never needed |
+| Boilerplate | intro disclaimer/credit marked in 87/143 files (in the rest Whisper dropped it, so there's nothing to mark); outro marked in 135/143 |
+| Gap fill | 116 files had a gap that yielded speech (mostly the head disclaimer); 102 searchable segments / 1,304 words recovered mid-sermon (dropped sentences, Scripture references, a Latin quotation) |
+| Loop repair | 21 segments in 19 files re-decoded; 0 left `asr_suspect`. 3 hallucinated one-word fragments from these re-decodes ("You", "100.", "Thank you.") were removed after the run by the same span/rate rule now in the code (logged in `progress.log`) |
+| QA (`qa.py`) | 5 files flagged, all the same benign pattern: a "[Section N of] Sermons on Several Occasions" fragment at ~2 s, then the dropped disclaimer as a 13–24 s gap. No surviving loops, no mid-sermon gaps > 8 s, no prompt leakage |
+| Timestamp check | word starts vs an independent sequential decode (sermon 1): median 0.01 s, p90 0.05 s, p99 0.33 s |
+
+**WER vs CCEL text** (`wer_check.py`, first 1,500 words of each sermon body,
+paragraph numbers removed; reader deviations and unread inline references
+count as errors):
+
+| Transcript | Series / reader | WER |
+|---|---|---|
+| wesley-s1-01 Salvation by Faith | 1 / Robert G. Smith | 1.40% |
+| wesley-s1-05 Justification by Faith | 1 / Bill Mosley | 2.53% |
+| wesley-s1-10 Witness of the Spirit I | 1 / Tim Cote | 2.87% |
+| wesley-s1-32 Sermon on the Mount XII | 1 / Fr. Richard Zeile | 1.27% |
+| wesley-s2-06 God's Love to Fallen Man | 2 / Jacob Paul Starr | 1.67% |
+| wesley-s2-13 The Signs of the Times | 2 / KHand | 2.20% |
+| wesley-s2-30 On Patience | 2 / Beth Thomas | 0.87% |
+| wesley-s2-45 On Visiting the Sick | 2 / Bruce Kachuk | 1.00% |
+| wesley-s3to5-04 The Rich Man and Lazarus | 3–5 / Andrea Rovny | 3.53% |
+| wesley-s3to5-15 Deceitfulness of the Human Heart | 3–5 / Avielh Tolentino | 2.80% |
+| wesley-s3to5-25 Death of John Fletcher | 3–5 / Larry Wilson | 2.13% |
+| wesley-s3to5-33 On the Holy Spirit | 3–5 / Larry Wilson | 1.67% |
+| **mean of 12** | | **2.0%** |
+
+Sample transcript committed: `ingest/samples/wesley-s2-20.json` ("Of Hell",
+read by Bill Mosley; 145 KB). It shows the marked intro (5 gap-filled
+disclaimer segments), the marked outro, mid-sermon gap fills and loop repairs.
+
+**Resume / rerun**: nothing is pending. If anything is ever deleted or added
+to the manifest, `uv run --extra transcribe ingest/run.py --all` picks up
+only the missing files (~1 min wall per 1 h of audio).
 
 ## 4. Open issues / risks
 
@@ -144,6 +185,15 @@ RESULTS_PLACEHOLDER
   heading, which is harmless and useful.
 - **Untranscribed stretches of 4–8 s** that the gap fill couldn't recover
   (VAD found no speech) aren't listed by QA; > 8 s ones are. See §3.
+- **Punctuation is occasionally missing**: the prompt doesn't always win, so a
+  minority of segments are lowercase and unpunctuated (worst file s2-02:
+  27% of segments; most files < 10%). Words and timestamps are unaffected.
+  Snippet display / sentence splitting downstream should fall back to word
+  timing pauses.
+- **Intro edge cases**: the title announcement is sometimes partly inside
+  the marked intro (12-word credit cap, e.g. s1-05), and in 5 files a
+  "Sermons on Several Occasions" fragment before the dropped disclaimer is
+  searchable. Both are harmless for search.
 - **WER is a reader + ASR number**: readers don't voice inline references
   like "Luke 4:34" and sometimes paraphrase. `wer_check.py` drops paragraph
   numbers, but inline references still count as errors, so this is an upper

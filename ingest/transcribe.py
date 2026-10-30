@@ -89,8 +89,8 @@ def collapse_loops(words: list[list]) -> list[list]:
 
 def _hallucinated(seg: dict) -> bool:
     """Whisper invents stock phrases on near-silence ("We'll be right back.",
-    "Next slide, please."). Seen only in gap fills, always with an impossible
-    speaking rate or low confidence."""
+    "Next slide, please.", "Thank you.") when re-decoding near-silence, always
+    with an impossible span/speaking rate or low confidence."""
     span = seg["words"][-1][1] - seg["words"][0][0]
     rate = len(seg["words"]) / max(span, 1e-3)
     return span < 0.5 or rate > 6.0 or seg["_nsp"] > 0.6 or seg["_lp"] < -1.0
@@ -235,7 +235,8 @@ class Transcriber:
                 i += 1
                 continue
             t1 = segments[i + 1]["start"] if i + 1 < len(segments) else len(audio) / SR
-            new = self._decode(audio, seg["start"], t1, prompt, vad=False)
+            new = [x for x in self._decode(audio, seg["start"], t1, prompt, vad=False)
+                   if not _hallucinated(x)]
             for s in new:
                 s["redecoded"] = True
                 if has_loop(s["words"]):
