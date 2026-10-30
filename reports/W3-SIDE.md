@@ -85,7 +85,7 @@ Full suite after both commits: 304 tests, 0 failures. `uv lock --check` passed (
 
 ## Open issues
 
-- **TODO (after PR #12 is on main):** turn the church searcher back on. It gets #12's gate and per-request `visible_sql`, audio withheld on flagged passages, and the `source_url` rule covering hits, plus #10's index-stamp reload on that file. Confidence stays `abstain.church_confidence` (unrated) until a floor is fitted on a church library. `load_church_searcher` is still in `app/server.py` and is unused. If #14 is on main by then, a church file passed as `--library` is refused with #14's `check_servable`. Do not add a parallel check. The classic searcher already reloads.
+- **TODO (after PR #12 is on main):** turn the church searcher back on. It gets #12's gate and per-request `visible_sql`, audio withheld on flagged passages, and the `source_url` rule covering hits, plus #10's index-stamp reload on that file. Confidence stays `abstain.church_confidence` (unrated) until a floor is fitted on a church library. `load_church_searcher` is still in `app/server.py` and is unused. PR #14 is on main (`c95d872`). A church file passed as `--library` is refused by `check_servable` / `libraries.classic_index_problem` (a slug outside wesley and `PUBLIC_DOMAIN` is refused by `libraries.is_public_domain` before the file is opened). Do not add a parallel check. The classic searcher already reloads.
 - If more than one non-classic file is marked `church` and the process is not given `--church-library` or `--church-index`, the church side is empty. The server logs the slugs. It does not guess.
 - The single-library page still sends `library=wesley`. A server started with `--library` set to something else will reject that request, as it did before.
 - The page asks for 5 hits per side. The API default remains 10, matching `/api/search`.
@@ -96,3 +96,19 @@ Full suite after both commits: 304 tests, 0 failures. `uv lock --check` passed (
 ## Dependencies
 
 None. `uv lock --check` passed; `uv.lock` was not changed. The standard library, the existing SQLite file per library, and the existing Deno test (skipped when `deno` is missing). No model was added.
+
+## Merge of #14 (main c95d872)
+
+`feat/w3-side` at `2e36e6b` was merged with `origin/main` at `c95d872` (PR #14). The merge commit is `64bcb71d2c9727b1a960f083fdb391e6896f3de6` (parents `2e36e6b` and `c95d872`). This section is the commit after that merge, and that commit is the branch head. The history is a merge commit.
+
+Conflicts were `README.md`, `app/server.py`, and `search/query.py`. Each file kept both sides. The README paragraph keeps the church mark (written only after a successful import, sibling marks cleared with plain sqlite3, wesley/spurgeon/edwards left classic) and #14's serve allow-list (only wesley and `PUBLIC_DOMAIN`). `app/server.py` keeps the empty church side (`prepare_church`, `/api/side`, `/healthz` `"church": null`, church arguments accepted and then discarded) together with #14's `check_servable`, `file_identity`, `WESLEY_SCHEMA`, and the `servable` hook on reload. The connection stays open across `build_app`, the same as main, and closes after `serve_forever` or when `servable` fails. `search/query.py` keeps #14's mutually exclusive `--index` / `--library`, `open_index`, and `classic_index_problem`, and keeps `--side`. `print_side` uses `--library` when it is set, otherwise the slug of `--index` or `INDEX_PATH`. It does not open the church file.
+
+What moved onto #14's gate: the local `CLASSIC_SLUGS` tuple and the hand-kept canonical path list are gone. `classic_names()` is wesley plus `libraries.PUBLIC_DOMAIN`. A path is a protected classic when its stem is one of those names, when it is the call-time `INDEX_PATH` or `INDEX_DIR/wesley.sqlite`, or when `classic_index_problem(slug, path)` is None or the path resolves to `canonical_index(slug)` for a public-domain slug. That check does not open the SQLite file. Refusing to serve a church file or any other non-servable file is #14's path: `is_public_domain` for the slug, then `check_servable` (which calls `classic_index_problem` for spurgeon and edwards, and the Wesley schema allow-list for wesley). There is no second serve check. Refusing to mark those libraries as the church still returns the "classic" error from `classic_church_refusal`, using those same names and path checks.
+
+Classic side and church-refusal tests now cover spurgeon and edwards: `SideApiTests.test_classic_side_covers_spurgeon_and_edwards`, `SideCliTests.test_classic_side_prints_spurgeon_and_edwards`, and `ChurchRefusalTests.test_canonical_path_refusal_uses_classic_index_problem`.
+
+`uv run python -m unittest discover -s tests`: **376 tests, all passing** (22.430s). `uv lock --check` passed (79 packages). The lock was not regenerated. No dependency was added.
+
+Wesley output is byte-identical to `origin/main` `c95d872`. `git archive` of that commit was exported and both trees were run with this worktree's venv on `/cache/index/wesley.sqlite` (ONNX fp32, the default). `search/query.py` stdout, stderr, and exit code matched for 5 queries × bm25/dense/hybrid (15/15): "what did Wesley say about worry", "Romans 8:16", "assurance of faith", "the witness of the Spirit", and "xyzzy plugh not a sermon". `/api/search` JSON matched for the same 15 calls, apart from `took_ms`. `/api/sermon/wesley-001` matched. `/healthz` matches apart from the extra `"church": null` this branch keeps while the church side is empty. The sha256 of `wesley.sqlite` was `909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b` before and after.
+
+Code merge: `64bcb71d2c9727b1a960f083fdb391e6896f3de6`. The branch head is the commit that adds this section.
