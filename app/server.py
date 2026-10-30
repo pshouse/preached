@@ -418,19 +418,23 @@ def load_search(
 def load_church_searcher(connection, model_key: str, *, bm25_only: bool):
     """Searcher for the church file, plus a note when that side is BM25 only.
 
-    A bad or missing church vector file does not take the classic side down
-    with it. The church column falls back to keyword search and says so.
+    Always built through #12's publish gate (``gated=True``, no slug, so the
+    public-domain exemption never applies): only approved sermons are
+    visible, checked per call. A bad or missing church vector file does not
+    take the classic side down with it. The church column falls back to
+    keyword search and says so.
     """
+    gate = {"gated": True, "library": None}
     if bm25_only:
-        return Searcher(connection), None
+        return Searcher(connection, **gate), None
     try:
-        return Searcher(connection, model=model_key), None
+        return Searcher(connection, model=model_key, **gate), None
     except EmbeddingMismatch:
         logging.exception("church vectors do not match search/models.toml; that side is BM25 only")
-        return Searcher(connection), STALE_NOTE
+        return Searcher(connection, **gate), STALE_NOTE
     except Exception:
         logging.exception("church vectors unavailable; that side is BM25 only")
-        return Searcher(connection), STALE_NOTE
+        return Searcher(connection, **gate), STALE_NOTE
 
 
 class App:

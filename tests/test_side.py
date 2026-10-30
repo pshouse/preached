@@ -453,6 +453,150 @@ class HardlinkTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), before[path], path.name)
 
 
+class ChurchGateTripwireTests(unittest.TestCase):
+    """Fails unless every church searcher goes through #12's publish gate.
+
+    The church side is not served in this PR. When it is wired, it must use
+    ``Searcher(gated=True)`` (``store.visible_sql``: approved sermons only),
+    with no slug, so the public-domain exemption can never apply to it.
+    """
+
+    GATE = {"gated": True, "library": None}
+
+    def _recorder(self, fail_model: Exception | None = None):
+        built: list[dict] = []
+
+        class Recorder:
+            def __init__(self, connection, model=None, fingerprint=None, **gate):
+                built.append(gate)
+                if model and fail_model is not None:
+                    raise fail_model
+                self.connection = connection
+                self._matrix = None
+
+            def bm25(self, *_a, **_k):
+                return []
+
+            dense = hybrid = bm25
+
+        return Recorder, built
+
+    def test_server_church_searcher_is_gated_on_every_path(self) -> None:
+        import app.server as server
+        from preached.store import EmbeddingMismatch
+
+        for kwargs, failure in (
+            ({"bm25_only": True}, None),
+            ({"bm25_only": False}, None),
+            ({"bm25_only": False}, EmbeddingMismatch("stale")),
+            ({"bm25_only": False}, RuntimeError("no vectors")),
+        ):
+            recorder, built = self._recorder(failure)
+            with patch.object(server, "Searcher", recorder), patch.object(server.logging, "exception"):
+                server.load_church_searcher(object(), "fixture", **kwargs)
+            self.assertTrue(built)
+            for gate in built:
+                self.assertEqual(gate, self.GATE, (kwargs, failure))
+
+    def test_cli_church_searcher_is_gated_on_every_path(self) -> None:
+        from preached.store import EmbeddingMismatch
+
+        module = _load_query()
+        signals = Signals(bm25_hits=0, dense_top=None, agreement=False)
+        for mode, failure in (("bm25", None), ("dense", None), ("hybrid", EmbeddingMismatch("stale"))):
+            recorder, built = self._recorder(failure)
+            args = SimpleNamespace(query="q", k=5, mode=mode, fusion="rrf", rrf_k=60, dense_weight=0.5)
+            with (
+                patch.object(module, "Searcher", recorder),
+                patch.object(module, "compute_signals", lambda *_a, **_k: signals),
+            ):
+                module.search_index(None, args, np.ones(4, dtype=np.float32), "fixture", fallback_bm25=True, church=True, library="spurgeon")
+            self.assertTrue(built)
+            for gate in built:
+                self.assertEqual(gate, self.GATE, mode)
+
+    def test_unapproved_church_sermon_is_not_found_through_either_entry_point(self) -> None:
+        import app.server as server
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.sqlite"
+            rows, vectors = church_rows()
+            build_library(path, rows, vectors, church=True, sample=True)
+            writer = sqlite3.connect(path)
+            writer.execute("UPDATE chunks SET video_id = sermon_id")
+            # samplevid01 (churchonlytoken) is unapproved; samplevid02 (sharedpulpit) is approved.
+            writer.executemany(
+                "INSERT INTO videos (video_id, status, review_sha256, approved_sha256) VALUES (?, 'ok', 'abc', ?)",
+                [("samplevid01", None), ("samplevid02", "abc")],
+            )
+            writer.commit()
+            writer.close()
+            connection = open_readonly(path)
+            try:
+                searcher, _note = server.load_church_searcher(connection, "fixture", bm25_only=True)
+                self.assertEqual(searcher.bm25("churchonlytoken", 5), [])
+                self.assertEqual([hit.chunk_id for hit in searcher.bm25("sharedpulpit", 5)], ["church-shared"])
+                module = _load_query()
+                for word, expected in (("churchonlytoken", []), ("sharedpulpit", ["church-shared"])):
+                    args = SimpleNamespace(query=word, k=5, mode="bm25", fusion="rrf", rrf_k=60, dense_weight=0.5)
+                    hits, *_rest = module.search_index(connection, args, None, None, fallback_bm25=True, church=True)
+                    self.assertEqual([hit.chunk_id for hit in hits], expected, word)
+            finally:
+                connection.close()
+
+    def test_every_searcher_built_near_church_code_passes_the_gate(self) -> None:
+        """Source scan: a function that mentions church and builds a Searcher must pass ``gated``."""
+        import ast
+
+        repo = Path(__file__).resolve().parents[1]
+        offenders = []
+        for rel in ("app/server.py", "search/query.py"):
+            tree = ast.parse((repo / rel).read_text())
+            for func in ast.walk(tree):
+                if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                names = {node.id for node in ast.walk(func) if isinstance(node, ast.Name)}
+                names |= {node.arg for node in ast.walk(func) if isinstance(node, ast.arg)}
+                names |= {node.attr for node in ast.walk(func) if isinstance(node, ast.Attribute)}
+                if not any("church" in name for name in names) and "church" not in func.name:
+                    continue
+                for call in ast.walk(func):
+                    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Searcher"):
+                        continue
+                    keywords = {kw.arg for kw in call.keywords}
+                    if "gated" not in keywords and None not in keywords:
+                        offenders.append(f"{rel}:{call.lineno} in {func.name}")
+        self.assertEqual(offenders, [])
+
+    def test_app_does_not_keep_an_ungated_church_searcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            classic_path = root / "wesley.sqlite"
+            church_path = root / "sample.sqlite"
+            build_library(classic_path, *classic_rows())
+            build_library(church_path, *church_rows(), church=True, sample=True)
+            connection = reopen(classic_path)
+            church = reopen(church_path)
+            try:
+                app = App(
+                    connection=connection,
+                    searcher=Searcher(connection),
+                    encode=None,
+                    fallback_note=None,
+                    model_name="fixture",
+                    hosts={"127.0.0.1"},
+                    static_dir=STATIC_DIR,
+                    church_connection=church,
+                    church_searcher=Searcher(church),
+                    church_library="sample",
+                )
+                kept = app.church_searcher
+                self.assertTrue(kept is None or kept.gated is True)
+            finally:
+                connection.close()
+                church.close()
+
+
 def _plain_marked(path: Path, *, church_import: bool = False) -> None:
     """A church-marked file that did not go through store.connect (no WAL).
 
