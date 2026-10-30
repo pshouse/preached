@@ -37,8 +37,29 @@ dtype_cpu = "fp32"
 dim = 768
 question_prefix = "task: question answering | query: "
 keyword_prefix = "task: search result | query: "
+# Card's Document prompt. The first run used "title: {sermon title} | text: ..."
+# and lost about 0.23 dense Recall@5 (see docs/research/embeddings.md, audit).
+document_prefix = "title: none | text: "
+drop_config = ["vision_config", "audio_config"]
+
+# The configuration of the first (superseded) run, kept so the audit can be
+# reproduced: uv run search/bench.py --models embeddinggemma-2-titled
+[models.embeddinggemma-2-titled]
+hf_id = "google/embeddinggemma-2"
+revision = "f9972ac22e696a105c482202646979e33e4b5a1e"
+license = "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)"
+developer = "Google DeepMind"
+lineage = "Same checkpoint as embeddinggemma-2. Documents carry the sermon title and scripture."
+lineage_sources = ["https://huggingface.co/google/embeddinggemma-2"]
+params = "270M text-only"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "task: question answering | query: "
+keyword_prefix = "task: search result | query: "
 document_template = "title: {title} | text: {text}"
 drop_config = ["vision_config", "audio_config"]
+enabled = false
 
 [models.embeddinggemma-300m]
 hf_id = "google/embeddinggemma-300m"

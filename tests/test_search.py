@@ -104,8 +104,14 @@ class ModelConfigTests(unittest.TestCase):
     def test_gemma_prompts_match_card(self) -> None:
         spec = MODELS["embeddinggemma-2"]
         docs, prompt = format_documents(spec, ["Salvation by Faith (Eph 2:8)"], ["By grace are ye saved."])
-        self.assertEqual(prompt, "")
-        self.assertEqual(docs, ["title: Salvation by Faith (Eph 2:8) | text: By grace are ye saved."])
+        # Card's Document prompt. Sermon titles in the document hurt (audit).
+        self.assertEqual((docs, prompt), (["By grace are ye saved."], "title: none | text: "))
+        titled = MODELS["embeddinggemma-2-titled"]
+        self.assertFalse(titled.enabled)
+        self.assertEqual(
+            format_documents(titled, ["Salvation by Faith (Eph 2:8)"], ["By grace."])[0],
+            ["title: Salvation by Faith (Eph 2:8) | text: By grace."],
+        )
         _, question = format_query(spec, "What did Wesley say about worry?")
         self.assertEqual(question, "task: question answering | query: ")
         _, keyword = format_query(spec, "Christian perfection")
