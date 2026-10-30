@@ -3,6 +3,7 @@
 import ctypes
 import gc
 import glob
+import hashlib
 import os
 import re
 import sys
@@ -22,6 +23,50 @@ TRANSCRIPT_DIR = CACHE_ROOT / "transcripts" / "wesley"
 MODEL = "large-v3-turbo"
 MODEL_REPO = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 MODEL_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+# LFS sha256 of that revision's model.bin (1,617,884,929 bytes), from reports/W1-A.md.
+# Checked once per process before the weights are used; PREACHED_SKIP_MODEL_SHA=1 opts out.
+MODEL_BIN_SHA256 = "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da"
+_VERIFIED: set = set()  # (path, size, mtime_ns) already hashed OK in this process
+
+
+def snapshot_model_bin(repo: str = MODEL_REPO, revision: str = MODEL_REVISION) -> Path:
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    return Path(HF_HUB_CACHE) / ("models--" + repo.replace("/", "--")) / "snapshots" / revision / "model.bin"
+
+
+def verify_model_bin(path: Path, expected: str = MODEL_BIN_SHA256, env=os.environ,
+                     required: bool = False) -> bool:
+    """Hash model.bin once per process; raise on a mismatch.
+
+    Outcomes: True = verified. False = skipped (PREACHED_SKIP_MODEL_SHA=1), or the
+    file is absent and `required` is False (a pre-download check). Absent with
+    `required=True` raises: after a load the weights must be where we can hash them.
+    """
+    if env.get("PREACHED_SKIP_MODEL_SHA") == "1":
+        return False
+    if not path.exists():
+        if required:
+            raise RuntimeError(
+                f"{path} is missing, so the pinned weights cannot be verified; refusing to use them. "
+                "Load them through the HF cache under PREACHED_CACHE (or set PREACHED_SKIP_MODEL_SHA=1)."
+            )
+        return False
+    stat = path.stat()
+    key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns, expected)
+    if key in _VERIFIED:
+        return True
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(8 << 20), b""):
+            digest.update(block)
+    if digest.hexdigest() != expected:
+        raise RuntimeError(
+            f"{path} sha256 {digest.hexdigest()} != pinned {expected}. Refusing to load these weights; "
+            "re-download the pinned revision (or set PREACHED_SKIP_MODEL_SHA=1 to skip this check)."
+        )
+    _VERIFIED.add(key)
+    return True
 
 SR = 16000
 GAP_FILL_S = 4.0  # re-decode untranscribed stretches longer than this
@@ -145,9 +190,20 @@ class Transcriber:
         from faster_whisper import BatchedInferencePipeline, WhisperModel
 
         if self._model is None:
-            self._model = WhisperModel(self.model_repo, revision=self.revision,
-                                       device="cuda", compute_type=self.compute_type)
-            self._pipe = BatchedInferencePipeline(self._model)
+            # Pre-check cached weights (absent is fine: a first download lands below),
+            # then check again once loaded, where absent is an error. self._model is
+            # set only after that check passes, so a caught failure can't leave a
+            # half-loaded Transcriber that skips verification on the next call.
+            pinned = (self.model_repo, self.revision) == (MODEL_REPO, MODEL_REVISION)
+            bin_path = snapshot_model_bin(self.model_repo, self.revision)
+            if pinned:
+                verify_model_bin(bin_path, MODEL_BIN_SHA256)
+            model = WhisperModel(self.model_repo, revision=self.revision,
+                                 device="cuda", compute_type=self.compute_type)
+            if pinned:
+                verify_model_bin(bin_path, MODEL_BIN_SHA256, required=True)
+            self._pipe = BatchedInferencePipeline(model)
+            self._model = model
 
     def _step_down(self) -> None:
         old_ct = self.compute_type

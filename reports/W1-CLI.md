@@ -51,6 +51,15 @@ uv run app/server.py                                 # http://127.0.0.1:8000/api
 
 ### Timestamps, 35 answerable questions (5 unanswerable are excluded)
 
+> **How to read this table (W1-HARDEN relabel).** These hit@k numbers are *derived from the
+> alignment*: the gold span and each chunk's `start_s`/`end_s` both come from the same W1-C per-word
+> alignment, so a chunk that contains the quote text overlaps the quote's span by construction.
+> They are therefore **equal to the text metric by construction (14/23 vs 14/23) and are not an
+> independent audio-accuracy result.** They show that timings and text agree, not that the timings
+> match the audio. The audio-accuracy evidence is the **W1-C spot-check**: `start_s` against the
+> audio, |delta| median 0.42 s, max 0.76 s, covered by the 0.75 s pre-roll. Do not present the
+> timestamp hit@k to judges as a separate result.
+
 How a hit is judged: the gold span is the first-to-last word time of the eval quote, found in the
 canonical word stream and read from W1-C's per-word times (`/cache/aligned/wesley/*.json`).
 Every occurrence of the quote counts, in any sermon, matching the text metric, because a sermon
@@ -58,13 +67,14 @@ often repeats its text verse. Grade-2 passages only; grade 1 adds nothing (same 
 
 | Criterion | hit@1 | hit@5 |
 |---|---|---|
-| **Overlap**: hit's `[start_s, end_s]` intersects the gold span, in the same audio file | **14/35 = 0.40** | **23/35 = 0.66** |
-| Text metric (`contains_quote`), for comparison | 14/35 | 23/35 |
+| **Overlap** (derived from the alignment, not an audio measurement): hit's `[start_s, end_s]` intersects the gold span, in the same audio file | **14/35 = 0.40** | **23/35 = 0.66** |
+| Text metric (`contains_quote`); the overlap row equals it by construction | 14/35 | 23/35 |
 | Strict: `start_s` falls inside the gold span | 5/35 = 0.14 | 7/35 = 0.20 |
 
-- **Timestamp hits equal text hits exactly**, question by question (after counting every
-  occurrence of the quote). So alignment lost nothing: whenever the right passage is retrieved, the
-  play position is on it.
+- **Timestamp hits equal text hits exactly** (by construction, see the note above), question by question (after counting every
+  occurrence of the quote). This only shows that the stored times agree with the text; it says
+  nothing about whether they match the audio. The audio evidence is W1-C's spot-check (chunk
+  starts vs the audio: |delta| median 0.42 s, max 0.76 s), which the 0.75 s pre-roll covers.
 - Strict is low by design, not an error: a chunk is ~45 s (median) and the gold quote is a sentence
   or two inside it, so `start_s` is the chunk's start, a little before the quote. Among the 14
   top-1 overlap hits, the quote starts 0 s after `start_s` in 5, ≤ 2 s in 8, and at most 31.7 s

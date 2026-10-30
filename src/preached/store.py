@@ -157,7 +157,13 @@ def update_chunk_metadata(connection: sqlite3.Connection, chunks: list[dict]) ->
 
 
 def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
+    """Replace every chunk and drop all embeddings and their fingerprints.
+
+    Does not commit: the caller commits, so a rebuild (this, the hash write)
+    is one transaction and a crash leaves the index fully old or fully new.
+    """
     connection.execute("DELETE FROM embeddings")
+    connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
     connection.execute("DELETE FROM chunks")
     connection.executemany(
         f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) "
@@ -165,7 +171,10 @@ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
         # Text-only chunk files have no audio fields; missing keys are NULL.
         [{column: chunk.get(column) for column in CHUNK_COLUMNS} for chunk in chunks],
     )
-    connection.commit()
+
+
+def _after_replace() -> None:
+    """No-op seam between the chunk replace and the hash write (tests patch it)."""
 
 
 def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
@@ -206,8 +215,9 @@ def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
             connection.commit()
             return len(chunks)
     replace_chunks(connection, chunks)
+    # Test hook point: a crash here must roll back the replace (see test_store).
+    _after_replace()
     connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('chunks_sha256', ?)", (digest,))
-    connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
     connection.commit()
     return len(chunks)
 

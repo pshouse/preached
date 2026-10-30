@@ -36,6 +36,12 @@ from textnorm import asr_tokens, canonical_tokens  # noqa: E402
 ALIGNED = CACHE_ROOT / "aligned" / "wesley"
 TRANSCRIPTS = CACHE_ROOT / "transcripts" / "wesley"
 TOP_K = 5
+METRIC_NOTE = (
+    "Derived from the W1-C alignment: the gold span and the chunk times come from the same per-word "
+    "alignment, so overlap hit@k equals the text hit@k by construction. It is not an independent "
+    "audio-accuracy result. Audio accuracy is the W1-C spot-check (start_s vs audio: median 0.42 s, "
+    "max 0.76 s, covered by the 0.75 s pre-roll)."
+)
 
 
 def quote_spans(quote: str, tokens: list[str]) -> list[tuple[int, int]]:
@@ -77,7 +83,7 @@ def judge(hit, chunk_file_id: str | None, span: dict) -> dict:
     """Relations between a hit's play position and one gold span."""
     if "error" in span:
         return {"inside": False, "overlap": False}
-    same_file = chunk_file_id in (None, span["file_id"])
+    same_file = chunk_file_id is not None and chunk_file_id == span["file_id"]  # a missing id never matches
     start, end = hit.start_s, hit.end_s
     inside = same_file and span["start_s"] <= start <= span["end_s"]
     overlap = same_file and start < span["end_s"] and end > span["start_s"]
@@ -166,7 +172,7 @@ def main() -> None:
         chunk = chunk_rows[r["top1"]["chunk_id"]]
         spot.append({"id": r["id"], "chunk_id": chunk["chunk_id"], "start_s": chunk["start_s"], "end_s": chunk["end_s"],
                      "audio_file_id": chunk["audio_file_id"], **window_overlap(chunk)})
-    args.out.write_text(json.dumps({"summary": summary, "questions": rows, "spot_check": spot}, indent=1))
+    args.out.write_text(json.dumps({"note": METRIC_NOTE, "summary": summary, "questions": rows, "spot_check": spot}, indent=1))
     print(json.dumps(summary, indent=1))
     for s in spot:
         print(s)
