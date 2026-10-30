@@ -167,3 +167,59 @@ Notes:
 - Behaviour change: `--library spurgeon --index <path>` works only when `<path>` is the canonical file. Copies, symlinks and bench copies of a classic are refused on purpose.
 - `check_servable` checks the marker and path of a classic, not its content. Anyone who can write to `/cache/index/<slug>.sqlite` can still put anything in it. That directory is ours (build_library.py writes it), so this is not handled here.
 - The check and the open are not atomic: a file swapped between `classic_index_problem` and `open_readonly` would not be caught. The window is at startup only, on a directory only we write to.
+
+
+## 12. Merge: `origin/main` with PR #10 (W3-CPU, merge `2ad5550`) into PR #14, plus CTO round 4
+
+PR #10 merged first, as the CTO approved. `origin/main` (`2ad5550`) was merged into `feat/w3-lib` (`ad72124`) as a merge commit, `4dd6df0`. No rebase, no force-push. The CTO round-4 gate and should-fixes are a separate commit on top, `e7c78ed`.
+
+### Conflict resolutions (as in the CTO trial merge)
+
+| File | Resolution |
+|---|---|
+| `app/server.py` (1 hunk, imports) | Kept both: #10's `preached.backends.DEFAULT_EMBED_BACKEND` and #14's `preached.libraries` import. Everything else auto-merged. |
+| `search/query.py`, hunk 1 (imports) | #10's imports (`load_embedder`, `check_query_variant`, `open_readonly`), plus #14's `libraries` import and `INDEX_DIR`. Leftover `connect`, `sync_chunks`, `chunks_in_sync`, `StaleChunks`, `index_chunks_jsonl` and the old `embed` imports are gone. |
+| `search/query.py`, hunk 2 (helpers) | Kept #14's `is_library_file`, `open_index` and `open_target`. `INDEX_PATH` now goes through `open_target` as well (read-only, no sync), like any other `--index`. `ensure_chunks` is deleted: #10 made `query.py` read-only with no sync, so the read-only `chunks_in_sync` check and its fallback to `connect` had no caller. `store.chunks_in_sync` is deleted too, so `src/preached/store.py` is now the same as on main. |
+| `search/query.py`, hunk 3 (arguments) | #14's `--index`/`--library` mutually exclusive group, plus #10's `--embed-backend`, `--onnx-variant`, `--ort-threads` and the torch `--device` help. |
+| `search/query.py`, hunk 4 (open) | `open_index(args.index, args.library)` with #10's comment on why the open does not sync. |
+| Docstrings and `--help` | `open_index`'s docstring, the `--index`/`--library` help and the library-file refusal message no longer mention a Wesley sync. `--index` help now reads "searched read-only as it is, never synced; library files are refused". |
+| `tests/test_libraries.py` | Dropped `test_wesley_index_is_synced` and the whole `WesleySyncReadOnlyTests` class: both tested main's Wesley sync, which #10 removed. Removed the `ensure_chunks` patch from `QueryIndexTargetTests.setUp` and its `assert_not_called` checks. `test_wesley_search_connection_is_read_only` now opens Wesley both by default and by `--index`, and checks the file bytes do not change. |
+
+After the merge commit: **345 tests, all pass**. That matches the CTO trial merge.
+
+### CTO round 4 (`e7c78ed`)
+
+| Item | Change | Tests (`tests/test_libraries.py`) |
+|---|---|---|
+| **Required gate**: `classic_index_problem` had no owner or mode check | After the existing checks (allow-list, no symlink, realpath equality, file exists), it now also requires the following. INDEX_DIR is not a symlink. INDEX_DIR's parent (`os.stat`), INDEX_DIR (`os.lstat`) and the file (`os.lstat`) are each owned by `os.geteuid()` with no group or world write bit. The file is a regular file with `st_nlink == 1`. Both `app/server.py` and `query.py --library` go through it. On this machine `/cache` (0700), `/cache/index` (0755) and `spurgeon.sqlite`/`edwards.sqlite` (0644, one link) all belong to the server's uid, so both classics are still served. | `ClassicOwnerModeTests`: world-writable and group-writable parent, INDEX_DIR and file are refused through `classic_index_problem`, `server.main` and `query.py` (3 targets x 2 bits); a symlinked INDEX_DIR is refused; a hardlinked file is refused, then passes once the extra link is gone; wrong owner for each of parent, dir and file is simulated by mocking `os.stat`/`os.lstat`, and a different server uid by mocking `os.geteuid`; the private layout passes. |
+| Should-fix: church names compared case-sensitively, and `Video_ID` in a side table passed | `CHURCH_COLUMNS`/`REVIEW_COLUMN` are replaced by an allow-list, `WESLEY_SCHEMA`: the exact tables `store.connect` creates (chunks, the five FTS5 tables, embeddings, meta) and each table's columns, compared lower-cased. Any other table or view, or any other column in an allowed table, is refused with its name. SQLite's own `sqlite_*` tables are ignored. A subset is enough, because older bench indexes lack the late columns. The table set used for the `videos`/marker branch is lower-cased too. Wesley ids are matched with `GLOB 'wesley-*'` rather than the case-insensitive `LIKE`. | `WesleyAllowListTests`: `store.connect`'s schema is exactly the allow-list and is served; `Video_ID`, `VIDEO_ID`, `Title`, `Approved_SHA256` and `flag_END_s` in chunks are refused; a side table with `Video_ID`, a `VIDEOS` table, extra columns on meta or embeddings, and a view are refused; `WESLEY-001` is not Wesley. The round-3 tests (`test_church_import_renamed_wesley_is_refused`, 8 columns) still pass. |
+| Should-fix: `st_dev`/`st_ino` before and after the open | `main` records `file_identity(index)` (`st_dev`, `st_ino`, following symlinks as the open does) before `open_readonly`. After `check_servable`, it reads it again and refuses on a mismatch ("was replaced while it was being opened or served"). | `test_inode_change_across_the_open_is_refused` (mocked identities); `test_replaced_file_is_refused_on_reload` (a real `os.replace` onto the path). |
+| `check_servable` on every Searcher #10's reload builds | `App` takes a `servable(connection)` hook. `main` passes `check_servable` plus the identity check, through `build_app`. `_refresh_if_stale` runs it before `_reload_cached_index` and before the keyword-only fallback after a failed stamp read, so no `Searcher` is built from a reloaded file that has not passed the gate. On failure the app drops its searcher and returns 503 `{"error": "index unavailable"}` for search, health and sermon; the details are logged, not sent. `_status_failed` stays set, so the gate runs again on the next request, and serving resumes once it passes. `sermon()` now refreshes too, so it cannot read a file the gate has started refusing. The hook defaults to None, so apps built directly (tests, #10's YouTube reload test) behave as before. | `test_reload_runs_check_servable_before_any_searcher`: an in-place `ALTER TABLE chunks ADD COLUMN Video_ID` plus a new chunk hash makes search, health and sermon return 503 with no `Searcher` built; dropping the column brings search back. #10's `test_server_reloads_youtube_library_and_falls_back` passes unchanged. |
+
+Test INDEX_DIRs in `QueryIndexTargetTests` and `ServerGateTests` now sit one level under the temp dir (`<tmp>/index`), and the module sets umask 022. Otherwise a shared `/tmp` (root-owned, mode 1777) as INDEX_DIR's parent would trip the new gate.
+
+### Results
+
+- **Tests: 357, all pass** (`uv run python -m unittest discover -s tests`): 345 after the merge, plus 12 new.
+- **Wesley is byte-identical to main `2ad5550`.** `git archive 2ad5550` was exported to a temp dir, and both trees were run with the same venv on the real `/cache/index/wesley.sqlite` (onnx fp32 default). `search/query.py` output, stdout plus stderr plus exit code, was byte-identical for 5 queries x bm25/dense/hybrid (15/15). The queries were "what did Wesley say about worry", "Romans 8:16", "assurance of faith", "the witness of the Spirit", and a nonsense query. `/api/search` JSON from `app/server.py` was identical for 5 queries x 3 modes (15/15), apart from `took_ms`. `/healthz` and `/api/sermon/wesley-001` were identical. The sha256 of `/cache/index/wesley.sqlite` was the same before and after the tests and all the runs.
+- `check_servable` on the real files: `wesley.sqlite`, `spurgeon.sqlite` and `edwards.sqlite` are served; `cc-speech.sqlite` is still refused.
+- **`uv lock --check` is clean** (79 packages, main's lock; `uv.lock` and `pyproject.toml` are identical to main). No new dependencies, no LLM.
+- **Head:** `e7c78ed` (code). This report is the commit after it; see `git log -1 origin/feat/w3-lib` for the pushed head.
+
+### Run
+
+```
+uv run python -m unittest discover -s tests
+uv run python -m unittest tests.test_libraries tests.test_youtube
+uv lock --check
+uv run search/query.py "what did Wesley say about worry" --mode hybrid -k 5
+uv run search/query.py "grace" --mode bm25 --library spurgeon
+uv run app/server.py --library edwards --bm25-only
+```
+
+### Open issues
+
+- The reload gate runs only when #10's stamp changes (chunk hash, row count, embedding records) or after a failed read. A schema-only change in place that leaves the stamp alone is not rechecked until the next stamp change. The cached rows do not change in that case either.
+- The identity check compares the path's inode before the open and after the checks. It cannot see the inode SQLite holds open, so a swap and swap-back inside that window would not be caught. The window is at startup, and the owner/mode gate means only the server's uid can write the classics' directory.
+- The owner/mode gate covers the classics only. The Wesley path (`INDEX_PATH`) is gated on content, as before.
+- The section 11 row about `ensure_chunks`/`chunks_in_sync` is superseded: both are gone after the merge.

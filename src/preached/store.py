@@ -304,30 +304,6 @@ def sync_chunks(
     return len(chunks)
 
 
-SCHEMA_OBJECTS = frozenset({"chunks", "chunks_fts", "embeddings", "meta", "chunks_ai", "chunks_ad", "chunks_au"})
-
-
-def chunks_in_sync(connection: sqlite3.Connection, chunks_path: Path) -> bool:
-    """True when ``connect`` plus ``sync_chunks(chunks_path)`` would change nothing.
-
-    Read-only: every schema object and late column exists, the file is in WAL
-    mode, and meta ``chunks_sha256`` equals the chunk file's sha256. Lets a
-    reader skip the read-write open when the index is already current.
-    """
-    import hashlib
-
-    names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
-    if not SCHEMA_OBJECTS <= names:
-        return False
-    have = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
-    if not set(LATE_COLUMNS) <= have:
-        return False
-    if str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
-        return False
-    row = connection.execute("SELECT value FROM meta WHERE key = 'chunks_sha256'").fetchone()
-    return row is not None and row[0] == hashlib.sha256(chunks_path.read_bytes()).hexdigest()
-
-
 def chunk_count(connection: sqlite3.Connection) -> int:
     return int(connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
 

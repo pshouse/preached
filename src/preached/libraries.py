@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import urllib.parse
 from pathlib import Path
 
@@ -160,6 +161,16 @@ def canonical_index(slug: str, index_dir: Path | None = None) -> Path:
     return (paths.INDEX_DIR if index_dir is None else Path(index_dir)) / f"{slug}.sqlite"
 
 
+def _owner_mode_problem(path: Path, st: os.stat_result, what: str) -> str | None:
+    """Owned by the server's uid, with no group or world write bit."""
+    uid = os.geteuid()
+    if st.st_uid != uid:
+        return f"{what} {path} is owned by uid {st.st_uid}, not this server's uid {uid}"
+    if st.st_mode & 0o022:
+        return f"{what} {path} is group- or world-writable (mode {stat.S_IMODE(st.st_mode):o})"
+    return None
+
+
 def classic_index_problem(slug: object, path: Path, index_dir: Path | None = None) -> str | None:
     """Why ``path`` may not be treated as the classic library ``slug``, or None.
 
@@ -169,6 +180,11 @@ def classic_index_problem(slug: object, path: Path, index_dir: Path | None = Non
     not be symlinks and must resolve (realpath) to the same file, so a library
     marker in any other file is never trusted. ``index_dir`` defaults to
     ``preached.paths.INDEX_DIR`` read at call time.
+
+    Nobody but this server's uid may have put the file there or changed it:
+    INDEX_DIR, its parent and the file are owned by the server's uid with no
+    group or world write; INDEX_DIR and the file are not symlinks; the file is
+    a regular file with one link (no hardlink from elsewhere).
     """
     if not is_public_domain(slug):
         return f"{slug!r} is not a public-domain library (allowed: {', '.join(PUBLIC_DOMAIN)})"
@@ -180,4 +196,25 @@ def classic_index_problem(slug: object, path: Path, index_dir: Path | None = Non
         return f"{given} is not {canonical}; the {slug} library is served only from there"
     if not os.path.isfile(canonical):
         return f"missing index {canonical}"
+    directory = canonical.parent
+    if os.path.islink(directory):
+        return f"index directory {directory} is a symlink; the {slug} library is not served through it"
+    parent = Path(os.path.abspath(directory)).parent
+    try:
+        checks = (
+            (parent, os.stat(parent), "index parent directory"),
+            (directory, os.lstat(directory), "index directory"),
+            (canonical, os.lstat(canonical), "index"),
+        )
+    except OSError as exc:
+        return f"cannot check {canonical} ({exc})"
+    for target, st, what in checks:
+        problem = _owner_mode_problem(target, st, what)
+        if problem is not None:
+            return problem
+    st = checks[2][1]
+    if not stat.S_ISREG(st.st_mode):
+        return f"{canonical} is not a regular file"
+    if st.st_nlink != 1:
+        return f"{canonical} has {st.st_nlink} hard links; the {slug} library is served only from a file with one"
     return None
