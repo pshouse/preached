@@ -233,13 +233,22 @@ def main() -> None:
     n_chunks = ensure_chunks(connection)
     questions = read_jsonl(questions_path())
     rows = list(connection.execute("SELECT rowid, sermon_title, scripture, text FROM chunks ORDER BY rowid"))
-    report = {
-        "chunks": n_chunks,
-        "questions": len(questions),
-        "index_path": str(INDEX_PATH),
-        "excluded_models": EXCLUDED,
-        "models": {},
-    }
+    # A later run of one model must keep the other models' numbers.
+    if args.out.exists():
+        report = json.loads(args.out.read_text())
+        report["chunks"] = n_chunks
+        report["questions"] = len(questions)
+        report["index_path"] = str(INDEX_PATH)
+        report["excluded_models"] = EXCLUDED
+        report.setdefault("models", {})
+    else:
+        report = {
+            "chunks": n_chunks,
+            "questions": len(questions),
+            "index_path": str(INDEX_PATH),
+            "excluded_models": EXCLUDED,
+            "models": {},
+        }
     print(f"chunks={n_chunks} questions={len(questions)}", flush=True)
 
     # BM25 does not depend on a model. Computed once inside the first model
