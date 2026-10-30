@@ -12,10 +12,12 @@ here to take it out of the product.
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 from pathlib import Path
 
+from preached import paths
 from preached.paths import repo_root
 
 PUBLIC_DOMAIN = ("spurgeon", "edwards")
@@ -37,6 +39,13 @@ def provenance_path(slug: str) -> Path:
     return repo_root() / "ingest" / "manifest" / f"{slug}.provenance.json"
 
 
+def manifest_path(slug: str) -> Path:
+    """Where the committed manifest for ``slug`` lives (it may not exist)."""
+    if slug not in PUBLIC_DOMAIN:
+        raise ValueError(f"{slug!r} is not a public-domain library")
+    return repo_root() / "ingest" / "manifest" / f"{slug}.jsonl"
+
+
 def _text(value: object) -> bool:
     return isinstance(value, str) and value.strip() != ""
 
@@ -51,7 +60,7 @@ def audio_url(ia_identifier: str, file_name: str) -> str:
 
 
 def _archive_url(url: str) -> bool:
-    if "\\" in url or re.search(r"[\x00-\x20\x7f-\x9f]", url):
+    if "\\" in url or not url.isascii() or re.search(r"[\x00-\x20\x7f-\x9f]", url):
         return False
     try:
         parts = urllib.parse.urlsplit(url)
@@ -109,10 +118,66 @@ def load_provenance(slug: object) -> dict:
     return data
 
 
-def is_public_domain(slug: object) -> bool:
-    """True only for an allow-listed slug whose committed provenance checks out."""
+def check_manifest(slug: str, provenance: dict) -> None:
+    """BadProvenance unless the committed manifest and provenance list the same audio.
+
+    Same ids, and per id the same file name, size and md5, with the audio URL
+    that provenance derives. Checked whenever a library is used (build, query,
+    serve), not only when it is built.
+    """
+    path = manifest_path(slug)
     try:
-        load_provenance(slug)
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError) as exc:
+        raise BadProvenance(f"{path}: cannot read manifest ({exc})") from None
+    entries = {entry["id"]: entry for entry in provenance["audio_files"]}
+    ids = [row.get("id") if isinstance(row, dict) else None for row in rows]
+    if len(set(ids)) != len(ids) or set(ids) != set(entries):
+        raise BadProvenance(f"{path}: manifest ids differ from {slug}.provenance.json")
+    for row in rows:
+        entry = entries[row["id"]]
+        for key in ("file_name", "size", "md5"):
+            if row.get(key) != entry[key]:
+                raise BadProvenance(f"{path}: {row['id']} {key} {row.get(key)!r} != provenance {entry[key]!r}")
+        if row.get("audio_url") != audio_url(provenance["ia_identifier"], entry["file_name"]):
+            raise BadProvenance(f"{path}: {row['id']} audio_url does not match provenance")
+
+
+def is_public_domain(slug: object) -> bool:
+    """True only for an allow-listed slug whose committed provenance checks out
+    and agrees with its committed manifest."""
+    try:
+        check_manifest(slug, load_provenance(slug))
     except BadProvenance:
         return False
     return True
+
+
+def canonical_index(slug: str, index_dir: Path | None = None) -> Path:
+    """The one place a classic library's index may live: INDEX_DIR/<slug>.sqlite."""
+    if slug not in PUBLIC_DOMAIN:
+        raise ValueError(f"{slug!r} is not a public-domain library")
+    return (paths.INDEX_DIR if index_dir is None else Path(index_dir)) / f"{slug}.sqlite"
+
+
+def classic_index_problem(slug: object, path: Path, index_dir: Path | None = None) -> str | None:
+    """Why ``path`` may not be treated as the classic library ``slug``, or None.
+
+    The single gate for the classics exemption (no redaction, no review): the
+    slug passes ``is_public_domain`` and ``path`` is the canonical
+    INDEX_DIR/<slug>.sqlite. Both the given path and the canonical path must
+    not be symlinks and must resolve (realpath) to the same file, so a library
+    marker in any other file is never trusted. ``index_dir`` defaults to
+    ``preached.paths.INDEX_DIR`` read at call time.
+    """
+    if not is_public_domain(slug):
+        return f"{slug!r} is not a public-domain library (allowed: {', '.join(PUBLIC_DOMAIN)})"
+    canonical = canonical_index(slug, index_dir)
+    given = Path(path)
+    if os.path.islink(given) or os.path.islink(canonical):
+        return f"{given} is a symlink; the {slug} library is served only from {canonical}"
+    if os.path.realpath(given) != os.path.realpath(canonical):
+        return f"{given} is not {canonical}; the {slug} library is served only from there"
+    if not os.path.isfile(canonical):
+        return f"missing index {canonical}"
+    return None

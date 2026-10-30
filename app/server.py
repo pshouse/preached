@@ -33,7 +33,7 @@ if str(SRC) not in sys.path:
 
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
-from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -576,15 +576,28 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
+# Columns a YouTube/church import (or PR #12's review gate) adds. The real
+# Wesley index has none of them, so a file with any is never served as Wesley.
+CHURCH_COLUMNS = frozenset({"video_id", "title", "published", "flag_end_s"})
+REVIEW_COLUMN = re.compile(r"approv|review", re.IGNORECASE)
+
+
 def check_servable(connection, library: str, index: Path) -> None:
     """SystemExit unless this file is the Wesley index or an allow-listed public-domain library.
 
     Nothing else is served: church libraries (YouTube imports) have no
     redaction or approval gate yet, so they are refused (fail closed) until
-    PR #12 lands. A library file (``videos`` table or meta ``library``) must
-    carry a ``library`` marker naming an allow-listed slug equal to
-    ``--library``. Any other file must look like the Wesley index (chunks,
-    every sermon id ``wesley-*``) and be served as ``wesley``.
+    PR #12 lands.
+
+    A classic (``--library spurgeon``/``edwards``) is served only from its
+    canonical INDEX_DIR/<slug>.sqlite (``libraries.classic_index_problem``:
+    realpath equality, no symlinks), and that file must carry the matching
+    ``library`` marker. A marker anywhere else is not trusted.
+
+    Wesley must look like the Wesley index: chunks, every sermon id
+    ``wesley-*``, no ``videos`` table, no ``library`` marker, and no chunk
+    column that a church import or the review gate adds (CHURCH_COLUMNS, or
+    any approval/review column).
     """
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     marker = None
@@ -592,22 +605,32 @@ def check_servable(connection, library: str, index: Path) -> None:
         row = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
         marker = row[0] if row is not None else None
     allowed = f"allowed: {', '.join((LIBRARY, *PUBLIC_DOMAIN))}"
-    if "videos" in tables or marker is not None:
-        if marker is None or not is_public_domain(marker):
-            raise SystemExit(
-                f"error: {index} is not a public-domain library ({allowed}). Church libraries are not "
-                "served until redaction and approval are in place."
-            )
+    if library != LIBRARY:
+        problem = classic_index_problem(library, index, INDEX_DIR)
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
         if marker != library:
-            raise SystemExit(f"error: {index} is the {marker!r} library; serve it with --library {marker}")
+            raise SystemExit(f"error: {index} is not marked as the {library!r} library (marker {marker!r})")
         return
+    if "videos" in tables or marker is not None:
+        if marker is not None and is_public_domain(marker):
+            raise SystemExit(f"error: {index} is the {marker!r} library; serve it with --library {marker}")
+        raise SystemExit(
+            f"error: {index} is not a public-domain library ({allowed}). Church libraries are not "
+            "served until redaction and approval are in place."
+        )
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")} if "chunks" in tables else set()
+    foreign = sorted(c for c in columns if c in CHURCH_COLUMNS or REVIEW_COLUMN.search(c))
+    if foreign:
+        raise SystemExit(
+            f"error: {index} has church-import columns ({', '.join(foreign)}); it is not the Wesley index. "
+            "Church libraries are not served until redaction and approval are in place."
+        )
     wesley = "chunks" in tables and connection.execute(
         "SELECT count(*) > 0 AND count(*) = sum(sermon_id LIKE 'wesley-%') FROM chunks"
     ).fetchone()[0]
     if not wesley:
         raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
-    if library != LIBRARY:
-        raise SystemExit(f"error: {index} is a Wesley index; serve it with --library {LIBRARY}")
 
 
 def main(argv: list[str] | None = None) -> None:
