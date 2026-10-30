@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -13,11 +14,13 @@ import urllib.request
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
 
-from app.server import CSP, STATIC_DIR, App, Searcher, build_app, make_server
+from app.server import CSP, STATIC_DIR, App, Searcher, build_app, make_server, prepare_church
+from preached.abstain import Signals, church_confidence, decide
 from preached.library import (
     CHURCH_EMPTY,
     church_index_matches,
@@ -284,6 +287,88 @@ class MarkTests(unittest.TestCase):
             self.assertIsNone(resolve_church_path(root, classic=wesley, church_library="missing"))
             self.assertEqual(resolve_church_path(root, classic=wesley, church_library="sample"), first)
 
+    def test_classic_copy_bytes_are_unchanged_and_a_sibling_is_cleared_without_wal(self) -> None:
+        """A mistaken mark must not migrate wesley or turn on WAL.
+
+        store.connect rewrites the schema and sets journal_mode=WAL. Clearing
+        a sibling uses a plain sqlite3 connection. wesley, spurgeon, edwards,
+        and a canonical classic path are not opened.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            classics = {
+                name: root / f"{name}.sqlite" for name in ("wesley", "spurgeon", "edwards")
+            }
+            for path in classics.values():
+                _plain_marked(path)
+            before = {name: path.read_bytes() for name, path in classics.items()}
+            other = root / "other.sqlite"
+            _plain_marked(other)
+            sample = root / "sample.sqlite"
+            rows, vectors = church_rows()
+            build_library(sample, rows[:1], vectors[:1])
+            # A marked wesley copy is not a candidate, so it is not opened.
+            self.assertEqual(church_index_matches(root), [other])
+            mark_your_church_exclusive(sample, root, sample=True)
+            for name, path in classics.items():
+                self.assertEqual(path.read_bytes(), before[name], name)
+                self.assertFalse(path.with_name(path.name + "-wal").exists(), name)
+                self.assertFalse(path.with_name(path.name + "-journal").exists(), name)
+                kept = sqlite3.connect(path)
+                try:
+                    self.assertEqual(
+                        kept.execute("SELECT value FROM meta WHERE key = 'role'").fetchone()[0],
+                        "church",
+                    )
+                    self.assertEqual(kept.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+                finally:
+                    kept.close()
+            cleared = sqlite3.connect(other)
+            try:
+                self.assertIsNone(
+                    cleared.execute("SELECT value FROM meta WHERE key = 'role'").fetchone()
+                )
+                self.assertEqual(cleared.execute("PRAGMA journal_mode").fetchone()[0], "delete")
+                tables = {row[0] for row in cleared.execute("SELECT name FROM sqlite_master")}
+            finally:
+                cleared.close()
+            self.assertNotIn("chunks_fts", tables)
+            self.assertNotIn("embeddings", tables)
+            self.assertFalse(other.with_name(other.name + "-wal").exists())
+            marked = open_readonly(sample)
+            try:
+                self.assertTrue(is_your_church(marked))
+            finally:
+                marked.close()
+            # Marking the wesley copy itself must not rewrite it either.
+            with self.assertRaises(ValueError):
+                mark_your_church_exclusive(classics["wesley"], root)
+            self.assertEqual(classics["wesley"].read_bytes(), before["wesley"])
+
+            canonical = root / "archive.sqlite"
+            _plain_marked(canonical)
+            canonical_before = canonical.read_bytes()
+            with patch("preached.paths.INDEX_PATH", canonical):
+                mark_your_church_exclusive(sample, root, sample=True)
+            self.assertEqual(canonical.read_bytes(), canonical_before)
+            self.assertFalse(canonical.with_name(canonical.name + "-wal").exists())
+
+
+def _plain_marked(path: Path) -> None:
+    """A church-marked file that did not go through store.connect (no WAL)."""
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+        connection.execute("INSERT INTO meta (key, value) VALUES ('role', 'church')")
+        connection.execute("CREATE TABLE chunks (chunk_id TEXT, text TEXT)")
+        connection.execute(
+            "INSERT INTO chunks VALUES ('wesley-001-c0000', ?)",
+            ("By grace are ye saved through faith. " * 20,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
 
 class SideApiTests(unittest.TestCase):
     @classmethod
@@ -320,34 +405,22 @@ class SideApiTests(unittest.TestCase):
             self.assertEqual(set(hit), RESULT_KEYS)
             self.assertEqual(hit["audio_url"], CLASSIC_AUDIO)
 
-        status, _, body = self.both.get("/api/search?q=classiconlytoken&library=sample&mode=bm25")
-        self.assertEqual(status, 200)
-        empty = json.loads(body)
-        self.assertEqual(empty["results"], [])
-        self.assertNotIn(b"Salvation", body)
-
-        status, _, body = self.both.get("/api/search?q=churchonlytoken&library=sample&mode=bm25")
-        self.assertEqual(status, 200)
-        church = json.loads(body)
-        self.assertIn("churchonlytoken", texts(church))
-        self.assertNotIn("classiconlytoken", texts(church))
-        self.assertEqual(sermon_ids(church), {"samplevid01"})
-        hit = church["results"][0]
-        self.assertEqual(set(hit), RESULT_KEYS)
-        self.assertEqual(hit["audio_url"], CHURCH_AUDIO)
-        self.assertEqual(hit["text_source"], "asr")
-        self.assertEqual(hit["start_s"], 12.2)
-        self.assertEqual(hit["source_url"], WATCH)
+        # A church slug is not an open library. Same 400 as a server with no church file.
+        for slug in ("sample", "spurgeon"):
+            status, _, body = self.both.get(f"/api/search?q=churchonlytoken&library={slug}&mode=bm25")
+            self.assertEqual(status, 400, slug)
+            self.assertEqual(json.loads(body)["error"], "library must be wesley")
+            self.assert_no_church_payload(body)
+            only_status, _, only_body = self.classic_only.get(
+                f"/api/search?q=churchonlytoken&library={slug}&mode=bm25"
+            )
+            self.assertEqual(status, only_status)
+            self.assertEqual(json.loads(body)["error"], json.loads(only_body)["error"])
 
         status, _, body = self.both.get("/api/search?q=churchonlytoken&library=wesley&mode=bm25")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["results"], [])
-        self.assertNotIn(b"On Mercy", body)
-
-        status, _, body = self.both.get("/api/search?q=sharedpulpit&library=spurgeon&mode=bm25")
-        self.assertEqual(status, 400)
-        self.assertIn("library must be wesley or sample", json.loads(body)["error"])
-        self.assertNotIn(b"sharedpulpit", body)
+        self.assert_no_church_payload(body)
 
         status, _, body = self.both.get("/api/search?q=classiconlytoken&mode=bm25&k=1")
         self.assertEqual(status, 200)
@@ -378,25 +451,39 @@ class SideApiTests(unittest.TestCase):
         self.assertEqual(len(classic["results"]), 1)
         self.assertIn("classiconlytoken", texts(classic))
         self.assertNotIn("churchonlytoken", texts(classic))
-        self.assertTrue(church["sample"])
-        self.assertEqual(church["label"], "Your church")
-        self.assertTrue(church["present"])
-        self.assertTrue(church["empty"])
-        self.assertEqual(church["message"], CHURCH_EMPTY)
-        self.assertEqual(church["results"], [])
-        self.assertTrue(church["abstain"])
-        self.assertEqual(church["confidence"]["level"], "none")
-        self.assertNotIn(b"classiconlytoken", json.dumps(church).encode())
+        self.assert_missing_church(church)
+        self.assert_no_church_payload(json.dumps(church).encode())
+
+        only_status, _, only_body = self.classic_only.get("/api/side?q=classiconlytoken&mode=bm25&k=1")
+        self.assertEqual(only_status, 200)
+        only = json.loads(only_body)
+        self.assertEqual(_without_took(payload), _without_took(only))
 
         status, _, body = self.both.get("/api/side?q=churchonlytoken&mode=bm25&k=5")
         swapped = json.loads(body)
         self.assertEqual(status, 200)
         self.assertTrue(swapped["classic"]["abstain"])
         self.assertEqual(swapped["classic"]["results"], [])
-        self.assertFalse(swapped["church"]["abstain"])
-        self.assertIn("churchonlytoken", texts(swapped["church"]))
-        self.assertNotIn("classiconlytoken", texts(swapped["church"]))
-        self.assertTrue(sermon_ids(swapped["classic"]).isdisjoint(sermon_ids(swapped["church"])))
+        self.assert_missing_church(swapped["church"])
+        self.assert_no_church_payload(body)
+
+    def test_configured_church_matches_the_no_church_responses(self) -> None:
+        """A fixture church file must not change /api/side, /api/search, or /healthz."""
+        side_both = self.both.get("/api/side?q=sharedpulpit&mode=bm25&k=5")
+        side_only = self.classic_only.get("/api/side?q=sharedpulpit&mode=bm25&k=5")
+        self.assertEqual(side_both[0], 200)
+        self.assertEqual(side_only[0], 200)
+        both_payload = json.loads(side_both[2])
+        only_payload = json.loads(side_only[2])
+        self.assertEqual(_without_took(both_payload), _without_took(only_payload))
+        self.assert_missing_church(both_payload["church"])
+        self.assertFalse(both_payload["church"]["present"])
+        self.assert_no_church_payload(side_both[2])
+
+        health_both = json.loads(self.both.get("/healthz")[2])
+        health_only = json.loads(self.classic_only.get("/healthz")[2])
+        self.assertIsNone(health_both["church"])
+        self.assertEqual(health_both, health_only)
 
     def test_low_confidence_is_per_side(self) -> None:
         status, _, body = self.both.get("/api/side?q=sharedpulpit&mode=hybrid&k=5")
@@ -406,13 +493,12 @@ class SideApiTests(unittest.TestCase):
         church = payload["church"]
         self.assertFalse(classic["abstain"])
         self.assertEqual(classic["confidence"]["level"], "strong")
-        self.assertFalse(church["abstain"])
-        self.assertEqual(church["confidence"]["level"], "weak")
+        self.assert_missing_church(church)
         self.assertIn("sharedpulpit", texts(classic))
-        self.assertIn("sharedpulpit", texts(church))
-        self.assertTrue(sermon_ids(classic).isdisjoint(sermon_ids(church)))
         self.assertTrue(all(hit["audio_url"] == CLASSIC_AUDIO for hit in classic["results"]))
-        self.assertTrue(all("youtube.com" in hit["audio_url"] for hit in church["results"]))
+        self.assert_no_church_payload(json.dumps(church).encode())
+        only = json.loads(self.classic_only.get("/api/side?q=sharedpulpit&mode=hybrid&k=5")[2])
+        self.assertEqual(_without_took(payload), _without_took(only))
 
     def test_missing_church_is_an_empty_side_not_an_error(self) -> None:
         status, _, body = self.classic_only.get("/api/side?q=classiconlytoken&mode=bm25")
@@ -472,12 +558,43 @@ class SideApiTests(unittest.TestCase):
                 church_library="sample",
             )
             payload = app.side("churchonlytoken", 5, "hybrid")
-            self.assertIn("churchonlytoken", texts(payload["church"]))
-            self.assertEqual(payload["church"]["mode"], "bm25")
-            self.assertIn("BM25", payload["church"]["note"])
-            self.assertNotIn("churchonlytoken", texts(payload["classic"]))
-            self.assertTrue(all(hit["audio_url"] == CLASSIC_AUDIO for hit in payload["classic"]["results"]))
-            self.assertTrue(all("youtube.com" in hit["audio_url"] for hit in payload["church"]["results"]))
+            self.assert_missing_church(payload["church"])
+            self.assert_no_church_payload(json.dumps(payload["church"]).encode())
+            classic = app.side("classiconlytoken", 5, "hybrid")
+            self.assertIn("classiconlytoken", texts(classic["classic"]))
+            self.assertTrue(all(hit["audio_url"] == CLASSIC_AUDIO for hit in classic["classic"]["results"]))
+            self.assert_missing_church(classic["church"])
+
+    def assert_missing_church(self, church: dict) -> None:
+        self.assertEqual(
+            church,
+            {
+                "library": None,
+                "label": "Your church",
+                "sample": False,
+                "present": False,
+                "empty": True,
+                "message": CHURCH_EMPTY,
+                "mode": None,
+                "results": [],
+                "note": None,
+                "abstain": False,
+                "confidence": None,
+            },
+        )
+
+    def assert_no_church_payload(self, body: bytes) -> None:
+        """Church fixture text must not appear outside the echoed query."""
+        payload = json.loads(body)
+        scrubbed = json.dumps(_drop_query(payload), ensure_ascii=False).encode()
+        self.assertNotIn(b"churchonlytoken", scrubbed)
+        self.assertNotIn(b"samplevid01", scrubbed)
+        self.assertNotIn(b"samplevid02", scrubbed)
+        self.assertNotIn(b"youtube.com", scrubbed)
+        self.assertNotIn(b"On Mercy", scrubbed)
+        self.assertNotIn(b"On Hope", scrubbed)
+        self.assertNotIn(WATCH.encode(), scrubbed)
+        self.assertNotIn(CHURCH_AUDIO.encode(), scrubbed)
 
 
 class SideCliTests(unittest.TestCase):
@@ -489,54 +606,200 @@ class SideCliTests(unittest.TestCase):
             church = root / "sample.sqlite"
             build_library(classic, *classic_rows())
             build_library(church, *church_rows(), church=True, sample=True)
-            with patch.object(module, "ensure_chunks", lambda connection: None):
-                out = StringIO()
-                with redirect_stdout(out):
-                    module.main(
-                        [
-                            "classiconlytoken",
-                            "--mode",
-                            "bm25",
-                            "-k",
-                            "5",
-                            "--side",
-                            "--index",
-                            str(classic),
-                            "--church-index",
-                            str(church),
-                        ]
-                    )
+            out = StringIO()
+            with redirect_stdout(out):
+                module.main(
+                    [
+                        "classiconlytoken",
+                        "--mode",
+                        "bm25",
+                        "-k",
+                        "5",
+                        "--side",
+                        "--index",
+                        str(classic),
+                        "--church-index",
+                        str(church),
+                    ]
+                )
             text = out.getvalue()
             classic_body = _section(text, "Classic library: John Wesley")
-            church_body = _section(text, "Your church (sample data)")
+            church_body = _section(text, "Your church")
             self.assertIn("classiconlytoken", classic_body)
             self.assertNotIn("churchonlytoken", classic_body)
             self.assertIn("confidence: unrated", classic_body)
             self.assertIn(CLASSIC_AUDIO, classic_body)
             self.assertIn(CHURCH_EMPTY, church_body)
-            self.assertIn("confidence: none", church_body)
-            self.assertNotIn("classiconlytoken", church_body)
-            self.assertNotIn("churchonlytoken", church_body)
+            self.assertNotIn("confidence:", church_body)
+            self.assertNotIn("sample data", church_body)
+            self.assertNotIn("churchonlytoken", text)
+            self.assertNotIn("youtube.com", text)
+            self.assertNotIn(CHURCH_AUDIO, text)
 
             missing = StringIO()
-            with patch.object(module, "ensure_chunks", lambda connection: None):
-                with redirect_stdout(missing):
-                    module.main(
-                        [
-                            "classiconlytoken",
-                            "--mode",
-                            "bm25",
-                            "--side",
-                            "--index",
-                            str(classic),
-                            "--church-index",
-                            str(root / "absent.sqlite"),
-                        ]
-                    )
+            with redirect_stdout(missing):
+                module.main(
+                    [
+                        "classiconlytoken",
+                        "--mode",
+                        "bm25",
+                        "-k",
+                        "5",
+                        "--side",
+                        "--index",
+                        str(classic),
+                        "--church-index",
+                        str(root / "absent.sqlite"),
+                    ]
+                )
             absent = missing.getvalue()
+            self.assertEqual(text, absent)
             self.assertIn("## Your church\n", absent)
             self.assertIn(CHURCH_EMPTY, _section(absent, "Your church"))
-            self.assertNotIn("sample data", _section(absent, "Your church"))
+
+    def test_classic_church_slug_is_refused(self) -> None:
+        module = _load_query()
+        for slug in ("wesley", "spurgeon", "edwards"):
+            with self.assertRaises(SystemExit) as caught:
+                module.main(
+                    [
+                        "mercy",
+                        "--mode",
+                        "bm25",
+                        "--side",
+                        "--church-library",
+                        slug,
+                    ]
+                )
+            self.assertIn("classic", str(caught.exception))
+
+    def test_church_confidence_is_unrated_not_the_wesley_floor(self) -> None:
+        signals = Signals(bm25_hits=1, dense_top=0.2, agreement=True)
+        self.assertEqual(decide(signals, 0.5, has_results=True).level, "weak")
+        rated = church_confidence(signals, has_results=True)
+        self.assertEqual(rated.level, "unrated")
+        self.assertFalse(rated.calibrated)
+        self.assertIsNone(rated.floor)
+        self.assertFalse(rated.abstain)
+        strong = Signals(bm25_hits=2, dense_top=0.9, agreement=True)
+        self.assertEqual(decide(strong, 0.5, has_results=True).level, "strong")
+        self.assertEqual(church_confidence(strong, has_results=True).level, "unrated")
+        low = Signals(bm25_hits=0, dense_top=0.1, agreement=False)
+        self.assertEqual(decide(low, 0.5, has_results=True).level, "none")
+        self.assertEqual(church_confidence(low, has_results=True).level, "unrated")
+        empty = church_confidence(signals, has_results=False)
+        self.assertEqual(empty.level, "none")
+        self.assertFalse(empty.calibrated)
+        self.assertIsNone(empty.floor)
+
+        module = _load_query()
+
+        class FakeSearcher:
+            def __init__(self, connection, model=None):
+                self.connection = connection
+                self._matrix = np.ones((1, 4), dtype=np.float32)
+                self._rowids = [1]
+
+            def hybrid(self, *_args, **_kwargs):
+                return [object()]
+
+            def dense(self, *_args, **_kwargs):
+                return [object()]
+
+            def bm25(self, *_args, **_kwargs):
+                return [object()]
+
+        args = SimpleNamespace(
+            query="classiconlytoken",
+            k=5,
+            mode="hybrid",
+            fusion="rrf",
+            rrf_k=60,
+            dense_weight=0.5,
+        )
+        floors: list = []
+
+        def floor_for(*pos, **_kwargs):
+            floors.append(pos)
+            return 0.5
+
+        vector = np.ones(4, dtype=np.float32)
+        with (
+            patch.object(module, "Searcher", FakeSearcher),
+            patch.object(module, "compute_signals", lambda *_a, **_k: signals),
+            patch.object(module, "floor_for", floor_for),
+        ):
+            _hits, confidence, *_rest = module.search_index(
+                None, args, vector, "fixture", fallback_bm25=True, church=True
+            )
+        self.assertEqual(confidence.level, "unrated")
+        self.assertEqual(floors, [])
+        with (
+            patch.object(module, "Searcher", FakeSearcher),
+            patch.object(module, "compute_signals", lambda *_a, **_k: signals),
+            patch.object(module, "floor_for", floor_for),
+        ):
+            _hits, wesley, *_rest = module.search_index(
+                None, args, vector, "fixture", fallback_bm25=False, church=False
+            )
+        self.assertEqual(wesley.level, "weak")
+        self.assertTrue(floors)
+
+
+class ChurchRefusalTests(unittest.TestCase):
+    def test_explicit_classic_slug_is_refused_and_a_marked_copy_is_not_opened(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            classic = root / "built.sqlite"
+            build_library(classic, *classic_rows())
+            for slug in ("wesley", "spurgeon", "edwards"):
+                path = root / f"{slug}.sqlite"
+                _plain_marked(path)
+                before = path.read_bytes()
+                with self.assertRaises(SystemExit) as caught:
+                    prepare_church(root, classic=classic, church_index=None, church_library=slug)
+                self.assertIn(slug, str(caught.exception))
+                self.assertIn("classic", str(caught.exception))
+                with self.assertRaises(SystemExit):
+                    prepare_church(root, classic=classic, church_index=path, church_library=None)
+                self.assertEqual(path.read_bytes(), before)
+            # A missing classic name is still refused.
+            absent = root / "gone" / "edwards.sqlite"
+            with self.assertRaises(SystemExit):
+                prepare_church(root, classic=classic, church_index=absent, church_library=None)
+            titled = root / "Wesley.sqlite"
+            _plain_marked(titled)
+            titled_before = titled.read_bytes()
+            with self.assertRaises(SystemExit) as titled_exit:
+                prepare_church(root, classic=classic, church_index=titled, church_library=None)
+            self.assertIn("classic", str(titled_exit.exception))
+            self.assertEqual(titled.read_bytes(), titled_before)
+            # Auto-detected mark on a wesley copy does not stop resolution.
+            found = prepare_church(root, classic=classic, church_index=None, church_library=None)
+            self.assertEqual(found, (None, None))
+            sample = root / "sample.sqlite"
+            rows, vectors = church_rows()
+            build_library(sample, rows[:1], vectors[:1], church=True, sample=True)
+            before = sample.read_bytes()
+            path, slug = prepare_church(root, classic=classic, church_index=None, church_library="sample")
+            self.assertEqual(path, sample)
+            self.assertEqual(slug, "sample")
+            self.assertEqual(sample.read_bytes(), before)
+
+
+def _without_took(payload: dict) -> dict:
+    copy = json.loads(json.dumps(payload))
+    copy.pop("took_ms", None)
+    return copy
+
+
+def _drop_query(value):
+    """Remove echoed ``query`` fields so a church-token query is not a hit."""
+    if isinstance(value, dict):
+        return {key: _drop_query(item) for key, item in value.items() if key != "query"}
+    if isinstance(value, list):
+        return [_drop_query(item) for item in value]
+    return value
 
 
 def _section(text: str, heading: str) -> str:

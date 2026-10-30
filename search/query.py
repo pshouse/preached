@@ -17,16 +17,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
-from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
+from preached.abstain import church_confidence, compute_signals, decide, floor_for  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.library import (  # noqa: E402
     CHURCH_EMPTY,
+    classic_church_refusal,
     classic_heading,
     church_heading,
-    resolve_church_path,
 )
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
+from preached.paths import INDEX_PATH  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, check_query_variant, open_readonly  # noqa: E402
 from preached.youtube.listing import youtube_watch_url  # noqa: E402
@@ -142,12 +142,18 @@ def search_index(
     fallback_bm25: bool,
     backend: str | None = None,
     variant: str | None = None,
+    church: bool = False,
 ):
     """Hits and confidence for one library file. Same rule as a single query.
 
     ``fallback_bm25`` is for the church file: a vector mismatch prints keyword
     hits instead of stopping the classic side. The floor is the one fitted
     for this query embedder (backend and variant), same as a single search.
+
+    ``church=True`` does not apply that floor. Church confidence is unrated
+    until a floor is fitted on a church library (``abstain.church_confidence``).
+    The CLI does not call this for the church side until PR #12's gate is on
+    main; the flag is the rule that side will use.
     """
     used_vector = vector
     used_model = model_name
@@ -181,16 +187,17 @@ def search_index(
         used_model = None
         used_mode = "bm25"
         note = "Stored passage vectors do not match the configured model; results are BM25 only."
-    floor = (
-        floor_for(used_model, backend=backend or "torch", variant=variant)
-        if used_vector is not None
-        else None
-    )
-    confidence = decide(
-        compute_signals(searcher, args.query, used_vector, hits),
-        floor,
-        has_results=bool(hits),
-    )
+    signals = compute_signals(searcher, args.query, used_vector, hits)
+    if church:
+        # Wesley's floor does not apply. Unrated until a church floor exists.
+        confidence = church_confidence(signals, has_results=bool(hits))
+    else:
+        floor = (
+            floor_for(used_model, backend=backend or "torch", variant=variant)
+            if used_vector is not None
+            else None
+        )
+        confidence = decide(signals, floor, has_results=bool(hits))
     return hits, confidence, used_mode, used_model, note
 
 
@@ -232,6 +239,9 @@ def main(argv: list[str] | None = None) -> None:
         help="Church library slug under the index directory, when --church-index is omitted",
     )
     args = parser.parse_args(argv)
+    refusal = classic_church_refusal(args.church_library, args.church_index)
+    if refusal:
+        raise SystemExit(refusal)
 
     # Read-only, and it does not sync. A text-only chunks.jsonl matches the
     # aligned index on ids and text; syncing it would null every start_s,
@@ -328,35 +338,22 @@ def print_side(
     backend: str | None = None,
     variant: str | None = None,
 ) -> None:
-    """Classic section, then your church. A missing church file is not an error."""
+    """Classic section, then an empty church section.
+
+    The church file is not opened. Until PR #12's gate is on main the section
+    matches a missing church file: ``Nothing from your church yet.`` and no
+    confidence line. ``backend`` and ``variant`` are kept for the post-#12
+    call to ``search_index(..., church=True)``, which rates that side unrated.
+    """
+    del backend, variant, vector
     classic_slug = connection_slug(args.index, "wesley")
-    church_path = resolve_church_path(
-        INDEX_DIR,
-        classic=args.index,
-        church_index=args.church_index,
-        church_library=args.church_library,
-    )
-    church_hits = []
+    # TODO(post-#12): open the church file and search_index(..., church=True)
+    # under #12's gate. Do not print hits before that. Confidence is unrated.
+    church_hits: list = []
     church_confidence = None
     church_note = None
     church_mode = None
     church_title = church_heading(None, None)
-    if church_path is not None:
-        church_slug = connection_slug(church_path, "church")
-        church_conn = open_readonly(church_path)
-        try:
-            church_title = church_heading(church_conn, church_slug)
-            church_hits, church_confidence, church_mode, _model, church_note = search_index(
-                church_conn,
-                args,
-                vector,
-                model_name,
-                fallback_bm25=True,
-                backend=backend,
-                variant=variant,
-            )
-        finally:
-            church_conn.close()
     print(f"query: {clean(args.query)}")
     print(f"mode: {mode_label}" + (f"  model: {model_name}" if model_name else ""))
     print()

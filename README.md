@@ -32,7 +32,7 @@ uv run app/server.py --bm25-only
 uv run search/query.py "what did Wesley say about worry" --mode bm25 --side
 ```
 
-`--your-church` sets `meta.role` to `church` on that file and clears the mark on any other file in `/cache/index`. The slug `sample` is labelled sample data. A missing church file does not stop the server. `GET /api/search?library=<slug>` searches only an open library. `GET /api/side` returns the top hits from each side. The page's Side by side view calls that. Details are in `reports/W3-SIDE.md`.
+`--your-church` sets `meta.role` to `church` on that file after a successful import and clears the mark on any other non-classic file in the index directory. `wesley`, `spurgeon`, and `edwards` stay the classic libraries. The slug `sample` is labelled sample data. Until the publish gate is on main, `/api/side`'s church column and `/healthz` match a process with no church file, and `/api/search?library=<church>` is a 400. The page's Side by side view still calls `/api/side`. Details are in `reports/W3-SIDE.md`.
 
 ## Credits
 
