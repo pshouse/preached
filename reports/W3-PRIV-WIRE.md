@@ -39,7 +39,7 @@ uv run python -m unittest discover -s tests
 - ~~The church ASR path has no review file and no gate~~ and ~~approvals are read at server start~~: fixed, see the fix-up section below.
 - The server does not re-hash the review file; the file hash is checked at import and approval only.
 - Approval is a CLI act of the operator; nothing proves the file was read.
-- `shifted` relies on ASR word times (up to ~0.76 s late per W1-C); the 0.5 s margin is a guess, not measured. YouTube `t=` is whole seconds, rounded up.
+- `shifted` relies on ASR word times (up to ~0.76 s late per W1-C); the 0.5 s `shifted` margin is a guess, not measured. The *seek* margin (`SEEK_SLACK_S`) is now 1.5 s, from measurement (round 5): large-v3-turbo word ends vs forced alignment were p95 0.12 s, p99 0.48 s, max 3.58 s late on clean studio audio, so 1.5 = p99 + 0.5 s with headroom; church audio will be worse. YouTube `t=` is whole seconds, rounded up.
 - A kept-but-unflagged name (the silent-miss class in `reports/W3-PRIV.md`) is neither redacted nor audio-restricted.
 - The sermon-level `audio_url` in `/api/sermon/<id>` skips flagged chunks unless the policy is `play`.
 - Titles are redacted by the same rules (recall 0.926 on blind3), so titles can still leak names.
@@ -266,5 +266,22 @@ The old `test_world_or_group_writable_is_refused` tests (in `test_libraries` and
 
 ### Open issues
 - A swapped-in WAL is checked when the server starts and whenever the gate re-runs on reload (stamp change). A WAL replaced under an already-open reader is not replayed while the existing `-shm` index doesn't match it, so I did not add a reload test for that case. Only root or the server's euid can write INDEX_DIR, so planting needs one of those uids.
-- The seek rule uses a fixed 0.5 s slack after the earliest seek. A player that lands more than 0.5 s before the requested `t=` could still reach the end of a name. YouTube's whole-second `t=` is already covered by `seek_time`.
+- The seek rule uses a fixed 1.5 s slack (`SEEK_SLACK_S`, was 0.5 s before round 5) before the earliest seek. A word end later than that (the clean-audio maximum was 3.58 s) or a player that lands more than 1.5 s before the requested `t=` could still reach a name. YouTube's whole-second `t=` is already covered by `seek_time`.
 - The earlier open issues still apply (residual same-sermon scrub risk accepted by Patrick, `[name]` timestamps, title recall).
+
+## Fix-up round 5: CTO review of PR #12 at d82a388 (13-W3-PRIV-WIRE-FIX5)
+
+The CTO's report file was not visible to me; I worked from the task text. No merge was needed (`origin/main` is still `c95d872`).
+
+| Item | Commit | Change | Test |
+|---|---|---|---|
+| **Must-fix**: privacy margin | `19226a9` | `SEEK_SLACK_S` 0.5 → **1.5 s**. Large-v3-turbo word ends vs forced alignment were p95 0.12 s, p99 0.48 s, max 3.58 s late on clean studio audio; church audio will be worse. 1.5 = p99 + 0.5 s. Not addressed by rounding: `seek_time` floors, which moves the seek toward the name, so it was left alone. | `test_priv_seek.py`: boundary and both control tests derive from `SEEK_SLACK_S` (no pinned 0.5). New `test_margin_is_wide_enough_for_late_asr_word_ends`: ends at seek−0.51, −1.0, −1.49 (between the old and new margin) now touch; exactly seek−1.5 and anything earlier do not. |
+| **Should-fix**: `/healthz` on a refused index | `ad41d07` | `App.health` re-runs the serve gate itself each call (a swapped `-wal` can leave the index stamp unchanged, so the reload path never re-checked and `/healthz` reported ok with 0 chunks). A refusal now returns HTTP 503 and sets `_status_failed`, so recovery rebuilds the searcher. | `test_libraries.test_healthz_reports_a_refusal_the_stamp_did_not_notice`: gate fails with the stamp unchanged → `/healthz` and search 503; gate passes again → both serve. |
+| **Round-4 leftover**: `audio_policy` rounding | `ac942c6` | `flagged_play` rounds the `shifted` seek **up** to 0.01 s (was `round`, which could pull it earlier than `flag_end_s + margin`). If rounding reaches the chunk end, no audio is left. The excluded span can only widen. | `test_privacy_wire`: 20.001 → 20.51; seek ≥ flag_end + margin; 54.491 → withheld. |
+| **Round-4 leftover**: review-path ancestor race | `7c8ab3c` | `privacy._open_private_dir` walks the path from `/` one component at a time with `O_DIRECTORY \| O_NOFOLLOW` relative to the previous descriptor (`mkdir` with `dir_fd` for missing parts). No check-then-use window: a component swapped for a symlink fails the open, and the descriptor held stays on the directory that was checked. The islink loop is gone. | `test_priv_review_symlink`: a component swapped for a symlink immediately before it is opened is refused and the victim directory is untouched; the existing symlink tests pass. |
+| **Round-4 leftover**: Wesley in-place rows (documentation) | this section | Wesley is not gated (`App.gated` false) and has no `flag_end_s`, so the privacy rules never apply to it. The searcher re-reads row text per call (M1), so a row edited in place is served as edited on the next request. Cached vectors and the abstain state reload only when the index stamp (chunk hash, row count, embedding records) changes, so an in-place edit that keeps the hash and counts is not re-embedded until restart. Nothing in this branch writes to the Wesley index. | n/a |
+
+### Results
+- Full suite: **478 tests, all pass** (475 before, plus 3 new).
+- **Wesley byte-identical to `origin/main` (`c95d872`)**: same script in both trees on `/cache/index/wesley.sqlite` (40 eval questions × bm25/dense/hybrid at k=10, `/healthz`, `/api/sermon` for 141 ids; 262 responses, `took_ms` removed). sha256 `4d018f76…311f311` for both. `/healthz` now runs the Wesley gate check on each call; the payload is unchanged.
+- `uv lock --check`: `Resolved 79 packages`; `pyproject.toml` and `uv.lock` identical to `origin/main`. No dependencies added, no LLM.
