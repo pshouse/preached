@@ -21,7 +21,10 @@ Every other library fails closed:
 
 - it refuses to run without a privacy config (``--privacy <toml>`` or
   ``$PREACHED_PRIVACY``), and always redacts words and titles;
-- each sermon gets a private review file (title, then ``review()`` items) in
+- announcements, prayer requests and testimonies proposed by
+  ``preached.skip`` are never chunked; each kept run is chunked on its own;
+- each sermon gets a private review file (title, the proposed ``exclude``
+  stretches, then ``review()`` items) and a kept-words file in
   ``<index dir>/<library>/review/``, never inside the repo;
 - each chunk carries ``video_id`` (the sermon id: the publish-gate key) and,
   when flagged, ``flag_end_s`` for the flagged-audio policy. ``store`` refuses
@@ -41,7 +44,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from preached.asr import ASR_ID_PREFIX, PAUSE_S, asr_chunk_id, church_records, token_offsets  # noqa: E402,F401
 from preached.corpus import chunk_text, load_chunk_config, word_tokens, write_jsonl  # noqa: E402
+from preached.exclusions import base_sha256, excluded_indexes, kept_runs, review_lines, word_rows, words_file, words_file_lines  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN  # noqa: E402
 from preached.privacy import (  # noqa: E402
     CONFIG_ENV,
@@ -54,17 +59,11 @@ from preached.privacy import (  # noqa: E402
     review,
 )
 
+from preached.skip import propose  # noqa: E402
+
 PUBLIC_LIBRARY = "wesley"
-
-PAUSE_S = 1.5
-# ASR chunk ids live in their own namespace. Canonical (CCEL) ids are
-# "{sermon_id}-cNNNN" with no colon, so a church sermon whose id reuses a CCEL
-# sermon id can never hit chunks.chunk_id UNIQUE and fail the rebuild.
-ASR_ID_PREFIX = "asr:"
-
-
-def asr_chunk_id(sermon_id: str, index: int) -> str:
-    return f"{ASR_ID_PREFIX}{sermon_id}-c{index:04d}"
+# Transcript meta fields a church chunk copies (kept for a rebuild at approval).
+SOURCE_META = ("audio_url", "reader", "preacher", "sermon_number", "scripture", "source_url", "ia_url")
 
 
 def transcript_words(transcript: dict) -> list[tuple[float, float, str]]:
@@ -91,14 +90,15 @@ def asr_chunks(
     items: list | None = None,
 ) -> list[dict]:
     """``privacy`` None leaves the words alone (Wesley only). A Config redacts
-    them and the title, keys each chunk to the publish gate (``video_id``)
-    and sets ``flag_end_s`` from ``[name]`` words and ``items`` (the sermon's
-    ``review()`` list, see ``sermon_review``)."""
+    them and the title, leaves out the stretches ``preached.skip`` proposes
+    (announcements, prayer requests, testimonies), keys each chunk to the
+    publish gate (``video_id``) and sets ``flag_end_s`` from ``[name]`` words
+    and ``items`` (the sermon's ``review()`` list, see ``sermon_review``)."""
+    if privacy is not None:
+        return church_plan(transcript, config, privacy, sermon_id, sermon_title, pause_s, items)["records"]
     meta = transcript.get("meta", {})
     sermon_id = sermon_id or meta["id"]
     words = transcript_words(transcript)
-    if privacy is not None:
-        words = redact(words, config=privacy, source=sermon_id)
     # Token index -> Whisper word index. Tokens never cross a space, so the
     # tokens of the joined text are the tokens of each word in order.
     owner: list[int] = []
@@ -118,8 +118,6 @@ def asr_chunks(
         first = words[owner[piece["word_start"]]]
         last = words[owner[piece["word_end"] - 1]]
         title = sermon_title or meta.get("title") or sermon_id
-        if privacy is not None:
-            title = redact_metadata(title, config=privacy)[0]
         records.append({
             "chunk_id": asr_chunk_id(sermon_id, index),
             "sermon_id": sermon_id,
@@ -138,12 +136,46 @@ def asr_chunks(
             "word_end": piece["word_end"],
             "librivox_id": None,
         })
-        if privacy is not None:
-            ends = [w[1] for w in words[owner[piece["word_start"]] : owner[piece["word_end"] - 1] + 1] if privacy.token in w[2]]
-            ends += [i["end"] for i in items or () if i["start"] < last[1] and i["end"] > first[0]]
-            records[-1]["video_id"] = sermon_id
-            records[-1]["flag_end_s"] = max(ends) if ends else None
     return records
+
+
+def church_plan(
+    transcript: dict,
+    config: dict,
+    privacy: Config,
+    sermon_id: str | None = None,
+    sermon_title: str | None = None,
+    pause_s: float = PAUSE_S,
+    items: list | None = None,
+) -> dict:
+    """A church sermon: redacted words, proposed exclusions, review items and chunk records.
+
+    ``rows`` and ``items`` hold real words (names in ``items``): keep private.
+    """
+    meta = transcript.get("meta", {})
+    sermon_id = sermon_id or meta["id"]
+    words = redact(transcript_words(transcript), config=privacy, source=sermon_id)
+    texts = [w[2] for w in words]
+    stretches = propose(texts)
+    excluded = excluded_indexes(stretches)
+    rows = word_rows(texts, [w[0] for w in words], [w[1] for w in words], token_offsets(texts))
+    kept = [r for r in rows if r["i"] not in excluded]
+    if items is None:
+        items = sermon_review(transcript, privacy, sermon_id)
+    # Names inside an excluded stretch are not indexed, so they need no review line.
+    items = [i for i in items if any(r["s"] < i["end"] and r["e"] > i["start"] for r in kept)]
+    title = redact_metadata(sermon_title or meta.get("title") or sermon_id, config=privacy)[0]
+    source = {key: meta[key] for key in SOURCE_META if key in meta}
+    runs = [[rows[i] for i in run] for run in kept_runs([r["i"] for r in kept])]
+    records = church_records(runs, config, sermon_id=sermon_id, title=title, meta=source, token=privacy.token, items=items, pause_s=pause_s)
+    return {
+        "records": records,
+        "items": items,
+        "stretches": stretches,
+        "rows": rows,
+        "excluded": excluded,
+        "meta": {"title": title, "source": source, "pause_s": pause_s},
+    }
 
 
 def refuse_non_wesley(rows: list[dict]) -> None:
@@ -194,8 +226,9 @@ def privacy_for(library: str, path: Path | None) -> Config | None:
 def private_sermon(transcript: dict, chunk_config: dict, privacy: Config, review_root: Path, pause_s: float = PAUSE_S):
     """Chunks for one church sermon, plus its private review file.
 
-    Returns ``(records, review_sha256)``. The review file holds the stored
-    (redacted) title with the title's ``review()`` items, then the sermon's.
+    Returns ``(records, review_sha256, review_base_sha256)``. The review file
+    holds the stored (redacted) title with the title's ``review()`` items, the
+    proposed excluded stretches, then the sermon's name items.
     """
     from preached.privacy import review_metadata
     from preached.youtube.pipeline import SAFE_ID, write_private_review
@@ -204,16 +237,19 @@ def private_sermon(transcript: dict, chunk_config: dict, privacy: Config, review
     sermon_id = meta["id"]
     if not SAFE_ID.fullmatch(str(sermon_id)):
         raise SystemExit(f"sermon id {str(sermon_id)[:20]!r} is not usable as a file name")
-    items = sermon_review(transcript, privacy, sermon_id)
-    records = asr_chunks(transcript, chunk_config, pause_s=pause_s, privacy=privacy, items=items)
+    plan = church_plan(transcript, chunk_config, privacy, pause_s=pause_s)
     original_title = meta.get("title") or sermon_id
     header = {
         "field": "title",
         "stored": redact_metadata(original_title, config=privacy)[0],
         "review": [dict(i) for i in review_metadata(original_title, config=privacy)],
     }
-    count, digest = write_private_review([header, *items], review_root / f"{sermon_id}.review.jsonl")
-    return records, digest
+    review_file = review_root / f"{sermon_id}.review.jsonl"
+    # Kept (redacted) words, so approval can rebuild when the reviewer widens or adds a stretch.
+    _, words_sha = write_private_review(words_file_lines("asr", plan["meta"], plan["rows"], plan["excluded"]), words_file(review_file))
+    lines = [header, *review_lines(plan["stretches"], plan["rows"], words_sha), *plan["items"]]
+    count, digest = write_private_review(lines, review_file)
+    return plan["records"], digest, base_sha256(lines)
 
 
 def index_library(index_path: Path, sermons: list[tuple[list[dict], str]], privacy: Config, embedder=None) -> None:
@@ -224,7 +260,7 @@ def index_library(index_path: Path, sermons: list[tuple[list[dict], str]], priva
     embed = embedder or _embed_on_cpu
     connection = open_library(index_path)
     try:
-        for records, review_sha in sermons:
+        for records, review_sha, base_sha in sermons:
             if not records:
                 continue
             title = records[0]["sermon_title"]
@@ -241,6 +277,7 @@ def index_library(index_path: Path, sermons: list[tuple[list[dict], str]], priva
                 matrix=matrix,
                 review_sha256=review_sha,
                 privacy_sha256=config_sha256(privacy),
+                review_base_sha256=base_sha,
             )
     finally:
         connection.close()
@@ -272,12 +309,13 @@ def main(argv: list[str] | None = None, *, embedder=None) -> None:
     review_root = (args.index.with_suffix("") if args.index else INDEX_DIR / args.library) / "review"
     sermons = []
     for path in args.transcripts:
-        records, digest = private_sermon(json.loads(path.read_text()), config, privacy, review_root, args.pause)
-        sermons.append((records, digest))
+        records, digest, base_sha = private_sermon(json.loads(path.read_text()), config, privacy, review_root, args.pause)
+        sermons.append((records, digest, base_sha))
         rows.extend(records)
     write_jsonl(args.out, rows)
     flagged = sum(1 for row in rows if row["flag_end_s"] is not None)
-    print(f"wrote {len(rows)} redacted asr chunks ({flagged} flagged) from {len(args.transcripts)} transcripts to {args.out}")
+    print(f"wrote {len(rows)} redacted asr chunks ({flagged} flagged; announcements, prayer requests and "
+          f"testimonies proposed by preached.skip left out) from {len(args.transcripts)} transcripts to {args.out}")
     if args.index is not None:
         index_library(args.index, sermons, privacy, embedder)
         print(f"loaded {len(sermons)} sermons into {args.index}; UNPUBLISHED until each review file is acknowledged")
