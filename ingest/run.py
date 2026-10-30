@@ -5,7 +5,8 @@
     uv run --extra transcribe ingest/run.py --ids wesley-s2-06 --redo
 
 Finished transcripts are skipped; each is written atomically, so a crash loses
-at most the file in flight. Progress goes to /cache/transcripts/wesley/progress.log.
+at most the file in flight. Progress goes to $PREACHED_CACHE/transcripts/wesley/progress.log
+(PREACHED_CACHE defaults to /cache).
 """
 
 import argparse
@@ -68,7 +69,8 @@ class VramPeak:
 
 
 def out_path(row: dict) -> Path:
-    return transcribe.TRANSCRIPT_DIR / f"{row['id']}.json"
+    manifest.check_name(row["id"], manifest.ID_RE)
+    return manifest.safe_child(transcribe.TRANSCRIPT_DIR, f"{row['id']}.json")
 
 
 def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe.Transcriber) -> None:
@@ -82,6 +84,8 @@ def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe
             "gaps_filled": info["gaps_filled"],  # see Transcriber.fill_gaps
             "repaired_segments": info["repaired"],  # loop re-decodes, see repair_loops
             "model": tr.model_name,
+            "model_repo": tr.model_repo,  # Hugging Face repo id (CTranslate2 weights)
+            "model_revision": tr.revision,  # pinned commit
             "runtime": tr.runtime_info(),
             "created": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         },

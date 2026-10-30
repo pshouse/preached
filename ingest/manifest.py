@@ -10,12 +10,71 @@ import json
 import re
 import sys
 import urllib.parse
-import urllib.request
 from pathlib import Path
+
+from preached.corpus import download, sha256
+from preached.paths import CACHE_ROOT, CCEL_TEXT_URL, SERMONS_TEXT, catalog_path
 
 ROOT = Path(__file__).resolve().parent
 MANIFEST = ROOT / "manifest" / "wesley.jsonl"
-META_CACHE = Path("/cache/meta/wesley")
+META_CACHE = CACHE_ROOT / "meta" / "wesley"
+META_MAX_BYTES = 8 * 1024 * 1024  # archive.org/LibriVox metadata is ~150 KB
+
+# --- Row validation ---------------------------------------------------------------
+# file_name and id become path components under /cache. archive.org items can
+# hold subdirectories and the names come from remote metadata, so only plain
+# single-component names are accepted: no "/", "\\", "..", ":", NUL, leading dot,
+# absolute paths or drive letters.
+FILE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}")
+ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
+AUDIO_HOSTS = ("archive.org",)  # plus any subdomain, e.g. dn720708.ca.archive.org
+
+
+class UnsafeRow(ValueError):
+    """A manifest row whose name, id or URL could escape its folder or host."""
+
+
+def check_name(name: object, pattern: re.Pattern = FILE_NAME_RE) -> str:
+    if not isinstance(name, str) or not pattern.fullmatch(name) or ".." in name:
+        raise UnsafeRow(f"unsafe name {name!r}")
+    return name
+
+
+def safe_child(base: Path, name: object, pattern: re.Pattern = FILE_NAME_RE) -> Path:
+    """base/name, refusing anything that would not land directly inside base."""
+    check_name(name, pattern)
+    root = Path(base).resolve()
+    dest = (root / name).resolve()
+    if dest.parent != root:
+        raise UnsafeRow(f"{name!r} resolves outside {root}")
+    return dest
+
+
+def check_audio_url(url: object) -> str:
+    """https only, archive.org or a subdomain, default port, no credentials."""
+    if not isinstance(url, str):
+        raise UnsafeRow(f"bad URL {url!r}")
+    parts = urllib.parse.urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        raise UnsafeRow(f"bad port in {url!r}") from None
+    host = (parts.hostname or "").lower().rstrip(".")
+    ok_host = any(host == h or host.endswith("." + h) for h in AUDIO_HOSTS)
+    if parts.scheme != "https" or not ok_host or port not in (None, 443) or parts.username or parts.password:
+        raise UnsafeRow(f"audio URL must be https on archive.org: {url!r}")
+    return url
+
+
+def validate_row(row: dict) -> dict:
+    check_name(row.get("id"), ID_RE)
+    check_name(row.get("file_name"), FILE_NAME_RE)
+    check_audio_url(row.get("audio_url"))
+    if not isinstance(row.get("size"), int) or row["size"] <= 0:
+        raise UnsafeRow(f"bad size for {row.get('id')!r}")
+    if not isinstance(row.get("md5"), str) or not re.fullmatch(r"[0-9a-f]{32}", row["md5"]):
+        raise UnsafeRow(f"bad md5 for {row.get('id')!r}")
+    return row
 
 # archive.org identifier -> (series key, LibriVox catalog title)
 SOURCES = {
@@ -37,12 +96,23 @@ LICENSE_NOTE = (
 
 
 def fetch_json(url: str, cache: Path) -> dict:
+    # Capped, atomic download (PR #2's helper). archive.org/LibriVox publish no
+    # checksum for their metadata; every audio row is checked by size + md5.
     if not cache.exists():
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        req = urllib.request.Request(url, headers={"User-Agent": "preached-ingest/0.1"})
-        with urllib.request.urlopen(req, timeout=60) as r:
-            cache.write_bytes(r.read())
+        download(url, cache, max_bytes=META_MAX_BYTES)
     return json.loads(cache.read_text())
+
+
+def ccel_text() -> str:
+    """The CCEL Sermons text shared with the search corpus (PREACHED_CACHE/corpus),
+    downloaded with the 32 MiB cap and checked against corpus/catalog.json."""
+    if not SERMONS_TEXT.exists():
+        download(CCEL_TEXT_URL, SERMONS_TEXT)
+    expected = json.loads(catalog_path().read_text()).get("sha256_text")
+    actual = sha256(SERMONS_TEXT)
+    if expected and actual != expected:
+        raise RuntimeError(f"{SERMONS_TEXT} sha256 {actual} != corpus/catalog.json {expected}")
+    return SERMONS_TEXT.read_text(encoding="utf-8")
 
 
 def librivox_book(title: str) -> dict:
@@ -61,7 +131,6 @@ def wesley_number(series: str, num: int) -> int | None:
     return {"s2": 53, "s3to5": 108}[series] + num
 
 
-CCEL_TXT_URL = "https://www.ccel.org/ccel/w/wesley/sermons/cache/sermons.txt"
 CCEL_URL = "https://www.ccel.org/ccel/wesley/sermons"
 
 # Hand-checked fixes where parsing the CCEL text fails or the text is wrong:
@@ -80,13 +149,7 @@ SCRIPTURE_OVERRIDES = {
 
 def ccel_scripture() -> dict[int, tuple[str | None, str | None]]:
     """Wesley number -> (reference, quoted text), parsed from each sermon's heading."""
-    path = META_CACHE / "ccel" / "sermons.txt"
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        req = urllib.request.Request(CCEL_TXT_URL, headers={"User-Agent": "preached-ingest/0.1"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            path.write_bytes(r.read())
-    body = path.read_text().split("First Series\n     ___", 1)[1]
+    body = ccel_text().split("First Series\n     ___", 1)[1]
     out: dict[int, tuple[str | None, str | None]] = {}
     for part in re.split(r"\n(?=Sermon \d+(?: \[\d+\])?\n)", body):
         m = re.match(r"Sermon (\d+)", part)
@@ -162,12 +225,14 @@ def build() -> list[dict]:
     return rows
 
 
-def load() -> list[dict]:
-    return [json.loads(line) for line in MANIFEST.read_text().splitlines() if line.strip()]
+def load(path: Path | None = None) -> list[dict]:
+    """Manifest rows, each validated (safe id/file_name, https archive.org URL)."""
+    text = (path or MANIFEST).read_text()
+    return [validate_row(json.loads(line)) for line in text.splitlines() if line.strip()]
 
 
 def main() -> None:
-    rows = build()
+    rows = [validate_row(r) for r in build()]
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     with MANIFEST.open("w") as fh:
         for r in rows:
