@@ -203,6 +203,155 @@ Lowest coverage files, all above the 90% flag:
 | s2-39 | 92 On Zeal | 96.2% | references |
 | s2-08 | 61 The Mystery of Iniquity | 97.0% | a 58-word CCEL editor's footnote ("Mr. Wesley doubtless quoted from memory…") and a translator note, unread |
 
+<details><summary>Coverage for all 142 sermon files</summary>
+
+| file | sermon | title | reader | coverage |
+|---|---|---|---|---|
+| wesley-s1-01 | wesley-001 | Salvation by Faith | Robert G. Smith | 97.8% |
+| wesley-s1-02 | wesley-002 | The Almost Christian | Christopher Smith | 98.7% |
+| wesley-s1-03 | wesley-003 | Awake, Thou That Sleepest | Greg Giordano | 97.8% |
+| wesley-s1-04 | wesley-004 | Scriptural Christianity | Tim Cote | 98.5% |
+| wesley-s1-05 | wesley-005 | Justification By Faith | Bill Mosley | 99.2% |
+| wesley-s1-06 | wesley-006 | The Righteousness of Faith | Brian Wilson | 98.7% |
+| wesley-s1-07 | wesley-007 | The Way to the Kingdom | Tim Cote | 98.8% |
+| wesley-s1-08 | wesley-008 | THE FIRST FRUITS OF THE SPIRIT | Tim Cote | 98.8% |
+| wesley-s1-09 | wesley-009 | The Spirit of Bondage and of Adoption. | Robert G. Smith | 97.9% |
+| wesley-s1-10 | wesley-010 | THE WITNESS OF THE SPIRIT, Discourse I | Tim Cote | 98.8% |
+| wesley-s1-11 | wesley-011 | The Witness of the Spirit, Discourse II | Tim Cote | 98.3% |
+| wesley-s1-12 | wesley-012 | The Witness of our own Spirit | Tim Cote | 99.1% |
+| wesley-s1-13 | wesley-013 | On Sin in Believers | Jackson Bates | 98.6% |
+| wesley-s1-14 | wesley-014 | The Repentance of Believers | RLC | 99.0% |
+| wesley-s1-15 | wesley-015 | The Great Assize | Robert Hoffman | 98.4% |
+| wesley-s1-16 | wesley-016 | The Means of Grace | fshort | 98.8% |
+| wesley-s1-17 | wesley-017 | The Circumcision of the Heart | Kim Moses | 98.1% |
+| wesley-s1-18 | wesley-018 | The Marks of the New Birth | RLC | 98.4% |
+| wesley-s1-19 | wesley-019 | The Great Privilege of those that are Born of God | Fr. Richard Zeile of Detroit | 98.8% |
+| wesley-s1-20 | wesley-020 | The Lord our Righteousness | Matthew James Gray | 98.6% |
+| wesley-s1-21 | wesley-021 | Upon our Lord's Sermon on the Mount, Discourse 1 | Tim Cote | 98.6% |
+| wesley-s1-22 | wesley-022 | Upon our Lord's Sermon on the Mount, Discourse 2 | fshort | 98.8% |
+| wesley-s1-23 | wesley-023 | Upon our Lord's Sermon on the Mount, Discourse 3 | Kris Gannon, Braden River, Florida | 98.7% |
+| wesley-s1-24 | wesley-024 | Upon our Lord's Sermon on the Mount, Discourse 4 | Joseph Abell | 98.9% |
+| wesley-s1-25 | wesley-025 | Upon our Lord's Sermon on the Mount, Discourse 5 | TriciaG | 99.0% |
+| wesley-s1-26 | wesley-026 | Upon our Lord's Sermon on the Mount, Discourse 6 | Matthew James Gray | 98.3% |
+| wesley-s1-27 | wesley-027 | Upon our Lord's Sermon on the Mount, Discourse 7 | Matthew James Gray | 98.5% |
+| wesley-s1-28 | wesley-028 | Upon our Lord's Sermon on the Mount, Discourse 8 | Joseph Abell | 98.5% |
+| wesley-s1-29 | wesley-029 | Upon our Lord's Sermon on the Mount, Discourse 9 | Joseph Abell | 99.4% |
+| wesley-s1-30 | wesley-030 | Upon our Lord's Sermon on the Mount, Discourse 10 | Joseph Abell | 98.4% |
+| wesley-s1-31 | wesley-031 | Upon our Lord'S Sermon on the Mount, Discourse 11 | Melora | 98.9% |
+| wesley-s1-32 | wesley-032 | Upon our Lord's Sermon on the Mount, Discourse 12 | Fr. Richard Zeile of Detroit | 98.6% |
+| wesley-s1-33 | wesley-033 | UPON OUR LORD'S SERMON ON THE MOUNT, Discourse 13 | Alistair Bench | 99.1% |
+| wesley-s1-34 | wesley-034 | The Original, Nature, Property, and Use of the Law | Greg Giordano | 98.4% |
+| wesley-s1-35 | wesley-035 | The Law Established through Faith, Discourse I | Aaron Weber | 97.3% |
+| wesley-s1-36 | wesley-036 | The Law Established through Faith, Discourse 2 | Aaron Weber | 98.1% |
+| wesley-s1-37 | wesley-037 | The Nature of Enthusiasm | Robert G. Smith | 98.5% |
+| wesley-s1-38 | wesley-038 | A Caution against Bigotry | Robert G. Smith | 98.3% |
+| wesley-s1-39 | wesley-039 | Catholic Spirit | Robert G. Smith | 97.9% |
+| wesley-s1-40 | wesley-040 | Christian Perfection | Robert G. Smith | 93.1% |
+| wesley-s1-41 | wesley-040 | Christian Perfection | Robert G. Smith | 94.5% |
+| wesley-s1-42 | wesley-041 | Wandering Thoughts | Greg Giordano | 97.8% |
+| wesley-s1-43 | wesley-042 | Satan's Devices | Greg Giordano | 98.2% |
+| wesley-s1-44 | wesley-043 | The Scripture Way of Salvation | RLC | 98.6% |
+| wesley-s1-45 | wesley-044 | Original Sin | Kevin W. Davidson | 98.1% |
+| wesley-s1-46 | wesley-045 | The New Birth | RLC | 99.1% |
+| wesley-s1-47 | wesley-046 | The Wilderness State | Arnie Horton | 99.6% |
+| wesley-s1-48 | wesley-047 | Heaviness through Manifold Temptations | RLC | 98.6% |
+| wesley-s1-49 | wesley-048 | Self-denial | RLC | 98.9% |
+| wesley-s1-50 | wesley-049 | The Cure of Evil-speaking | Bill Mosley | 99.6% |
+| wesley-s1-51 | wesley-050 | The Use of Money | Tim Cote | 98.8% |
+| wesley-s1-52 | wesley-051 | The Good Steward | John Lieder | 99.2% |
+| wesley-s1-53 | wesley-052 | The Reformation of Manners | amaskill | 98.7% |
+| wesley-s1-54 | wesley-053 | On the Death of the Rev. Mr. George Whitefield | Chessie Joy | 98.4% |
+| wesley-s2-01 | wesley-054 | On Eternity | MaryAnn | 98.3% |
+| wesley-s2-02 | wesley-055 | On the Trinity | MaryAnn | 98.7% |
+| wesley-s2-03 | wesley-056 | God's Approbation of His Works | MaryAnn | 98.2% |
+| wesley-s2-04 | wesley-057 | On the Fall of Man | Ladypolanna | 99.2% |
+| wesley-s2-05 | wesley-058 | On Predestination | TriciaG | 99.0% |
+| wesley-s2-06 | wesley-059 | God's Love to Fallen Man | Jacob Paul Starr | 98.8% |
+| wesley-s2-07 | wesley-060 | The General Deliverance | Lynne T | 99.2% |
+| wesley-s2-08 | wesley-061 | The Mystery of Iniquity | Robert G. Smith | 97.0% |
+| wesley-s2-09 | wesley-062 | The End of Christ's Coming | Robert G. Smith | 98.3% |
+| wesley-s2-10 | wesley-063 | The General Spread of the Gospel | TriciaG | 99.0% |
+| wesley-s2-11 | wesley-064 | The New Creation | Greg Giordano | 98.7% |
+| wesley-s2-12 | wesley-065 | The Duty of Reproving our Neighbour | KHand | 98.5% |
+| wesley-s2-13 | wesley-066 | The Signs of the Times | KHand | 99.0% |
+| wesley-s2-14 | wesley-067 | On Divine Providence | KHand | 97.8% |
+| wesley-s2-15 | wesley-068 | The Wisdom of God's Counsels | TriciaG | 99.2% |
+| wesley-s2-16 | wesley-069 | The Imperfection of Human Knowledge | TimoleonWash | 98.6% |
+| wesley-s2-17 | wesley-070 | The Case of Reason Impartially Considered | TimoleonWash | 98.2% |
+| wesley-s2-18 | wesley-071 | Of Good Angels | TriciaG | 99.0% |
+| wesley-s2-19 | wesley-072 | Of Evil Angels | TriciaG | 99.1% |
+| wesley-s2-20 | wesley-073 | Of Hell | Bill Mosley | 98.9% |
+| wesley-s2-21 | wesley-074 | Of the Church | Bill Mosley | 98.7% |
+| wesley-s2-22 | wesley-075 | On Schism | Simon Brouwer | 96.0% |
+| wesley-s2-23 | wesley-076 | On Perfection | Larry Wilson | 98.2% |
+| wesley-s2-24 | wesley-077 | Spiritual Worship | TriciaG | 98.6% |
+| wesley-s2-25 | wesley-078 | Spiritual Idolatry | Greg Giordano | 97.7% |
+| wesley-s2-26 | wesley-079 | On Dissipation | Larry Wilson | 98.1% |
+| wesley-s2-27 | wesley-080 | On Friendship with the World | MaryAnn | 98.4% |
+| wesley-s2-28 | wesley-081 | In What Sense we are to Leave the World | MaryAnn | 98.5% |
+| wesley-s2-29 | wesley-082 | On Temptation | MaryAnn | 98.0% |
+| wesley-s2-30 | wesley-083 | On Patience | Beth Thomas (1974-2020) | 99.2% |
+| wesley-s2-31 | wesley-084 | The Important Question | MaryAnne | 98.5% |
+| wesley-s2-32 | wesley-085 | On Working out our own Salvation | Beth Thomas (1974-2020) | 98.7% |
+| wesley-s2-33 | wesley-086 | A Call to Backsliders | Robert G. Smith | 98.6% |
+| wesley-s2-34 | wesley-087 | The Danger of Riches | Larry Wilson | 98.5% |
+| wesley-s2-35 | wesley-088 | On Dress | TriciaG | 99.0% |
+| wesley-s2-36 | wesley-089 | The More Excellent Way | MaryAnne | 98.7% |
+| wesley-s2-37 | wesley-090 | An Israelite Indeed | Christopher Smith | 98.9% |
+| wesley-s2-38 | wesley-091 | On Charity | Denise Nordell | 98.8% |
+| wesley-s2-39 | wesley-092 | On Zeal | Simon Brouwer | 96.2% |
+| wesley-s2-40 | wesley-093 | On Redeeming the Time | Bruce Kachuk | 98.9% |
+| wesley-s2-41 | wesley-094 | On Family Religion | Bruce Kachuk | 98.6% |
+| wesley-s2-42 | wesley-095 | On the Education of Children | Bruce Kachuk | 99.0% |
+| wesley-s2-43 | wesley-096 | On Obedience to Parents | Bruce Kachuk | 99.4% |
+| wesley-s2-44 | wesley-097 | On Obedience to Pastors | Bruce Kachuk | 99.1% |
+| wesley-s2-45 | wesley-098 | On Visiting the Sick | Bruce Kachuk | 98.9% |
+| wesley-s2-46 | wesley-099 | The Reward of the Righteous | TriciaG | 98.9% |
+| wesley-s2-47 | wesley-100 | On Pleasing all Men | Larry Wilson | 99.2% |
+| wesley-s2-48 | wesley-101 | The Duty of Constant Communion J.W. | Larry Wilson | 98.7% |
+| wesley-s2-49 | wesley-102 | Of Former Times | Robert G. Smith | 97.8% |
+| wesley-s2-50 | wesley-103 | What is Man? | Timothy Watson | 98.0% |
+| wesley-s2-51 | wesley-104 | On Attending the Church Service | Bill Mosley | 98.8% |
+| wesley-s2-52 | wesley-105 | On Conscience | TimoleonWash | 97.9% |
+| wesley-s2-53 | wesley-106 | On Faith | TimoleonWash | 98.6% |
+| wesley-s2-54 | wesley-107 | On God's Vineyard | Bruce Kachuk | 99.1% |
+| wesley-s2-55 | wesley-108 | On Riches | Bruce Kachuk | 99.0% |
+| wesley-s3to5-01 | wesley-109 | What is Man? | MaryAnn | 98.8% |
+| wesley-s3to5-02 | wesley-110 | On the Discoveries of Faith | MaryAnn | 98.7% |
+| wesley-s3to5-03 | wesley-111 | On the Omnipresence of God | Andrea Rovny | 98.3% |
+| wesley-s3to5-04 | wesley-112 | The Rich Man and Lazarus | Andrea Rovny | 98.3% |
+| wesley-s3to5-05 | wesley-113 | The Difference Between Walking by Sight, and Walking by Faith | Bob Scott | 99.2% |
+| wesley-s3to5-06 | wesley-114 | The Unity of the Divine Being | Avielh Tolentino | 98.0% |
+| wesley-s3to5-07 | wesley-115 | The Ministerial Office | Avielh Tolentino | 97.8% |
+| wesley-s3to5-08 | wesley-116 | Causes of the Inefficacy of Christianity | TimoleonWash | 98.9% |
+| wesley-s3to5-09 | wesley-117 | On Knowing Christ after the Flesh | Avielh Tolentino | 98.6% |
+| wesley-s3to5-10 | wesley-118 | On a Single Eye | laurencetrask | 98.7% |
+| wesley-s3to5-11 | wesley-119 | On Worldly Folly | laurencetrask | 99.0% |
+| wesley-s3to5-12 | wesley-120 | On the Wedding Garment | laurencetrask | 98.6% |
+| wesley-s3to5-13 | wesley-121 | Human Life a Dream | laurencetrask | 98.8% |
+| wesley-s3to5-14 | wesley-122 | On Faith | TimoleonWash | 98.3% |
+| wesley-s3to5-15 | wesley-123 | The Deceitfulness of the Human Heart | Avielh Tolentino | 97.9% |
+| wesley-s3to5-16 | wesley-124 | The Heavenly Treasure in Earthen Vessels | Avielh Tolentino | 97.8% |
+| wesley-s3to5-17 | wesley-125 | On Living Without God | AlvinJPrice | 98.5% |
+| wesley-s3to5-18 | wesley-126 | On the Danger of Increasing Riches | Avielh Tolentino | 98.2% |
+| wesley-s3to5-19 | wesley-127 | The Trouble and Rest of Good Men | Avielh Tolentino | 98.5% |
+| wesley-s3to5-20 | wesley-128 | Free Grace | Matthew | 98.1% |
+| wesley-s3to5-21 | wesley-129 | The Cause and Cure of Earthquakes | Kathleen Moore | 99.2% |
+| wesley-s3to5-22 | wesley-130 | National Sins and Miseries | Kathleen Moore | 98.3% |
+| wesley-s3to5-23 | wesley-131 | The Late Work of God in North America | Michele Fry | 98.6% |
+| wesley-s3to5-24 | wesley-132 | On Laying the Foundation of the New Chapel, Near the City-Road, London | Larry Wilson | 98.7% |
+| wesley-s3to5-25 | wesley-133 | Preached on Occasion of the Death of the Rev. Mr. John Fletcher, Vicar of | Larry Wilson | 98.9% |
+| wesley-s3to5-26 | wesley-134 | True Christianity Defended | Avielh Tolentino | 97.6% |
+| wesley-s3to5-27 | wesley-135 | On Mourning for the Dead | TriciaG | 99.4% |
+| wesley-s3to5-28 | wesley-136 | On Corrupting the Word Of God | Bob Scott | 98.5% |
+| wesley-s3to5-29 | wesley-137 | On the Resurrection of the Dead | Tony Addison | 98.9% |
+| wesley-s3to5-30 | wesley-138 | On Grieving the Holy Spirit | Larry Wilson | 99.3% |
+| wesley-s3to5-31 | wesley-139 | On Love | David Lodes | 98.8% |
+| wesley-s3to5-32 | wesley-140 | On Public Diversions | AlvinJPrice | 99.4% |
+| wesley-s3to5-33 | wesley-141 | On the Holy Spirit | Larry Wilson | 99.2% |
+
+</details>
+
 What stays unanchored is almost entirely apparatus the readers skip: paragraph
 numbers ("1.", "II."), bracketed Scripture references, CCEL editorial notes
 ("Section numbers … follow the Bicentennial Edition"), and Latin/Greek that
