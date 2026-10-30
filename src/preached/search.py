@@ -32,6 +32,12 @@ BOUNDARY_WORDS = 8
 # touch that is just float rounding.
 TIME_OVERLAP_S = 0.4
 
+# A merged passage (dedupe_adjacent) stops growing at this many words: twice
+# the chunker's max_words (150, corpus/chunk_config.json), about two minutes
+# read aloud. Past it the neighbour is dropped, as before merging existed,
+# so a card never turns into a whole section of the sermon.
+MERGE_MAX_WORDS = 300
+
 # Player pre-roll. start_s stays the true onset of the chunk's first word
 # (honest for citations, same on the canonical and ASR paths); only the play
 # position starts this much earlier. W1-C's measured chunk starts are off by
@@ -281,7 +287,7 @@ def _boundary_size(first: list[str], second: list[str]) -> int:
     return 0
 
 
-def merge_overlapping(kept: Hit, neighbour: Hit) -> Hit | None:
+def merge_overlapping(kept: Hit, neighbour: Hit, max_words: int = MERGE_MAX_WORDS) -> Hit | None:
     """One passage covering both overlapping chunks, or None if they cannot
     be stitched exactly.
 
@@ -290,7 +296,8 @@ def merge_overlapping(kept: Hit, neighbour: Hit) -> Hit | None:
     the player starts at the merged passage's first word. Only chunks with
     word offsets, from the same sermon, audio file and text source, whose
     texts share a boundary run (the chunker's sentence overlap) are merged.
-    Anything else returns None and the caller drops the neighbour as before.
+    Anything else, or a merge longer than ``max_words``, returns None and
+    the caller drops the neighbour as before.
     """
     if kept.sermon_id != neighbour.sermon_id:
         return None
@@ -311,9 +318,12 @@ def merge_overlapping(kept: Hit, neighbour: Hit) -> Hit | None:
     size = _boundary_size(first_words, second_words)
     if size == 0:
         return None
+    words = first_words + second_words[size:]
+    if len(words) > max_words:
+        return None
     return replace(
         kept,
-        text=" ".join(first_words + second_words[size:]),
+        text=" ".join(words),
         word_start=first.word_start,
         word_end=second.word_end,
         start_s=first.start_s,
@@ -333,7 +343,8 @@ def dedupe_adjacent(hits: list[Hit], limit: int) -> list[Hit]:
     (``merge_overlapping``) rather than dropped. Then every word the plain
     top ``limit`` showed is still on the page, at the same rank or higher,
     and no word is shown twice. A neighbour ranked below ``limit`` is
-    dropped, so passages grow only from hits the user would have seen.
+    dropped, so passages grow only from hits the user would have seen, and
+    never past ``MERGE_MAX_WORDS``.
     """
     if limit <= 0:
         return []

@@ -184,6 +184,14 @@ class MergeTests(unittest.TestCase):
                 self.assertIn(word, shown)
         self.assertEqual(len(shown), len(set(shown)))  # and nothing twice
 
+    def test_merge_stops_at_the_word_cap(self) -> None:
+        best = hit(chunk_id="a", score=2, word_start=0, word_end=200, text=words("w", 0, 200))
+        neighbour = hit(chunk_id="b", score=1, word_start=150, word_end=350, text=words("w", 150, 350))
+        self.assertIsNone(merge_overlapping(best, neighbour, max_words=300))
+        kept = dedupe_adjacent([best, neighbour], limit=10)
+        self.assertEqual([item.chunk_ids for item in kept], [["a"]])  # dropped, as before merging
+        self.assertEqual(len(merge_overlapping(best, neighbour, max_words=350).text.split()), 350)
+
     def test_no_merge_without_a_shared_boundary(self) -> None:
         best = hit(chunk_id="a", score=2, word_start=0, word_end=100, text="alpha " * 20)
         neighbour = hit(chunk_id="b", score=1, word_start=80, word_end=160, text="beta " * 20)
