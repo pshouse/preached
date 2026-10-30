@@ -15,3 +15,11 @@ dist/
 build/
 *.egg-info/
 .python-version
+review/
+*.review.jsonl
+*.mp3
+*.m4a
+*.webm
+*.opus
+*.wav
+*.part

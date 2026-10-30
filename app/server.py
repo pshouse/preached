@@ -33,7 +33,7 @@ if str(SRC) not in sys.path:
 from preached import env  # noqa: E402, F401
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_PATH  # noqa: E402
+from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
     SEARCH_POOL,
     Searcher,
@@ -74,10 +74,16 @@ CSP = "; ".join(
 
 MODES = {"hybrid", "bm25", "dense"}
 LIBRARY = "wesley"
+# One process serves one library file. The slug is the file name under
+# /cache/index. The default stays wesley so the existing page keeps working.
+LIBRARY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_TARGET = 2048
 MAX_BODY = 4096
 REQUEST_TIMEOUT_S = 15
-SERMON_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+# Wesley ids are lowercase slugs (wesley-001), at most 64 characters. A
+# YouTube video id is 11 characters and case-sensitive. Dots and slashes are
+# not in either form, so a path cannot be an id.
+SERMON_ID = re.compile(r"^(?:[a-z0-9][a-z0-9-]{0,63}|[A-Za-z0-9_-]{11})$")
 
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
@@ -153,7 +159,7 @@ def _first(args: dict, name: str) -> str | None:
     return values[0]
 
 
-def parse_search_args(args: dict) -> tuple[str, int, str]:
+def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, str]:
     raw_q = _first(args, "q")
     if raw_q is None:
         raise BadRequest("q is required")
@@ -180,9 +186,9 @@ def parse_search_args(args: dict) -> tuple[str, int, str]:
         raise BadRequest("mode must be hybrid, bm25, or dense")
 
     raw_library = _first(args, "library")
-    library = LIBRARY if raw_library is None or raw_library.strip() == "" else raw_library.strip()
-    if library != LIBRARY:
-        raise BadRequest("library must be wesley")
+    chosen = library if raw_library is None or raw_library.strip() == "" else raw_library.strip()
+    if chosen != library:
+        raise BadRequest(f"library must be {library}")
     return query, k, mode
 
 
@@ -276,7 +282,18 @@ def load_search(
 
 
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, backend=None):
+    def __init__(
+        self,
+        connection,
+        searcher,
+        encode,
+        fallback_note,
+        model_name,
+        hosts,
+        static_dir,
+        backend=None,
+        library: str = LIBRARY,
+    ):
         self.connection = connection
         self.searcher = searcher
         self._encode = encode
@@ -289,7 +306,7 @@ class App:
         self.hosts = frozenset(host.lower() for host in hosts)
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
-        self.library = LIBRARY
+        self.library = library
         self._stamp = self._capture_stamp()
 
     def _capture_stamp(self):
@@ -415,6 +432,7 @@ def build_app(
     embed_backend: str | None = None,
     ort_threads: int | None = None,
     variant: str | None = None,
+    library: str = LIBRARY,
 ) -> App:
     searcher, encode, note = load_search(
         connection,
@@ -433,6 +451,7 @@ def build_app(
         model_name=model_key,
         hosts=hosts,
         static_dir=static_dir,
+        library=library,
     )
 
 
@@ -524,7 +543,7 @@ def make_handler(app: App):
                     args = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=32)
                 except ValueError as exc:
                     raise BadRequest("request too large", 414) from exc
-                query, k, mode = parse_search_args(args)
+                query, k, mode = parse_search_args(args, library=app.library)
                 self._send_json(200, app.search(query, k, mode), include_body)
                 return
             if path.startswith("/api/sermon/"):
@@ -646,7 +665,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Serve Preached search on this machine.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--index", type=Path, default=INDEX_PATH)
+    parser.add_argument("--library", default=LIBRARY, help="Library slug. Index defaults to /cache/index/<slug>.sqlite")
+    parser.add_argument("--index", type=Path, default=None, help="SQLite index. Defaults to /cache/index/<library>.sqlite")
     parser.add_argument(
         "--hosts",
         default="127.0.0.1,localhost",
@@ -669,8 +689,14 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.model not in MODELS:
         raise SystemExit(f"unknown model {args.model}")
+    library = args.library.strip()
+    if not LIBRARY_SLUG.fullmatch(library):
+        raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
+    index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
+    if library == LIBRARY and args.index is None:
+        index = INDEX_PATH
     try:
-        connection = open_readonly(args.index, check_same_thread=False)
+        connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
     hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
@@ -686,6 +712,7 @@ def main(argv: list[str] | None = None) -> None:
         embed_backend=args.embed_backend,
         ort_threads=args.ort_threads,
         variant=args.onnx_variant,
+        library=library,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)

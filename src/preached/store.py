@@ -150,11 +150,19 @@ def check_unique_ids(chunks: list[dict], source: object = "chunk file") -> None:
         seen.add(chunk_id)
 
 
+def _refuse_review_items(chunks: list[dict]) -> None:
+    from preached.privacy import ReviewItem, ReviewList
+
+    if isinstance(chunks, ReviewList) or any(isinstance(c, ReviewItem) for c in chunks):
+        raise ValueError("privacy review items hold real names and must never be indexed")
+
+
 def update_chunk_metadata(connection: sqlite3.Connection, chunks: list[dict]) -> None:
     """Rewrite only METADATA_COLUMNS, row for row, keeping rowids and vectors.
 
     The caller has checked that EMBED_KEY_COLUMNS match in the same order.
     """
+    _refuse_review_items(chunks)
     rowids = [int(r[0]) for r in connection.execute("SELECT rowid FROM chunks ORDER BY rowid")]
     if len(rowids) != len(chunks):
         raise RuntimeError("update_chunk_metadata: row count changed")
@@ -170,7 +178,9 @@ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
 
     Does not commit: the caller commits, so a rebuild (this, the hash write)
     is one transaction and a crash leaves the index fully old or fully new.
+    Privacy review items are refused before anything is written.
     """
+    _refuse_review_items(chunks)
     connection.execute("DELETE FROM embeddings")
     connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
     connection.execute("DELETE FROM chunks")
