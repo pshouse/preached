@@ -1,0 +1,171 @@
+diff --git a/search/bench.py b/search/bench.py
+index 7781929..0d456c9 100644
+--- a/search/bench.py
++++ b/search/bench.py
+@@ -48,7 +48,7 @@ from preached.embed import (  # noqa: E402
+ )
+ from preached.metrics import mrr_at, ndcg_at, recall_at  # noqa: E402
+ from preached.models import EXCLUDED, MODELS, REFERENCE, config_path  # noqa: E402
+-from preached.paths import CHUNKS_JSONL, INDEX_PATH, chunk_config_path, questions_path, repo_root  # noqa: E402
++from preached.paths import INDEX_CHUNKS_JSONL, INDEX_PATH, chunk_config_path, questions_path, repo_root  # noqa: E402
+ from preached.search import SEARCH_POOL, Searcher, api_search, dedupe_adjacent  # noqa: E402
+ from preached.stats import bootstrap_ci, paired_bootstrap  # noqa: E402
+ from preached.store import (  # noqa: E402
+@@ -113,7 +113,7 @@ def environment() -> dict:
+         "cpu": cpu,
+         "torch_threads": torch.get_num_threads(),
+         "questions_sha256": sha256(questions_path()),
+-        "chunks_sha256": sha256(CHUNKS_JSONL),
++        "chunks_sha256": sha256(INDEX_CHUNKS_JSONL),
+         "chunk_config": json.loads(chunk_config_path().read_text()),
+         "models_toml_sha256": sha256(config_path()),
+     }
+@@ -160,9 +160,9 @@ def is_gated(exc: BaseException) -> bool:
+ 
+ 
+ def ensure_chunks(connection) -> int:
+-    if not CHUNKS_JSONL.exists():
+-        raise SystemExit(f"missing {CHUNKS_JSONL}. Run corpus/fetch_wesley.py and corpus/chunk_sermons.py")
+-    return sync_chunks(connection, CHUNKS_JSONL)
++    if not INDEX_CHUNKS_JSONL.exists():
++        raise SystemExit(f"missing {INDEX_CHUNKS_JSONL}. Run corpus/fetch_wesley.py and corpus/chunk_sermons.py")
++    return sync_chunks(connection, INDEX_CHUNKS_JSONL)
+ 
+ 
+ API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
+diff --git a/search/build_index.py b/search/build_index.py
+index b7d3768..46bb473 100644
+--- a/search/build_index.py
++++ b/search/build_index.py
+@@ -10,15 +10,15 @@ from pathlib import Path
+ 
+ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ 
+-from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
++from preached.paths import INDEX_CHUNKS_JSONL, INDEX_PATH  # noqa: E402
+ from preached.store import chunk_count, connect, sync_chunks  # noqa: E402
+ 
+ 
+ def main() -> None:
+-    if not CHUNKS_JSONL.exists():
+-        raise SystemExit(f"missing {CHUNKS_JSONL}")
++    if not INDEX_CHUNKS_JSONL.exists():
++        raise SystemExit(f"missing {INDEX_CHUNKS_JSONL}")
+     connection = connect(INDEX_PATH)
+-    sync_chunks(connection, CHUNKS_JSONL)
++    sync_chunks(connection, INDEX_CHUNKS_JSONL)
+     print(f"indexed {chunk_count(connection)} chunks at {INDEX_PATH}")
+ 
+ 
+diff --git a/search/query.py b/search/query.py
+index 49c9b8b..8728a64 100644
+--- a/search/query.py
++++ b/search/query.py
+@@ -16,17 +16,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ from preached import env  # noqa: F401, E402
+ from preached.embed import encode_query, load_model, unload  # noqa: E402
+ from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
+-from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
++from preached.paths import INDEX_CHUNKS_JSONL, INDEX_PATH  # noqa: E402
+ from preached.search import Searcher  # noqa: E402
+ from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
+ 
+ 
+ def ensure_chunks(connection) -> None:
+-    if not CHUNKS_JSONL.exists():
++    if not INDEX_CHUNKS_JSONL.exists():
+         raise SystemExit(
+-            f"missing {CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
++            f"missing {INDEX_CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
+         )
+-    sync_chunks(connection, CHUNKS_JSONL)
++    sync_chunks(connection, INDEX_CHUNKS_JSONL)
+ 
+ 
+ def fmt_time(value) -> str:
+diff --git a/src/preached/paths.py b/src/preached/paths.py
+index 6d1733f..6da1ffc 100644
+--- a/src/preached/paths.py
++++ b/src/preached/paths.py
+@@ -15,6 +15,14 @@ INDEX_PATH = INDEX_DIR / "wesley.sqlite"
+ SERMONS_TEXT = CORPUS_DIR / "sermons.txt"
+ SERMONS_JSONL = CORPUS_DIR / "sermons.jsonl"
+ CHUNKS_JSONL = CORPUS_DIR / "chunks.jsonl"
++# What the index loads. W1-C's chunks carry real timestamps and audio; the
++# text-only file is the fallback. corpus/chunk_sermons.py still writes
++# CHUNKS_JSONL only, so re-chunking never overwrites the aligned file.
++ALIGNED_CHUNKS_JSONL = CORPUS_DIR / "chunks_aligned.jsonl"
++INDEX_CHUNKS_JSONL = Path(
++    os.environ.get("PREACHED_CHUNKS")
++    or (ALIGNED_CHUNKS_JSONL if ALIGNED_CHUNKS_JSONL.exists() else CHUNKS_JSONL)
++)
+ NUMBER_INDEX_HTML = CORPUS_DIR / "ccel_number_index.html"
+ 
+ CCEL_TEXT_URL = "https://www.ccel.org/ccel/w/wesley/sermons/cache/sermons.txt"
+diff --git a/src/preached/store.py b/src/preached/store.py
+index 23ee278..73852bd 100644
+--- a/src/preached/store.py
++++ b/src/preached/store.py
+@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS chunks (
+     word_count INTEGER,
+     word_start INTEGER,
+     word_end INTEGER,
+-    librivox_id TEXT
++    librivox_id TEXT,
++    audio_url TEXT,
++    reader TEXT,
++    text_source TEXT
+ );
+ 
+ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+@@ -81,6 +84,10 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
+     connection.row_factory = sqlite3.Row
+     connection.execute("PRAGMA journal_mode=WAL")
+     connection.executescript(SCHEMA)
++    have = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
++    for column in LATE_COLUMNS:
++        if column not in have:
++            connection.execute(f"ALTER TABLE chunks ADD COLUMN {column} TEXT")
+     connection.executescript(TRIGGERS)
+     return connection
+ 
+@@ -107,8 +114,10 @@ def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -
+ CHUNK_COLUMNS = (
+     "chunk_id", "sermon_id", "sermon_title", "text", "start_s", "end_s",
+     "sermon_number", "scripture", "source_url", "word_count", "word_start",
+-    "word_end", "librivox_id",
++    "word_end", "librivox_id", "audio_url", "reader", "text_source",
+ )
++# Added by W1-C; an index created before them gets them by ALTER TABLE.
++LATE_COLUMNS = ("audio_url", "reader", "text_source")
+ 
+ 
+ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
+@@ -117,7 +126,8 @@ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
+     connection.executemany(
+         f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) "
+         f"VALUES ({', '.join(':' + c for c in CHUNK_COLUMNS)})",
+-        chunks,
++        # Text-only chunk files have no audio fields; missing keys are NULL.
++        [{column: chunk.get(column) for column in CHUNK_COLUMNS} for chunk in chunks],
+     )
+     connection.commit()
+ 
+diff --git a/tests/test_server.py b/tests/test_server.py
+index 8d7a390..570ff9b 100644
+--- a/tests/test_server.py
++++ b/tests/test_server.py
+@@ -162,12 +162,7 @@ def build_rich_index(path: Path) -> None:
+         word_end=620,
+     )
+     connection.commit()
+-    for statement in (
+-        "ALTER TABLE chunks ADD COLUMN audio_url TEXT",
+-        "ALTER TABLE chunks ADD COLUMN reader TEXT",
+-        "ALTER TABLE chunks ADD COLUMN text_source TEXT",
+-    ):
+-        connection.execute(statement)
++    # connect() creates audio_url, reader and text_source (W1-C).
+     connection.execute(
+         "UPDATE chunks SET audio_url = ?, reader = ?, text_source = ? WHERE chunk_id = ?",
+         (AUDIO, "A. Volunteer", "canonical", "null-time"),
