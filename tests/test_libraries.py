@@ -4,7 +4,10 @@ ingested or indexed as public-domain libraries."""
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
+import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -15,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ingest"))
 sys.path.insert(0, str(ROOT / "search"))
 
+import app.server as server  # noqa: E402
 import build_library  # noqa: E402
 import manifest  # noqa: E402
 import query  # noqa: E402
@@ -85,9 +89,18 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.synced.assert_not_called()
 
     def test_wesley_index_is_synced(self) -> None:
+        connect(self.wesley).close()
         query.open_index(None, None).close()
         query.open_index(self.wesley, None).close()
         self.assertEqual(self.synced.call_count, 2)
+        self.synced.assert_called_with(self.wesley)
+
+    def test_wesley_search_connection_is_read_only(self) -> None:
+        connect(self.wesley).close()
+        connection = query.open_index(None, None)
+        with self.assertRaises(sqlite3.OperationalError):
+            connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
+        connection.close()
 
     def test_other_index_path_is_not_synced(self) -> None:
         other = self.dir / "wesley-onnx-int8.sqlite"
@@ -102,6 +115,107 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.synced.assert_not_called()
         with self.assertRaises(SystemExit):
             query.open_index(None, "../edwards")
+
+    def test_plain_sqlite_index_is_opened_read_only(self) -> None:
+        # The CTO repro: a plain SQLite file gained index tables and switched to WAL.
+        path = self.dir / "plain.sqlite"
+        raw = sqlite3.connect(path)
+        raw.execute("CREATE TABLE notes (x TEXT)")
+        raw.execute("INSERT INTO notes VALUES ('keep me')")
+        raw.commit()
+        raw.close()
+        before = path.read_bytes()
+        code, _ = run_main(["q", "--mode", "bm25", "--index", str(path)])
+        self.assertIn("not a search index", str(code))
+        self.assertEqual(path.read_bytes(), before)
+        for suffix in ("-wal", "-shm", "-journal"):
+            self.assertFalse(Path(f"{path}{suffix}").exists(), suffix)
+        self.synced.assert_not_called()
+
+    def test_nonexistent_index_is_refused_and_not_created(self) -> None:
+        path = self.dir / "nope" / "missing.sqlite"
+        code, _ = run_main(["q", "--mode", "bm25", "--index", str(path)])
+        self.assertIn("missing index", str(code))
+        self.assertFalse(path.exists())
+        self.assertFalse(path.parent.exists())
+
+    def test_library_flag_is_read_only_and_allow_listed(self) -> None:
+        path = self.library_file("spurgeon.sqlite")
+        before = path.read_bytes()
+        connection = query.open_index(None, "spurgeon")
+        with self.assertRaises(sqlite3.OperationalError):
+            connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
+        connection.close()
+        # The file is WAL already (build_library.py writes it so). Any reader of a
+        # WAL file may create an empty -wal and the -shm index; no data is written.
+        self.assertEqual(path.read_bytes(), before)
+        wal = Path(f"{path}-wal")
+        self.assertTrue(not wal.exists() or wal.stat().st_size == 0)
+        self.library_file("cc-speech.sqlite")
+        for slug in ("cc-speech", "wesley", "talmage"):
+            with self.subTest(slug=slug):
+                code, _ = run_main(["q", "--mode", "bm25", "--library", slug])
+                self.assertIn("refused", str(code))
+        # Allow-listed but not built yet: refused, not created.
+        code, _ = run_main(["q", "--mode", "bm25", "--library", "edwards"])
+        self.assertIn("missing index", str(code))
+        self.assertFalse((self.dir / "edwards.sqlite").exists())
+
+
+class WesleySyncReadOnlyTests(unittest.TestCase):
+    """query.py opens the Wesley index read-write only when the chunk sync would change it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.wesley = self.dir / "wesley.sqlite"
+        self.chunks = self.dir / "chunks.jsonl"
+        self.write_chunks("grace")
+        patches = [
+            mock.patch.object(query, "INDEX_PATH", self.wesley),
+            mock.patch.object(query, "INDEX_DIR", self.dir),
+            mock.patch.object(query, "index_chunks_jsonl", lambda: self.chunks),
+            mock.patch.object(query, "connect", side_effect=connect),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write_chunks(self, text: str) -> None:
+        row = {"chunk_id": "wesley-001-c0", "sermon_id": "wesley-001", "sermon_title": "S", "text": text}
+        self.chunks.write_text(json.dumps(row) + "\n")
+
+    def texts(self, connection) -> list[str]:
+        return [row[0] for row in connection.execute("SELECT text FROM chunks")]
+
+    def test_sync_runs_only_when_needed(self) -> None:
+        connection = query.open_index(None, None)  # missing: created and synced, as on main
+        self.assertEqual(self.texts(connection), ["grace"])
+        connection.close()
+        self.assertEqual(query.connect.call_count, 1)
+        before = self.wesley.read_bytes()
+        connection = query.open_index(None, None)  # current: read-only only
+        self.assertEqual(self.texts(connection), ["grace"])
+        with self.assertRaises(sqlite3.OperationalError):
+            connection.execute("DELETE FROM chunks")
+        connection.close()
+        self.assertEqual(query.connect.call_count, 1)
+        self.assertEqual(self.wesley.read_bytes(), before)
+        self.write_chunks("faith")  # stale: synced again
+        connection = query.open_index(None, None)
+        self.assertEqual(self.texts(connection), ["faith"])
+        connection.close()
+        self.assertEqual(query.connect.call_count, 2)
+
+    def test_missing_late_column_is_synced(self) -> None:
+        query.open_index(None, None).close()
+        raw = sqlite3.connect(self.wesley)
+        raw.execute("ALTER TABLE chunks DROP COLUMN text_source")
+        raw.commit()
+        raw.close()
+        query.open_index(None, None).close()
+        self.assertEqual(query.connect.call_count, 2)
 
 
 REFUSED = ("wesley", "talmage", "gaston", "unknown-slug", "../spurgeon", "", "SPURGEON")
@@ -221,10 +335,379 @@ class AudioUrlTests(unittest.TestCase):
         for slug in ("wesley", "spurgeon", "edwards"):
             self.assertTrue(manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl")))
 
+    def test_backslash_host_is_refused(self) -> None:
+        # urlsplit sees host "evil.com\\.archive.org"; a browser opens evil.com.
+        for bad in ("https://evil.com\\.archive.org/a.mp3", "https://archive.org\\@evil.com/a.mp3",
+                    "https://archive.org/download\\x/a.mp3"):
+            with self.subTest(url=bad), self.assertRaises(manifest.UnsafeRow):
+                manifest.check_audio_url(bad)
+        self.assertEqual(query.play_url("https://evil.com\\.archive.org/a.mp3", 10.0), query.UNSAFE_URL)
+
+    def test_non_ascii_is_refused(self) -> None:
+        # U+2028/U+2029 split a log line; U+200B/U+FEFF are invisible; U+00A0 looks like a space.
+        for char in ("\u2028", "\u2029", "\u200b", "\ufeff", "\u00a0", "\u00e9", "\uff0e"):
+            for bad in (self.GOOD + char, self.GOOD.replace("/download/", f"/download/{char}"),
+                        f"https://archive{char}.org/a.mp3", f"https://evil.com{char}archive.org/a.mp3"):
+                with self.subTest(url=bad), self.assertRaises(manifest.UnsafeRow):
+                    manifest.check_audio_url(bad)
+        self.assertEqual(query.play_url(self.GOOD + "\u2028", 10.0), query.UNSAFE_URL)
+        self.assertEqual(query.play_url(self.GOOD + "\u200b", 10.0), query.UNSAFE_URL)
+        self.assertFalse(libraries._archive_url(self.GOOD + "\u200b"))
+        self.assertTrue(libraries._archive_url(self.GOOD))
+
     def test_play_url_hides_them(self) -> None:
         self.assertEqual(query.play_url(self.GOOD + "\n", 10.0), query.UNSAFE_URL)
         self.assertEqual(query.play_url("https://[gggg::1]/x.mp3", 10.0), query.UNSAFE_URL)
         self.assertTrue(query.play_url(self.GOOD, 10.0).startswith(self.GOOD + "#t="))
+
+
+
+class ProvenanceTests(unittest.TestCase):
+    """is_public_domain checks the provenance content, not just that the file exists."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "ingest" / "manifest").mkdir(parents=True)
+        patch = mock.patch.object(libraries, "repo_root", lambda: self.root)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.good = json.loads((ROOT / "ingest" / "manifest" / "spurgeon.provenance.json").read_text())
+
+    def write(self, data: object, slug: str = "spurgeon") -> None:
+        text = data if isinstance(data, str) else json.dumps(data)
+        (self.root / "ingest" / "manifest" / f"{slug}.provenance.json").write_text(text)
+        manifest_copy = self.root / "ingest" / "manifest" / f"{slug}.jsonl"
+        if not manifest_copy.exists():
+            manifest_copy.write_text((ROOT / "ingest" / "manifest" / f"{slug}.jsonl").read_text())
+
+    def write_manifest(self, rows: list[dict], slug: str = "spurgeon") -> None:
+        text = "".join(json.dumps(row) + "\n" for row in rows)
+        (self.root / "ingest" / "manifest" / f"{slug}.jsonl").write_text(text)
+
+    def test_manifest_must_match_provenance_at_runtime(self) -> None:
+        # is_public_domain (used by query.py and app/server.py, not just the build)
+        # checks the committed manifest against provenance.
+        rows = [json.loads(line) for line in (ROOT / "ingest" / "manifest" / "spurgeon.jsonl").read_text().splitlines()]
+        self.write(self.good)
+        self.assertTrue(libraries.is_public_domain("spurgeon"))
+        other = "https://archive.org/download/spurgeons_sermons_librivox/other.mp3"
+        bad = {
+            "size": [{**rows[0], "size": rows[0]["size"] + 1}, *rows[1:]],
+            "md5": [{**rows[0], "md5": "0" * 32}, *rows[1:]],
+            "file_name": [{**rows[0], "file_name": "other.mp3"}, *rows[1:]],
+            "audio_url": [{**rows[0], "audio_url": other}, *rows[1:]],
+            "missing row": rows[1:],
+            "extra row": [*rows, {**rows[0], "id": "spurgeon-999"}],
+            "duplicate row": [*rows, rows[0]],
+            "not an object": [*rows[1:], []],
+        }
+        for name, manifest_rows in bad.items():
+            with self.subTest(case=name):
+                self.write_manifest(manifest_rows)
+                self.assertFalse(libraries.is_public_domain("spurgeon"))
+                with self.assertRaises(libraries.BadProvenance):
+                    libraries.check_manifest("spurgeon", libraries.load_provenance("spurgeon"))
+        (self.root / "ingest" / "manifest" / "spurgeon.jsonl").unlink()
+        self.assertFalse(libraries.is_public_domain("spurgeon"))
+
+    def assert_refused(self, data: object) -> None:
+        self.write(data)
+        self.assertFalse(libraries.is_public_domain("spurgeon"))
+        with self.assertRaises(libraries.BadProvenance):
+            libraries.load_provenance("spurgeon")
+
+    def test_committed_provenance_passes(self) -> None:
+        for slug in libraries.PUBLIC_DOMAIN:
+            with self.subTest(slug=slug):
+                self.write((ROOT / "ingest" / "manifest" / f"{slug}.provenance.json").read_text(), slug)
+                self.assertEqual(libraries.load_provenance(slug)["slug"], slug)
+                self.assertTrue(libraries.is_public_domain(slug))
+
+    def test_empty_or_broken_file_is_refused(self) -> None:
+        for data in ({}, [], "", "{not json", "null"):
+            with self.subTest(data=data):
+                self.assert_refused(data)
+
+    def test_slug_must_match(self) -> None:
+        self.assert_refused({**self.good, "slug": "edwards"})
+        self.assert_refused({k: v for k, v in self.good.items() if k != "slug"})
+
+    def test_licence_is_required(self) -> None:
+        for key in ("licenseurl", "license_note"):
+            with self.subTest(key=key):
+                self.assert_refused({k: v for k, v in self.good.items() if k != key})
+                self.assert_refused({**self.good, key: "  "})
+
+    def test_text_edition_is_required(self) -> None:
+        self.assert_refused({k: v for k, v in self.good.items() if k != "text_edition"})
+        self.assert_refused({**self.good, "text_edition": {}})
+        self.assert_refused({**self.good, "text_edition": {**self.good["text_edition"], "note": ""}})
+
+    def test_audio_files_must_be_non_empty_and_valid(self) -> None:
+        self.assert_refused({k: v for k, v in self.good.items() if k != "audio_files"})
+        self.assert_refused({**self.good, "audio_files": []})
+        bad_entries = {
+            "file_name": ["../x.mp3", "a/b.mp3", "a\\b.mp3", "a b.mp3", "", None],
+            "size": [0, -1, "1", None, True],
+            "md5": ["x" * 32, None, "ABCDEF" * 6],
+            "sha256": [None, "0" * 63, "g" * 64],
+            "id": [None, "../a"],
+        }
+        for key, values in bad_entries.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    data = copy.deepcopy(self.good)
+                    data["audio_files"][-1][key] = value
+                    self.assert_refused(data)
+
+    def test_archive_identifier_must_build_valid_urls(self) -> None:
+        for ident in ("evil.com\\", "a/b", "", None, "x y"):
+            with self.subTest(ident=ident):
+                self.assert_refused({**self.good, "ia_identifier": ident, "ia_url": f"https://archive.org/details/{ident}"})
+        self.assert_refused({**self.good, "ia_url": "https://evil.com/details/spurgeons_sermons_librivox"})
+
+    def test_audio_url_matches_committed_manifest(self) -> None:
+        prov = json.loads((ROOT / "ingest" / "manifest" / "edwards.provenance.json").read_text())
+        rows = manifest.load(manifest.MANIFEST.with_name("edwards.jsonl"))
+        files = {entry["id"]: entry for entry in prov["audio_files"]}
+        for row in rows:
+            self.assertEqual(row["audio_url"], libraries.audio_url(prov["ia_identifier"], files[row["id"]]["file_name"]))
+
+
+class BuildShaTests(unittest.TestCase):
+    """build_library.py checks each audio file's sha256 against provenance before indexing it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.audio = Path(self.tmp.name)
+        self.rows = manifest.load(manifest.MANIFEST.with_name("spurgeon.jsonl"))
+
+    def test_committed_manifest_matches_provenance(self) -> None:
+        entries = build_library.provenance_files("spurgeon", self.rows)
+        self.assertEqual(set(entries), {row["id"] for row in self.rows})
+
+    def test_manifest_row_disagreeing_with_provenance_is_refused(self) -> None:
+        for key, value in (("md5", "0" * 32), ("size", 1), ("file_name", "other_64kb.mp3"),
+                           ("audio_url", "https://archive.org/download/other/x.mp3"), ("id", "spurgeon-999")):
+            with self.subTest(key=key):
+                rows = copy.deepcopy(self.rows)
+                rows[0][key] = value
+                with self.assertRaises(SystemExit):
+                    build_library.provenance_files("spurgeon", rows)
+
+    def entry(self, data: bytes) -> dict:
+        import hashlib
+
+        (self.audio / "a_64kb.mp3").write_bytes(data)
+        return {"file_name": "a_64kb.mp3", "sha256": hashlib.sha256(b"the real audio").hexdigest()}
+
+    def test_matching_sha256_passes(self) -> None:
+        self.assertIsNone(build_library.audio_problem(self.entry(b"the real audio"), self.audio))
+
+    def test_wrong_sha256_is_refused(self) -> None:
+        # Same size, different bytes: a size check alone would pass it.
+        problem = build_library.audio_problem(self.entry(b"the fake audio"), self.audio)
+        self.assertIn("sha256", problem)
+
+    def test_missing_audio_is_refused(self) -> None:
+        entry = self.entry(b"x")
+        (self.audio / entry["file_name"]).unlink()
+        self.assertIn("no audio", build_library.audio_problem(entry, self.audio))
+
+
+class Stop(Exception):
+    """Raised by the patched build_app: main() got past every check."""
+
+
+class ServerGateTests(unittest.TestCase):
+    """app/server.py serves only the Wesley index and allow-listed public-domain libraries."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.wesley = self.dir / "wesley.sqlite"
+        connection = connect(self.wesley)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('wesley-001-c0', 'wesley-001', 'S', 'grace')"
+        )
+        connection.commit()
+        connection.close()
+        patches = [
+            mock.patch.object(server, "INDEX_PATH", self.wesley),
+            mock.patch.object(server, "INDEX_DIR", self.dir),
+            mock.patch.object(server, "build_app", side_effect=Stop),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def library_file(self, name: str, marker: str | None) -> Path:
+        path = self.dir / f"{name}.sqlite"
+        connection = open_library(path)
+        if marker is not None:
+            connection.execute("INSERT INTO meta (key, value) VALUES ('library', ?)", (marker,))
+            connection.commit()
+        connection.close()
+        return path
+
+    def served(self, *argv: str) -> bool:
+        try:
+            server.main(["--bm25-only", *argv])
+        except Stop:
+            return True
+        raise AssertionError("main returned without serving")
+
+    def refused(self, *argv: str) -> str:
+        with self.assertRaises(SystemExit) as ctx:
+            server.main(["--bm25-only", *argv])
+        self.assertNotIn(ctx.exception.code, (0, None))
+        return str(ctx.exception.code)
+
+    def test_wesley_spurgeon_edwards_are_served(self) -> None:
+        self.assertTrue(self.served())
+        self.assertTrue(self.served("--index", str(self.wesley)))
+        for slug in ("spurgeon", "edwards"):
+            with self.subTest(slug=slug):
+                path = self.library_file(slug, slug)
+                self.assertTrue(self.served("--library", slug))
+                self.assertTrue(self.served("--library", slug, "--index", str(path)))
+
+    def test_church_and_unknown_libraries_are_refused(self) -> None:
+        self.library_file("cc-speech", None)  # a YouTube import has no library marker
+        self.library_file("talmage", "talmage")
+        for slug in ("cc-speech", "talmage", "unknown-slug"):
+            with self.subTest(slug=slug):
+                self.assertIn("refused", self.refused("--library", slug))
+
+    def test_index_with_non_allow_listed_library_file_is_refused(self) -> None:
+        church = self.library_file("church-copy", None)
+        talmage = self.library_file("old", "talmage")
+        for path in (church, talmage):
+            with self.subTest(path=path.name, library="wesley"):
+                self.assertIn("not a public-domain library", self.refused("--library", "wesley", "--index", str(path)))
+            with self.subTest(path=path.name, library="spurgeon"):
+                self.assertIn("served only from", self.refused("--library", "spurgeon", "--index", str(path)))
+
+    def test_index_library_must_match_slug(self) -> None:
+        spurgeon = self.library_file("spurgeon", "spurgeon")
+        self.library_file("edwards", "spurgeon")  # canonical edwards path, wrong marker
+        self.assertIn("served only from", self.refused("--library", "edwards", "--index", str(spurgeon)))
+        self.assertIn("not marked as the 'edwards' library", self.refused("--library", "edwards"))
+        self.assertIn("--library spurgeon", self.refused("--index", str(spurgeon)))
+        self.assertIn("served only from", self.refused("--library", "spurgeon", "--index", str(self.wesley)))
+
+    def test_forged_classic_marker_elsewhere_is_refused(self) -> None:
+        # CTO round-3 repro: a church import given a spurgeon marker, served with
+        # --library spurgeon --index <other>, was served ungated.
+        self.library_file("spurgeon", "spurgeon")
+        elsewhere = self.dir / "elsewhere"
+        elsewhere.mkdir()
+        forged = elsewhere / "spurgeon.sqlite"  # same file name, other directory
+        connection = open_library(forged)
+        connection.execute("INSERT INTO meta (key, value) VALUES ('library', 'spurgeon')")
+        connection.commit()
+        connection.close()
+        other = self.library_file("church-forged", "spurgeon")
+        for path in (forged, other):
+            with self.subTest(path=str(path)):
+                self.assertIn("served only from", self.refused("--library", "spurgeon", "--index", str(path)))
+        # The canonical file is still served, by slug or by an equivalent path.
+        self.assertTrue(self.served("--library", "spurgeon"))
+        self.assertTrue(self.served("--library", "spurgeon", "--index", str(self.dir / "." / "spurgeon.sqlite")))
+
+    def test_symlinks_to_or_at_the_canonical_path_are_refused(self) -> None:
+        canonical = self.library_file("spurgeon", "spurgeon")
+        link = self.dir / "link.sqlite"
+        link.symlink_to(canonical)
+        self.assertIn("symlink", self.refused("--library", "spurgeon", "--index", str(link)))
+        # The canonical path itself a symlink to a forged file elsewhere.
+        canonical.unlink()
+        forged = self.dir / "forged" / "x.sqlite"
+        forged.parent.mkdir()
+        connection = open_library(forged)
+        connection.execute("INSERT INTO meta (key, value) VALUES ('library', 'spurgeon')")
+        connection.commit()
+        connection.close()
+        canonical.symlink_to(forged)
+        self.assertIn("symlink", self.refused("--library", "spurgeon"))
+        self.assertIn("symlink", self.refused("--library", "spurgeon", "--index", str(canonical)))
+
+    def test_classic_index_problem_is_the_reusable_gate(self) -> None:
+        canonical = self.library_file("edwards", "edwards")
+        self.assertIsNone(libraries.classic_index_problem("edwards", canonical, self.dir))
+        with mock.patch.object(libraries.paths, "INDEX_DIR", self.dir):
+            self.assertIsNone(libraries.classic_index_problem("edwards", canonical))
+        self.assertIn("served only from", libraries.classic_index_problem("edwards", self.wesley, self.dir))
+        self.assertIn("not a public-domain library", libraries.classic_index_problem("wesley", self.wesley, self.dir))
+        self.assertIn("not a public-domain library", libraries.classic_index_problem("cc-speech", canonical, self.dir))
+        self.assertIn("missing index", libraries.classic_index_problem("spurgeon", self.dir / "spurgeon.sqlite", self.dir))
+
+    def church_as_wesley(self, name: str) -> Path:
+        """CTO round-3 repro: a church import with ids renamed wesley-*, the
+        videos table dropped, video_id (and the other import columns) kept,
+        and no library marker."""
+        path = self.dir / f"{name}.sqlite"
+        connection = open_library(path)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text, video_id) "
+            "VALUES ('wesley-900-c0', 'wesley-900', 'S', 'a member named in a story', 'abc123')"
+        )
+        connection.execute("DROP TABLE videos")
+        connection.execute("DELETE FROM meta WHERE key = 'library'")
+        connection.commit()
+        connection.close()
+        return path
+
+    def test_church_import_renamed_wesley_is_refused(self) -> None:
+        path = self.church_as_wesley("renamed")
+        message = self.refused("--index", str(path))
+        self.assertIn("church-import columns", message)
+        self.assertIn("video_id", message)
+
+    def test_any_church_or_review_column_is_refused_as_wesley(self) -> None:
+        for column in ("video_id", "title", "published", "flag_end_s", "review_sha256", "approved_sha256",
+                       "approval_status", "reviewed_by"):
+            with self.subTest(column=column):
+                path = self.dir / f"col-{column}.sqlite"
+                connection = connect(path)
+                connection.execute(f"ALTER TABLE chunks ADD COLUMN {column} TEXT")
+                connection.execute(
+                    "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) "
+                    "VALUES ('wesley-001-c0', 'wesley-001', 'S', 'grace')"
+                )
+                connection.commit()
+                connection.close()
+                self.assertIn(column, self.refused("--index", str(path)))
+        # The Wesley schema itself (store.connect) is still served.
+        self.assertTrue(self.served("--index", str(self.wesley)))
+
+    def test_unknown_files_are_refused(self) -> None:
+        plain = self.dir / "plain.sqlite"
+        raw = sqlite3.connect(plain)
+        raw.execute("CREATE TABLE notes (x TEXT)")
+        raw.commit()
+        raw.close()
+        empty = self.dir / "empty-index.sqlite"
+        connect(empty).close()
+        other = self.dir / "other.sqlite"
+        connection = connect(other)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('x-c0', 'pastor-01', 'S', 'grace')"
+        )
+        connection.commit()
+        connection.close()
+        not_db = self.dir / "notes.txt"
+        not_db.write_text("not a database " * 100)
+        for path in (plain, empty, other):
+            with self.subTest(path=path.name):
+                self.assertIn("not the Wesley index", self.refused("--index", str(path)))
+        self.assertIn("not a SQLite index", self.refused("--index", str(not_db)))
+        self.assertIn("missing index", self.refused("--index", str(self.dir / "missing.sqlite")))
+        self.assertFalse((self.dir / "missing.sqlite").exists())
 
 
 if __name__ == "__main__":

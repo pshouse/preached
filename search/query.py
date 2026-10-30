@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -20,10 +21,11 @@ from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
 from preached.privacy import default_config  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start, touches_flagged  # noqa: E402
-from preached.store import EmbeddingMismatch, connect, open_readonly, sync_chunks  # noqa: E402
+from preached.store import EmbeddingMismatch, chunks_in_sync, connect, open_readonly, sync_chunks  # noqa: E402
 from preached.youtube.listing import chunk_video_id, policy_watch_url, youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
@@ -58,29 +60,63 @@ def is_library_file(path: Path) -> bool:
 
 
 def open_index(index: Path | None, library: str | None):
-    """Connect to the index to search. Only the Wesley index file gets the chunk sync.
+    """Open the index to search, read-only (sqlite ``mode=ro``, ``query_only``).
 
-    --library opens /cache/index/<slug>.sqlite as built. --index must not be a
-    library file: the Wesley sync would replace its chunks and drop its
-    vectors. Any other --index path is searched as it is.
+    --library takes an allow-listed public-domain slug and opens only its
+    canonical /cache/index/<slug>.sqlite as built
+    (``libraries.classic_index_problem``: no symlinks, realpath equality).
+    The Wesley index (INDEX_PATH) gets main's chunk sync first, through a
+    read-write connection that is opened only when the index is out of date
+    (``ensure_chunks``); the search itself then runs read-only. Any other
+    --index path is searched as it is. --index must not be a library file:
+    the Wesley sync would replace its chunks and drop its vectors.
     """
     if library is not None:
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", library) or not (INDEX_DIR / f"{library}.sqlite").is_file():
-            raise SystemExit(f"error: no library {library!r} under {INDEX_DIR}")
-        return connect(INDEX_DIR / f"{library}.sqlite")
+        if not is_public_domain(library):
+            raise SystemExit(
+                f"error: --library {library!r} refused: only public-domain libraries ({', '.join(PUBLIC_DOMAIN)})"
+            )
+        problem = classic_index_problem(library, INDEX_DIR / f"{library}.sqlite", INDEX_DIR)
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
+        return open_target(INDEX_DIR / f"{library}.sqlite")
     path = index if index is not None else INDEX_PATH
     if is_library_file(path):
         raise SystemExit(
             f"error: {path} is a library index, not the Wesley index. "
             f"Search it with --library {path.stem} (it is never synced with Wesley chunks)."
         )
-    connection = connect(path)
     if path.resolve() == INDEX_PATH.resolve():
-        ensure_chunks(connection)
+        ensure_chunks(path)
+    return open_target(path)
+
+
+def open_target(path: Path):
+    """Open read-only (``mode=ro``, ``query_only``). A missing file is refused, not created."""
+    try:
+        connection = open_readonly(path)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    try:
+        has_chunks = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks'"
+        ).fetchone() is not None
+    except sqlite3.DatabaseError as exc:
+        connection.close()
+        raise SystemExit(f"error: {path} is not a SQLite index ({exc})") from exc
+    if not has_chunks:
+        connection.close()
+        raise SystemExit(f"error: {path} is not a search index (no chunks table)")
     return connection
 
 
-def ensure_chunks(connection) -> None:
+def ensure_chunks(path: Path) -> None:
+    """Sync the Wesley index at ``path`` with the chunk file, as on main.
+
+    Checked read-only first; ``connect`` (which may create the file, add
+    columns and write chunks) runs only when that check says the sync would
+    change something.
+    """
     try:
         chunks_path = index_chunks_jsonl()
     except StaleChunks as exc:
@@ -89,7 +125,19 @@ def ensure_chunks(connection) -> None:
         raise SystemExit(
             f"missing {chunks_path}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
         )
-    sync_chunks(connection, chunks_path)
+    if path.is_file():
+        reader = open_readonly(path)
+        try:
+            current = chunks_in_sync(reader, chunks_path)
+        finally:
+            reader.close()
+        if current:
+            return
+    connection = connect(path)
+    try:
+        sync_chunks(connection, chunks_path)
+    finally:
+        connection.close()
 
 
 def fmt_time(value) -> str:
@@ -210,9 +258,9 @@ def main() -> None:
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--index", type=Path, default=None,
                         help=f"SQLite index (default {INDEX_PATH}, synced with the Wesley chunks; "
-                        "any other path is searched as it is; library files are refused)")
+                        "any other path is searched read-only as it is; library files are refused)")
     target.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, edwards); "
-                        "built by search/build_library.py, so no Wesley chunk sync")
+                        "built by search/build_library.py; read-only, no Wesley chunk sync")
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
