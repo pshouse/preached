@@ -334,3 +334,22 @@ No new dependency. Direct runtime dependencies are still numpy, onnxruntime, and
 Run the calibrated server from this worktree with `uv sync` and `uv run app/server.py`. The default is onnx, fp32, `granite-english-r2`. `/healthz` reports `backend` `onnx` and `abstain_calibrated` true while the committed floor's fingerprints match `search/models.toml` and the query embedder.
 
 Open on this merge: int8 has no floor, on purpose, because int8 moves the top cosine. The floor is still the W3-POLISH heuristic on five unanswerable questions, with LLM-written labels pending human review. `search/bench.py` still imports torch inside `environment()` on an ONNX run, so the bench command needs `--group bench`. The runtime install does not.
+
+## Merge with #13
+
+Merged `origin/main` at `e2ddbc7` (no rebase). That is PR #13, YouTube watch-URL play, plus the watch-URL parser fix-up. Merge commit `945a5bc`. Parents are `98b577d` (this branch) and `e2ddbc7`.
+
+The only conflict was `search/query.py`, in the imports. `uv.lock` and `pyproject.toml` did not change on main since the #11 merge, so the lockfile was left as this branch has it. No `uv lock` regeneration.
+
+`search/query.py` keeps this branch's read-only index (`open_readonly`, no `sync_chunks`), h:mm:ss, `--embed-backend` / `--onnx-variant` / `--ort-threads`, #11's low-confidence banner with `--hide-low-confidence`, and the onnx/fp32 floor via `floor_for`. It takes #13's play line: a validated `youtube_watch_url` is printed as stored (no extra `#t=`), and `check_audio_url` failures, including a parser `ValueError`, print `n/a (unsafe URL hidden)`. `app/static/app.js`, `app/static/app.css`, `src/preached/youtube/listing.py`, and the YouTube tests came in from main unchanged.
+
+Tests, from this worktree:
+
+```bash
+cd /work/preached/.worktrees/feat/w3-cpu
+uv run python -m unittest discover -s tests
+```
+
+280 tests ran in 19.011 s, 0 failed, 0 skipped. The count after the #11 merge was 274.
+
+No new dependency. Direct runtime dependencies are still numpy, onnxruntime, and tokenizers.
