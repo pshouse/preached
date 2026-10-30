@@ -225,6 +225,7 @@ function renderCard(hit) {
   var audioHref = safeUrl(hit.audio_url);
   var youtube = youtubeWatchUrl(hit.audio_url);
   var spoken = readerLabel(hit, audioHref);
+  var watchHref = null;
 
   if (hit.start_s == null) {
     card.appendChild(el("p", "timing", "Audio timing coming soon"));
@@ -234,6 +235,7 @@ function renderCard(hit) {
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
     if (youtube && startLabel) {
+      watchHref = youtube;
       /* Rebuilt watch URL, including a validated &t= pre-roll. Not loaded in <audio>. */
       var watch = el("a", "play", "Watch on YouTube at " + startLabel);
       watch.href = youtube;
@@ -259,7 +261,7 @@ function renderCard(hit) {
 
   if (spoken) card.appendChild(el("p", "reader", spoken));
 
-  var described = sourceLinkFor(hit.source_url, youtube);
+  var described = sourceLinkFor(hit.source_url, watchHref);
   if (described) {
     var link = el("a", null, described.text);
     link.href = described.href;

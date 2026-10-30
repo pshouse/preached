@@ -190,6 +190,18 @@ var duplicate = renderCard({
 eq(textLinks(duplicate).length, 0, "same video is not a second source link");
 eq(playNodes(duplicate, "A").length, 1, "watch link remains");
 
+var untimed = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: null,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://www.youtube.com/watch?v=abcdefghijk",
+});
+eq(playNodes(untimed, "A").length, 0, "no watch link without a time");
+eq(textLinks(untimed).length, 1, "source stays when there is no watch link");
+eq(textLinks(untimed)[0].textContent, "Watch the source on YouTube", "untimed youtube source");
+eq(textLinks(untimed)[0].href, "https://www.youtube.com/watch?v=abcdefghijk", "untimed source rebuilt");
+
 var otherVideo = renderCard({
   sermon_title: "On Mercy",
   text: "grace",
