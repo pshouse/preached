@@ -28,7 +28,7 @@ from preached.corpus import read_jsonl, word_tokens  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.metrics import contains_quote  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import CACHE_ROOT, INDEX_CHUNKS_JSONL, INDEX_PATH, SERMONS_JSONL  # noqa: E402
+from preached.paths import CACHE_ROOT, INDEX_PATH, SERMONS_JSONL, index_chunks_jsonl  # noqa: E402
 from preached.search import Searcher  # noqa: E402
 from preached.store import connect  # noqa: E402
 from textnorm import asr_tokens, canonical_tokens  # noqa: E402
@@ -112,7 +112,7 @@ def main() -> None:
 
     questions = [json.loads(line) for line in open(ROOT / "eval" / "questions.jsonl")]
     sermons = {row["sermon_id"]: row for row in read_jsonl(SERMONS_JSONL)}
-    chunk_rows = {row["chunk_id"]: row for row in read_jsonl(INDEX_CHUNKS_JSONL)}
+    chunk_rows = {row["chunk_id"]: row for row in read_jsonl(index_chunks_jsonl())}
     connection = connect(INDEX_PATH)
     spec = MODELS[DEFAULT_MODEL]
     loaded = load_model(spec, device="cpu", batch_size=1)

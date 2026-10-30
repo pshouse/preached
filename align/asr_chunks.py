@@ -26,6 +26,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from preached.corpus import chunk_text, load_chunk_config, word_tokens, write_jsonl  # noqa: E402
 
 PAUSE_S = 1.5
+# ASR chunk ids live in their own namespace. Canonical (CCEL) ids are
+# "{sermon_id}-cNNNN" with no colon, so a church sermon whose id reuses a CCEL
+# sermon id can never hit chunks.chunk_id UNIQUE and fail the rebuild.
+ASR_ID_PREFIX = "asr:"
+
+
+def asr_chunk_id(sermon_id: str, index: int) -> str:
+    return f"{ASR_ID_PREFIX}{sermon_id}-c{index:04d}"
 
 
 def transcript_words(transcript: dict) -> list[tuple[float, float, str]]:
@@ -71,7 +79,7 @@ def asr_chunks(
         first = words[owner[piece["word_start"]]]
         last = words[owner[piece["word_end"] - 1]]
         records.append({
-            "chunk_id": f"{sermon_id}-c{index:04d}",
+            "chunk_id": asr_chunk_id(sermon_id, index),
             "sermon_id": sermon_id,
             "sermon_title": sermon_title or meta.get("title") or sermon_id,
             "text": piece["text"],

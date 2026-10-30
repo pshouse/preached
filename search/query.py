@@ -16,17 +16,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from preached import env  # noqa: F401, E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_CHUNKS_JSONL, INDEX_PATH  # noqa: E402
-from preached.search import Searcher  # noqa: E402
+from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
+from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 
 
 def ensure_chunks(connection) -> None:
-    if not INDEX_CHUNKS_JSONL.exists():
+    try:
+        chunks_path = index_chunks_jsonl()
+    except StaleChunks as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    if not chunks_path.exists():
         raise SystemExit(
-            f"missing {INDEX_CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
+            f"missing {chunks_path}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
         )
-    sync_chunks(connection, INDEX_CHUNKS_JSONL)
+    sync_chunks(connection, chunks_path)
 
 
 def fmt_time(value) -> str:
@@ -38,12 +42,14 @@ def fmt_time(value) -> str:
 
 
 def play_url(audio_url, start_s) -> str:
-    """The URL the page's player builds: the audio URL with #t=<seconds>."""
+    """The URL the page's player builds: the audio URL with #t=<seek>, where
+    seek = max(0, start_s - PREROLL_S). start_s itself stays exact."""
     if not audio_url:
         return "n/a"
-    if start_s is None:
+    seek = play_start(start_s)
+    if seek is None:
         return audio_url
-    return f"{audio_url.split('#')[0]}#t={float(start_s):g}"
+    return f"{audio_url.split('#')[0]}#t={seek:g}"
 
 
 def print_hits(query: str, mode: str, model: str | None, hits) -> None:
@@ -56,7 +62,7 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
         print(
             f"\n[{rank}] {hit.sermon_title}  (score {hit.score:.4f}, {hit.chunk_id})\n"
             f"    at {fmt_time(hit.start_s)} (start_s={hit.start_s})  read by {hit.reader or 'n/a'}\n"
-            f"    play: {play_url(hit.audio_url, hit.start_s)}\n"
+            f"    play: {play_url(hit.audio_url, hit.start_s)}  ({PREROLL_S:g} s pre-roll)\n"
             f"    text: {hit.source_url or ''}\n"
             f"    \"{hit.text}\""
         )

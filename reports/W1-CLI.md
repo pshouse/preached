@@ -1,16 +1,16 @@
 # W1-CLI: timestamped index + question → exact moment from the command line
 
-Branch `feat/w1-cli`, stacked on `feat/w1-align` (PR #6) at `cb57410`. No W1-C
-fix-ups had landed on `origin/feat/w1-align` when I finished, so no merge was
-needed. Written 2026-10-30. The model is the recommended **granite-english-r2**
+Branch `feat/w1-cli` (PR #7). Started on `feat/w1-align` (PR #6) at `cb57410`; after #5 and #6
+merged, `origin/main` (`b57a623`) was merged in (no rebase) and the PR retargeted to `main`.
+Written 2026-10-30; §6 lists the PR #6 review should-fixes applied afterwards. The model is the recommended **granite-english-r2**
 (IBM, `ibm-granite/granite-embedding-english-r2@47ea694b25`); no PRC-developed model is used.
 
 ## 1. What was done
 
 1. **Applied `align/index_consumption.patch` as a real commit** (`857e70d`) and
    deleted the patch file. `CHUNKS_JSONL` is still the file `corpus/chunk_sermons.py`
-   writes; the index reads `INDEX_CHUNKS_JSONL` (`$PREACHED_CHUNKS`, else
-   `chunks_aligned.jsonl`, else `chunks.jsonl`).
+   writes; the index reads `paths.index_chunks_jsonl()` (`$PREACHED_CHUNKS`, else
+   `chunks_aligned.jsonl` if it still matches `chunks.jsonl`, else `chunks.jsonl`; see §6).
 2. **Rebuilt the index and re-embedded** (`/cache/index/wesley.sqlite`):
    - 8,383 rows. 0 NULL `start_s`, 0 NULL `audio_url`, 0 NULL `reader`; every row `text_source = canonical`.
    - 8,383 granite-english-r2 vectors, dim 768, fingerprint `13e0ed78bb32d86b` (stored in `meta` under `embeddings:granite-english-r2`).
@@ -18,14 +18,15 @@ needed. Written 2026-10-30. The model is the recommended **granite-english-r2**
    - Bench of that run: `eval/results/2026-10-30-2.{json,md}` (hybrid RRF recall@5 0.629, MRR@10 0.506, nDCG@10 0.558, sermon@5 0.971). Same text, so the same scores as W1-B's run.
 3. **`search/query.py` output** now prints, per hit: sermon title, chunk id and score,
    `h:mm:ss` (and raw `start_s`), the reader, a playable URL, the CCEL page, and the
-   canonical quote. The URL is `audio_url#t=<seconds>`, built the way the page does it.
-   `app/static/app.js` `mediaUrlAt()` sets `url.hash = "t=" + start_s` on the archive.org MP3,
-   and `formatTime()` is floor-to-whole-seconds `h:mm:ss`; `query.py` copies both.
+   canonical quote. The URL is `audio_url#t=<seek>` with `seek = max(0, start_s − 0.75)`, built
+   the way the page does it: `app/static/app.js` `playStart()` applies the same 0.75 s pre-roll and
+   `mediaUrlAt()` sets `url.hash = "t=" + seek`; `formatTime()` is floor-to-whole-seconds `h:mm:ss`
+   of the exact `start_s`. `query.py` copies all three (`preached.search.PREROLL_S`/`play_start`).
    Example (`uv run search/query.py "Romans 8:16" -k 1`):
    ```
    [1] The Witness of the Spirit, Discourse II  (score 0.0307, wesley-011-c0000)
        at 0:00:32 (start_s=32.81)  read by Tim Cote
-       play: https://archive.org/download/sermonsfirstseries_1307_librivox/sermonsfirstseries_11_wesley_64kb.mp3#t=32.81
+       play: https://archive.org/download/sermonsfirstseries_1307_librivox/sermonsfirstseries_11_wesley_64kb.mp3#t=32.06  (0.75 s pre-roll)
        text: https://ccel.org/ccel/wesley/sermons/sermons.v.xi.html
        "The Spirit itself beareth witness with our spirit, ..."
    ```
@@ -69,6 +70,11 @@ often repeats its text verse. Grade-2 passages only; grade 1 adds nothing (same 
   top-1 overlap hits, the quote starts 0 s after `start_s` in 5, ≤ 2 s in 8, and at most 31.7 s
   (sorted: 0, 0, 0, 0, 0, 0.3, 0.6, 2.0, 6.6, 6.6, 14.1, 16.6, 24.2, 31.7). Playing from `start_s`
   reaches the quote in under half a minute every time.
+- **Pre-roll.** These numbers judge the stored `[start_s, end_s]`, which stay the exact first-word
+  onset (data unchanged by §6). The player and the CLI link now seek 0.75 s earlier, so in playback
+  each lead above is 0.75 s longer and no top-1 hit starts after its first word (W1-C's worst
+  measured late start is 0.76 s). Re-run after §6: `eval/timestamps.py` gives identical results,
+  question by question (hit@1 14, hit@5 23, strict 5/7).
 - Retrieval itself is the limit (hit@5 0.66 is W1-B's recall@5 0.629 counted per question, with
   unanswerable excluded). Misses are retrieval misses (the wrong sermon or passage), not timing.
 - Per-question detail: `reports/W1-CLI-timestamps.json` (`g2_overlap_first_rank`, `g2_inside_first_rank`, `top1_lead_s`).
@@ -93,8 +99,8 @@ audio, so this is text against ASR words, not an ear check.
 
 ### Tests and server
 
-- `uv run python -m unittest discover -s tests`: **76 tests, OK** (includes `test_server`, `test_app_js`,
-  `test_api_path`, `test_align`; W1-C reported 46 before its patch + 12 align tests; that count was not re-derived).
+- `uv run python -m unittest discover -s tests`: **120 tests, OK** after merging `main` and §6
+  (`main` alone: 101; 76 before the merge). Deno is on the sandbox PATH, so the `app.js` tests ran.
 - `uv run app/server.py` on 127.0.0.1:8000, `GET /api/search?q=what did Wesley say about worry and tomorrow`
   returned real values, e.g. "The Danger of Riches" `start_s` 2211.21, `end_s` 2264.84, reader Larry Wilson,
   `audio_url` the archive.org MP3; "Wandering Thoughts" 197.36–242.17; "Of Former Times" 667.5–712.33.
@@ -102,7 +108,6 @@ audio, so this is text against ASR words, not an ear check.
 
 ## 4. Open issues and risks
 
-- The test count of 76 is what ran; I did not compare with a pre-patch baseline.
 - Strict `start_s`-inside-span is 5/35. If the product wants the play button to land closer to the
   quote, the options are a sentence-level `start_s` for the best sentence in the chunk, or a small
   lead-in. I did not change it: the card shows the chunk's range, and the text it plays is the chunk.
@@ -116,3 +121,36 @@ audio, so this is text against ASR words, not an ear check.
 ## 5. Dependencies added
 
 None. `eval/timestamps.py` uses the repo's own modules and the stdlib.
+
+## 6. PR #6 review should-fixes (applied on this branch)
+
+1. **Timing-only change keeps vectors** (`store.sync_chunks`). When the hash changes but the chunk ids
+   and the embedding inputs (`EMBED_KEY_COLUMNS` = chunk_id, sermon_title, scripture, text) match row
+   for row in order, only the other columns (start_s, end_s, audio_url, reader, spans, ...) are
+   `UPDATE`d in place; rowids, vectors and `embeddings:*` fingerprints stay. Anything else still
+   rebuilds and drops vectors. The same rule covers a legacy hashless index, so timing still lands
+   there (PR #2's fix) and now without a re-embed. On a scratch copy of the real index, a
+   timing-only resync of 8,383 chunks took 0.6 s and kept all granite vectors and their meta.
+   Tests: `InPlaceMetadataTests` (in place, text change, title/scripture change, reorder,
+   duplicate ids) and the updated legacy test in `tests/test_store.py`.
+2. **Stale aligned file is refused** (`paths.index_chunks_jsonl()`, resolved at call time, replacing
+   the import-time `INDEX_CHUNKS_JSONL`). `align/wesley.py chunks` now writes
+   `chunks_aligned.source.json` with the sha256 of `chunks.jsonl` and `chunk_config.json`. Before
+   using `chunks_aligned.jsonl`, the hashes are checked; if they differ or there is no record, the
+   canonical chunk ids and text are compared with `chunks.jsonl` in order; a mismatch raises
+   `StaleChunks` and `build_index.py`, `query.py`, `bench.py` exit with a re-run hint.
+   `$PREACHED_CHUNKS` still overrides. The current `/cache` file passed the content check and its
+   record was written (`hash` path from now on). Tests: `tests/test_preroll_paths.py`.
+3. **ASR chunk ids are namespaced** (`align/asr_chunks.py`): `asr:{sermon_id}-cNNNN`. Canonical ids
+   never contain a colon. `sync_chunks` also refuses duplicate chunk ids up front
+   (`DuplicateChunkId`) before writing anything. Tests in `tests/test_align.py` (a church sermon
+   reusing `wesley-001` indexes alongside the CCEL chunks) and `tests/test_store.py`.
+4. **Player pre-roll** in the player, not the data: `app.js` `playStart()` and
+   `preached.search.play_start()` both give `max(0, start_s − 0.75)` (2 decimals); `query.py`'s play
+   link uses it; labels and `start_s` stay exact. Tests: Deno checks in `tests/test_app_js.py`,
+   a Python/JS parity check, and `query.play_url` tests.
+5. **Manifest default** (`align/wesley.py`): `--source-manifest` defaults to
+   `ingest/manifest/wesley.jsonl` in this tree (#5 is merged). Test in `tests/test_align.py`.
+
+Nothing in §6 changes `chunks_aligned.jsonl`, the index rows or the vectors, so the W1-CLI eval
+numbers stand; the re-run above confirms it.

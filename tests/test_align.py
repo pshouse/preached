@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "align"))
 
-from asr_chunks import asr_chunks  # noqa: E402
+from asr_chunks import ASR_ID_PREFIX, asr_chunks  # noqa: E402
 from preached.corpus import load_chunk_config, word_tokens  # noqa: E402
 from seqalign import EXACT, FUZZY, align_tokens, interpolate  # noqa: E402
 from textnorm import asr_tokens, canonical_tokens, int_to_words, ordinal_words  # noqa: E402
@@ -113,6 +113,54 @@ class OutputTest(unittest.TestCase):
             self.assertLessEqual(row["word_count"], config["max_words"] + 30)
         self.assertEqual(rows[0]["start_s"], 0.0)
         self.assertEqual(rows[-1]["end_s"], words[-1][1])
+        self.assertEqual(rows[0]["chunk_id"], "asr:church-2026-11-01-c0000")
+
+    def test_asr_ids_cannot_collide_with_ccel_ids(self):
+        # PR #6 should-fix 3: a church sermon that reuses a CCEL sermon id.
+        from preached.corpus import chunk_sermon
+
+        config = load_chunk_config(ROOT / "corpus" / "chunk_config.json")
+        text = " ".join(f"word{i}." for i in range(300))
+        sermon = {"sermon_id": "wesley-001", "title": "Salvation by Faith", "text": text, "sermon_number": 1,
+                  "series": "s", "librivox_id": None, "scripture": None, "source_url": None}
+        canonical = chunk_sermon(sermon, config)
+        words = [[0.4 * i, 0.4 * i + 0.3, f"word{i}."] for i in range(300)]
+        transcript = {"meta": {"id": "wesley-001"}, "segments": [{"start": 0, "end": 120, "text": "", "words": words}]}
+        asr = asr_chunks(transcript, config)
+        self.assertTrue(canonical and asr)
+        ids = [r["chunk_id"] for r in canonical + asr]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(r["chunk_id"].startswith(ASR_ID_PREFIX) for r in asr))
+        self.assertFalse(any(":" in r["chunk_id"] for r in canonical))
+
+    def test_index_accepts_mixed_canonical_and_asr_file(self):
+        import json
+        import tempfile
+
+        from preached.corpus import chunk_sermon
+        from preached.store import connect, load_chunk_rows, sync_chunks
+
+        config = load_chunk_config(ROOT / "corpus" / "chunk_config.json")
+        text = " ".join(f"word{i}." for i in range(300))
+        sermon = {"sermon_id": "wesley-001", "title": "T", "text": text, "sermon_number": 1,
+                  "series": "s", "librivox_id": None, "scripture": None, "source_url": None}
+        words = [[0.4 * i, 0.4 * i + 0.3, f"word{i}."] for i in range(300)]
+        transcript = {"meta": {"id": "wesley-001"}, "segments": [{"start": 0, "end": 120, "text": "", "words": words}]}
+        rows = chunk_sermon(sermon, config) + asr_chunks(transcript, config)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "chunks.jsonl"
+            path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+            connection = connect(Path(tmp) / "index.sqlite")
+            self.assertEqual(sync_chunks(connection, path), len(rows))
+            self.assertEqual(len(load_chunk_rows(connection)), len(rows))
+            connection.close()
+
+    def test_default_source_manifest_is_in_tree(self):
+        # PR #6 should-fix 5: #5 merged, so the manifest is ingest/manifest here.
+        import wesley
+
+        self.assertEqual(wesley.SOURCE_MANIFEST, ROOT / "ingest" / "manifest" / "wesley.jsonl")
+        self.assertTrue(wesley.SOURCE_MANIFEST.is_file())
 
 
 if __name__ == "__main__":
