@@ -1,6 +1,6 @@
 # W3-SIDE: classic library beside your church
 
-Branch `feat/w3-side`, from `origin/main` at `e2ddbc7`. No new dependencies. No new models. Gaston Community Church was not imported, stored, or shown. The church column in tests is fixture text, and a library whose slug is `sample` (or whose meta `sample` is `1`) is labelled sample data.
+Branch `feat/w3-side`, from `origin/main` at `e2ddbc7`, then merged with `origin/main` at `4129646` (YouTube watch links rebuilt from the video id and `t=`). No new dependencies. No new models. Gaston Community Church was not imported, stored, or shown. The church column in tests is fixture text, and a library whose slug is `sample` (or whose meta `sample` is `1`) is labelled sample data.
 
 ## What was done
 
@@ -34,7 +34,7 @@ A missing church file is HTTP 200:
 
 `abstain` stays false there because no search ran. A church file that was searched and found nothing still abstains (`confidence.level` is `none`), and `message` is the same sentence. The page shows that sentence instead of the low-confidence banner when there are no passages. When a side does return passages, the existing strong / weak / low-confidence rules apply to that side only. Low-confidence passages stay visible under the banner unless the person hides them.
 
-The page adds a View control: John Wesley, or Side by side. Side by side calls `/api/side?k=5`. The single-library view still calls `/api/search?library=wesley&k=10`. Both columns use `renderCard`, so an archive.org hit is the audio player and a YouTube hit is the stored watch link. On a phone the columns stack, each under its heading. At 800px and wider they sit next to each other. Sample data is titled `Your church (sample data)`. CSP is unchanged: no inline script, no new host. YouTube is still a link, not `media-src`.
+The page adds a View control: John Wesley, or Side by side. Side by side calls `/api/side?k=5`. The single-library view still calls `/api/search?library=wesley&k=10`. Both columns use `renderCard`. An archive.org hit is the audio player. A YouTube hit is a watch link rebuilt from the video id and an integer `t=` (the API does the same rebuild in `public_audio_url` before the page sees `audio_url`). On a phone the columns stack, each under its heading. At 800px and wider they sit next to each other. Sample data is titled `Your church (sample data)`. CSP is unchanged: no inline script, no new host. YouTube is still a link, not `media-src`.
 
 `search/query.py --side` prints the same two sections. `--church-index` or `--church-library` names the church file; otherwise it uses the single marked file under `/cache/index`. A missing file prints `Nothing from your church yet.` and exits 0. The CLI still prints the ranker's raw top `-k` (default 5). The API still de-dupes, as it did before this branch.
 
@@ -62,7 +62,7 @@ uv run search/query.py "mercy" --mode bm25 --side --church-library sample
 
 ## Results
 
-`uv run python -m unittest discover -s tests`: **252 tests, all passing** (14.8s). Deno is installed; the page test ran the card renderer, the watch link, the archive player, the empty church sentence, the sample-data heading, and the per-side low-confidence toggle. There is no browser in this environment, so the layout was not clicked through in a real viewport. The CSS test checks that two columns appear only inside the `min-width: 800px` rule.
+`uv run python -m unittest discover -s tests`, after the merge of `origin/main`: **255 tests, all passing** (14.0s). Deno is installed; the page test ran the card renderer, the watch link, the archive player, the empty church sentence, the sample-data heading, and the per-side low-confidence toggle. There is no browser in this environment, so the layout was not clicked through in a real viewport. The CSS test checks that two columns appear only inside the `min-width: 800px` rule.
 
 New coverage:
 
