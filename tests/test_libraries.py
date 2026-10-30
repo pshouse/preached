@@ -4,7 +4,10 @@ ingested or indexed as public-domain libraries."""
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
+import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -102,6 +105,7 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.synced.assert_not_called()
         with self.assertRaises(SystemExit):
             query.open_index(None, "../edwards")
+
 
 
 REFUSED = ("wesley", "talmage", "gaston", "unknown-slug", "../spurgeon", "", "SPURGEON")
@@ -225,6 +229,90 @@ class AudioUrlTests(unittest.TestCase):
         self.assertEqual(query.play_url(self.GOOD + "\n", 10.0), query.UNSAFE_URL)
         self.assertEqual(query.play_url("https://[gggg::1]/x.mp3", 10.0), query.UNSAFE_URL)
         self.assertTrue(query.play_url(self.GOOD, 10.0).startswith(self.GOOD + "#t="))
+
+
+
+class ProvenanceTests(unittest.TestCase):
+    """is_public_domain checks the provenance content, not just that the file exists."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "ingest" / "manifest").mkdir(parents=True)
+        patch = mock.patch.object(libraries, "repo_root", lambda: self.root)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.good = json.loads((ROOT / "ingest" / "manifest" / "spurgeon.provenance.json").read_text())
+
+    def write(self, data: object, slug: str = "spurgeon") -> None:
+        text = data if isinstance(data, str) else json.dumps(data)
+        (self.root / "ingest" / "manifest" / f"{slug}.provenance.json").write_text(text)
+
+    def assert_refused(self, data: object) -> None:
+        self.write(data)
+        self.assertFalse(libraries.is_public_domain("spurgeon"))
+        with self.assertRaises(libraries.BadProvenance):
+            libraries.load_provenance("spurgeon")
+
+    def test_committed_provenance_passes(self) -> None:
+        for slug in libraries.PUBLIC_DOMAIN:
+            with self.subTest(slug=slug):
+                self.write((ROOT / "ingest" / "manifest" / f"{slug}.provenance.json").read_text(), slug)
+                self.assertEqual(libraries.load_provenance(slug)["slug"], slug)
+                self.assertTrue(libraries.is_public_domain(slug))
+
+    def test_empty_or_broken_file_is_refused(self) -> None:
+        for data in ({}, [], "", "{not json", "null"):
+            with self.subTest(data=data):
+                self.assert_refused(data)
+
+    def test_slug_must_match(self) -> None:
+        self.assert_refused({**self.good, "slug": "edwards"})
+        self.assert_refused({k: v for k, v in self.good.items() if k != "slug"})
+
+    def test_licence_is_required(self) -> None:
+        for key in ("licenseurl", "license_note"):
+            with self.subTest(key=key):
+                self.assert_refused({k: v for k, v in self.good.items() if k != key})
+                self.assert_refused({**self.good, key: "  "})
+
+    def test_text_edition_is_required(self) -> None:
+        self.assert_refused({k: v for k, v in self.good.items() if k != "text_edition"})
+        self.assert_refused({**self.good, "text_edition": {}})
+        self.assert_refused({**self.good, "text_edition": {**self.good["text_edition"], "note": ""}})
+
+    def test_audio_files_must_be_non_empty_and_valid(self) -> None:
+        self.assert_refused({k: v for k, v in self.good.items() if k != "audio_files"})
+        self.assert_refused({**self.good, "audio_files": []})
+        bad_entries = {
+            "file_name": ["../x.mp3", "a/b.mp3", "a\\b.mp3", "a b.mp3", "", None],
+            "size": [0, -1, "1", None, True],
+            "md5": ["x" * 32, None, "ABCDEF" * 6],
+            "sha256": [None, "0" * 63, "g" * 64],
+            "id": [None, "../a"],
+        }
+        for key, values in bad_entries.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    data = copy.deepcopy(self.good)
+                    data["audio_files"][-1][key] = value
+                    self.assert_refused(data)
+
+    def test_archive_identifier_must_build_valid_urls(self) -> None:
+        for ident in ("evil.com\\", "a/b", "", None, "x y"):
+            with self.subTest(ident=ident):
+                self.assert_refused({**self.good, "ia_identifier": ident, "ia_url": f"https://archive.org/details/{ident}"})
+        self.assert_refused({**self.good, "ia_url": "https://evil.com/details/spurgeons_sermons_librivox"})
+
+    def test_audio_url_matches_committed_manifest(self) -> None:
+        prov = json.loads((ROOT / "ingest" / "manifest" / "edwards.provenance.json").read_text())
+        rows = manifest.load(manifest.MANIFEST.with_name("edwards.jsonl"))
+        files = {entry["id"]: entry for entry in prov["audio_files"]}
+        for row in rows:
+            self.assertEqual(row["audio_url"], libraries.audio_url(prov["ia_identifier"], files[row["id"]]["file_name"]))
+
+
 
 
 if __name__ == "__main__":
