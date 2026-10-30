@@ -74,6 +74,10 @@ def youtube_watch_url(url: object) -> str | None:
     default) limited to ``WATCH_HOSTS``, path ``/watch``, and one ``v`` of
     11 characters. The string comes back unchanged: its ``&t=`` already
     includes the pre-roll, and nothing here adds ``#t=``.
+
+    Never raises. ``urlsplit`` raises ``ValueError`` for an invalid IPv6
+    netloc, and ``.port`` raises ``ValueError`` for a non-numeric or
+    out-of-range port. Those, and anything else the parser rejects, are None.
     """
     if (
         not isinstance(url, str)
@@ -83,13 +87,22 @@ def youtube_watch_url(url: object) -> str | None:
         or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)
     ):
         return None
-    parsed = urlsplit(url)
+    try:
+        parsed = urlsplit(url)
+        # Read these inside the try. A matching host with a bad port used to
+        # raise from ``.port`` before the function could return None.
+        hostname = parsed.hostname
+        port = parsed.port
+        username = parsed.username
+        password = parsed.password
+    except ValueError:
+        return None
     if (
         parsed.scheme != "https"
-        or parsed.hostname not in WATCH_HOSTS
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.port not in (None, 443)
+        or hostname not in WATCH_HOSTS
+        or username is not None
+        or password is not None
+        or port not in (None, 443)
     ):
         return None
     if parsed.path != "/watch":
