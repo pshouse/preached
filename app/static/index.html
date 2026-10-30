@@ -16,7 +16,7 @@
     <header class="mast">
       <p class="mark">Preached</p>
       <h1>John Wesley, in his own words</h1>
-      <p class="lede">Search <cite>Sermons on Several Occasions</cite>. Each result is a passage he published, with the LibriVox reading queued to that moment when the timing is known.</p>
+      <p class="lede">Search <cite>Sermons on Several Occasions</cite>. Each result is a passage he published, with the LibriVox reading queued to that moment when the timing is known. Side by side sets the same question next to your church.</p>
     </header>
 
     <form id="search-form" class="search-form" role="search">
@@ -30,6 +30,13 @@
           <option value="hybrid">Words and meaning</option>
           <option value="bm25">Exact words</option>
           <option value="dense">Closest in meaning</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="view">View</label>
+        <select id="view" name="view">
+          <option value="classic">John Wesley</option>
+          <option value="side">Side by side</option>
         </select>
       </div>
       <button type="submit">Search</button>
@@ -55,10 +62,12 @@
         <button type="button" id="retry" class="secondary" hidden>Try again</button>
       </div>
       <ol id="results" class="results"></ol>
+      <div id="sides" class="sides" hidden></div>
     </section>
 
     <footer class="colophon">
       <p>Results are Wesley's own published words; audio is read by LibriVox volunteers. Preached finds passages; it never writes or paraphrases.</p>
+      <p>Side by side compares that library with your church. A column marked sample data is fixture text, not a congregation's archive.</p>
       <section class="credits" aria-labelledby="credits-heading">
         <h2 id="credits-heading">Credits</h2>
         <p>Text: John Wesley, <cite>Sermons on Several Occasions</cite> (public domain), via the <a href="https://ccel.org/ccel/wesley/sermons" rel="noreferrer">Christian Classics Ethereal Library (CCEL)</a>. Paragraph numbers are hidden in excerpts.</p>

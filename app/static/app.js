@@ -276,6 +276,65 @@ function describeResponse(data, hideLow) {
   return state;
 }
 
+/* Same sentence as preached.library.CHURCH_EMPTY. */
+var CHURCH_EMPTY = "Nothing from your church yet.";
+
+/* Column title. Sample fixture libraries keep the words "sample data".
+   Same idea as preached.library.classic_heading / church_heading. */
+function sideHeading(side, which) {
+  if (which === "classic") {
+    var classic = side && typeof side.label === "string" && side.label ? side.label : "John Wesley";
+    return "Classic library: " + classic;
+  }
+  var label = side && typeof side.label === "string" && side.label ? side.label : "Your church";
+  if (side && side.sample === true && label.toLowerCase().indexOf("sample data") === -1) {
+    return label + " (sample data)";
+  }
+  return label;
+}
+
+/* One column. A missing or empty church side uses the honest empty sentence,
+   not the low-confidence banner (there is nothing to judge). A church side
+   that did return passages uses the same abstain rules as a single search. */
+function describeSide(side, hideLow, which) {
+  var heading = sideHeading(side, which);
+  var results = side && Array.isArray(side.results) ? side.results : [];
+  if (which === "church" && (!side || side.present === false || results.length === 0)) {
+    var message = side && typeof side.message === "string" && side.message ? side.message : CHURCH_EMPTY;
+    return {
+      kind: "empty",
+      heading: heading,
+      status: message,
+      confidenceNote: null,
+      fallbackNote: side && typeof side.note === "string" && side.note ? side.note : null,
+      showResults: false,
+      canHide: false,
+      results: [],
+    };
+  }
+  var state = describeResponse(side || { results: [] }, hideLow);
+  state.heading = heading;
+  return state;
+}
+
+/* One column of cards. Reuses renderCard, so a YouTube hit stays a watch
+   link and an archive.org hit stays the audio player. */
+function renderSide(side, hideLow, which) {
+  var state = describeSide(side, hideLow, which);
+  var section = el("section", "side-col");
+  var title = el("h2", null, state.heading);
+  section.appendChild(title);
+  if (state.fallbackNote) section.appendChild(el("p", "note", state.fallbackNote));
+  section.appendChild(el("p", "status", state.status));
+  if (state.confidenceNote) section.appendChild(el("p", "note note-weak", state.confidenceNote));
+  var list = el("ol", "results");
+  if (state.showResults) {
+    for (var i = 0; i < state.results.length; i += 1) list.appendChild(renderCard(state.results[i]));
+  }
+  section.appendChild(list);
+  return section;
+}
+
 /* Status text for a failed search. kind: network | http | garbled. */
 function failureMessage(kind, status, data) {
   if (kind === "network") return MESSAGES.network;
@@ -287,6 +346,7 @@ function failureMessage(kind, status, data) {
 
 var lastSearch = null;
 var lastData = null;
+var lastView = "classic";
 
 function setText(id, text) {
   var node = document.getElementById(id);
@@ -301,7 +361,16 @@ function setBusy(busy) {
 }
 
 function resetState() {
-  document.getElementById("results").replaceChildren();
+  var results = document.getElementById("results");
+  results.replaceChildren();
+  results.hidden = false;
+  var sides = document.getElementById("sides");
+  if (sides) {
+    sides.replaceChildren();
+    sides.hidden = true;
+  }
+  var wrap = document.querySelector(".wrap");
+  if (wrap && wrap.classList) wrap.classList.remove("is-side");
   setText("note", "");
   setText("confidence", "");
   document.getElementById("hide-low").hidden = true;
@@ -321,6 +390,7 @@ function showResults(data) {
   resetState();
   setBusy(false);
   lastData = data;
+  lastView = "classic";
   var state = describeResponse(data, hideLowConfidence);
   setText("note", state.fallbackNote);
   document.getElementById("status").textContent = state.status;
@@ -333,10 +403,36 @@ function showResults(data) {
   toggle.setAttribute("aria-pressed", hideLowConfidence ? "true" : "false");
 }
 
+function showSides(data) {
+  resetState();
+  setBusy(false);
+  lastData = data;
+  lastView = "side";
+  var classicState = describeSide(data && data.classic, hideLowConfidence, "classic");
+  var churchState = describeSide(data && data.church, hideLowConfidence, "church");
+  document.getElementById("status").textContent =
+    classicState.heading + ". " + classicState.status + " " +
+    churchState.heading + ". " + churchState.status;
+  var results = document.getElementById("results");
+  results.hidden = true;
+  var sides = document.getElementById("sides");
+  if (sides) {
+    sides.hidden = false;
+    sides.appendChild(renderSide(data && data.classic, hideLowConfidence, "classic"));
+    sides.appendChild(renderSide(data && data.church, hideLowConfidence, "church"));
+  }
+  var wrap = document.querySelector(".wrap");
+  if (wrap && wrap.classList) wrap.classList.add("is-side");
+  var toggle = document.getElementById("hide-low");
+  toggle.hidden = !(classicState.canHide || churchState.canHide);
+  toggle.setAttribute("aria-pressed", hideLowConfidence ? "true" : "false");
+}
+
 function toggleLowConfidence() {
   hideLowConfidence = !hideLowConfidence;
   if (!lastData) return;
-  showResults(lastData);
+  if (lastView === "side") showSides(lastData);
+  else showResults(lastData);
   /* Keep focus on the toggle so it can be pressed again. */
   document.getElementById("hide-low").focus();
 }
@@ -351,30 +447,43 @@ function showFailure(message) {
   document.getElementById("retry").hidden = !lastSearch;
 }
 
+function selectedView() {
+  var viewEl = document.getElementById("view");
+  return viewEl && viewEl.value === "side" ? "side" : "classic";
+}
+
 async function runSearch(query) {
   var statusEl = document.getElementById("status");
   var modeEl = document.getElementById("mode");
   var mode = modeEl.value;
   if (mode !== "hybrid" && mode !== "bm25" && mode !== "dense") mode = "hybrid";
+  var view = selectedView();
   if (searchAbort) searchAbort.abort();
   searchAbort = new AbortController();
   var signal = searchAbort.signal;
   lastSearch = query;
   lastData = null;
+  lastView = view;
   resetState();
   setBusy(true);
   statusEl.textContent = MESSAGES.loading;
 
   var params = new URLSearchParams();
   params.set("q", query);
-  params.set("k", "10");
   params.set("mode", mode);
-  params.set("library", "wesley");
+  var endpoint = "/api/search";
+  if (view === "side") {
+    params.set("k", "5");
+    endpoint = "/api/side";
+  } else {
+    params.set("k", "10");
+    params.set("library", "wesley");
+  }
 
   var response;
   var text;
   try {
-    response = await fetch("/api/search?" + params.toString(), {
+    response = await fetch(endpoint + "?" + params.toString(), {
       headers: { Accept: "application/json" },
       signal: signal,
     });
@@ -397,7 +506,8 @@ async function runSearch(query) {
     showFailure(failureMessage("http", response.status, data));
     return;
   }
-  showResults(data);
+  if (view === "side") showSides(data);
+  else showResults(data);
 }
 
 function init() {
@@ -425,6 +535,13 @@ function init() {
     if (lastSearch) runSearch(lastSearch);
   });
 
+  var viewEl = document.getElementById("view");
+  if (viewEl) {
+    viewEl.addEventListener("change", function () {
+      if (lastSearch) runSearch(lastSearch);
+    });
+  }
+
   document.querySelectorAll("[data-query]").forEach(function (button) {
     button.addEventListener("click", function () {
       input.value = button.getAttribute("data-query") || "";
@@ -432,7 +549,9 @@ function init() {
     });
   });
 
-  var initial = new URLSearchParams(window.location.search).get("q");
+  var initialParams = new URLSearchParams(window.location.search);
+  if (viewEl && initialParams.get("view") === "side") viewEl.value = "side";
+  var initial = initialParams.get("q");
   if (initial && initial.trim()) {
     input.value = initial.trim();
     runSearch(input.value);
