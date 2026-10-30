@@ -43,7 +43,7 @@ from preached.search import (  # noqa: E402
     _optional_int,
     _text_or_none,
 )
-from preached.store import EmbeddingMismatch, open_readonly  # noqa: E402
+from preached.store import EmbeddingMismatch, check_query_variant, index_stamp, open_readonly  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -230,6 +230,7 @@ def default_loader(
         device="cpu",
         batch_size=1,
     )
+    check_query_variant(connection, model_key, getattr(embedder, "variant", None))
 
     def encode(query: str):
         return embedder.encode_queries([query])[0]
@@ -278,7 +279,10 @@ class App:
     def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, backend=None):
         self.connection = connection
         self.searcher = searcher
+        self._encode = encode
         self.encode = encode
+        self._configured_model = model_name
+        self._weights_ok = encode is not None
         self.fallback_note = fallback_note
         self.model_name = model_name if encode is not None else None
         self.backend = None if encode is None else (backend if backend is not None else getattr(encode, "backend", None))
@@ -286,12 +290,54 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = LIBRARY
+        self._stamp = self._capture_stamp()
+
+    def _capture_stamp(self):
+        try:
+            model = self._configured_model if self._weights_ok else None
+            return index_stamp(self.connection, model)
+        except Exception:
+            logging.exception("could not read the index stamp")
+            return None
+
+    def _refresh_if_stale(self) -> None:
+        """Reload cached rows and vectors when the chunk hash or embeddings changed.
+
+        The searcher keeps both in memory from startup. A rebuild in the same
+        file would otherwise keep serving the old text and deleted vectors
+        until the process restarts. Missing or mismatched vectors fall back
+        to BM25. The weights stay loaded so a later rebuild can use them.
+        """
+        stamp = self._capture_stamp()
+        if stamp == self._stamp:
+            return
+        if self._stamp is None:
+            self._stamp = stamp
+            return
+        self._stamp = stamp
+        if self._weights_ok:
+            try:
+                self.searcher = Searcher(self.connection, model=self._configured_model)
+            except (EmbeddingMismatch, RuntimeError):
+                self.searcher = Searcher(self.connection)
+                self.encode = None
+                self.model_name = None
+                self.backend = None
+                self.fallback_note = STALE_NOTE
+                return
+            self.encode = self._encode
+            self.model_name = self._configured_model
+            self.backend = getattr(self._encode, "backend", None)
+            self.fallback_note = None
+            return
+        self.searcher = Searcher(self.connection)
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
 
     def health(self) -> dict:
         with self.lock:
+            self._refresh_if_stale()
             count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
         return {
             "ok": True,
@@ -308,6 +354,7 @@ class App:
         note = None
         effective = mode
         with self.lock:
+            self._refresh_if_stale()
             if self.encode is None:
                 if self.fallback_note:
                     note = self.fallback_note

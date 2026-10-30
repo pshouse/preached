@@ -622,6 +622,67 @@ class ServerTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_search_reloads_when_the_chunk_hash_or_embeddings_change(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.sqlite"
+            connection = connect(path)
+            _insert(
+                connection,
+                chunk_id="c1",
+                text="By grace are ye saved through faith.",
+                start_s=10,
+                end_s=20,
+            )
+            connection.commit()
+            rowid = int(connection.execute("SELECT rowid FROM chunks").fetchone()[0])
+            matrix = np.ones((1, 4), dtype=np.float32)
+            write_embeddings(connection, spec.key, [rowid], matrix)
+            save_embedding_info(
+                connection,
+                spec.key,
+                {"fingerprint": spec.fingerprint(), "backend": "onnx", "variant": "fp32"},
+            )
+            connection.execute(
+                "INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa')"
+            )
+            connection.commit()
+
+            def encode(_query: str) -> np.ndarray:
+                return np.ones(4, dtype=np.float32)
+
+            encode.backend = "onnx"
+            app = App(
+                connection=connection,
+                searcher=Searcher(connection, model=spec.key),
+                encode=encode,
+                fallback_note=None,
+                model_name=spec.key,
+                hosts={"127.0.0.1"},
+                static_dir=STATIC_DIR,
+                backend="onnx",
+            )
+            first = app.search("grace", 5, "dense")
+            self.assertEqual(first["mode"], "dense")
+            self.assertIn("grace", first["results"][0]["text"])
+            connection.execute(
+                "UPDATE chunks SET text = ? WHERE chunk_id = 'c1'",
+                ("A prayer for the whole church.",),
+            )
+            connection.execute(
+                "UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'"
+            )
+            connection.commit()
+            second = app.search("prayer", 5, "bm25")
+            self.assertTrue(any("prayer" in hit["text"] for hit in second["results"]))
+            connection.execute("DELETE FROM embeddings")
+            connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
+            connection.commit()
+            third = app.search("prayer", 5, "dense")
+            self.assertEqual(third["mode"], "bm25")
+            self.assertEqual(third["note"], STALE_NOTE)
+            self.assertFalse(app.health()["dense"])
+
     def test_bm25_fallback_is_flagged(self) -> None:
         self.assertIsNone(self.fallback_encode)
         self.assertEqual(self.fallback_note, FALLBACK_NOTE)

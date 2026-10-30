@@ -185,8 +185,10 @@ def _write_manifest(folder: Path, files: list[str], default_variant: str) -> Non
     }
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     # The manifest hashes itself out. Record it after the write so a later
-    # reader can still check the other files. The runtime hashes the files
-    # named above; manifest.json is not in that list.
+    # reader can still check the other files. The runtime hashes only the
+    # selected variant plus tokenizer.json and pooling.json. int8 may be
+    # listed here and still be absent when the server loads fp32.
+    # manifest.json is not in the hashed list.
     print(json.dumps({name: info["bytes"] for name, info in listed.items()}, indent=2))
 
 

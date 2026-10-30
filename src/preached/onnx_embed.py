@@ -16,7 +16,6 @@ from preached.artifacts import (
     ArtifactError,
     artifact_dir,
     resolve_threads,
-    resolve_variant,
     verify_manifest,
 )
 from preached.models import MODELS, ModelSpec
@@ -64,8 +63,9 @@ class OnnxEmbedder:
             raise ArtifactError(f"onnx backend only supports {GRANITE_MODEL_KEY}")
         spec = MODELS[model_key]
         folder = directory or artifact_dir()
-        manifest = verify_manifest(folder)
-        chosen = resolve_variant(manifest, variant)
+        verified = verify_manifest(folder, variant=variant)
+        manifest = verified.manifest
+        chosen = verified.variant
         filename = manifest["variants"][chosen]
         threads = resolve_threads(ort_threads)
         max_length = int(manifest.get("max_seq_length") or MAX_SEQ_LENGTH)
@@ -76,6 +76,8 @@ class OnnxEmbedder:
             )
 
         # Imported here so BM25-only commands and the import guard stay light.
+        # The session and the tokenizer are built from the bytes just hashed,
+        # not from a second open of the path.
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
@@ -86,7 +88,7 @@ class OnnxEmbedder:
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         options.log_severity_level = 3
         session = ort.InferenceSession(
-            str(folder / filename),
+            verified.files[filename],
             sess_options=options,
             providers=["CPUExecutionProvider"],
         )
@@ -97,7 +99,7 @@ class OnnxEmbedder:
             # A GPU build of onnxruntime must not pick CUDA. CPUExecutionProvider
             # is requested alone; anything else means the session ignored that.
             raise ArtifactError(f"ONNX session providers {session.get_providers()} are not CPU")
-        tokenizer = Tokenizer.from_file(str(folder / "tokenizer.json"))
+        tokenizer = Tokenizer.from_buffer(verified.files["tokenizer.json"])
         embedder = cls(
             spec,
             session,

@@ -17,9 +17,11 @@ from pathlib import Path
 import numpy as np
 
 from preached.artifacts import (
+    FP32_ONNX_SHA256,
     GRANITE_HF_ID,
     GRANITE_REVISION,
     THREADS_ENV,
+    TOKENIZER_SHA256,
     ArtifactError,
     artifact_dir,
     resolve_threads,
@@ -168,11 +170,13 @@ class TokenizerTests(unittest.TestCase):
 
 
 class ManifestTests(unittest.TestCase):
-    def _write(self, folder: Path, corrupt: bool) -> None:
-        names = ["model.fp32.onnx", "model.int8.onnx", "tokenizer.json", "pooling.json"]
+    def _write(self, folder: Path, corrupt: bool, *, include_int8: bool = True) -> None:
+        names = ["model.fp32.onnx", "tokenizer.json", "pooling.json"]
+        if include_int8:
+            names.append("model.int8.onnx")
         files = {}
         for name in names:
-            payload = f"bytes-for-{name}".encode()
+            payload = b'{"pooling": "cls"}\n' if name == "pooling.json" else f"bytes-for-{name}".encode()
             (folder / name).write_bytes(payload)
             digest = sha256_file(folder / name)
             files[name] = {"sha256": digest, "bytes": len(payload)}
@@ -184,9 +188,48 @@ class ManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             self._write(folder, corrupt=False)
-            manifest = verify_manifest(folder)
-            self.assertEqual(manifest["revision"], GRANITE_REVISION)
-            self.assertEqual(manifest["pooling"], "cls")
+            verified = verify_manifest(folder, enforce_pins=False)
+            self.assertEqual(verified.manifest["revision"], GRANITE_REVISION)
+            self.assertEqual(verified.manifest["pooling"], "cls")
+            self.assertEqual(verified.variant, "fp32")
+            self.assertIn("model.fp32.onnx", verified.files)
+            self.assertNotIn("model.int8.onnx", verified.files)
+
+    def test_fp32_without_int8_verifies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._write(folder, corrupt=False, include_int8=False)
+            verified = verify_manifest(folder, variant="fp32", enforce_pins=False)
+            self.assertEqual(verified.variant, "fp32")
+            self.assertEqual(set(verified.files), {"model.fp32.onnx", "tokenizer.json", "pooling.json"})
+
+    def test_listed_int8_is_not_required_for_fp32(self) -> None:
+        # The on-disk manifest names int8. A Sprite that only copied fp32
+        # still verifies.
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._write(folder, corrupt=False, include_int8=True)
+            (folder / "model.int8.onnx").unlink()
+            verified = verify_manifest(folder, variant="fp32", enforce_pins=False)
+            self.assertEqual(verified.variant, "fp32")
+
+    def test_int8_selected_without_the_file_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._write(folder, corrupt=False, include_int8=True)
+            (folder / "model.int8.onnx").unlink()
+            with self.assertRaises(ArtifactError) as ctx:
+                verify_manifest(folder, variant="int8", enforce_pins=False)
+            self.assertIn("missing", str(ctx.exception))
+            self.assertIn("model.int8.onnx", str(ctx.exception))
+
+    def test_pinned_digest_refuses_a_rewritten_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._write(folder, corrupt=False, include_int8=False)
+            with self.assertRaises(ArtifactError) as ctx:
+                verify_manifest(folder, variant="fp32", enforce_pins=True)
+            self.assertIn("pinned", str(ctx.exception))
 
     def test_mismatched_sha256_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -200,8 +243,9 @@ class ManifestTests(unittest.TestCase):
             folder = Path(tmp)
             self._write(folder, corrupt=False)
             (folder / "tokenizer.json").unlink()
-            with self.assertRaises(ArtifactError):
-                verify_manifest(folder)
+            with self.assertRaises(ArtifactError) as ctx:
+                verify_manifest(folder, enforce_pins=False)
+            self.assertIn("tokenizer.json", str(ctx.exception))
 
 
 def _seed_granite(path: Path):
@@ -261,6 +305,91 @@ class FallbackTests(unittest.TestCase):
                     os.environ["PREACHED_ONNX_DIR"] = previous
             self.assertIsNone(encode)
             self.assertEqual(note, FALLBACK_NOTE)
+
+    def test_int8_absent_falls_back(self) -> None:
+        from app.server import FALLBACK_NOTE, load_search
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / GRANITE_REVISION
+            folder.mkdir()
+            files = {}
+            for name in ("model.fp32.onnx", "tokenizer.json", "pooling.json"):
+                payload = b'{"pooling": "cls"}\n' if name == "pooling.json" else b"not-a-real-model"
+                (folder / name).write_bytes(payload)
+                files[name] = {"sha256": sha256_file(folder / name), "bytes": len(payload)}
+            files["model.int8.onnx"] = {"sha256": "ab" * 32, "bytes": 1}
+            _manifest(folder, files)
+            previous = os.environ.get("PREACHED_ONNX_DIR")
+            os.environ["PREACHED_ONNX_DIR"] = tmp
+            try:
+                connection = _seed_granite(Path(tmp) / "index.sqlite")
+                _searcher, encode, note = load_search(
+                    connection, "granite-english-r2", embed_backend="onnx", variant="int8"
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("PREACHED_ONNX_DIR", None)
+                else:
+                    os.environ["PREACHED_ONNX_DIR"] = previous
+            self.assertIsNone(encode)
+            self.assertEqual(note, FALLBACK_NOTE)
+
+    def test_mismatched_fp32_without_int8_falls_back(self) -> None:
+        from app.server import FALLBACK_NOTE, load_search
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / GRANITE_REVISION
+            folder.mkdir()
+            files = {}
+            for name in ("model.fp32.onnx", "tokenizer.json", "pooling.json"):
+                payload = b'{"pooling": "cls"}\n' if name == "pooling.json" else b"not-a-real-model"
+                (folder / name).write_bytes(payload)
+                files[name] = {"sha256": sha256_file(folder / name), "bytes": len(payload)}
+            files["model.fp32.onnx"]["sha256"] = "0" * 64
+            _manifest(folder, files)
+            previous = os.environ.get("PREACHED_ONNX_DIR")
+            os.environ["PREACHED_ONNX_DIR"] = tmp
+            try:
+                connection = _seed_granite(Path(tmp) / "index.sqlite")
+                _searcher, encode, note = load_search(
+                    connection, "granite-english-r2", embed_backend="onnx", variant="fp32"
+                )
+            finally:
+                if previous is None:
+                    os.environ.pop("PREACHED_ONNX_DIR", None)
+                else:
+                    os.environ["PREACHED_ONNX_DIR"] = previous
+            self.assertIsNone(encode)
+            self.assertEqual(note, FALLBACK_NOTE)
+
+
+class VariantPairingTests(unittest.TestCase):
+    def test_int8_query_refuses_fp32_document_vectors(self) -> None:
+        from preached.store import EmbeddingMismatch, check_query_variant
+
+        with tempfile.TemporaryDirectory() as tmp:
+            connection = _seed_granite(Path(tmp) / "index.sqlite")
+            with self.assertRaises(EmbeddingMismatch):
+                check_query_variant(connection, "granite-english-r2", "int8")
+            check_query_variant(connection, "granite-english-r2", "fp32")
+
+
+class BenchOutputTests(unittest.TestCase):
+    def test_tag_and_out_avoid_the_numbered_collision(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("preached_bench", ROOT / "search" / "bench.py")
+        bench = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bench)
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            (results / "2026-10-30.json").write_text("{}")
+            (results / "2026-10-30-w3cpu-onnx-fp32.json").write_text("{}")
+            tagged, _md = bench.output_paths(results, "2026-10-30", "w3cpu-onnx-fp32")
+            self.assertEqual(tagged.name, "2026-10-30-w3cpu-onnx-fp32-2.json")
+            explicit, explicit_md = bench.output_paths(results, "2026-10-30", out=results / "mine.json")
+            self.assertEqual(explicit.name, "mine.json")
+            self.assertEqual(explicit_md.name, "mine.md")
 
 
 class SchemaTests(unittest.TestCase):
@@ -337,6 +466,32 @@ class ImportGuardTests(unittest.TestCase):
 
 
 class RealOnnxTests(unittest.TestCase):
+    def test_cached_fp32_and_tokenizer_match_the_pins(self) -> None:
+        folder = artifact_dir()
+        if not (folder / "model.fp32.onnx").is_file():
+            self.skipTest("granite onnx artifacts are not in /cache")
+        self.assertEqual(sha256_file(folder / "model.fp32.onnx"), FP32_ONNX_SHA256)
+        self.assertEqual(sha256_file(folder / "tokenizer.json"), TOKENIZER_SHA256)
+
+    def test_fp32_directory_without_int8_loads(self) -> None:
+        source = artifact_dir()
+        if not (source / "model.fp32.onnx").is_file():
+            self.skipTest("granite onnx artifacts are not in /cache")
+        from preached.onnx_embed import OnnxEmbedder
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for name in ("model.fp32.onnx", "tokenizer.json", "pooling.json"):
+                (folder / name).symlink_to(source / name)
+            manifest = json.loads((source / "manifest.json").read_text())
+            # int8 stays named in the manifest and is not on disk.
+            (folder / "manifest.json").write_text(json.dumps(manifest))
+            embedder = OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1, batch_size=1)
+            self.assertEqual(embedder.variant, "fp32")
+            vectors = embedder.encode_queries(["What did Wesley say about worry?"])
+            self.assertEqual(vectors.shape, (1, 768))
+            self.assertTrue(np.allclose(np.linalg.norm(vectors, axis=1), 1.0, atol=1e-5))
+
     def test_fp32_query_is_unit_normalized(self) -> None:
         if not (artifact_dir() / "manifest.json").is_file():
             self.skipTest("granite onnx artifacts are not in /cache")

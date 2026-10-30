@@ -132,6 +132,74 @@ class PrerollTests(unittest.TestCase):
             with self.subTest(url=bad):
                 self.assertEqual(query.play_url(bad, 3.0), query.UNSAFE_URL)
 
+    def test_query_does_not_sync_or_write_the_index(self) -> None:
+        import os
+        import sqlite3
+        import sys
+
+        from preached.store import connect
+
+        query = self.load_query()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = root / "index.sqlite"
+            bare = root / "chunks.jsonl"
+            write_jsonl(
+                bare,
+                [{
+                    "chunk_id": "wesley-001-c0000",
+                    "sermon_id": "wesley-001",
+                    "sermon_title": "Salvation by Faith",
+                    "text": "By grace are ye saved through faith.",
+                    "start_s": None,
+                    "end_s": None,
+                    "scripture": "Eph 2:8",
+                }],
+            )
+            connection = connect(index)
+            connection.execute(
+                """
+                INSERT INTO chunks (
+                    chunk_id, sermon_id, sermon_title, text, start_s, end_s, scripture
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "wesley-001-c0000",
+                    "wesley-001",
+                    "Salvation by Faith",
+                    "By grace are ye saved through faith.",
+                    12.5,
+                    40.0,
+                    "Eph 2:8",
+                ),
+            )
+            connection.commit()
+            connection.close()
+            previous = os.environ.get("PREACHED_CHUNKS")
+            os.environ["PREACHED_CHUNKS"] = str(bare)
+            argv = sys.argv
+            sys.argv = [
+                "query.py", "grace", "--mode", "bm25", "-k", "1", "--index", str(index),
+            ]
+            try:
+                import contextlib
+                import io
+
+                with contextlib.redirect_stdout(io.StringIO()):
+                    query.main()
+            finally:
+                sys.argv = argv
+                if previous is None:
+                    os.environ.pop("PREACHED_CHUNKS", None)
+                else:
+                    os.environ["PREACHED_CHUNKS"] = previous
+            checked = sqlite3.connect(index)
+            row = checked.execute(
+                "SELECT start_s, end_s FROM chunks WHERE chunk_id = 'wesley-001-c0000'"
+            ).fetchone()
+            checked.close()
+            self.assertEqual(row, (12.5, 40.0))
+
     def test_print_hits_strips_control_characters(self) -> None:
         import contextlib
         import io

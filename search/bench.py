@@ -6,8 +6,10 @@ ONNX Granite (does not touch the shipped index):
   uv run --group bench search/bench.py --models granite-english-r2 \
     --embed-backend onnx --index /cache/index/wesley-onnx-fp32.sqlite
 Models come from search/models.toml (one table per model, pinned revision).
-Each run writes eval/results/YYYY-MM-DD[-N].json and .md and never
-overwrites an earlier run. Document vectors are cached in the SQLite index
+Each run writes eval/results/YYYY-MM-DD[-tag][-N].json and .md and never
+overwrites an earlier run. --tag names the file so two branches do not
+both claim YYYY-MM-DD-2. --out path.json writes that file and the sibling
+.md and does not auto-number. Document vectors are cached in the SQLite index
 under a fingerprint of everything that changes them (repo revision, dtype,
 document prefix, dim), so a rerun only re-embeds what changed.
 
@@ -56,6 +58,7 @@ from preached.paths import INDEX_PATH, StaleChunks, chunk_config_path, index_chu
 from preached.search import SEARCH_POOL, Searcher, api_search, dedupe_adjacent  # noqa: E402
 from preached.stats import bootstrap_ci, paired_bootstrap  # noqa: E402
 from preached.store import (  # noqa: E402
+    NullTimingRefused,
     connect,
     embedding_bytes,
     save_embedding_info,
@@ -163,14 +166,17 @@ def is_gated(exc: BaseException) -> bool:
     return any(t in text for t in ("gated", "401", "403", "access denied", "cannot access", "restricted"))
 
 
-def ensure_chunks(connection) -> int:
+def ensure_chunks(connection, *, force_null_timings: bool = False) -> int:
     try:
         chunks_path = index_chunks_jsonl()
     except StaleChunks as exc:
         raise SystemExit(f"error: {exc}") from exc
     if not chunks_path.exists():
         raise SystemExit(f"missing {chunks_path}. Run corpus/fetch_wesley.py and corpus/chunk_sermons.py")
-    return sync_chunks(connection, chunks_path)
+    try:
+        return sync_chunks(connection, chunks_path, force_null_timings=force_null_timings)
+    except NullTimingRefused as exc:
+        raise SystemExit(f"error: {exc}") from exc
 
 
 API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
@@ -377,7 +383,26 @@ def cpu_eval(
 
 # ---------- output ----------
 
-def output_paths(results_dir: Path, today: str, tag: str = "") -> tuple[Path, Path]:
+def output_paths(
+    results_dir: Path,
+    today: str,
+    tag: str = "",
+    out: Path | None = None,
+) -> tuple[Path, Path]:
+    """Pick a results pair. ``out`` is used as given; otherwise auto-number."""
+    if out is not None:
+        destination = Path(out)
+        if destination.suffix == ".md":
+            json_path = destination.with_suffix(".json")
+            md_path = destination
+        elif destination.suffix == ".json":
+            json_path = destination
+            md_path = destination.with_suffix(".md")
+        else:
+            json_path = Path(str(destination) + ".json")
+            md_path = Path(str(destination) + ".md")
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        return json_path, md_path
     results_dir.mkdir(parents=True, exist_ok=True)
     base = f"{today}-{tag}" if tag else today
     stem, n = base, 1
@@ -471,6 +496,12 @@ def main() -> None:
                         help="extra passes over the 40 queries for p50/p95")
     parser.add_argument("--allow-cached", action="store_true",
                         help="score the vectors already stored, even if the backend tag differs; never re-embeds")
+    parser.add_argument("--tag", default="",
+                        help="name in the results file (YYYY-MM-DD[-dedupe]-TAG) so runs do not collide")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="write this .json and the sibling .md instead of auto-numbering")
+    parser.add_argument("--force-null-timings", action="store_true",
+                        help="allow the chunk file to replace stored timings, audio, and reader with nulls")
     args = parser.parse_args()
 
     if args.embed_backend == "onnx":
@@ -478,13 +509,20 @@ def main() -> None:
 
     started = dt.datetime.now().astimezone()
     connection = connect(args.index)
-    n_chunks = ensure_chunks(connection)
+    n_chunks = ensure_chunks(connection, force_null_timings=args.force_null_timings)
     questions = read_jsonl(questions_path())
     answerable = [q for q in questions if q["relevant"]]
     rows = list(connection.execute("SELECT rowid, sermon_title, scripture, text FROM chunks ORDER BY rowid"))
 
     models = list(dict.fromkeys(args.models + ([REFERENCE["model"]] if REFERENCE["model"] in MODELS else [])))
-    json_path, md_path = output_paths(args.results_dir, started.date().isoformat(), "dedupe" if args.dedupe else "")
+    tag_parts = []
+    if args.dedupe:
+        tag_parts.append("dedupe")
+    if args.tag:
+        tag_parts.append(args.tag)
+    json_path, md_path = output_paths(
+        args.results_dir, started.date().isoformat(), "-".join(tag_parts), out=args.out
+    )
     report = {
         "started_at": started.isoformat(timespec="seconds"),
         "note": args.note,
