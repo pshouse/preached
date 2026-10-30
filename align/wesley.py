@@ -405,6 +405,9 @@ def cmd_qa(args: argparse.Namespace) -> None:
         "sentence_window_recall_median": round(statistics.median(recalls), 3),
         "sentence_window_recall_p10": round(sorted(recalls)[len(recalls) // 10], 3),
         "sentences_recall_under_50": sum(r < 0.5 for r in recalls),
+        # Collapsed to a point by interpolation: the reader skipped it (or
+        # Whisper dropped it). Still searchable; plays from the nearest word.
+        "sentences_under_0_2s": sum(sentence["end_s"] - sentence["start_s"] < 0.2 for _, sentence, _ in sentences),
         "spot_check_seed": args.seed,
     }
     QA_JSON.write_text(json.dumps({"summary": summary, "per_file": per_file, "spot_check": spot}, indent=1, ensure_ascii=False))
