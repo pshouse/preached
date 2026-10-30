@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 
 from preached.paths import CACHE_ROOT, INDEX_DIR
+from preached.privacy import default_config, load_config
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
 from preached.youtube.listing import SLUG, BadChannelUrl, ChannelRefused, assert_youtube_url
 from preached.youtube.pipeline import Settings, acknowledge, privacy_config, run
@@ -68,7 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="VIDEO_ID",
         help="Approve a sermon after reading <index dir>/<library>/review/<id>.review.jsonl and skimming its transcript. "
-        "Repeat per video. Run without a channel URL. Imports are unpublished until approved.",
+        "Repeat per video. Run without a channel URL, under the same --privacy (or $PREACHED_PRIVACY) as the import. "
+        "Imports are unpublished until approved. The review file is read once, at approval.",
     )
     return parser
 
@@ -90,7 +92,12 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         if args.channel_url:
             print("--ack-review runs on its own: omit the channel URL", file=sys.stderr)
             return 2
-        return acknowledge(index_root / f"{args.library}.sqlite", index_root / args.library / "review", args.ack_review)
+        try:
+            config = load_config(args.privacy) if args.privacy else default_config()
+        except (OSError, ValueError) as exc:
+            print(f"privacy: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+            return 2
+        return acknowledge(index_root / f"{args.library}.sqlite", index_root / args.library / "review", args.ack_review, config)
     if not args.channel_url:
         print("channel_url is required unless --ack-review is given", file=sys.stderr)
         return 2

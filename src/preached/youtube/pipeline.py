@@ -20,7 +20,7 @@ import numpy as np
 
 from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
-from preached.privacy import Config, apply_drops, default_config, load_config, redact_metadata, review, write_review_file
+from preached.privacy import Config, apply_drops, config_sha256, default_config, load_config, redact_metadata, review, review_metadata, write_review_file
 from preached.youtube import privacy
 from preached.youtube.chunking import chunk_words
 from preached.youtube.library import approve_review, file_sha256, imported_ok, index_video, mark_video, open_library
@@ -184,6 +184,29 @@ def _chunks_for(
     return records, items
 
 
+def metadata_review_lines(title: str | None, description: str | None, original_title: str | None, original_description: str | None, config: Config) -> list[dict]:
+    """The review file's first lines: each stored field and its ``review()`` items.
+
+    ``stored`` is exactly what is stored, embedded and shown (the redacted
+    title); a description is never stored, so its line shows the redacted
+    text it would have had. ``review`` items hold the original words.
+    Covered by the review file's sha256, so approval covers them.
+    """
+    return [
+        {
+            "field": "title",
+            "stored": title,
+            "review": [dict(item) for item in review_metadata(original_title, config=config)],
+        },
+        {
+            "field": "description",
+            "stored": None,
+            "redacted": description,
+            "review": [dict(item) for item in review_metadata(original_description, config=config)],
+        },
+    ]
+
+
 def write_private_review(items, path: Path) -> tuple[int, str]:
     """Write one sermon's review file (owner-only) and return ``(count, sha256)``.
 
@@ -196,8 +219,13 @@ def write_private_review(items, path: Path) -> tuple[int, str]:
     return count, file_sha256(resolved)
 
 
-def acknowledge(index_path: Path, review_root: Path, video_ids: list[str]) -> int:
-    """Record a human's approval for each id. Returns 0 when every id was approved."""
+def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], config: Config | None = None) -> int:
+    """Record a human's approval for each id. Returns 0 when every id was approved.
+
+    ``config`` is the privacy config in effect now (``--privacy`` or
+    ``PREACHED_PRIVACY``); it must hash the same as the one the import used.
+    """
+    privacy_sha = config_sha256(default_config() if config is None else config)
     connection = open_library(index_path)
     failures = 0
     try:
@@ -207,12 +235,12 @@ def acknowledge(index_path: Path, review_root: Path, video_ids: list[str]) -> in
                 failures += 1
                 continue
             try:
-                approve_review(connection, video_id, review_root / f"{video_id}.review.jsonl")
+                approve_review(connection, video_id, review_root / f"{video_id}.review.jsonl", privacy_sha)
             except RuntimeError as exc:
                 print(f"not approved: {exc}", file=sys.stderr)
                 failures += 1
             else:
-                print(f"approved {video_id}; restart the server to serve it", file=sys.stderr)
+                print(f"approved {video_id}; a running server serves it from its next request", file=sys.stderr)
     finally:
         connection.close()
     return 1 if failures else 0
@@ -318,13 +346,17 @@ def _import_one(
     config: Config | None = None,
     policy: str = "none",
 ) -> None:
+    config = default_config() if config is None else config
     meta = metadata(video) if metadata is not None else {}
     if not isinstance(meta, dict):
         raise RuntimeError("metadata was not an object")
+    original_title = meta["title"] if isinstance(meta.get("title"), str) and meta.get("title") else None
+    original_description = meta.get("description") if isinstance(meta.get("description"), str) else None
     video = _apply_metadata(video, meta)
     # Titles (and descriptions, which are never stored) are redacted before they
-    # are stored, embedded or shown.
-    video = replace(video, title=redact_metadata(video.title, config=config)[0] or "")
+    # are stored, embedded or shown. Both go into the review file below.
+    title, description = redact_metadata(video.title, original_description, config=config)
+    video = replace(video, title=title or "")
     if settings.since is not None and video.published is not None and video.published < settings.since:
         print(f"skip {video.id} published {video.published.isoformat()} before {settings.since.isoformat()}", file=sys.stderr)
         return
@@ -358,7 +390,8 @@ def _import_one(
     if not SAFE_ID.fullmatch(video.id):
         raise RuntimeError("video id is not usable as a file name")
     flagged = sum(1 for record in records if record["flag_end_s"] is not None)
-    _, review_sha = write_private_review(items, settings.review_root() / f"{video.id}.review.jsonl")
+    header = metadata_review_lines(video.title, description, original_title or video.title, original_description, config)
+    _, review_sha = write_private_review([*header, *items], settings.review_root() / f"{video.id}.review.jsonl")
     titles = [video.title for _ in records]
     texts = [record["text"] for record in records]
     index_started = time.perf_counter()
@@ -375,6 +408,7 @@ def _import_one(
         chunks=records,
         matrix=matrix,
         review_sha256=review_sha,
+        privacy_sha256=config_sha256(config),
     )
     index_s = time.perf_counter() - index_started
     if not settings.keep_audio:

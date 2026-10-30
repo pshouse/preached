@@ -39,6 +39,8 @@ VIDEO_EXTRA_COLUMNS = (
     ("review_sha256", "TEXT"),
     ("approved_sha256", "TEXT"),
     ("approved_at", "TEXT"),
+    # preached.privacy.config_sha256 of the config the import ran under.
+    ("privacy_sha256", "TEXT"),
 )
 
 MODEL_KEY = DEFAULT_MODEL
@@ -148,6 +150,7 @@ def index_video(
     chunks: list[dict],
     matrix: np.ndarray,
     review_sha256: str | None = None,
+    privacy_sha256: str | None = None,
 ) -> list[int]:
     """Replace any earlier attempt at this video and commit chunks plus vectors.
 
@@ -232,8 +235,9 @@ def index_video(
             error=None,
         )
         connection.execute(
-            "UPDATE videos SET review_sha256 = ?, approved_sha256 = NULL, approved_at = NULL WHERE video_id = ?",
-            (review_sha256, video_id),
+            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, approved_sha256 = NULL, approved_at = NULL "
+            "WHERE video_id = ?",
+            (review_sha256, privacy_sha256, video_id),
         )
         connection.execute(
             "INSERT INTO meta (key, value) VALUES ('embed_model', ?) "
@@ -266,17 +270,27 @@ def _stamp_fingerprint(connection: sqlite3.Connection) -> None:
     save_embedding_info(connection, MODEL_KEY, {"fingerprint": expected})
 
 
-def approve_review(connection: sqlite3.Connection, video_id: str, review_file) -> str:
+def approve_review(connection: sqlite3.Connection, video_id: str, review_file, privacy_sha256: str) -> str:
     """Record a human's approval of this sermon's review file; return its sha256.
 
-    Refuses when the file is missing, the video is not ``ok``, or the file's
-    sha256 differs from the one stored at import (the list changed since).
+    Refuses when the file is missing, the video is not ``ok``, the file's
+    sha256 differs from the one stored at import (the list changed since), or
+    the privacy config in effect now (``privacy_sha256``) is not the one the
+    import ran under (the stored text came from other rules).
+
+    The review file is read here, once. Nothing re-reads it after approval:
+    editing or deleting it later does not unpublish the sermon.
     """
     row = connection.execute(
-        "SELECT status, review_sha256 FROM videos WHERE video_id = ?", (video_id,)
+        "SELECT status, review_sha256, privacy_sha256 FROM videos WHERE video_id = ?", (video_id,)
     ).fetchone()
     if row is None or row[0] != "ok":
         raise RuntimeError(f"{video_id}: not imported")
+    if row[2] is None or row[2] != privacy_sha256:
+        raise RuntimeError(
+            f"{video_id}: privacy config changed since import (or the import predates the config hash); "
+            "re-import with --redo under the config you mean, or pass the same --privacy"
+        )
     try:
         digest = file_sha256(review_file)
     except OSError as exc:
