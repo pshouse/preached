@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from app.server import (
+    CSP,
     FALLBACK_NOTE,
     STALE_NOTE,
     MAX_BODY,
@@ -699,6 +700,21 @@ class UrllibSmoke(unittest.TestCase):
                 timeout=5,
             )
         self.assertEqual(caught.exception.code, 400)
+
+
+class CspTests(unittest.TestCase):
+    def test_media_stays_on_archive_org(self) -> None:
+        self.assertEqual(
+            CSP,
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+            "media-src 'self' https://archive.org https://*.archive.org; "
+            "connect-src 'self'; font-src 'self'; object-src 'none'; "
+            "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        )
+        self.assertNotIn("youtube", CSP)
+        self.assertNotIn("frame-src", CSP)
+        self.assertNotIn("unsafe-inline", CSP)
+        self.assertNotIn("unsafe-eval", CSP)
 
 
 if __name__ == "__main__":

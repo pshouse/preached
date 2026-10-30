@@ -67,6 +67,38 @@ function isArchiveHost(href) {
   return host === "archive.org" || host.endsWith(".archive.org");
 }
 
+/* Importer hosts that serve /watch?v=. youtu.be is a short link, not this form. */
+var YOUTUBE_WATCH_HOSTS = { "youtube.com": 1, "www.youtube.com": 1, "m.youtube.com": 1 };
+var YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/* Valid https watch URL, or null. Returns the stored string so &t= stays put.
+   Does not add #t=. Host check matches the importer (no credentials, port 443
+   or default). media-src does not allow YouTube, so callers must not put
+   this URL on an <audio> element. */
+function youtubeWatchUrl(value) {
+  if (typeof value !== "string" || value === "") return null;
+  if (value.charAt(0) === "-" || value.indexOf("\\") !== -1) return null;
+  var i;
+  for (i = 0; i < value.length; i += 1) {
+    var code = value.charCodeAt(i);
+    if (code <= 32 || code === 127) return null;
+  }
+  var url;
+  try {
+    url = new URL(value);
+  } catch (err) {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  if (!YOUTUBE_WATCH_HOSTS[url.hostname]) return null;
+  if (url.username || url.password) return null;
+  if (url.port !== "" && url.port !== "443") return null;
+  if (url.pathname !== "/watch") return null;
+  var ids = url.searchParams.getAll("v");
+  if (ids.length !== 1 || !YOUTUBE_ID.test(ids[0])) return null;
+  return value;
+}
+
 function readerLabel(hit, href) {
   var name = typeof hit.reader === "string" ? hit.reader : "";
   var librivox = href ? isArchiveHost(href) : false;
@@ -135,6 +167,7 @@ function renderCard(hit) {
 
   var source = safeUrl(hit.source_url);
   var audioHref = safeUrl(hit.audio_url);
+  var youtube = youtubeWatchUrl(hit.audio_url);
   var spoken = readerLabel(hit, audioHref);
 
   if (hit.start_s == null) {
@@ -144,7 +177,14 @@ function renderCard(hit) {
     var endLabel = formatTime(hit.end_s);
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
-    if (audioHref && startLabel) {
+    if (youtube && startLabel) {
+      /* Stored watch URL, including its &t= pre-roll. Not loaded in <audio>. */
+      var watch = el("a", "play", "Watch on YouTube at " + startLabel);
+      watch.href = youtube;
+      watch.target = "_blank";
+      watch.rel = "noopener noreferrer";
+      card.appendChild(watch);
+    } else if (audioHref && startLabel) {
       var button = el("button", "play", "Play from " + startLabel);
       button.type = "button";
       var sermonName = hit.sermon_number != null ? "sermon " + hit.sermon_number : (hit.sermon_title || "this sermon");
