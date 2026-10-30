@@ -13,7 +13,7 @@ query_fingerprint = "66cfc353bfc19649"
 backend = "torch"
 variant = "fp32"
 fitted_on = "eval/questions.jsonl sha256 14d9274ad6552cf9, 35 answerable + 5 unanswerable"
-results = "eval/results/2026-10-30-abstain-2.json"
+results = "eval/results/2026-10-30-w3polish-abstain.json"
 
 [models.granite-english-r2]
 dense_floor = 0.8129
@@ -22,4 +22,4 @@ query_fingerprint = "ab84c60ae72e3806"
 backend = "torch"
 variant = "fp32"
 fitted_on = "eval/questions.jsonl sha256 14d9274ad6552cf9, 35 answerable + 5 unanswerable"
-results = "eval/results/2026-10-30-abstain-2.json"
+results = "eval/results/2026-10-30-w3polish-abstain.json"

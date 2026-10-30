@@ -1,6 +1,6 @@
-# Abstain rule, 2026-10-30T13:29:13-04:00
+# Abstain rule, 2026-10-30T14:00:20-04:00
 
-API path (hybrid RRF, top 100, `dedupe_adjacent`, k=10). Rule: `src/preached/abstain.py`. Questions: 35 answerable, 5 unanswerable (LLM-written labels, pending human review). Commit `081a1144eb227518968974fe2faee7a49d232444`.
+API path (hybrid RRF, top 100, `dedupe_adjacent`, k=10). Rule: `src/preached/abstain.py`. Questions: 35 answerable, 5 unanswerable (LLM-written labels, pending human review). Commit `39bc8e2b59819ff4e7dad672d041b53fd31c3ad3`.
 
 Headline is leave-one-out (LOO): each question is judged with a floor fitted on the other 39. An abstained answerable question counts as a miss.
 
@@ -9,9 +9,9 @@ Headline is leave-one-out (LOO): each question is judged with a floor fitted on 
 | granite-english-r2 | **LOO** | refit per fold (range 0.7988–0.8129) | 1.000 | 0.600 | 0.800 | 0.000 | 0.029 | 0.657 → 0.657 | 0.540 → 0.540 |
 | granite-english-r2 | in-sample | 0.813 | 1.000 | 0.800 | 0.800 | 0.000 | 0.029 | 0.657 → 0.657 | 0.540 → 0.540 |
 | granite-english-r2 | no floor | none | n/a | 0.000 | 0.800 | 0.000 | 0.029 | 0.657 → 0.657 | 0.540 → 0.540 |
-| embeddinggemma-2 | **LOO** | refit per fold (range 0.7367–0.7413) | 1.000 | 0.600 | 0.800 | 0.000 | 0.000 | 0.671 → 0.671 | 0.513 → 0.513 |
-| embeddinggemma-2 | in-sample | 0.741 | 1.000 | 0.800 | 0.800 | 0.000 | 0.000 | 0.671 → 0.671 | 0.513 → 0.513 |
-| embeddinggemma-2 | no floor | none | n/a | 0.000 | 0.800 | 0.000 | 0.000 | 0.671 → 0.671 | 0.513 → 0.513 |
+| embeddinggemma-2 | **LOO** | refit per fold (range 0.7367–0.7413) | 1.000 | 0.600 | 0.800 | 0.000 | 0.000 | 0.671 → 0.671 | 0.509 → 0.509 |
+| embeddinggemma-2 | in-sample | 0.741 | 1.000 | 0.800 | 0.800 | 0.000 | 0.000 | 0.671 → 0.671 | 0.509 → 0.509 |
+| embeddinggemma-2 | no floor | none | n/a | 0.000 | 0.800 | 0.000 | 0.000 | 0.671 → 0.671 | 0.509 → 0.509 |
 
 Per question (signals and levels; `agree` = a shown passage is in both BM25's and dense's top 100):
 
