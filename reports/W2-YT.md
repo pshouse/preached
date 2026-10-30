@@ -1,6 +1,6 @@
 # W2-YT: YouTube channel import
 
-Branch `feat/w2-youtube`. The first cut was based on `origin/feat/w2-web` before PR #3 landed on `origin/main`. Review fix-ups merged `origin/main` (`feat/w2-web` at `73df6c4`, which includes PR #2 `aaee310`). `ingest/` from `feat/w1-ingest` is still not on this base, so transcription is a thin adapter rather than a call into W1-A. Report written 2026-10-30.
+Branch `feat/w2-youtube`. The first cut was based on `origin/feat/w2-web` before PR #3 landed on `origin/main`. Review fix-ups merged `origin/main` (`feat/w2-web` at `73df6c4`, which includes PR #2 `aaee310`). W1-A (`ingest/`) is on main. Unifying this transcription adapter with it is a follow-up, so transcription here is still a thin adapter rather than a call into W1-A. Report written 2026-10-30.
 
 ## What was done
 
@@ -26,7 +26,7 @@ A chorus with no 15-second gap before the sermon stays inside the sermon run. Th
 
 ### Transcription
 
-`transcribe(audio_path)` returns `list[Word]` with `start`, `end`, and `text` on the file timeline. It uses faster-whisper's sequential API, English, word timestamps, VAD, and a one-line punctuated prompt. It does not copy W1-A's batched pass, gap fill, or loop repair. Those should replace this adapter when `feat/w1-ingest` merges.
+`transcribe(audio_path)` returns `list[Word]` with `start`, `end`, and `text` on the file timeline. It uses faster-whisper's sequential API, English, word timestamps, VAD, and a one-line punctuated prompt. It does not copy W1-A's batched pass, gap fill, or loop repair. W1-A is on main; unifying this adapter with it is a follow-up.
 
 Before loading the model it reads `nvidia-smi`. If more than 6 GB is already in use, or the reading fails, it uses CPU and `tiny.en`. Otherwise it uses the cached OpenAI `large-v3-turbo` conversion `mobiuslabsgmbh/faster-whisper-large-v3-turbo` (Mobius Labs, Berlin; the weights W1-A already checked) on CUDA, `int8_float16`. This box has no system CUDA toolkit on the loader path. The adapter loads `libcublas.so.12` and cuDNN from the nvidia wheels with `ctypes` before ctranslate2 starts. The first attempt failed with "Library libcublas.so.12 is not found" until that preload was added.
 
@@ -111,7 +111,7 @@ A headless Chromium load of that `t=87s` URL got the page title "Are speeches pu
 - YouTube's terms and the player change underneath yt-dlp. This run warned that the remote JS challenge solver was skipped and that the n-challenge failed, then still downloaded audio format 251. A later player change can refuse the download. Do not add a cookie jar or a challenge bypass here. The working file is only for transcription. Playback stays a link to YouTube.
 - Channel-tab dates are approximate until each video is opened. `--since` on a dry-run can be off by weeks. The stored `published` date is the exact one.
 - The sermon rule cannot see a song that Whisper transcribes as ordinary prose with no long gap and no repeated line. Worship that runs straight into the sermon needs a `--windows` override.
-- The adapter is not W1-A. Punctuation is uneven, and there is no gap fill or loop repair. Unify them when ingest merges. The CUDA preload should move with that code.
+- The adapter is not W1-A. Punctuation is uneven, and there is no gap fill or loop repair. W1-A is on main; unifying them is a follow-up. The CUDA preload should move with that code.
 - The page always requests `library=wesley` and plays `audio_url` in one `<audio>` element. A church library needs a library picker and a link or a `youtube-nocookie` frame. W2-A already says not to open `script-src` to do that. `/api/sermon/<id>` now accepts an 11-character YouTube id; the page still does not link to it.
 - Embedding on the Sprite is the same Granite CPU load as W2-A, about 1.6 GiB RSS, plus brute-force scan of one SQLite file. Eleven vectors are nothing. A multi-year church archive is still one file and one model, which is the point of the design, until the brute-force scan itself gets slow. No second model, no vector database.
 - Permission: do not point this at a church channel until a person has the pastor's yes. The tool refuses Gaston Community Church by name. `--require-cc` is the wrong gate for a church. Before any church audio is indexed, W3-PRIV has to replace `privacy.redact`. Indexes and audio stay in `/cache`. Nothing from a church was downloaded for this task.
@@ -132,3 +132,15 @@ A channel URL that is not `https` on `youtube.com`, `www.youtube.com`, `m.youtub
 Indexing a video records `embeddings:<model>` with `save_embedding_info` and the current `models.toml` fingerprint, in the same transaction as the vectors. `Searcher` can then open that library under the Granite key. A test fixture that writes vectors checks the stored fingerprint.
 
 88 tests, `unittest discover -s tests`, all passing. No YouTube download in this pass. No new dependency.
+
+## CTO review fix-ups
+
+Three follow-ups from the second review of this branch at `33fdce0`. `origin/main` was not merged in this pass, and `pyproject.toml` and `uv.lock` were left unchanged.
+
+Every yt-dlp invocation now prepends `_SAFE_ARGS` in `_run`, before the caller's options and before `--` and the URL: `--ignore-config`, `--no-plugin-dirs`, `--no-remote-components`, and `--use-extractors youtube,youtube:tab`. A config file cannot add `--exec`, plugins are not loaded, the remote JS challenge solver is not fetched, and the Generic extractor cannot follow a redirect off YouTube.
+
+A listing id must match `^[A-Za-z0-9_-]{11}$`, the same form `/api/sermon/<id>` accepts. `../x`, `a.b`, `abc`, and a 12-character id are dropped. `BGoD6CIpLWQ` is kept. The channel fixture's 12-character ids (`shortvid0001`, `livevideo111`) are now `shortvid001` and `livevideo11`.
+
+After `index_video` commits, the pipeline deletes the audio path the downloader returned, and only when that name and the resolved file both sit inside `settings.audio_dir`. A failed video keeps its file so the retry can resume. `--keep-audio` (default off) skips the delete.
+
+92 tests, `unittest discover -s tests`, all passing (88 before this pass). No YouTube download in this pass. No new dependency.
