@@ -1,4 +1,9 @@
-"""Search the Wesley chunk index. BM25, dense, or hybrid."""
+"""Search the Wesley chunk index. BM25, dense, or hybrid.
+
+Chunks overlap their neighbors by about 25% (see corpus/chunk_config.json).
+``dedupe_adjacent`` drops a lower-ranked hit when it repeats a hit already
+kept from the same sermon, so a result list does not show those words twice.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +16,14 @@ from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weig
 from preached.store import bm25_search, load_embeddings
 
 CANDIDATES = 100
+
+# Adjacent text chunks share a sentence boundary. Eight words is enough to
+# call that a repeat, and short enough to catch the 25% overlap on a short
+# chunk. A single shared word is not.
+BOUNDARY_WORDS = 8
+# Timestamp fallback when word offsets are missing. Ignore a sub-second
+# touch that is just float rounding.
+TIME_OVERLAP_S = 0.4
 
 
 @dataclass
@@ -25,6 +38,12 @@ class Hit:
     end_s: float | None
     source_url: str | None
     scripture: str | None
+    sermon_number: int | None = None
+    audio_url: str | None = None
+    reader: str | None = None
+    text_source: str | None = None
+    word_start: int | None = None
+    word_end: int | None = None
 
 
 class Searcher:
@@ -46,20 +65,7 @@ class Searcher:
             row = self._rows.get(rowid)
             if row is None:
                 continue
-            hits.append(
-                Hit(
-                    rowid=rowid,
-                    score=score,
-                    chunk_id=row["chunk_id"],
-                    sermon_id=row["sermon_id"],
-                    sermon_title=row["sermon_title"],
-                    text=row["text"],
-                    start_s=row["start_s"],
-                    end_s=row["end_s"],
-                    source_url=row["source_url"],
-                    scripture=row["scripture"],
-                )
-            )
+            hits.append(hit_from_row(row, score))
         return hits
 
     def bm25(self, query: str, limit: int) -> list[Hit]:
@@ -96,3 +102,144 @@ class Searcher:
         else:
             raise RuntimeError(f"unknown fusion {fusion}")
         return self._pack(fused, limit)
+
+
+def row_value(row: sqlite3.Row, key: str):
+    """Column value, or None when the column was never added.
+
+    W1-C may add ``audio_url``, ``reader``, and ``text_source``. An older
+    index simply lacks those columns. NULL and a missing column are the
+    same for the page.
+    """
+    if key not in row.keys():
+        return None
+    return row[key]
+
+
+def _optional_float(value) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    else:
+        return None
+    if number != number or number in (float("inf"), float("-inf")):
+        return None
+    return number
+
+
+def _optional_int(value) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _text_or_none(value) -> str | None:
+    if not isinstance(value, str) or value.strip() == "":
+        return None
+    return value
+
+
+def hit_from_row(row: sqlite3.Row, score: float) -> Hit:
+    return Hit(
+        rowid=int(row["rowid"]),
+        score=float(score),
+        chunk_id=row["chunk_id"],
+        sermon_id=row["sermon_id"],
+        sermon_title=row["sermon_title"],
+        text=row["text"],
+        start_s=_optional_float(row_value(row, "start_s")),
+        end_s=_optional_float(row_value(row, "end_s")),
+        source_url=_text_or_none(row_value(row, "source_url")),
+        scripture=_text_or_none(row_value(row, "scripture")),
+        sermon_number=_optional_int(row_value(row, "sermon_number")),
+        audio_url=_text_or_none(row_value(row, "audio_url")),
+        reader=_text_or_none(row_value(row, "reader")),
+        text_source=_text_or_none(row_value(row, "text_source")),
+        word_start=_optional_int(row_value(row, "word_start")),
+        word_end=_optional_int(row_value(row, "word_end")),
+    )
+
+
+def _span_overlap(a0, a1, b0, b1) -> float | None:
+    if None in (a0, a1, b0, b1):
+        return None
+    return min(a1, b1) - max(a0, b0)
+
+
+def _words(text: str) -> list[str]:
+    return [word.casefold() for word in text.split()]
+
+
+def boundary_overlap(a: str, b: str, minimum: int = BOUNDARY_WORDS) -> bool:
+    """True when two excerpts share a prefix/suffix, the shape of a 25% overlap.
+
+    A sentence quoted again in the middle of another chunk does not count.
+    The shared run has to sit on the boundary between the two excerpts.
+    Identical text counts, so a duplicated chunk is not shown twice.
+    """
+    wa = _words(a)
+    wb = _words(b)
+    if not wa or not wb:
+        return False
+    if wa == wb:
+        return True
+    limit = min(len(wa), len(wb))
+    if limit < minimum:
+        return False
+    for size in range(limit, minimum - 1, -1):
+        if wa[-size:] == wb[:size] or wb[-size:] == wa[:size]:
+            return True
+    return False
+
+
+def repeats_kept(hit: Hit, kept: Hit) -> bool:
+    """Whether ``hit`` repeats words already shown in ``kept``.
+
+    Rule, in order:
+
+    1. Different sermons never collapse.
+    2. The same ``chunk_id`` collapses.
+    3. If both chunks have word offsets, they collapse only when those
+       ranges overlap. The chunker overlaps only adjacent windows (25%),
+       so this is the adjacent-passage case. A later non-overlapping
+       passage from the same sermon stays.
+    4. If word offsets are missing and both chunks have timestamps, they
+       collapse when the times overlap by at least ``TIME_OVERLAP_S``.
+    5. If those spans are missing too, they collapse when the texts share
+       a boundary run of at least ``BOUNDARY_WORDS`` (or are identical).
+    """
+    if hit.sermon_id != kept.sermon_id:
+        return False
+    if hit.chunk_id and hit.chunk_id == kept.chunk_id:
+        return True
+    word_overlap = _span_overlap(hit.word_start, hit.word_end, kept.word_start, kept.word_end)
+    if word_overlap is not None:
+        return word_overlap > 0
+    time_overlap = _span_overlap(hit.start_s, hit.end_s, kept.start_s, kept.end_s)
+    if time_overlap is not None:
+        return time_overlap >= TIME_OVERLAP_S
+    return boundary_overlap(hit.text or "", kept.text or "")
+
+
+def dedupe_adjacent(hits: list[Hit], limit: int) -> list[Hit]:
+    """Keep the best ``limit`` hits that do not repeat an adjacent neighbor.
+
+    Higher score wins. Ties keep the earlier hit. The caller should pass a
+    wider pool than ``limit`` so dropping a neighbor still leaves a full page.
+    """
+    if limit <= 0:
+        return []
+    ordered = sorted(enumerate(hits), key=lambda item: (-item[1].score, item[0]))
+    kept: list[Hit] = []
+    for _, hit in ordered:
+        if any(repeats_kept(hit, previous) for previous in kept):
+            continue
+        kept.append(hit)
+        if len(kept) >= limit:
+            break
+    return kept

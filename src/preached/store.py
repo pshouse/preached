@@ -84,6 +84,23 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return connection
 
 
+def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    """Open an existing index without creating or writing it.
+
+    ``mode=ro`` plus ``query_only`` so the web server cannot migrate the
+    file out from under the ingest job. Missing audio columns stay missing;
+    callers read them with ``row_value``.
+    """
+    index_path = path or INDEX_PATH
+    if not index_path.is_file():
+        raise FileNotFoundError(f"missing index {index_path}")
+    uri = index_path.resolve().as_uri() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only = ON")
+    return connection
+
+
 def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
     connection.execute("DELETE FROM embeddings")
     connection.execute("DELETE FROM chunks")
