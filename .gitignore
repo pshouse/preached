@@ -16,6 +16,8 @@ build/
 *.egg-info/
 .python-version
 review/
+# The eval label review sheet holds only public Wesley text (EVAL-GRADE).
+!/eval/review/
 *.review.jsonl
 *.mp3
 *.m4a
