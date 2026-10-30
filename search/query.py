@@ -30,9 +30,20 @@ def ensure_chunks(connection) -> None:
 
 
 def fmt_time(value) -> str:
+    """h:mm:ss, the same as the page's formatTime (whole seconds, floored)."""
     if value is None:
-        return "null"
-    return f"{float(value):.1f}"
+        return "n/a"
+    total = int(float(value))
+    return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
+
+
+def play_url(audio_url, start_s) -> str:
+    """The URL the page's player builds: the audio URL with #t=<seconds>."""
+    if not audio_url:
+        return "n/a"
+    if start_s is None:
+        return audio_url
+    return f"{audio_url.split('#')[0]}#t={float(start_s):g}"
 
 
 def print_hits(query: str, mode: str, model: str | None, hits) -> None:
@@ -43,11 +54,11 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
         return
     for rank, hit in enumerate(hits, start=1):
         print(
-            f"\n[{rank}] score={hit.score:.4f}  {hit.sermon_title}\n"
-            f"    {hit.chunk_id}  sermon={hit.sermon_id}  "
-            f"start_s={fmt_time(hit.start_s)}  end_s={fmt_time(hit.end_s)}\n"
-            f"    {hit.source_url or ''}\n"
-            f"    {hit.text}"
+            f"\n[{rank}] {hit.sermon_title}  (score {hit.score:.4f}, {hit.chunk_id})\n"
+            f"    at {fmt_time(hit.start_s)} (start_s={hit.start_s})  read by {hit.reader or 'n/a'}\n"
+            f"    play: {play_url(hit.audio_url, hit.start_s)}\n"
+            f"    text: {hit.source_url or ''}\n"
+            f"    \"{hit.text}\""
         )
 
 
