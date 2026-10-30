@@ -9,9 +9,12 @@ read paragraph numbers, or misread, and those count as errors here.
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
-CCEL_TXT = Path("/cache/meta/wesley/ccel/sermons.txt")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import manifest  # noqa: E402
+
 NUM = {"0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
        "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten"}
 
@@ -24,7 +27,8 @@ def norm(text: str) -> list[str]:
 
 
 def ccel_body(n: int) -> str:
-    body = CCEL_TXT.read_text().split("First Series\n     ___", 1)[1]
+    # Same CCEL file as the search corpus, sha256-checked against corpus/catalog.json.
+    body = manifest.ccel_text().split("First Series\n     ___", 1)[1]
     m = re.search(rf"\nSermon {n}(?: \[\d+\])?\n(.*?)(?=\nSermon {n + 1}(?: \[\d+\])?\n|\Z)", body, re.S)
     blocks = re.split(r"\n\s*\n", re.sub(r"\n\s*_{5,}.*", "", m.group(1), flags=re.S))
     # Skip the heading (title, epigraph, reference): readers voice it in varying ways.

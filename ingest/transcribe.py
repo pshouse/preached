@@ -9,8 +9,19 @@ import sys
 import time
 from pathlib import Path
 
-TRANSCRIPT_DIR = Path("/cache/transcripts/wesley")
-MODEL = "large-v3-turbo"  # OpenAI Whisper, CTranslate2 conversion (mobiuslabsgmbh)
+import preached.env  # noqa: F401  (HF_HOME under PREACHED_CACHE before any HF import)
+from preached.paths import CACHE_ROOT
+
+TRANSCRIPT_DIR = CACHE_ROOT / "transcripts" / "wesley"
+# OpenAI Whisper large-v3-turbo, CTranslate2 conversion. Pinned to a commit
+# (PR #2 rule). The repo was created by Mobius Labs and has since moved to
+# dropbox-dash/faster-whisper-large-v3-turbo; the old id redirects, and we keep
+# it because it is the id the weights are cached under in /cache/huggingface
+# (models--mobiuslabsgmbh--faster-whisper-large-v3-turbo). The revision is the
+# only snapshot in that cache and the one all 143 Wesley transcripts used.
+MODEL = "large-v3-turbo"
+MODEL_REPO = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+MODEL_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
 
 SR = 16000
 GAP_FILL_S = 4.0  # re-decode untranscribed stretches longer than this
@@ -22,8 +33,12 @@ LADDER = [("float16", 8), ("float16", 4), ("int8_float16", 4), ("int8_float16", 
 def _preload_cuda_libs() -> None:
     """Load cuBLAS/cuDNN from the nvidia-* wheels so no LD_LIBRARY_PATH is needed."""
     site = Path(__file__).resolve().parent.parent / ".venv"
-    for base in [*sys.path, str(site)]:
-        libs = sorted(glob.glob(os.path.join(base, "**/nvidia/*/lib/lib*.so.*"), recursive=True))
+    libs: list[str] = []
+    # Glob the wheel layout directly; a recursive glob of every sys.path entry is slow.
+    for pattern in [os.path.join(b, "nvidia/*/lib/lib*.so.*") for b in sys.path if b] + [
+        str(site / "lib/python*/site-packages/nvidia/*/lib/lib*.so.*")
+    ]:
+        libs = sorted(glob.glob(pattern))
         if libs:
             break
     # cublasLt before cublas, cudnn sublibs after libcudnn: order by dependency.
@@ -106,11 +121,14 @@ def is_oom(exc: BaseException) -> bool:
 
 
 class Transcriber:
-    def __init__(self, model: str = MODEL, rung: int = 0):
+    def __init__(self, model: str = MODEL, rung: int = 0,
+                 repo: str = MODEL_REPO, revision: str = MODEL_REVISION):
         _preload_cuda_libs()
         import faster_whisper  # noqa: F401  (after preload)
 
         self.model_name = model
+        self.model_repo = repo
+        self.revision = revision
         self.rung = rung
         self._model = None
         self._pipe = None
@@ -127,7 +145,8 @@ class Transcriber:
         from faster_whisper import BatchedInferencePipeline, WhisperModel
 
         if self._model is None:
-            self._model = WhisperModel(self.model_name, device="cuda", compute_type=self.compute_type)
+            self._model = WhisperModel(self.model_repo, revision=self.revision,
+                                       device="cuda", compute_type=self.compute_type)
             self._pipe = BatchedInferencePipeline(self._model)
 
     def _step_down(self) -> None:
@@ -202,6 +221,7 @@ class Transcriber:
         gap are inserted. Filled segments are flagged `gap_filled`. Edits
         `segments` in place; returns the number of gaps that yielded words."""
         duration = len(audio) / SR
+        segments.sort(key=lambda seg: seg["start"])
         bounds = [0.0] + [x for seg in segments for x in (seg["start"], seg["end"])] + [duration]
         gaps = [(bounds[k], bounds[k + 1]) for k in range(0, len(bounds), 2)
                 if bounds[k + 1] - bounds[k] > GAP_FILL_S]
@@ -264,6 +284,8 @@ class Transcriber:
 
         return {
             "name": "faster-whisper",
+            "model_repo": self.model_repo,
+            "model_revision": self.revision,
             "version": faster_whisper.__version__,
             "ctranslate2": ctranslate2.__version__,
             "compute_type": self.compute_type,
