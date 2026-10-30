@@ -19,9 +19,9 @@ Serve-time footprint, recorded in `docs/DEPLOY.md`:
 
 In-app limits added in stdlib: headers over 8,192 bytes get 431; 120 requests per 60 seconds per socket IP in code, 60 per 60 seconds when started by `scripts/serve.sh`. `X-Forwarded-For` is ignored. A full table of 4,096 active keys refuses a new IP. Access logs are IP, method, path, status. The query string is stripped. A failed request logs the exception type.
 
-`scripts/build-bundle.sh` writes a directory and a sibling `.tar.gz`: the serve-time source list, `uv.lock`, `requirements-serve.txt` from `uv export --frozen --no-dev --no-default-groups`, the fp32 model, and one index. The manifest is sha256sum format, sorted, and excludes itself, `KILL`, bytecode, and `.venv`. The tar is ustar, owner 0, mtime `2026-10-30 00:00:00` UTC, `gzip -n`. `scripts/serve.sh` binds `PREACHED_HOST` / `PREACHED_PORT` (default `127.0.0.1:8000`), forces ONNX fp32, one thread, offline Hub, and unsets `SPRITE_TOKEN`, `FLY_API_TOKEN`, `HF_TOKEN`, and `HUGGING_FACE_HUB_TOKEN`. It refuses to start as root unless `PREACHED_ALLOW_ROOT=1`.
+`scripts/build-bundle.sh` writes a directory and a sibling `.tar.gz`: the serve-time source list, `uv.lock`, `requirements-serve.txt` from `uv export --frozen --no-dev --no-default-groups`, the fp32 model, and one index. The manifest is sha256sum format, sorted, and excludes itself, `KILL`, bytecode, and `.venv`. The tar is ustar, owner 0, mtime `2026-10-30 00:00:00` UTC, `gzip -n`. `scripts/serve.sh` binds `PREACHED_HOST` / `PREACHED_PORT` (default `127.0.0.1:8000`), forces ONNX fp32, one thread, and offline Hub. The first cut unset four token names and allowed root when `PREACHED_ALLOW_ROOT=1`. The fix-up below replaces that with `exec env -i` and an unconditional root refusal.
 
-The allow-list is in those two scripts only. Libraries are `wesley`, `spurgeon`, and `edwards`. The default bundle is Wesley. A symlink, a basename other than `<library>.sqlite`, and a path containing `cc-speech`, `gaston`, `youtube`, or `church` are refused. `app/server.py` still opens whatever library it is given. YouTube tests serve library `sample`. That default was not changed.
+The first cut kept a script allow-list and a path denylist (`cc-speech`, `gaston`, `youtube`, `church`), and `app/server.py` opened whatever library it was given. YouTube tests in `tests/test_server.py` still build a library named `sample` inside the test harness. The fix-up deletes the script lists and calls `check_servable`.
 
 `docs/DEPLOY.md` is the runbook. Human steps are marked **HUMAN**: upload, extract, `uv sync` as the service user, the public `Host` list, rollback by switching directories, and rotation of the Sprite admin credential. The app has no API key.
 
@@ -40,7 +40,7 @@ scripts/smoke-bundle.sh
 
 `scripts/smoke-bundle.sh` builds into a temp directory, syncs a fresh venv there, checks that `/work/preached` is not on that venv's path, starts `serve.sh` with a scrubbed environment, hits `/healthz` and 21 hybrid searches, prints p50 and RSS, then deletes the temp directory and stops the server.
 
-Sprite update, rollback, and secret rotation are in `docs/DEPLOY.md`. They are human steps. The API is https://api.sprites.dev (OpenAPI at `/openapi.json`). The host is https://preached-blncn.sprites.app. This repo does not call either one.
+Sprite update, rollback, and secret rotation are in `docs/DEPLOY.md`. They are human steps. The admin API is https://api.sprites.dev (OpenAPI at `/openapi.json`). The fix-up runbook does not publish a public app hostname. This repo does not call the API.
 
 ## Results and numbers
 
@@ -76,11 +76,11 @@ The manifest and tar hashes are from that smoke. `scripts/build-bundle.sh` is no
 
 ## Open issues, risks, and exclusions
 
-- `app/server.py` still serves any library file when it is started without `scripts/serve.sh`. The allow-list waits on PR #14 must-fix 1 or PR #12. Deploy scripts ship Wesley only. Spurgeon and Edwards are allowed if a person builds a second bundle on purpose. Church libraries, YouTube imports, `cc-speech.sqlite`, and Gaston Community Church are not in the bundle.
-- int8 is on disk under `/cache` and is not shipped. The loader still refuses it at runtime.
-- Behind a proxy that presents one socket address, the in-app cap is one global bucket. The runbook asks for a host-level limit as well. The process does not trust `X-Forwarded-For`.
-- Binding `0.0.0.0` does not add the public name to the Host allowlist. The human sets `PREACHED_HOSTS` to `preached-blncn.sprites.app,127.0.0.1,localhost`.
-- Non-root, a read-only mount of the index and model, and TLS are host steps in `docs/DEPLOY.md`. `serve.sh` refuses uid 0 unless `PREACHED_ALLOW_ROOT=1`, and it clears the write bit on an index that lives inside the bundle.
+- The first cut left library checks in the scripts only. The fix-up puts `check_servable` in `app/server.py` as well. Church libraries, YouTube imports, `cc-speech.sqlite`, and Gaston Community Church stay unpublished.
+- int8 is on disk under `/cache` and is not shipped. The bundled manifest no longer names it. The loader still refuses it at runtime.
+- Trusted-proxy `X-Forwarded-For` keying, plus a global backstop in front of the per-IP cap, is not in this PR. It is required before anything goes public. The process ignores `X-Forwarded-For`.
+- The first cut told the operator to bind `0.0.0.0` and add a public Host. The fix-up runbook keeps loopback or an existing Tailscale address. A public bind is a separate gated step.
+- Non-root, a read-only mount of the index and model, and TLS are host steps in `docs/DEPLOY.md`. `app/server.py` and `serve.sh` refuse uid 0. There is no `PREACHED_ALLOW_ROOT`. `serve.sh` clears the write bit on a bundle index.
 - The exact Sprites CLI flags are not in this repo. The runbook does not invent them. It points at the OpenAPI the admin already uses.
 - The application has no secret to rotate. The secret is the Sprite admin credential. Rotation steps are marked human. Tokens are not written into the bundle or the server environment.
 - The smoke RSS is higher than the W3-CPU 1-thread figure. The gap is not diagnosed here.
@@ -89,3 +89,31 @@ The manifest and tar hashes are from that smoke. `scripts/build-bundle.sh` is no
 ## Dependencies added and why
 
 None. The serve install is the existing lockfile with `--frozen --no-dev --no-default-groups`. Direct runtime packages remain numpy, onnxruntime, and tokenizers.
+
+## Fix-up: CTO review of PR #18 (11-W3-DEPLOY-FIX)
+
+Merged `origin/main` (`c95d872`, includes #10 and #14) into `feat/w3-deploy-prep` as `c9e8182`. Merge commit only. The three conflict hunks in `app/server.py` kept both the deploy-prep rate limit and kill file and main's `servable` gate. The paragraphs above are the first cut. Where they disagree with this section, this section is the current behaviour. The smoke latency and RSS figures above were not re-run.
+
+| Item | Commit | Tests and checks |
+| --- | --- | --- |
+| Secrets: `exec env -i` and an allow-list. `FAKE_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `SPRITE_TOKEN`, and `HF_TOKEN` are absent from the server environment (names only). | `55761d7` | `test_serve_sh_drops_secret_names`, `test_server_refuses_root` (the script contains the literal `env -i`) |
+| Tar "file changed as we read it": tar a private `cp --reflink=never` snapshot, not the live tree. | `56ffbf7` | `test_bundle_is_reproducible_and_serve_only`. Real `scripts/build-bundle.sh /tmp/preached-bundle-real` exited 0. |
+| Bundled index: SQLite backup API and `journal_mode=DELETE`. Opens `mode=ro` from a non-writable directory. | `56ffbf7` | Same test (no `-wal`, mode `0444`, `journal` `delete`, count 1 from a `0555` directory). Real bundle: 8,383 chunks, journal `delete`, `chunks_sha256` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`, opened `mode=ro` after `chmod 0555` on the bundle root and `index/`. |
+| Bundle after #14: `PREACHED_CACHE` is the bundle root, `libraries.py` and the Spurgeon and Edwards manifests ship, build-time import check, script allow/deny lists deleted, `check_servable` is the gate. Unpack as the service user with no group or world write. | `56ffbf7`, `55761d7`, `4219bff` | `test_bundle_is_reproducible_and_serve_only`, `test_refuses_church_and_youtube_libraries`, `test_refuses_a_renamed_church_path_and_a_symlink`, `test_serve_sh_refuses_a_sample_library` |
+| Slow-send: global cap 32, per-client cap 4, one 15 s header deadline. Over the cap the accept thread returns 503 and starts no handler thread. | `36a095f` | `test_header_deadline_is_not_per_read`, `test_connection_caps_reject_without_a_handler_slot` |
+| `docs/DEPLOY.md` stays on loopback or Tailscale. Going public needs a written threat model, CTO sign-off, Patrick's approval, and a kill-switch drill, in that order. | `4219bff` | Runbook review. The doc does not give `0.0.0.0` or a public Host as the default. |
+| Kill switch fails closed on a directory, a symlink, or an unreadable parent. Removing a regular file resumes serving on the next request. `PREACHED_DISABLED` is process environment, so it is not the without-restart switch. | `36a095f`, `4219bff` | `test_kill_switch_fails_closed_on_surprises`, `test_kill_file_stops_search_without_leaking_the_path` |
+| Bad request lines do not crash the process. Control characters in the log are escaped. | `36a095f` | `test_bad_request_line_does_not_crash_and_controls_are_escaped`, `test_access_log_drops_the_query` |
+| No `PREACHED_ALLOW_ROOT` and no `PREACHED_PYTHON`. `app/server.py` refuses uid 0. | `36a095f`, `55761d7` | `test_server_refuses_root` |
+| Bundled manifest drops int8. `PREACHED_BUNDLE_SKIP_PINS=1` is honoured only when the parent command line is the unit tests. | `56ffbf7` | `test_int8_is_removed_from_the_bundled_manifest`, `test_skip_pins_is_ignored_outside_the_tests` |
+| Rate limiter: a full table refuses a new client and keeps live keys. `/healthz` shares the bucket. | `36a095f` | `test_full_table_refuses_a_new_client`, `test_healthz_uses_the_same_bucket`, `test_rate_table_drops_idle_keys` |
+
+Real bundle, this machine, Wesley index and the pinned fp32 ONNX files. `sha256sum -c MANIFEST.sha256` matched every file. `gzip -t` passed. Manifest sha256 (of `MANIFEST.sha256`) `4dd28a7957691fe3bd5d9834d73c0859371624c8c62db946baf138c2b1dde5da`. Tar sha256 `c403ea0fbea39cbf87e558b9fd8fa7c9a6c503c80e9e0cc3a08ec573eccef5e5`. These replace the first-cut manifest and tar hashes for the current tree. The p50 and RSS table above is still the first-cut smoke.
+
+`uv run python -m unittest discover -s tests`: **380 tests, 25.924s, OK**.
+
+`uv lock --check`: clean (79 packages resolved). No lockfile change. No new dependencies. No LLM.
+
+Code head: `781e9b4`. This report is the commit after it. `git log -1` on `feat/w3-deploy-prep` is the branch head.
+
+Open, and required before anything goes public: trusted-proxy `X-Forwarded-For` keying plus a global backstop. Not in this PR. `test_per_ip_limit_ignores_forwarded_for` still checks that the header is ignored.
