@@ -313,3 +313,27 @@ The new checks add no `plain` or `plain-blind` flag. The only note is the old on
 `uv lock --check`: `Resolved 79 packages`, exit 0.
 
 Head: `d3a3c414346314383a773e2aeaa9037d3b5cefe2` adds this section. This sentence is the commit after it. `git log -1` on `feat/eval-deleak` is the branch head.
+
+## Main merge
+
+`origin/main` at `6c7c4ca5fed392cf9a8e19bf2de74d93741bf4d6` (PR #12, W3-PRIV-WIRE; also contains #10 and #14) merged into `feat/eval-deleak` at `14eae9e366010cca636cabf8cbaf5ecfb86c5f57`. Merge commit only. No rebase and no force-push. No new dependency. Grading was not re-run. No label status changed. No question was rewritten.
+
+**Conflicts.** One content conflict.
+
+| file | resolution |
+| --- | --- |
+| `search/query.py` | Both sides. Main's product code stays: `audio_policy` (`public_times`, `resolve_flagged_audio`), the read-only library gate, and play/text withholding. The PR's `ArtifactError` handler stays on top of that: one `error:` line on stderr and exit 1. The resolved file is main's `query.py` plus that import and the `try`/`except`. |
+
+`tests/test_embed_backend.py` auto-merged. It keeps main's `_Conn.__iter__` (PRAGMA `table_info` iterates nothing, so nothing is gated) and the PR's `test_query_artifact_error_is_one_line`. That test passed after the merge.
+
+These did not conflict, and they are byte-identical to `14eae9e`: `search/bench.py`, `docs/research/embeddings.md`, `search/abstain.toml`, `eval/questions.jsonl`, `eval/plain_candidates.jsonl`, `eval/review/`, `eval/pool.py`, `eval/apply_grades.py`, `scripts/check_title_leak.py`, and `tests/test_eval_leak.py`. The LLM disclosures are unchanged (`found_by` `llm-proposed:claude`, `provenance` `llm-written:grok`). Main's product code came in as main wrote it (`app/`, the CLI, the library and privacy gates). `search/abstain.toml` was not edited. The default model was not edited.
+
+**Floor and bench numbers.** Not re-run, and not tuned. The shipped Granite floor is still 0.8129 (`search/abstain.toml` is the same file as before this merge). `search/bench.py` is the PR's file. The bench builds `Searcher` with the gate off and no library slug. For Wesley's index, `visible_sql` returns None (no `video_id` column and no `videos` table), so the ungated ranking path is the same one the reported figures used. Main did not change what those figures measure. The numbers stay as #17 reported.
+
+**Tests.** `uv run python -m unittest discover -s tests`: **492 tests, OK** (24.075s). That is the previous 372 plus the tests main added in #12.
+
+**Lock.** `uv lock --check`: `Resolved 79 packages`, exit 0.
+
+Merge commit: `49fb5daacec19f7cd55c3192828654845dc0c7a0` (parents `14eae9e366010cca636cabf8cbaf5ecfb86c5f57` and `6c7c4ca5fed392cf9a8e19bf2de74d93741bf4d6`).
+
+Head: recorded in the commit that adds this section. PR #17 mergeability is recorded in the commit after that, once the branch is pushed.
