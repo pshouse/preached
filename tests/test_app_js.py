@@ -79,6 +79,10 @@ eq(youtubeWatchUrl("https://www.youtube.com/watch?v=short"), null, "short id");
 eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijkl"), null, "12 char id");
 eq(youtubeWatchUrl("https://evil.com@www.youtube.com/watch?v=abcdefghijk"), null, "userinfo");
 eq(youtubeWatchUrl("https://www.youtube.com:8443/watch?v=abcdefghijk"), null, "odd port");
+eq(youtubeWatchUrl("https://www.youtube.com:abc/watch?v=abcdefghijk"), null, "non-numeric port");
+eq(youtubeWatchUrl("https://www.youtube.com:99999/watch?v=abcdefghijk"), null, "port out of range");
+eq(youtubeWatchUrl("https://[::1]/watch?v=abcdefghijk"), null, "ipv6 host");
+eq(youtubeWatchUrl("https://[gggg::1]/watch?v=abcdefghijk"), null, "invalid ipv6");
 eq(youtubeWatchUrl("https://archive.org/download/x/y.mp3"), null, "archive is not youtube");
 
 function walk(node, out) {
