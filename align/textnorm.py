@@ -69,6 +69,25 @@ BOOKS = {
     "jas": "james", "pet": "peter", "rev": "revelation",
 }
 
+# Compounds the 1872 text writes as two words (or hyphenated) and Whisper
+# writes as one. Split on both sides so "to-day", "to day" and "today" meet.
+SPLIT = {
+    w: " ".join(parts)
+    for parts in (
+        ("to", "day"), ("to", "morrow"), ("to", "night"), ("for", "ever"), ("every", "one"),
+        ("any", "one"), ("some", "one"), ("no", "one"), ("can", "not"), ("any", "thing"),
+        ("every", "thing"), ("some", "thing"), ("no", "thing"), ("any", "where"),
+        ("every", "where"), ("some", "times"), ("any", "how"), ("in", "to"), ("up", "on"),
+        ("with", "out"), ("him", "self"), ("her", "self"), ("it", "self"), ("my", "self"),
+        ("them", "selves"), ("our", "selves"), ("your", "selves"), ("your", "self"),
+        ("there", "fore"), ("where", "fore"), ("never", "the", "less"), ("none", "the", "less"),
+        ("how", "ever"), ("what", "ever"), ("who", "ever"), ("when", "ever"), ("where", "ever"),
+        ("mean", "while"), ("some", "what"), ("god", "head"), ("first", "born"),
+        ("high", "minded"), ("new", "born"), ("good", "will"), ("an", "other"),
+    )
+    for w in ["".join(parts)]
+}
+
 _OUR = re.compile(
     r"^(favo|hono|labo|savio|behavio|neighbo|colo|endeavo|vigo|rigo|humo|odo|"
     r"ardo|fervo|splendo|clamo|harbo|rumo|savo|cando|valo|parlo|armo|tumo|"
@@ -133,7 +152,7 @@ def norm_word(raw: str, books: bool = False, roman: bool = False) -> list[str]:
         value = roman_value(bare.upper() if books else bare)
         if value is not None:
             return int_to_words(value)
-    word = raw.lower().replace("’", "'").replace("-", "")
+    word = raw.lower().replace("’", "'").replace("-", " ")
     word = re.sub(r"[^a-z0-9']+", " ", word).replace("'", "").strip()
     out: list[str] = []
     for part in word.split():
@@ -152,6 +171,8 @@ def norm_word(raw: str, books: bool = False, roman: bool = False) -> list[str]:
 def _spell(word: str, books: bool) -> str:
     if books and word in BOOKS:
         return BOOKS[word]
+    if word in SPLIT:
+        return SPLIT[word]
     if word in SPELLING:
         return SPELLING[word]
     word = _OUR.sub(r"\1r", word)
@@ -173,9 +194,9 @@ def canonical_tokens(text: str) -> list[tuple[str, list[int]]]:
     index = 0
     while index < len(spans):
         group = [index]
-        # "to-day", "Lord’s", "&c": tokens joined by a hyphen or apostrophe
-        # with no space are one spoken word.
-        while index + 1 < len(spans) and text[spans[index][1] : spans[index + 1][0]] in ("-", "’", "'"):
+        # "Lord’s": tokens joined by an apostrophe with no space are one
+        # spoken word. Hyphenated words stay apart; see SPLIT.
+        while index + 1 < len(spans) and text[spans[index][1] : spans[index + 1][0]] in ("’", "'"):
             index += 1
             group.append(index)
         raw = "".join(spans[i][2] for i in group)
@@ -193,7 +214,7 @@ def canonical_tokens(text: str) -> list[tuple[str, list[int]]]:
     return out
 
 
-_ASR_JOIN = {("et", "cetera"): "etcetera", ("to", "day"): "today", ("to", "morrow"): "tomorrow"}
+_ASR_JOIN = {("et", "cetera"): "etcetera"}
 
 
 def asr_tokens(words: list[str]) -> list[tuple[str, int]]:

@@ -165,11 +165,15 @@ def sentence_spans(text: str) -> list[dict]:
 
 
 def span_times(words: list[list], start: int, end: int) -> tuple[int, float, float, float]:
-    """(part, start_s, end_s, anchored share) for canonical tokens [start, end)."""
-    part = words[start][0]
+    """(part, start_s, end_s, anchored share) for canonical tokens [start, end).
+
+    A span that crosses from one audio file to the next (a sermon read in
+    two parts) plays from the file holding most of its words.
+    """
+    part = Counter(w[0] for w in words[start:end]).most_common(1)[0][0]
     same = [w for w in words[start:end] if w[0] == part]
     anchored = sum(1 for w in words[start:end] if w[3]) / max(1, end - start)
-    return part, same[0][1], max(w[2] for w in same), round(anchored, 3)
+    return part, min(w[1] for w in same), max(w[2] for w in same), round(anchored, 3)
 
 
 def align_sermon(sermon: dict, files: list[dict]) -> dict:
