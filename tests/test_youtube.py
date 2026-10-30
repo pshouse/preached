@@ -32,7 +32,7 @@ from preached.store import connect, load_embeddings, open_readonly, stored_finge
 from preached.youtube.chunking import chunk_words
 from preached.youtube.cli import main
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
-from preached.youtube.library import MODEL_KEY
+from preached.youtube.library import MODEL_KEY, ensure_library
 from preached.youtube.listing import (
     PREROLL_S,
     WATCH_HOSTS,
@@ -1053,6 +1053,7 @@ class ImportTests(unittest.TestCase):
             self.assertFalse((root / "sample.sqlite").exists())
 
             other = connect(root / "other.sqlite")
+            ensure_library(other)  # a church import, so its mark may be cleared
             mark_your_church(other)
             other.commit()
             other.close()
@@ -1100,6 +1101,7 @@ class ImportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             other = connect(root / "other.sqlite")
+            ensure_library(other)  # a church import, so its mark may be cleared
             mark_your_church(other)
             other.commit()
             other.close()

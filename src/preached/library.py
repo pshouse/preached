@@ -8,6 +8,7 @@ is no combined index and no new database.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -233,8 +234,11 @@ def mark_your_church_exclusive(
 ) -> None:
     """Mark ``path`` as the church and clear that mark on any sibling file.
 
-    Classic libraries (wesley, spurgeon, edwards, and their canonical paths)
-    are not opened. ``store.connect`` migrates the schema and sets
+    Classic libraries (wesley, spurgeon, edwards: by name, path, or the same
+    inode through a hardlink) are not opened for writing. Nor is any file
+    that does not look like a church import (``church_shaped``): a
+    Wesley-shaped file, or one whose ``meta.library`` names a classic, is
+    never written. ``store.connect`` migrates the schema and sets
     ``journal_mode=WAL``; a mistaken mark on a copy of wesley.sqlite used to
     rewrite that file. Siblings that do get cleared are opened with a plain
     ``sqlite3`` connection, which does not migrate and does not change the
@@ -244,8 +248,10 @@ def mark_your_church_exclusive(
     target = Path(path).resolve()
     if is_protected_classic(target):
         raise ValueError(_classic_church_error(target.name))
+    if not church_shaped(target):
+        raise ValueError(f"error: {target.name} is not a church import (no videos table); it is not marked")
     for candidate in church_index_matches(index_dir, exclude=target):
-        if is_protected_classic(candidate):
+        if is_protected_classic(candidate) or not church_shaped(candidate):
             continue
         _clear_church_mark(candidate)
     connection = connect(target)
@@ -256,33 +262,80 @@ def mark_your_church_exclusive(
         connection.close()
 
 
-def is_protected_classic(path: Path) -> bool:
-    """True for a classic slug or a canonical classic index path.
+def _classic_files() -> list[Path]:
+    """Where the classic indexes live: Wesley (``paths.INDEX_PATH`` and
+    ``INDEX_DIR/wesley.sqlite``, read at call time) and #14's canonical
+    public-domain files."""
+    from preached import paths
 
-    The stem check covers a copy (``/tmp/wesley.sqlite``). Spurgeon and
-    edwards canonical paths go through ``libraries.classic_index_problem``
-    and ``canonical_index``. Wesley's place is ``paths.INDEX_PATH``, read
-    at call time. The file is not opened.
+    return [paths.INDEX_PATH, paths.INDEX_DIR / "wesley.sqlite", *(canonical_index(slug) for slug in PUBLIC_DOMAIN)]
+
+
+def _file_id(path: Path) -> tuple[int, int, int] | None:
+    """(st_dev, st_ino, st_nlink) of the file ``path`` names, following symlinks."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino, st.st_nlink
+
+
+def is_protected_classic(path: Path) -> bool:
+    """True for a classic slug, a classic index file, or any hardlinked file.
+
+    The stem check covers a copy (``/tmp/wesley.sqlite``). A path is
+    compared with the classic files (``_classic_files``) by realpath and by
+    ``(st_dev, st_ino)``, so a hardlink to wesley.sqlite or spurgeon.sqlite
+    under another name is that classic. A file with more than one link is
+    protected too: its other name may be a classic this process does not
+    know about. The file is not opened.
     """
     if is_classic_slug(Path(path).stem):
         return True
     resolved = _resolve(path)
     if resolved is None:
         return False
-    from preached import paths
-
-    for candidate in (paths.INDEX_PATH, paths.INDEX_DIR / "wesley.sqlite"):
+    ident = _file_id(path)
+    if ident is not None and ident[2] > 1:
+        return True
+    for candidate in _classic_files():
         canonical = _resolve(candidate)
         if canonical is not None and resolved == canonical:
+            return True
+        other = _file_id(candidate)
+        if ident is not None and other is not None and ident[:2] == other[:2]:
             return True
     for slug in PUBLIC_DOMAIN:
         # None means #14 would serve this path as that classic library.
         if classic_index_problem(slug, path) is None:
             return True
-        canonical = _resolve(canonical_index(slug))
-        if canonical is not None and resolved == canonical:
-            return True
     return False
+
+
+def church_shaped(path: Path) -> bool:
+    """True when ``path`` holds a church import: a ``videos`` table and a
+    ``chunks.video_id`` column, with no ``meta.library`` naming a classic.
+
+    Wesley's index has neither table nor column; build_library.py records
+    its slug in ``meta.library``. Read-only (``store.open_readonly``).
+    Anything unreadable is not church-shaped, so it is not written.
+    """
+    try:
+        connection = open_readonly(Path(path))
+    except (OSError, sqlite3.Error):
+        return False
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "videos" not in tables or "chunks" not in tables:
+            return False
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+        if "video_id" not in columns:
+            return False
+        return not is_classic_slug(get_meta(connection, "library"))
+    except sqlite3.Error:
+        return False
+    finally:
+        connection.close()
 
 
 def _clear_church_mark(path: Path) -> None:
@@ -290,7 +343,8 @@ def _clear_church_mark(path: Path) -> None:
 
     ``store.connect`` runs the schema script and ``PRAGMA journal_mode=WAL``.
     A plain connection does neither. The journal mode already on the file
-    stays as it is.
+    stays as it is. Callers check ``is_protected_classic`` and
+    ``church_shaped`` first.
     """
     connection = sqlite3.connect(path)
     try:

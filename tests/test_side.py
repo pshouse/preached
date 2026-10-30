@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sqlite3
@@ -24,6 +25,9 @@ from preached.abstain import Signals, church_confidence, decide
 from preached.library import (
     CHURCH_EMPTY,
     church_index_matches,
+    church_shaped,
+    classic_church_refusal,
+    is_protected_classic,
     find_church_index,
     get_meta,
     is_your_church,
@@ -32,6 +36,7 @@ from preached.library import (
     resolve_church_path,
 )
 from preached.store import connect, open_readonly, save_embedding_info, write_embeddings
+from preached.youtube.library import ensure_library
 
 FIXTURE_FP = "fixture-fingerprint"
 CLASSIC_AUDIO = "https://archive.org/download/sermonsfirstseries_1307_librivox/example.mp3"
@@ -116,8 +121,20 @@ def _insert(connection, **overrides) -> None:
     connection.execute(f"INSERT INTO chunks ({names}) VALUES ({places})", row)
 
 
-def build_library(path: Path, rows: list[dict], vectors: list[list[float]], *, church: bool = False, sample: bool = False) -> None:
+def build_library(
+    path: Path,
+    rows: list[dict],
+    vectors: list[list[float]],
+    *,
+    church: bool = False,
+    sample: bool = False,
+    church_import: bool | None = None,
+) -> None:
+    """``church_import`` (default: ``church``) adds the YouTube import's
+    ``videos`` table and ``chunks.video_id`` (``library.church_shaped``)."""
     connection = connect(path)
+    if church if church_import is None else church_import:
+        ensure_library(connection)
     for row in rows:
         _insert(connection, **row)
     connection.commit()
@@ -303,10 +320,10 @@ class MarkTests(unittest.TestCase):
                 _plain_marked(path)
             before = {name: path.read_bytes() for name, path in classics.items()}
             other = root / "other.sqlite"
-            _plain_marked(other)
+            _plain_marked(other, church_import=True)
             sample = root / "sample.sqlite"
             rows, vectors = church_rows()
-            build_library(sample, rows[:1], vectors[:1])
+            build_library(sample, rows[:1], vectors[:1], church_import=True)
             # A marked wesley copy is not a candidate, so it is not opened.
             self.assertEqual(church_index_matches(root), [other])
             mark_your_church_exclusive(sample, root, sample=True)
@@ -354,15 +371,105 @@ class MarkTests(unittest.TestCase):
             self.assertFalse(canonical.with_name(canonical.name + "-wal").exists())
 
 
-def _plain_marked(path: Path) -> None:
-    """A church-marked file that did not go through store.connect (no WAL)."""
+class HardlinkTests(unittest.TestCase):
+    """A hardlink to a classic file is that classic (CTO round 2, must-fix 1).
+
+    A path compare missed it: marking a church through a hardlinked
+    wesley.sqlite rewrote the real Wesley file, and ``--church-index`` on a
+    hardlink to the canonical spurgeon was accepted.
+    """
+
+    def test_hardlinks_to_wesley_and_spurgeon_are_refused_and_wesley_bytes_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            index_dir = Path(tmp) / "index"
+            work = Path(tmp) / "work"
+            index_dir.mkdir()
+            work.mkdir()
+            wesley = index_dir / "wesley.sqlite"
+            spurgeon = index_dir / "spurgeon.sqlite"
+            # A mistaken role=church on both, as in the CTO repro.
+            _plain_marked(wesley)
+            _plain_marked(spurgeon)
+            wesley_link = work / "mychurch.sqlite"
+            spurgeon_link = work / "other.sqlite"
+            wesley_link.hardlink_to(wesley)
+            spurgeon_link.hardlink_to(spurgeon)
+            sample = work / "sample.sqlite"
+            rows, vectors = church_rows()
+            build_library(sample, rows[:1], vectors[:1], church_import=True)
+            before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (wesley, spurgeon)}
+            with (
+                patch("preached.paths.INDEX_DIR", index_dir),
+                patch("preached.paths.INDEX_PATH", wesley),
+            ):
+                for link in (wesley_link, spurgeon_link):
+                    self.assertTrue(is_protected_classic(link), link.name)
+                    self.assertIsNotNone(classic_church_refusal(None, link), link.name)
+                    with self.assertRaises(SystemExit) as caught:
+                        prepare_church(work, classic=sample, church_index=link, church_library=None)
+                    self.assertIn("classic", str(caught.exception))
+                    with self.assertRaises(ValueError):
+                        mark_your_church_exclusive(link, work)
+                # Both links are marked role=church siblings; neither is cleared.
+                mark_your_church_exclusive(sample, work, sample=True)
+            for path, digest in before.items():
+                self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), digest, path.name)
+                self.assertFalse(path.with_name(path.name + "-wal").exists(), path.name)
+                self.assertFalse(path.with_name(path.name + "-shm").exists(), path.name)
+
+    def test_any_hardlinked_file_is_protected_even_without_a_known_classic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = root / "elsewhere.sqlite"
+            _plain_marked(original, church_import=True)
+            link = root / "church.sqlite"
+            link.hardlink_to(original)
+            self.assertTrue(is_protected_classic(link))
+            self.assertTrue(is_protected_classic(original))
+
+    def test_wesley_shaped_or_classic_marked_content_is_never_written(self) -> None:
+        """Not a link, not a classic name: still not written unless it is a church import."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wesley_copy = root / "copied.sqlite"
+            _plain_marked(wesley_copy)
+            tagged = root / "tagged.sqlite"
+            _plain_marked(tagged, church_import=True)
+            labelled = sqlite3.connect(tagged)
+            labelled.execute("INSERT INTO meta (key, value) VALUES ('library', 'spurgeon')")
+            labelled.commit()
+            labelled.close()
+            sample = root / "sample.sqlite"
+            rows, vectors = church_rows()
+            build_library(sample, rows[:1], vectors[:1], church_import=True)
+            before = {path: path.read_bytes() for path in (wesley_copy, tagged)}
+            self.assertFalse(church_shaped(wesley_copy))
+            self.assertFalse(church_shaped(tagged))
+            mark_your_church_exclusive(sample, root, sample=True)
+            for path in (wesley_copy, tagged):
+                self.assertEqual(path.read_bytes(), before[path], path.name)
+                with self.assertRaises(ValueError):
+                    mark_your_church_exclusive(path, root)
+                self.assertEqual(path.read_bytes(), before[path], path.name)
+
+
+def _plain_marked(path: Path, *, church_import: bool = False) -> None:
+    """A church-marked file that did not go through store.connect (no WAL).
+
+    Wesley-shaped unless ``church_import`` adds a ``videos`` table and
+    ``chunks.video_id`` (``library.church_shaped``).
+    """
     connection = sqlite3.connect(path)
     try:
         connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
         connection.execute("INSERT INTO meta (key, value) VALUES ('role', 'church')")
-        connection.execute("CREATE TABLE chunks (chunk_id TEXT, text TEXT)")
+        if church_import:
+            connection.execute("CREATE TABLE chunks (chunk_id TEXT, text TEXT, video_id TEXT)")
+            connection.execute("CREATE TABLE videos (video_id TEXT PRIMARY KEY, status TEXT)")
+        else:
+            connection.execute("CREATE TABLE chunks (chunk_id TEXT, text TEXT)")
         connection.execute(
-            "INSERT INTO chunks VALUES ('wesley-001-c0000', ?)",
+            "INSERT INTO chunks (chunk_id, text) VALUES ('wesley-001-c0000', ?)",
             ("By grace are ye saved through faith. " * 20,),
         )
         connection.commit()
