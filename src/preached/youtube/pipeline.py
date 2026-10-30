@@ -2,7 +2,9 @@
 
 Re-running skips video ids already marked ``ok``. A failure on one video is
 recorded and the rest continue. ``--dry-run`` prints id, title, date, and
-duration, and does not download, transcribe, or write the index.
+duration, and does not download, transcribe, or write the index. A successful
+import deletes the working audio file. ``--keep-audio`` leaves it. A failed
+video keeps the file so the next run can resume the download.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ class Settings:
     dry_run: bool
     require_cc: bool
     redo: bool
+    keep_audio: bool
     index_path: Path
     audio_dir: Path
     windows_path: Path | None
@@ -278,6 +281,8 @@ def _import_one(
         matrix=matrix,
     )
     index_s = time.perf_counter() - index_started
+    if not settings.keep_audio:
+        _discard_audio(audio_path, settings.audio_dir)
     audio_s = video.duration_s or (words[-1].end - words[0].start)
     print(
         "TIMING "
@@ -292,3 +297,29 @@ def _import_one(
         file=sys.stderr,
         flush=True,
     )
+
+
+def _discard_audio(path: Path, audio_dir: Path) -> None:
+    """Delete the working file the downloader returned.
+
+    The name is removed only when it lives inside ``audio_dir`` and the
+    resolved file does too. A ``..`` path or a symlink that leaves the
+    directory is left alone. A delete error does not undo the committed index.
+    """
+    try:
+        audio = Path(path)
+        root = Path(audio_dir).resolve()
+        parent = audio.parent.resolve()
+        resolved = audio.resolve()
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"keep audio {path}: {exc}", file=sys.stderr, flush=True)
+        return
+    parent_inside = parent == root or parent.is_relative_to(root)
+    if not parent_inside or resolved == root or not resolved.is_relative_to(root):
+        return
+    if not audio.is_file():
+        return
+    try:
+        audio.unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"keep audio {audio}: {exc}", file=sys.stderr, flush=True)

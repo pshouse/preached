@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Import again even when the video id is already marked ok.",
     )
+    parser.add_argument(
+        "--keep-audio",
+        action="store_true",
+        help="Keep the downloaded audio after a successful import. By default that file is deleted. A failed video always keeps its file.",
+    )
     return parser
 
 
@@ -76,6 +81,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         dry_run=args.dry_run,
         require_cc=args.require_cc,
         redo=args.redo,
+        keep_audio=args.keep_audio,
         index_path=index_root / f"{args.library}.sqlite",
         audio_dir=audio_base / args.library,
         windows_path=args.windows,

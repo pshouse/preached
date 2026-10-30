@@ -341,6 +341,106 @@ class ImportTests(unittest.TestCase):
             self.assertEqual(downloaded, ["videofail1"])
             self.assertEqual(transcribed, ["videofail1.m4a"])
 
+    def test_success_deletes_the_returned_audio_file(self) -> None:
+        inside = Video("BGoD6CIpLWQ", "Talk", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=BGoD6CIpLWQ")
+        escaped = Video("abcdefghijk", "Other", 40, date(2024, 6, 3), "https://www.youtube.com/watch?v=abcdefghijk")
+        linked = Video("bbbcccddd11", "Link", 40, date(2024, 6, 4), "https://www.youtube.com/watch?v=bbbcccddd11")
+
+        def downloader(video, dest: Path):
+            dest.mkdir(parents=True, exist_ok=True)
+            if video.id == escaped.id:
+                path = dest / ".." / ".." / "escaped.m4a"
+                path.write_bytes(b"nope")
+                return path
+            if video.id == linked.id:
+                target = dest.parent.parent / "secret.m4a"
+                target.write_bytes(b"secret")
+                link = dest / "linked.m4a"
+                link.symlink_to(target)
+                return link
+            path = dest / f"{video.id}.m4a"
+            path.write_bytes(b"audio")
+            (dest / f"{video.id}.part").write_bytes(b"part")
+            return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                ["https://www.youtube.com/channel/UCexample", "--library", "sample"],
+                root,
+                lister=lambda _url: [inside, escaped, linked],
+                downloader=downloader,
+                transcriber=lambda _path: sample_words(),
+                metadata=lambda _video: {},
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            audio = root / "audio" / "sample"
+            self.assertFalse((audio / f"{inside.id}.m4a").exists())
+            self.assertTrue((audio / f"{inside.id}.part").is_file())
+            self.assertEqual((root / "escaped.m4a").read_bytes(), b"nope")
+            self.assertTrue((audio / "linked.m4a").is_symlink())
+            self.assertEqual((root / "secret.m4a").read_bytes(), b"secret")
+
+    def test_failed_import_keeps_the_audio_file(self) -> None:
+        video = Video("audiofail01", "Talk", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=audiofail01")
+
+        def downloader(_video, dest: Path):
+            dest.mkdir(parents=True, exist_ok=True)
+            path = dest / f"{video.id}.m4a"
+            path.write_bytes(b"audio")
+            return path
+
+        def transcriber(_path):
+            raise RuntimeError("decoder blew up")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                ["https://www.youtube.com/channel/UCexample", "--library", "sample"],
+                root,
+                lister=lambda _url: [video],
+                downloader=downloader,
+                transcriber=transcriber,
+                metadata=lambda _video: {},
+                embedder=embedder,
+            )
+            self.assertEqual(code, 1, err)
+            self.assertTrue((root / "audio" / "sample" / f"{video.id}.m4a").is_file())
+            connection = open_readonly(root / "sample.sqlite")
+            try:
+                status = connection.execute(
+                    "SELECT status FROM videos WHERE video_id = ?",
+                    (video.id,),
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(status[0], "error")
+
+    def test_keep_audio_flag_retains_the_file(self) -> None:
+        video = Video("audiokeep01", "Talk", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=audiokeep01")
+
+        def downloader(_video, dest: Path):
+            dest.mkdir(parents=True, exist_ok=True)
+            path = dest / f"{video.id}.m4a"
+            path.write_bytes(b"audio")
+            return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                ["https://www.youtube.com/channel/UCexample", "--library", "sample", "--keep-audio"],
+                root,
+                lister=lambda _url: [video],
+                downloader=downloader,
+                transcriber=lambda _path: sample_words(),
+                metadata=lambda _video: {},
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            saved = root / "audio" / "sample" / f"{video.id}.m4a"
+            self.assertEqual(saved.read_bytes(), b"audio")
+
     def test_require_cc_skips_without_transcribing(self) -> None:
         video = Video("cccheck0001", "Talk", 40, date(2024, 5, 1), "https://www.youtube.com/watch?v=cccheck0001")
         seen = {"meta": 0, "audio": 0}
