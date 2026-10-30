@@ -129,7 +129,9 @@ class LiveGateTests(Base):
         self.assertEqual(self.served(live, "faithful"), {"bm25": {ID_A}, "dense": {ID_A}, "hybrid": {ID_A}})
         status, sermon, _ = live.get(f"/api/sermon/{ID_A}")
         self.assertEqual(status, 200)
-        self.assertEqual(sermon["source_url"], f"https://www.youtube.com/watch?v={ID_A}")
+        # A has flagged chunks, so its YouTube source link (a watch link from
+        # 0:00, which plays the opening names) is withheld under none.
+        self.assertIsNone(sermon["source_url"])
         self.assertEqual(live.get(f"/api/sermon/{ID_B}")[0], 404)
         _, health, _ = live.get("/healthz")
         connection = open_readonly(self.index)
@@ -340,16 +342,21 @@ class ConfigHashTests(Base):
         toml = self.root / "privacy.toml"
         toml.write_text('block = ["Timothy"]\n')
         self.assertEqual(self.importer(["--privacy", str(toml)])[0], 0)
-        # No config (or another config) at approval: refused.
+        # Another config at approval (Base sets an empty one in the env): refused.
         code, _out, err = self.cli(["--library", "wire", "--ack-review", ID_A])
         self.assertEqual(code, 1)
         self.assertIn("privacy config changed", err)
+        # No config at all: refused before the index is opened.
+        with patch.dict(os.environ, {"PREACHED_PRIVACY": ""}):
+            code, _out, err = self.cli(["--library", "wire", "--ack-review", ID_A])
+        self.assertEqual(code, 2)
+        self.assertIn("needs a privacy config", err)
         toml.write_text('block = ["Timothy", "Paul"]\n')
         code, _out, err = self.cli(["--library", "wire", "--ack-review", ID_A, "--privacy", str(toml)])
         self.assertEqual(code, 1)
         self.assertIn("privacy config changed", err)
         # The same settings (any order, same file or env) approve.
-        toml.write_text('block = ["timothy"]\nflagged_audio = "shifted"\n')
+        toml.write_text('block = ["timothy"]\nflagged_audio = "none"\n')
         with patch.dict(os.environ, {"PREACHED_PRIVACY": str(toml)}):
             code, _out, err = self.cli(["--library", "wire", "--ack-review", ID_A])
         self.assertEqual(code, 0, err)

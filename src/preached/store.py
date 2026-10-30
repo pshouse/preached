@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from preached.fts import to_fts_query
+from preached.libraries import is_public_domain
 from preached.paths import INDEX_PATH
 
 SCHEMA = """
@@ -363,7 +364,47 @@ def file_bytes(path: Path | None = None) -> int:
     return index_path.stat().st_size if index_path.exists() else 0
 
 
-def visible_sql(connection: sqlite3.Connection, alias: str = "chunks", *, gated: bool = False) -> str | None:
+def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def public_domain_file(connection: sqlite3.Connection, library: str | None) -> bool:
+    """True when ``library`` is exempt from the publish gate for this file.
+
+    Keyed on the slug, never on a missing column: only a slug on the
+    public-domain allow-list (``preached.libraries``: spurgeon, edwards) can
+    be exempt, and only when the file is that library's own build: meta
+    ``library`` equals the slug (``search/build_library.py`` writes it), no
+    sermon carries a review hash and no chunk is flagged. So a church file
+    served as ``--library spurgeon --index church.sqlite``, or church chunks
+    written into a classics file, stay gated. Anything else returns False.
+    """
+    if not is_public_domain(library):
+        return False
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "meta" not in tables or "chunks" not in tables:
+        return False
+    marker = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
+    if marker is None or marker[0] != library:
+        return False
+    if "review_sha256" in _columns(connection, "videos") and connection.execute(
+        "SELECT 1 FROM videos WHERE review_sha256 IS NOT NULL LIMIT 1"
+    ).fetchone():
+        return False
+    if "flag_end_s" in _columns(connection, "chunks") and connection.execute(
+        "SELECT 1 FROM chunks WHERE flag_end_s IS NOT NULL LIMIT 1"
+    ).fetchone():
+        return False
+    return True
+
+
+def visible_sql(
+    connection: sqlite3.Connection,
+    alias: str = "chunks",
+    *,
+    gated: bool = False,
+    library: str | None = None,
+) -> str | None:
     """SQL condition for the chunks a reader may see, or None when nothing is gated.
 
     Evaluated against the file as it is now, so callers run it per request:
@@ -375,9 +416,14 @@ def visible_sql(connection: sqlite3.Connection, alias: str = "chunks", *, gated:
     library file without the gate columns fails closed (``"0"``). Wesley's
     index has no ``video_id`` column and no ``videos`` table and is not gated,
     unless ``gated`` says this file must be (any library but wesley).
+
+    ``library`` is the slug the file is served as. The public-domain classics
+    (``public_domain_file``) are not gated, which is re-checked on every call.
     """
-    chunk_cols = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
-    video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
+    if library is not None and public_domain_file(connection, library):
+        return None
+    chunk_cols = _columns(connection, "chunks")
+    video_cols = _columns(connection, "videos")
     if "video_id" not in chunk_cols and not video_cols and not gated:
         return None
     if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status"} <= video_cols:
@@ -390,18 +436,18 @@ def visible_sql(connection: sqlite3.Connection, alias: str = "chunks", *, gated:
     )
 
 
-def visible_count(connection: sqlite3.Connection, *, gated: bool = False) -> int:
-    where = visible_sql(connection, "chunks", gated=gated)
+def visible_count(connection: sqlite3.Connection, *, gated: bool = False, library: str | None = None) -> int:
+    where = visible_sql(connection, "chunks", gated=gated, library=library)
     sql = "SELECT count(*) FROM chunks" + (f" WHERE {where}" if where else "")
     return int(connection.execute(sql).fetchone()[0])
 
 
-def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = False) -> set[int]:
+def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = False, library: str | None = None) -> set[int]:
     """The subset of ``rowids`` that may be served right now."""
     wanted = [int(r) for r in rowids]
     if not wanted:
         return set()
-    where = visible_sql(connection, "chunks", gated=gated)
+    where = visible_sql(connection, "chunks", gated=gated, library=library)
     found: set[int] = set()
     for start in range(0, len(wanted), 500):
         part = wanted[start : start + 500]
@@ -424,9 +470,9 @@ def pending_review_count(connection: sqlite3.Connection) -> int:
     return int(row[0])
 
 
-def hidden_rowids(connection: sqlite3.Connection, *, gated: bool = False) -> set[int]:
+def hidden_rowids(connection: sqlite3.Connection, *, gated: bool = False, library: str | None = None) -> set[int]:
     """Rowids that search, the API and the page must not serve right now (see ``visible_sql``)."""
-    where = visible_sql(connection, "chunks", gated=gated)
+    where = visible_sql(connection, "chunks", gated=gated, library=library)
     if where is None:
         return set()
     return {int(r[0]) for r in connection.execute(f"SELECT rowid FROM chunks WHERE NOT ({where})")}

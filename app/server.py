@@ -21,6 +21,7 @@ import re
 import sys
 import threading
 import time
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -44,7 +45,15 @@ from preached.search import (  # noqa: E402
 )
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
 from preached.privacy import default_config  # noqa: E402
-from preached.store import EmbeddingMismatch, open_readonly, pending_review_count, visible_count, visible_sql  # noqa: E402
+from preached.store import (  # noqa: E402
+    EmbeddingMismatch,
+    open_readonly,
+    pending_review_count,
+    public_domain_file,
+    visible_count,
+    visible_sql,
+)
+from preached.libraries import is_public_domain  # noqa: E402
 from preached.youtube.listing import chunk_video_id, policy_watch_url, public_audio_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
@@ -296,7 +305,7 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
 
 
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, floor=None, library: str = LIBRARY, flagged_audio: str | None = None):
+    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, floor=None, library: str = LIBRARY):
         self.connection = connection
         self.searcher = searcher
         self.encode = encode
@@ -309,21 +318,30 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
-        # Any library but wesley is gated. The gate is checked per request in
-        # SQL (preached.store.visible_sql), so an import, --redo or approval
-        # made while this process runs applies to the next request.
+        # Any library but wesley is gated, except an allow-listed public-domain
+        # library's own file (store.public_domain_file, keyed on the slug).
+        # The gate is checked per request in SQL (preached.store.visible_sql),
+        # so an import, --redo or approval made while this process runs
+        # applies to the next request.
         self.gated = library != LIBRARY
         if hasattr(searcher, "gated"):
             searcher.gated = searcher.gated or self.gated
-        self.flagged_audio = resolve_flagged_audio(flagged_audio, default_config().flagged_audio)
+        if hasattr(searcher, "library"):
+            searcher.library = library
+        if is_public_domain(library) and not public_domain_file(connection, library):
+            logging.warning("%s is on the public-domain list but this file is not its own build; gate stays on", library)
+        # Always "none" for church libraries (Patrick's decision). Tests may set
+        # the attribute to exercise the other values; no flag, env or TOML can.
+        self.flagged_audio = resolve_flagged_audio(default_config().flagged_audio)
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
 
     def health(self) -> dict:
         with self.lock:
-            count = visible_count(self.connection, gated=self.gated)
-            pending = pending_review_count(self.connection) if self.gated else None
+            count = visible_count(self.connection, gated=self.gated, library=self.library)
+            gated = self.gated and not public_domain_file(self.connection, self.library)
+            pending = pending_review_count(self.connection) if gated else None
         payload = {
             "ok": True,
             "library": self.library,
@@ -368,36 +386,74 @@ class App:
         if not SERMON_ID.fullmatch(sermon_id):
             return None
         with self.lock:
-            where = visible_sql(self.connection, "chunks", gated=self.gated)
+            where = visible_sql(self.connection, "chunks", gated=self.gated, library=self.library)
             sql = "SELECT * FROM chunks WHERE sermon_id = ?" + (f" AND {where}" if where else "") + " ORDER BY rowid"
             rows = list(self.connection.execute(sql, (sermon_id,)))
-        if not rows:
-            return None
+            if not rows:
+                return None
+            audio_url, source_url = self._sermon_links(rows)
         first = rows[0]
-        audio_url = None
         reader = None
         for row in rows:
-            flagged = row_value(row, "flag_end_s") is not None
-            if audio_url is None and not (flagged and self.flagged_audio != "play"):
-                audio_url = _text_or_none(row_value(row, "audio_url"))
-            if reader is None:
-                reader = _text_or_none(row_value(row, "reader"))
-            if audio_url and reader:
+            reader = _text_or_none(row_value(row, "reader"))
+            if reader:
                 break
         return {
             "sermon_id": sermon_id,
             "sermon_number": _optional_int(row_value(first, "sermon_number")),
             "sermon_title": first["sermon_title"],
             "scripture": _text_or_none(row_value(first, "scripture")),
-            "source_url": _text_or_none(row_value(first, "source_url")),
+            "source_url": source_url,
             "audio_url": audio_url,
             "reader": reader,
         }
 
+    def _sermon_links(self, rows) -> tuple[str | None, str | None]:
+        """``(audio_url, source_url)`` for /api/sermon, under the same rules as a card.
+
+        The stored ``audio_url`` is never passed through: it goes through
+        ``public_audio_url``, and a YouTube link is rebuilt by
+        ``policy_watch_url`` (the stored ``t=`` was set at import time and may
+        sit on a name). A flagged chunk is skipped unless the policy is
+        ``play``, and under ``none`` so is a chunk that touches a flagged
+        chunk (``touches_flagged``). The first chunk left gives the link; if
+        none is left there is no link. A YouTube ``source_url`` (a watch link
+        from 0:00) is dropped when any chunk of the sermon is flagged.
+        """
+        policy = self.flagged_audio
+        flagged_any = any(row_value(row, "flag_end_s") is not None for row in rows)
+        source_url = _text_or_none(row_value(rows[0], "source_url"))
+        if flagged_any and policy != "play" and _youtube_like(source_url):
+            source_url = None
+        for row in rows:
+            card = SimpleNamespace(
+                sermon_id=row["sermon_id"],
+                flag_end_s=row_value(row, "flag_end_s"),
+                word_start=row_value(row, "word_start"),
+                word_end=row_value(row, "word_end"),
+                start_s=row_value(row, "start_s"),
+                end_s=row_value(row, "end_s"),
+            )
+            if card.flag_end_s is not None and policy != "play":
+                continue
+            if flagged_any and policy == "none" and touches_flagged(self.connection, card):
+                continue
+            stored = _text_or_none(row_value(row, "audio_url"))
+            if stored is None:
+                continue
+            row_source = _text_or_none(row_value(row, "source_url"))
+            if _youtube_like(stored) or _youtube_like(row_source):
+                vid = chunk_video_id(row_value(row, "video_id"), stored, row_source)
+                url = policy_watch_url(vid, card.start_s, card.end_s, card.flag_end_s, policy)
+            else:
+                url = public_audio_url(stored)
+            if url is not None:
+                return url, source_url
+        return None, source_url
+
 
 def build_app(
     connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, floor=None, library: str = LIBRARY,
-    flagged_audio: str | None = None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -430,7 +486,6 @@ def build_app(
         hosts=hosts,
         static_dir=static_dir,
         library=library,
-        flagged_audio=flagged_audio,
     )
 
 
@@ -657,14 +712,10 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the embedding model and serve keyword search",
     )
-    parser.add_argument(
-        "--flagged-audio",
-        default=None,
-        help="Play links for chunks with [name] or a review flag: play, shifted or none (default none). Also $PREACHED_FLAGGED_AUDIO or the privacy TOML key.",
-    )
     args = parser.parse_args(argv)
     try:
-        resolve_flagged_audio(args.flagged_audio, default_config().flagged_audio)
+        # Always none (Patrick's decision); a stale shifted/play setting stops here.
+        resolve_flagged_audio(default_config().flagged_audio)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"flagged audio policy: {exc}") from exc
     if args.model not in MODELS:
@@ -690,7 +741,6 @@ def main(argv: list[str] | None = None) -> None:
         hosts=hosts,
         static_dir=STATIC_DIR,
         library=library,
-        flagged_audio=args.flagged_audio,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)

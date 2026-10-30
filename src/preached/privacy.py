@@ -74,7 +74,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from preached.audio_policy import check_flagged_audio
+from preached.audio_policy import check_church_policy
 
 DATA = Path(__file__).with_name("privacy_data")
 TOKEN = "[name]"
@@ -337,7 +337,8 @@ class Config:
             drop.append((window.get("source"), start, end))
         flagged = data.get("flagged_audio")
         if flagged is not None:
-            check_flagged_audio(flagged)
+            # Only "none" (Patrick's decision); kept as a key so old files still load.
+            check_church_policy(flagged)
         return cls(
             allow=allow,
             block=block,
@@ -355,6 +356,26 @@ def load_config(path: str | os.PathLike[str]) -> Config:
 def default_config() -> Config:
     path = os.environ.get(CONFIG_ENV)
     return load_config(path) if path else Config()
+
+
+class MissingConfig(ValueError):
+    """A church library was given no privacy config (fail closed)."""
+
+
+def required_config(path: str | os.PathLike[str] | None = None) -> Config:
+    """``path`` (``--privacy``), else ``$PREACHED_PRIVACY``; neither is an error.
+
+    Every library except Wesley and the public-domain allow-list
+    (``preached.libraries``) is a church library and must name its config, so
+    nobody imports church audio under an empty config by forgetting a flag.
+    """
+    chosen = path or os.environ.get(CONFIG_ENV)
+    if not chosen:
+        raise MissingConfig(
+            f"a church library needs a privacy config: --privacy <toml> or ${CONFIG_ENV} "
+            "(see privacy.example.toml)"
+        )
+    return load_config(chosen)
 
 
 # ---------------------------------------------------------------- word records

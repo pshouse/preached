@@ -20,7 +20,7 @@ import numpy as np
 
 from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
-from preached.privacy import Config, apply_drops, config_sha256, default_config, load_config, redact_metadata, review, review_metadata, write_review_file
+from preached.privacy import Config, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file
 from preached.youtube import privacy
 from preached.youtube.chunking import chunk_words
 from preached.youtube.library import approve_review, file_sha256, imported_ok, index_video, mark_video, open_library
@@ -43,7 +43,6 @@ class Settings:
     audio_dir: Path
     windows_path: Path | None
     privacy_path: Path | None = None
-    flagged_audio: str | None = None
     review_dir: Path | None = None
 
     def review_root(self) -> Path:
@@ -248,9 +247,13 @@ def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], confi
 
 
 def privacy_config(settings: Settings) -> tuple[Config, str]:
-    """``--privacy`` wins, then ``PREACHED_PRIVACY``. Also returns the flagged-audio policy."""
-    config = load_config(settings.privacy_path) if settings.privacy_path else default_config()
-    return config, resolve_flagged_audio(settings.flagged_audio, config.flagged_audio)
+    """``--privacy`` wins, then ``PREACHED_PRIVACY``; neither raises ``MissingConfig``.
+
+    Also returns the flagged-audio policy, which is always ``none`` for a
+    church library (Patrick's decision; see ``preached.audio_policy``).
+    """
+    config = required_config(settings.privacy_path)
+    return config, resolve_flagged_audio(config.flagged_audio)
 
 
 def run(

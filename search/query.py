@@ -214,26 +214,25 @@ def main() -> None:
     target.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, edwards); "
                         "built by search/build_library.py, so no Wesley chunk sync")
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
-    parser.add_argument(
-        "--flagged-audio",
-        default=None,
-        help="Play links for passages with [name] or a review flag: play, shifted or none (default none).",
-    )
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
     try:
-        policy = resolve_flagged_audio(args.flagged_audio, default_config().flagged_audio)
+        # Always none (Patrick's decision); a stale shifted/play setting stops here.
+        policy = resolve_flagged_audio(default_config().flagged_audio)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"error: {exc}") from exc
 
     connection = open_index(args.index, args.library)
+    # Same gate as the server: any --library but wesley is gated unless it is an
+    # allow-listed public-domain library's own file (store.public_domain_file).
+    gate = {"gated": args.library not in (None, "wesley"), "library": args.library}
     model_name = None
     loaded = None
     vector = None
     try:
         if args.mode == "bm25":
-            searcher = Searcher(connection)
+            searcher = Searcher(connection, **gate)
             hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
@@ -241,7 +240,7 @@ def main() -> None:
             loaded = load_model(spec, device=args.device, batch_size=1)
             vector = encode_query(loaded, args.query)
             try:
-                searcher = Searcher(connection, model=model_name)
+                searcher = Searcher(connection, model=model_name, **gate)
             except EmbeddingMismatch as exc:
                 raise SystemExit(f"error: {exc}\nOr search without vectors: --mode bm25") from exc
             if args.mode == "dense":

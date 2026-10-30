@@ -72,6 +72,11 @@ class Base(unittest.TestCase):
         self.root = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
         env = {k: v for k, v in os.environ.items() if not k.startswith("PREACHED_PRIVACY") and k != "PREACHED_FLAGGED_AUDIO"}
+        # A church import needs a privacy config (fail closed). An empty one
+        # keeps the built-in rules; tests of the refusal remove it.
+        self.empty_config = self.root / "empty-privacy.toml"
+        self.empty_config.write_text("# no library-specific names\n")
+        env["PREACHED_PRIVACY"] = str(self.empty_config)
         patcher = patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -100,10 +105,10 @@ class Base(unittest.TestCase):
     def review_file(self, video_id: str) -> Path:
         return self.root / "wire" / "review" / f"{video_id}.review.jsonl"
 
-    def app(self, **kwargs) -> App:
+    def app(self, flagged_audio: str | None = None, **kwargs) -> App:
         connection = open_readonly(self.index, check_same_thread=False)
         self.addCleanup(connection.close)
-        return App(
+        app = App(
             connection=connection,
             searcher=Searcher(connection),
             encode=None,
@@ -114,6 +119,11 @@ class Base(unittest.TestCase):
             library="wire",
             **kwargs,
         )
+        if flagged_audio is not None:
+            # Test hook only. No flag, env or TOML selects play/shifted for a
+            # church library (Patrick chose none); this exercises the kept code.
+            app.flagged_audio = check_flagged_audio(flagged_audio)
+        return app
 
 
 class EndToEndTests(Base):
@@ -258,9 +268,29 @@ class PrivacyConfigTests(Base):
         code, _out, err = self.importer(["--privacy", str(toml)])
         self.assertEqual(code, 2)
         self.assertIn("flagged_audio must be one of play, shifted, none", err)
-        code, _out, err = self.importer(["--flagged-audio", "loud"])
-        self.assertEqual(code, 2)
         self.assertEqual(self.importer(["--privacy", str(self.root / "missing.toml")])[0], 2)
+
+    def test_church_audio_policy_cannot_be_chosen(self) -> None:
+        """Patrick chose none: play and shifted are refused from every config source, before any download."""
+        for value in ("shifted", "play"):
+            toml = self.root / f"{value}.toml"
+            toml.write_text(f'flagged_audio = "{value}"\n')
+            code, _out, err = self.importer(["--privacy", str(toml)])
+            self.assertEqual(code, 2, err)
+            self.assertIn("Patrick chose 'none'", err)
+            with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": value}):
+                code, _out, err = self.importer()
+            self.assertEqual(code, 2, err)
+            self.assertIn("Patrick chose 'none'", err)
+        # There is no command-line flag any more (argparse exits 2).
+        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as ctx:
+            self.importer(["--flagged-audio", "shifted"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertFalse(self.index.exists())
+        # "none" is still accepted, so an existing config keeps working.
+        toml = self.root / "none.toml"
+        toml.write_text('flagged_audio = "none"\n')
+        self.assertEqual(self.importer(["--privacy", str(toml)])[0], 0)
 
 
 class FlaggedAudioTests(Base):
@@ -279,9 +309,17 @@ class FlaggedAudioTests(Base):
         with self.assertRaises(ValueError):
             Config.from_dict({"flagged_audio": "mute"})
         self.assertEqual(resolve_flagged_audio(), "none")
-        with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": "play"}):
-            self.assertEqual(resolve_flagged_audio(None, "shifted"), "play")
-            self.assertEqual(resolve_flagged_audio("none", "shifted"), "none")
+        self.assertEqual(resolve_flagged_audio("none"), "none")
+        with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": "none"}):
+            self.assertEqual(resolve_flagged_audio("none"), "none")
+        # Patrick chose none for church libraries: nothing else is selectable.
+        for value in ("play", "shifted"):
+            with self.assertRaisesRegex(ValueError, "Patrick chose 'none'"):
+                resolve_flagged_audio(value)
+            with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": value}), self.assertRaises(ValueError):
+                resolve_flagged_audio()
+            with self.assertRaises(ValueError):
+                Config.from_dict({"flagged_audio": value})
         with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": "bogus"}), self.assertRaises(ValueError):
             resolve_flagged_audio()
 

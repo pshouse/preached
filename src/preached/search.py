@@ -95,6 +95,7 @@ class Searcher:
         model: str | None = None,
         fingerprint: str | None = None,
         gated: bool = False,
+        library: str | None = None,
     ):
         """model: a key in search/models.toml. Its stored document vectors
         must carry the fingerprint the config gives now (or `fingerprint`,
@@ -102,10 +103,15 @@ class Searcher:
         silently mixing old document vectors with new query vectors.
 
         gated: this file is a church library, so the publish gate applies even
-        if its schema is incomplete (see ``store.visible_sql``)."""
+        if its schema is incomplete (see ``store.visible_sql``).
+
+        library: the slug this file is served as. Only an allow-listed
+        public-domain library's own file is exempt from the gate
+        (``store.public_domain_file``, re-checked per call)."""
         self.connection = connection
         self.model = model
         self.gated = gated
+        self.library = library
         self._fingerprint = fingerprint
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
@@ -144,7 +150,7 @@ class Searcher:
                 logging.exception("could not reload vectors after the index changed; keeping the old ones")
 
     def _where(self) -> str | None:
-        return visible_sql(self.connection, "chunks", gated=self.gated)
+        return visible_sql(self.connection, "chunks", gated=self.gated, library=self.library)
 
     def _pack(self, scored: list[tuple[int, float]], limit: int, where: str | None) -> list[Hit]:
         scored = scored[:limit]
@@ -172,7 +178,7 @@ class Searcher:
         kept: list[tuple[int, float]] = []
         for start in range(0, len(order), max(limit, 1) * 4):
             batch = [(self._rowids[int(i)], float(scores[int(i)])) for i in order[start : start + max(limit, 1) * 4]]
-            visible = visible_rowids(self.connection, [rowid for rowid, _ in batch], gated=self.gated)
+            visible = visible_rowids(self.connection, [rowid for rowid, _ in batch], gated=self.gated, library=self.library)
             kept.extend(item for item in batch if item[0] in visible)
             if len(kept) >= limit:
                 break
@@ -183,7 +189,7 @@ class Searcher:
         return self._pack(self._lexical(query, limit, where), limit, where)
 
     def visible_count(self) -> int:
-        return visible_count(self.connection, gated=self.gated)
+        return visible_count(self.connection, gated=self.gated, library=self.library)
 
     def dense(self, vector: np.ndarray, limit: int) -> list[Hit]:
         self._refresh()

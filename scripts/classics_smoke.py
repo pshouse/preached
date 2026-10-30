@@ -41,7 +41,8 @@ def main() -> int:
         for lib in sorted({q["library"] for q in questions}):
             if args.library and lib != args.library:
                 continue
-            searcher = Searcher(connect(INDEX_DIR / f"{lib}.sqlite"), model=DEFAULT_MODEL)
+            # Gated like the server: only the library's own build is exempt (store.public_domain_file).
+            searcher = Searcher(connect(INDEX_DIR / f"{lib}.sqlite"), model=DEFAULT_MODEL, gated=True, library=lib)
             for q in (q for q in questions if q["library"] == lib):
                 hits = searcher.hybrid(q["question"], encode_query(model, q["question"]), args.k)
                 rank = next((i for i, h in enumerate(hits, 1) if h.sermon_id in q["expect"]), None)

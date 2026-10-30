@@ -13,8 +13,11 @@ break near a natural boundary instead of only at ``max_words``.
     python3 align/asr_chunks.py /cache/transcripts/wesley/wesley-s1-01.json --library wesley --out /tmp/asr.jsonl
 
 ``--library`` is required. ``wesley`` (LibriVox, public domain) is never
-redacted and its output is byte-identical to before. Every other library
-fails closed:
+redacted and its output is byte-identical to before. The other public-domain
+libraries (``preached.libraries``: spurgeon, edwards) are refused here; they
+are built by ``search/build_library.py``, and their files are served without
+the publish gate, so church words must never be written under their slugs.
+Every other library fails closed:
 
 - it refuses to run without a privacy config (``--privacy <toml>`` or
   ``$PREACHED_PRIVACY``), and always redacts words and titles;
@@ -39,6 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from preached.corpus import chunk_text, load_chunk_config, word_tokens, write_jsonl  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN  # noqa: E402
 from preached.privacy import (  # noqa: E402
     CONFIG_ENV,
     Config,
@@ -155,6 +159,9 @@ def privacy_for(library: str, path: Path | None) -> Config | None:
         if path is not None:
             raise SystemExit("library wesley is public domain and is never redacted; drop --privacy")
         return None
+    if library in PUBLIC_DOMAIN:
+        print(f"library {library} is a public-domain classic: build it with search/build_library.py", file=sys.stderr)
+        raise SystemExit(2)
     if path is None and os.environ.get(CONFIG_ENV):
         path = Path(os.environ[CONFIG_ENV])
     if path is None:

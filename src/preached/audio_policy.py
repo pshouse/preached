@@ -1,9 +1,18 @@
 """What a play link may do for a chunk that holds a redacted or flagged name.
 
 Redaction changes text only. A chunk's ``start_s`` and a YouTube ``t=`` still
-point at the recording, where the name is spoken. Patrick has not chosen the
-policy, so it is configurable (``flagged_audio`` in the privacy TOML, the
-``PREACHED_FLAGGED_AUDIO`` variable, or a ``--flagged-audio`` flag):
+point at the recording, where the name is spoken.
+
+**Patrick chose ``none`` for church libraries** (2026-10-30): no play link, no
+YouTube link and no exact start/end on a passage that holds a name.
+Announcements, prayer requests and testimonies are excluded (see W3-PRIV-SKIP).
+``resolve_flagged_audio`` therefore always returns ``none``. The privacy TOML
+key ``flagged_audio`` and ``PREACHED_FLAGGED_AUDIO`` are still read so an old
+setting is not silently ignored, but anything other than ``none`` is refused.
+There is no command-line flag.
+
+The other values stay in the code because they are tested and the functions
+take ``policy`` as an argument, but no configuration selects them:
 
 - ``play``: the normal link with the usual pre-roll.
 - ``shifted``: start just after the last flagged word of the chunk. If that
@@ -11,7 +20,11 @@ policy, so it is configurable (``flagged_audio`` in the privacy TOML, the
   position as ``start_s`` and no ``end_s`` (``public_times``).
 - ``none``: no play link and no times; the page shows text only.
 
-Default ``none``. Unflagged chunks are never affected. No heavy imports here.
+Unflagged chunks are never affected. Patrick also decided against withholding
+a whole sermon: an unflagged card keeps its link, and a listener can scrub
+from it to a flagged moment elsewhere in the same recording. He accepted that
+residual risk; human review and the W3-PRIV-SKIP exclusions are the
+mitigation. No heavy imports here.
 """
 
 from __future__ import annotations
@@ -20,11 +33,13 @@ import math
 import os
 
 FLAGGED_AUDIO = ("play", "shifted", "none")
-DEFAULT_FLAGGED_AUDIO = "none"
+# Patrick's decision for church libraries; the only value configuration may give.
+CHURCH_FLAGGED_AUDIO = "none"
+DEFAULT_FLAGGED_AUDIO = CHURCH_FLAGGED_AUDIO
 ENV = "PREACHED_FLAGGED_AUDIO"
 # ASR word times can be late by up to ~0.76 s (W1-C), so start a little after
 # the flagged word's recorded end. 0.5 s is a guess, not measured on real
-# church audio; the policy choice itself is pending Patrick (default none).
+# church audio. Only reachable by passing policy="shifted" in code (tests).
 SHIFT_MARGIN_S = 0.5
 
 
@@ -34,12 +49,31 @@ def check_flagged_audio(value: object) -> str:
     return str(value)
 
 
-def resolve_flagged_audio(explicit: str | None = None, config_value: str | None = None) -> str:
-    """Explicit flag, then ``PREACHED_FLAGGED_AUDIO``, then the config key, then ``none``."""
-    for value in (explicit, os.environ.get(ENV) or None, config_value):
+def check_church_policy(value: object, source: str = "flagged_audio") -> str:
+    """``value`` when it is ``none``; any other value raises ``ValueError``.
+
+    Patrick chose ``none`` for church libraries, so a stale ``shifted`` or
+    ``play`` setting stops the program instead of being silently ignored.
+    """
+    check_flagged_audio(value)
+    if value != CHURCH_FLAGGED_AUDIO:
+        raise ValueError(
+            f"{source} = {value!r} refused: Patrick chose 'none' for church libraries "
+            "(no play link on name passages); play and shifted cannot be selected"
+        )
+    return CHURCH_FLAGGED_AUDIO
+
+
+def resolve_flagged_audio(config_value: str | None = None) -> str:
+    """The policy for church libraries: always ``none`` (Patrick's decision).
+
+    ``PREACHED_FLAGGED_AUDIO`` and the privacy TOML key may say ``none``;
+    anything else raises ``ValueError`` (``check_church_policy``).
+    """
+    for source, value in ((ENV, os.environ.get(ENV) or None), ("flagged_audio", config_value)):
         if value is not None:
-            return check_flagged_audio(value)
-    return DEFAULT_FLAGGED_AUDIO
+            check_church_policy(value, source)
+    return CHURCH_FLAGGED_AUDIO
 
 
 def flagged_play(

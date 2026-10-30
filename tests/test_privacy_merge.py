@@ -27,6 +27,7 @@ from pathlib import Path
 from app.server import hit_dict
 from preached.search import MERGE_MAX_WORDS, Hit, dedupe_adjacent, merge_overlapping, repeats_kept
 from preached.store import open_readonly
+from preached.youtube.listing import watch_url
 from unittest.mock import patch
 
 from test_dedupe import hit, words
@@ -140,10 +141,17 @@ class ServedTests(Base):
 
     def setUp(self) -> None:
         super().setUp()
-        # Imported under play, so the stored watch links point at the names:
-        # every client must rebuild or drop them, never pass them through.
-        code, _out, err = self.importer(["--flagged-audio", "play"])
+        # Stored watch links that point at the names, as an import made under
+        # play before Patrick chose none would have left them: every client
+        # must rebuild or drop them, never pass them through. play can no
+        # longer be configured, so the fixture writes those links itself.
+        code, _out, err = self.importer()
         self.assertEqual(code, 0, err)
+        writer = sqlite3.connect(self.index)
+        for rowid, video_id, start_s in list(writer.execute("SELECT rowid, video_id, start_s FROM chunks")):
+            writer.execute("UPDATE chunks SET audio_url = ? WHERE rowid = ?", (watch_url(video_id, start_s), rowid))
+        writer.commit()
+        writer.close()
         for video_id in (ID_A, ID_B):
             code, _out, err = self.cli(["--library", "wire", "--ack-review", video_id])
             self.assertEqual(code, 0, err)
@@ -347,9 +355,11 @@ class ChurchAsrServedTests(unittest.TestCase):
         from app.server import STATIC_DIR, App
         from preached.search import Searcher
 
-        return App(connection=self.connection, searcher=Searcher(self.connection), encode=None, fallback_note=None,
-                   model_name=None, hosts={"127.0.0.1"}, static_dir=STATIC_DIR, library="church",
-                   flagged_audio=policy)
+        app = App(connection=self.connection, searcher=Searcher(self.connection), encode=None, fallback_note=None,
+                  model_name=None, hosts={"127.0.0.1"}, static_dir=STATIC_DIR, library="church")
+        if policy is not None:
+            app.flagged_audio = policy  # test hook only; nothing configures it (Patrick chose none)
+        return app
 
     touches = ServedTests.touches
     cards = ServedTests.cards

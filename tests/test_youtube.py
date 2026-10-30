@@ -6,6 +6,7 @@ No network. Listings come from tests/fixtures. Transcription and download are fa
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -324,6 +325,19 @@ class ChunkTests(unittest.TestCase):
 
 
 class ImportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The import refuses to run without a privacy config (fail closed);
+        # an empty one keeps the built-in name rules, which these samples pass.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        toml = Path(tmp.name) / "privacy.toml"
+        toml.write_text("# no library-specific names\n")
+        env = {k: v for k, v in os.environ.items() if k != "PREACHED_FLAGGED_AUDIO"}
+        env["PREACHED_PRIVACY"] = str(toml)
+        patcher = patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _run(self, argv: list[str], tmp: Path, **kwargs):
         stdout = StringIO()
         stderr = StringIO()

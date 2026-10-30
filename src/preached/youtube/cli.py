@@ -7,8 +7,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from preached.libraries import PUBLIC_DOMAIN
 from preached.paths import CACHE_ROOT, INDEX_DIR
-from preached.privacy import default_config, load_config
+from preached.privacy import required_config
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
 from preached.youtube.listing import SLUG, BadChannelUrl, ChannelRefused, assert_youtube_url
 from preached.youtube.pipeline import Settings, acknowledge, privacy_config, run
@@ -27,7 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Import a YouTube channel into a Preached library. Audio stays on YouTube; the index stores excerpts and timestamps.",
     )
     parser.add_argument("channel_url", nargs="?", help="Channel, playlist, or single watch URL")
-    parser.add_argument("--library", required=True, help="Library slug. The index is /cache/index/<slug>.sqlite")
+    parser.add_argument(
+        "--library",
+        required=True,
+        help="Church library slug. The index is /cache/index/<slug>.sqlite. Not wesley and not a public-domain "
+        f"library ({', '.join(PUBLIC_DOMAIN)}): those are never redacted or gated.",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Import at most N videos after filters")
     parser.add_argument("--since", type=_date, default=None, help="Keep videos published on or after YYYY-MM-DD")
     parser.add_argument("--dry-run", action="store_true", help="List id, title, date, and duration. Write nothing.")
@@ -56,12 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--privacy",
         type=Path,
         default=None,
-        help="Privacy TOML (see privacy.example.toml). Defaults to $PREACHED_PRIVACY. Names are always redacted.",
-    )
-    parser.add_argument(
-        "--flagged-audio",
-        default=None,
-        help="Play links for chunks with [name] or a review flag: play, shifted, or none (default none). Also $PREACHED_FLAGGED_AUDIO.",
+        help="Privacy TOML (see privacy.example.toml). Defaults to $PREACHED_PRIVACY. Required: with neither, "
+        "nothing is listed, downloaded or approved. Names are always redacted.",
     )
     parser.add_argument(
         "--ack-review",
@@ -84,6 +86,10 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     if args.library == "wesley":
         print("library wesley is the built-in text index; choose another slug", file=sys.stderr)
         return 2
+    if args.library in PUBLIC_DOMAIN:
+        # Those files are served without the publish gate, so church audio must never land in one.
+        print(f"library {args.library} is a public-domain classic (search/build_library.py); choose another slug", file=sys.stderr)
+        return 2
     if args.limit is not None and args.limit < 1:
         print("limit must be at least 1", file=sys.stderr)
         return 2
@@ -93,7 +99,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
             print("--ack-review runs on its own: omit the channel URL", file=sys.stderr)
             return 2
         try:
-            config = load_config(args.privacy) if args.privacy else default_config()
+            config = required_config(args.privacy)
         except (OSError, ValueError) as exc:
             print(f"privacy: {exc.__class__.__name__}: {exc}", file=sys.stderr)
             return 2
@@ -120,7 +126,6 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         audio_dir=audio_base / args.library,
         windows_path=args.windows,
         privacy_path=args.privacy,
-        flagged_audio=args.flagged_audio,
         review_dir=index_root / args.library / "review",
     )
     try:
