@@ -513,9 +513,12 @@ def sermon_flagged(connection: sqlite3.Connection, sermon_id: object) -> bool:
     ).fetchone() is not None
 
 
-# A link may land this much before its seek (keyframes, player rounding), so
-# a flagged word that ends up to this long before the seek still counts.
-SEEK_SLACK_S = 0.5
+# A link may land this much before its seek (keyframes, player rounding), and
+# ASR word ends run late against the audio, so a flagged word that ends up to
+# this long before the seek still counts. Measured (large-v3-turbo vs forced
+# alignment, clean studio audio): word ends p95 0.12 s late, p99 0.48 s, max
+# 3.58 s. 1.5 = p99 + 0.5 s. Never rounded: seek_time floors toward the name.
+SEEK_SLACK_S = 1.5
 
 
 def seek_time(start_s: float | None) -> float | None:

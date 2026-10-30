@@ -4,7 +4,7 @@ The flagged chunk and the next one share no words, so the old word-overlap
 check let the next chunk keep a link that seeks inside the redacted name
 (CTO: ``&t=379s`` with the name at 378.86-379.22 s). ``search.touches_flagged``
 now also asks whether any flagged chunk of the sermon ends after this
-passage's seek minus 0.5 s and starts before its end. Checked on the real
+passage's seek minus SEEK_SLACK_S (1.5 s) and starts before its end. Checked on the real
 HTTP server for a YouTube import and an ASR (archive.org audio) import.
 Every name below is invented.
 """
@@ -108,11 +108,22 @@ class SeekRule(unittest.TestCase):
         return SimpleNamespace(sermon_id="s", flag_end_s=None, word_start=10, word_end=20, start_s=start_s, end_s=end_s)
 
     def test_boundary(self) -> None:
-        limit = seek_time(NEXT_START) - SEEK_SLACK_S  # 378.5
+        limit = seek_time(NEXT_START) - SEEK_SLACK_S  # 377.5
         self.assertTrue(touches_flagged(self.connection(NAME_END), self.hit()))
         self.assertTrue(touches_flagged(self.connection(limit + 0.01), self.hit()))
         self.assertFalse(touches_flagged(self.connection(limit), self.hit()))
         self.assertFalse(touches_flagged(self.connection(370.0, 369.0), self.hit()))
+
+    def test_margin_is_wide_enough_for_late_asr_word_ends(self) -> None:
+        # Measured: word ends p99 0.48 s late, max 3.58 s; the margin is p99 + 0.5 s.
+        self.assertGreaterEqual(SEEK_SLACK_S, 0.48 + 0.5)
+        seek = seek_time(NEXT_START)
+        # An end between seek - 1.5 and seek - 0.5 (the old margin) is now touching.
+        for end in (seek - SEEK_SLACK_S + 0.01, seek - 1.0, seek - 0.51, seek - 0.5):
+            with self.subTest(end=end):
+                self.assertTrue(touches_flagged(self.connection(end), self.hit()))
+        self.assertFalse(touches_flagged(self.connection(seek - SEEK_SLACK_S), self.hit()))
+        self.assertFalse(touches_flagged(self.connection(seek - SEEK_SLACK_S - 0.5, seek - 3.0), self.hit()))
 
     def test_flagged_chunk_after_the_passage_does_not_count(self) -> None:
         self.assertFalse(touches_flagged(self.connection(420.0, 415.0), self.hit()))
