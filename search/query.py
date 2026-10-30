@@ -113,10 +113,9 @@ def play_url(audio_url, start_s) -> str:
     if youtube is not None:
         return clean(youtube)
     try:
-        # Same rule as the manifest: https on archive.org, no credentials.
-        # UnsafeRow is a ValueError (bad port, off-host, credentials).
-        # urlsplit also raises ValueError for an invalid IPv6 netloc and
-        # some NFKC hosts, before check_audio_url can wrap it.
+        # Same rule as the manifest: https on archive.org, no credentials,
+        # no control characters. Every refusal is UnsafeRow, a ValueError
+        # (check_audio_url also wraps urlsplit's own ValueError).
         check_audio_url(audio_url)
     except ValueError:
         return UNSAFE_URL

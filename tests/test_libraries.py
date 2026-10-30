@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "ingest"))
 sys.path.insert(0, str(ROOT / "search"))
 
 import build_library  # noqa: E402
+import manifest  # noqa: E402
 import query  # noqa: E402
 import run  # noqa: E402
 from preached import libraries  # noqa: E402
@@ -197,6 +198,33 @@ class BuildTargetTests(unittest.TestCase):
         path = self.dir / "spurgeon.sqlite"
         open_library(path).close()  # a library file from before the marker
         build_library.check_target(path, "spurgeon")
+
+
+class AudioUrlTests(unittest.TestCase):
+    GOOD = "https://archive.org/download/spurgeons_sermons_librivox/sermon_0191_spurgeon_64kb.mp3"
+
+    def test_control_characters_are_refused(self) -> None:
+        for bad in (self.GOOD + "\n", self.GOOD + "\r\n", self.GOOD + "\t", "\n" + self.GOOD,
+                    self.GOOD.replace("download", "down\nload"), self.GOOD + "\x00", self.GOOD + "\x1b[2J",
+                    self.GOOD + "\x7f", self.GOOD + "\x85", self.GOOD + " ", "https://archive.org/a b.mp3"):
+            with self.subTest(url=bad), self.assertRaises(manifest.UnsafeRow):
+                manifest.check_audio_url(bad)
+
+    def test_urlsplit_value_error_becomes_unsafe_row(self) -> None:
+        for bad in ("https://[gggg::1]/x.mp3", "https://[archive.org/x.mp3",
+                    "https://archive.org\uff03@evil.com/x.mp3", "https://archive.org:abc/x.mp3"):
+            with self.subTest(url=bad), self.assertRaises(manifest.UnsafeRow):
+                manifest.check_audio_url(bad)
+
+    def test_good_urls_still_pass(self) -> None:
+        self.assertEqual(manifest.check_audio_url(self.GOOD), self.GOOD)
+        for slug in ("wesley", "spurgeon", "edwards"):
+            self.assertTrue(manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl")))
+
+    def test_play_url_hides_them(self) -> None:
+        self.assertEqual(query.play_url(self.GOOD + "\n", 10.0), query.UNSAFE_URL)
+        self.assertEqual(query.play_url("https://[gggg::1]/x.mp3", 10.0), query.UNSAFE_URL)
+        self.assertTrue(query.play_url(self.GOOD, 10.0).startswith(self.GOOD + "#t="))
 
 
 if __name__ == "__main__":
