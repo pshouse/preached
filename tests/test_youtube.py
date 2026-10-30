@@ -6,6 +6,8 @@ No network. Listings come from tests/fixtures. Transcription and download are fa
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -15,19 +17,24 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime, timezone
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
 from app.server import STATIC_DIR, App, make_server
 from preached.corpus import load_chunk_config
+from preached.models import MODELS
 from preached.search import Searcher
-from preached.store import load_embeddings, open_readonly
+from preached.store import load_embeddings, open_readonly, stored_fingerprint
 from preached.youtube.chunking import chunk_words
 from preached.youtube.cli import main
+from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
 from preached.youtube.library import MODEL_KEY
 from preached.youtube.listing import (
+    BadChannelUrl,
     ChannelRefused,
     Video,
+    assert_youtube_url,
     creative_commons,
     parse_listing,
     watch_url,
@@ -409,6 +416,11 @@ class ImportTests(unittest.TestCase):
                 self.assertEqual(matrix.dtype, np.float32)
                 self.assertEqual(matrix.ndim, 2)
                 self.assertAlmostEqual(float(np.linalg.norm(matrix[0])), 1.0, places=5)
+                self.assertEqual(
+                    stored_fingerprint(connection, MODEL_KEY),
+                    MODELS[MODEL_KEY].fingerprint(),
+                )
+                Searcher(connection, model=MODEL_KEY)
                 app = App(
                     connection=connection,
                     searcher=Searcher(connection),
@@ -448,6 +460,144 @@ class ImportTests(unittest.TestCase):
                     server.server_close()
             finally:
                 connection.close()
+
+    def test_dash_url_is_refused_before_subprocess(self) -> None:
+        self._assert_url_refused("-https://www.youtube.com/watch?v=abcdefghijk")
+        self._assert_url_refused("--version")
+
+    def test_non_youtube_host_is_refused_before_subprocess(self) -> None:
+        self._assert_url_refused("https://example.com/watch?v=abcdefghijk")
+        self._assert_url_refused("http://www.youtube.com/watch?v=abcdefghijk")
+        self._assert_url_refused("https://www.youtube.com.evil.com/watch?v=abcdefghijk")
+        self._assert_url_refused("https://evil.com@www.youtube.com/watch?v=abcdefghijk")
+
+    def test_youtube_hosts_are_accepted(self) -> None:
+        for url in (
+            "https://youtube.com/@channel/videos",
+            "https://www.youtube.com/watch?v=BGoD6CIpLWQ",
+            "https://m.youtube.com/watch?v=BGoD6CIpLWQ",
+            "https://youtu.be/BGoD6CIpLWQ",
+        ):
+            assert_youtube_url(url)
+
+    def test_yt_dlp_url_follows_double_dash(self) -> None:
+        url = "https://www.youtube.com/channel/UCexample"
+        listed = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"entries":[]}', stderr="")
+        with patch("preached.youtube.fetch.subprocess.run", return_value=listed) as run:
+            self.assertEqual(list_channel(url), [])
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], [sys.executable, "-m", "yt_dlp"])
+        self.assertEqual(command[-2:], ["--", url])
+
+        video = Video("BGoD6CIpLWQ", "Talk", 10, None, "https://www.youtube.com/watch?v=BGoD6CIpLWQ")
+        meta = subprocess.CompletedProcess(args=[], returncode=0, stdout="{}", stderr="")
+        with patch("preached.youtube.fetch.subprocess.run", return_value=meta) as run:
+            self.assertEqual(fetch_metadata(video), {})
+        self.assertEqual(run.call_args.args[0][-2:], ["--", video.watch_url()])
+
+        failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("preached.youtube.fetch.subprocess.run", return_value=failed) as run:
+                with self.assertRaises(RuntimeError):
+                    download_audio(video, Path(tmp))
+        self.assertEqual(run.call_args.args[0][-2:], ["--", video.watch_url()])
+
+    def test_case_sensitive_sermon_id_on_the_fixture_library(self) -> None:
+        video_id = "BGoD6CIpLWQ"
+        video = Video(
+            video_id,
+            "Are speeches public domain?",
+            40,
+            date(2012, 8, 6),
+            f"https://www.youtube.com/watch?v={video_id}",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                [f"https://www.youtube.com/watch?v={video_id}", "--library", "sample"],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20120806",
+                    "title": video.title,
+                    "uploader": "New Media Rights",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / f"{video_id}.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            connection = open_readonly(root / "sample.sqlite", check_same_thread=False)
+            try:
+                app = App(
+                    connection=connection,
+                    searcher=Searcher(connection, model=MODEL_KEY),
+                    encode=None,
+                    fallback_note=None,
+                    model_name=None,
+                    hosts={"127.0.0.1", "localhost"},
+                    static_dir=STATIC_DIR,
+                    library="sample",
+                )
+                server = make_server(app, "127.0.0.1", 0)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                port = server.server_address[1]
+                try:
+                    status, body = self._get(port, f"/api/sermon/{video_id}")
+                    self.assertEqual(status, 200, body)
+                    meta = json.loads(body)
+                    self.assertEqual(meta["sermon_id"], video_id)
+                    self.assertEqual(meta["sermon_title"], video.title)
+                    self.assertEqual(
+                        meta["audio_url"],
+                        f"https://www.youtube.com/watch?v={video_id}&t=12s",
+                    )
+                    status, body = self._get(port, f"/api/sermon/{video_id.lower()}")
+                    self.assertEqual(status, 404)
+                    self.assertEqual(json.loads(body)["error"], "not found")
+                    for path in (
+                        "/api/sermon/../pyproject.toml",
+                        "/api/sermon/Wesley-001",
+                        "/api/sermon/" + ("A" * 64),
+                    ):
+                        status, body = self._get(port, path)
+                        self.assertEqual(status, 404, path)
+                        self.assertNotIn(b"pyproject", body.lower())
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                connection.close()
+
+    def _assert_url_refused(self, url: str) -> None:
+        with patch("preached.youtube.fetch.subprocess.run") as run:
+            with self.assertRaises(BadChannelUrl):
+                list_channel(url)
+            run.assert_not_called()
+        called: list[str] = []
+
+        def lister(got: str):
+            called.append(got)
+            raise AssertionError("lister should not run")
+
+        argv = [url, "--library", "sample", "--dry-run"]
+        if url.startswith("-"):
+            argv = ["--library", "sample", "--dry-run", "--", url]
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _out, err = self._run(
+                argv,
+                Path(tmp),
+                lister=lister,
+                downloader=self._boom,
+                transcriber=self._boom,
+                metadata=self._boom,
+            )
+        self.assertEqual(code, 2, err)
+        self.assertEqual(called, [])
+        self.assertIn("https", err)
 
     def test_bad_slug_exits(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
