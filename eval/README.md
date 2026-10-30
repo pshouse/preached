@@ -6,9 +6,20 @@ Each line has `id`, `query`, `type`, and `relevant`. Types are `conceptual` (25)
 
 ## How the labels were made
 
-No model judged relevance and no model wrote the quotes. The steps were:
+**Who made these labels.** The Grok CLI coding agent (an LLM) wrote all 40 questions and chose every relevant passage and grade while working task W1-B. The quotes are verbatim CCEL text and are machine-checked against the chunks (`eval/validate.py`), but the relevance calls are the agent's judgment, not a person's. No model is used at search time to judge relevance, and no embedding model under test was used to pick labels.
 
-1. Read the sermon that the standard numbering assigns to the topic (assurance is sermons 10 and 11, the use of money is sermon 50, and so on). Candidates were located with ordinary text search, then the surrounding paragraph was read.
+**Human review.**
+
+- Status: pending: Patrick to review all 40 items before submission.
+- Reviewer:
+- Date:
+- Changes made in review:
+
+Until that review is filled in, do not describe this set as human-labeled or human-verified.
+
+The agent's steps were:
+
+1. Read the sermon that the standard numbering assigns to the topic (assurance is sermons 10 and 11, the use of money is sermon 50, and so on). Candidates were located with ordinary text search, then the surrounding paragraph was read by the agent.
 2. Copy a short span that is an exact substring of `/cache/corpus/wesley/sermons.jsonl`. Quotes are Wesley's words or the scripture he is expounding, not a paraphrase.
 3. `uv run python eval/validate.py --write` checks that the normalized quote is contained in at least one chunk. It writes `chunk_ids` back. The quote is the judgment. Chunk ids are a cache and go stale if the chunker changes.
 
@@ -42,3 +53,9 @@ These five were checked by searching the full 141-sermon text. The terms do not 
 `corpus/chunk_config.json` is frozen: target 112 words, minimum 75, maximum 150, overlap 0.25, 150 words per minute. That is about 30–60 seconds of speech, with a target near 45 seconds. Text-derived chunks have `start_s` and `end_s` null. The record is `{chunk_id, sermon_id, sermon_title, text, start_s, end_s}` plus sermon number, scripture, source URL, and word span, so a later transcript chunk can fill in the timestamps without a new schema.
 
 The current file `/cache/corpus/wesley/chunks.jsonl` has 8,383 chunks (median 122 words, max 180). Ten chunks are 151–180 words because a heading shorter than 75 words was merged onto the next sentence, with 30 words of slack past the maximum. 190 chunks are under 75 words. 473 of 8,242 adjacent pairs do not overlap: a sentence longer than 150 words is hard-split on word boundaries with no overlap. Do not retune the chunker unless a graded quote stops fitting inside one chunk.
+
+## Known biases
+
+- Labels were found with keyword search, so passages that share words with the question are over-represented. That favors BM25 and hybrid modes.
+- 23 of the 35 answerable questions share a content word with the title of the sermon that answers them (for example "Christian perfection", "the means of grace", "the witness of the Spirit", "riches", "temptation"), and FTS5 indexes the title column. Absolute scores are optimistic for any lexical component.
+- 35 answerable questions is small: one question moves a mean by about 0.03. `search/bench.py` reports bootstrap 95% intervals; read differences inside them as ties.
