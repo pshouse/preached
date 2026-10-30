@@ -21,7 +21,7 @@ from unittest.mock import patch
 import numpy as np
 
 from app.server import STATIC_DIR, App, hit_dict
-from preached.audio_policy import SHIFT_MARGIN_S, check_flagged_audio, flagged_play, resolve_flagged_audio
+from preached.audio_policy import check_flagged_audio, flagged_play, resolve_flagged_audio
 from preached.privacy import Config
 from preached.search import Hit, Searcher
 from preached.store import hidden_rowids, open_readonly
@@ -120,7 +120,7 @@ class Base(unittest.TestCase):
             **kwargs,
         )
         if flagged_audio is not None:
-            # Test hook only. No flag, env or TOML selects play/shifted for a
+            # Test hook only. No flag, env or TOML selects play for a
             # church library (Patrick chose none); this exercises the kept code.
             app.flagged_audio = check_flagged_audio(flagged_audio)
         return app
@@ -267,7 +267,7 @@ class PrivacyConfigTests(Base):
         toml.write_text('flagged_audio = "loud"\n')
         code, _out, err = self.importer(["--privacy", str(toml)])
         self.assertEqual(code, 2)
-        self.assertIn("flagged_audio must be one of play, shifted, none", err)
+        self.assertIn("flagged_audio must be one of play, none", err)
         self.assertEqual(self.importer(["--privacy", str(self.root / "missing.toml")])[0], 2)
 
     def test_church_audio_policy_cannot_be_chosen(self) -> None:
@@ -277,11 +277,11 @@ class PrivacyConfigTests(Base):
             toml.write_text(f'flagged_audio = "{value}"\n')
             code, _out, err = self.importer(["--privacy", str(toml)])
             self.assertEqual(code, 2, err)
-            self.assertIn("Patrick chose 'none'", err)
+            self.assertRegex(err, "Patrick chose 'none'|must be one of play, none")
             with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": value}):
                 code, _out, err = self.importer()
             self.assertEqual(code, 2, err)
-            self.assertIn("Patrick chose 'none'", err)
+            self.assertRegex(err, "Patrick chose 'none'|must be one of play, none")
         # There is no command-line flag any more (argparse exits 2).
         with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as ctx:
             self.importer(["--flagged-audio", "shifted"])
@@ -295,16 +295,14 @@ class PrivacyConfigTests(Base):
 
 class FlaggedAudioTests(Base):
     def test_policy_function(self) -> None:
-        self.assertEqual(flagged_play(10.0, 55.0, None, "none"), (True, None))
-        self.assertEqual(flagged_play(10.0, 55.0, 20.0, "play"), (True, None))
-        self.assertEqual(flagged_play(10.0, 55.0, 20.0, "none"), (False, None))
-        self.assertEqual(flagged_play(10.0, 55.0, 20.0, "shifted"), (True, 20.0 + SHIFT_MARGIN_S))
-        # Nothing left after the last flagged word: behaves as none.
-        self.assertEqual(flagged_play(10.0, 55.0, 54.8, "shifted"), (False, None))
-        # Rounding only widens the excluded span: 20.001 + 0.5 -> 20.51, never 20.50.
-        self.assertEqual(flagged_play(10.0, 55.0, 20.001, "shifted"), (True, 20.51))
-        self.assertGreaterEqual(flagged_play(10.0, 55.0, 20.004, "shifted")[1], 20.004 + SHIFT_MARGIN_S)
-        self.assertEqual(flagged_play(10.0, 55.0, 54.491, "shifted"), (False, None))  # rounds up to 55.0 = end
+        self.assertIs(flagged_play(10.0, 55.0, None, "none"), True)
+        self.assertIs(flagged_play(10.0, 55.0, 20.0, "play"), True)
+        self.assertIs(flagged_play(10.0, 55.0, 20.0, "none"), False)
+        # The 'shifted' policy was deleted (round 6): it is not a known value any more.
+        with self.assertRaises(ValueError):
+            flagged_play(10.0, 55.0, 20.0, "shifted")
+        with self.assertRaises(ValueError):
+            check_flagged_audio("shifted")
         for bad in ("", "Play", "mute", None):
             with self.assertRaises(ValueError):
                 check_flagged_audio(bad)
@@ -318,7 +316,7 @@ class FlaggedAudioTests(Base):
             self.assertEqual(resolve_flagged_audio("none"), "none")
         # Patrick chose none for church libraries: nothing else is selectable.
         for value in ("play", "shifted"):
-            with self.assertRaisesRegex(ValueError, "Patrick chose 'none'"):
+            with self.assertRaisesRegex(ValueError, "Patrick chose 'none'|must be one of play, none"):
                 resolve_flagged_audio(value)
             with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": value}), self.assertRaises(ValueError):
                 resolve_flagged_audio()
@@ -334,7 +332,7 @@ class FlaggedAudioTests(Base):
             audio_url=watch_url(ID_A, 100.0), text_source="asr", video_id=ID_A, flag_end_s=flag_end_s,
         )
 
-    def test_api_json_for_all_three_values_and_unflagged_chunks(self) -> None:
+    def test_api_json_for_both_values_and_unflagged_chunks(self) -> None:
         plain = hit_dict(self.hit(None), "none")
         self.assertEqual(plain["audio_url"], f"https://www.youtube.com/watch?v={ID_A}&t=99s")
         self.assertNotIn("audio_withheld", plain)
@@ -348,17 +346,13 @@ class FlaggedAudioTests(Base):
         self.assertIsNone(none["audio_url"])
         self.assertTrue(none["audio_withheld"])
         self.assertEqual((none["start_s"], none["end_s"]), (None, None))
-        shifted = hit_dict(flagged, "shifted")
-        self.assertEqual(shifted["play_from_s"], 112.5)
-        self.assertEqual((shifted["start_s"], shifted["end_s"]), (112.5, None))
-        self.assertEqual(shifted["audio_url"], f"https://www.youtube.com/watch?v={ID_A}&t=113s")
-        self.assertIsNone(hit_dict(self.hit(144.9), "shifted")["audio_url"])
+        with self.assertRaises(ValueError):
+            hit_dict(flagged, "shifted")
 
     def test_watch_url(self) -> None:
         base = f"https://www.youtube.com/watch?v={ID_A}"
         self.assertEqual(watch_url(ID_A, 100.0), f"{base}&t=99s")
         self.assertEqual(watch_url(ID_A, 100.0, end_s=145.0, flag_end_s=112.0, policy="play"), f"{base}&t=99s")
-        self.assertEqual(watch_url(ID_A, 100.0, end_s=145.0, flag_end_s=112.0, policy="shifted"), f"{base}&t=113s")
         self.assertIsNone(watch_url(ID_A, 100.0, end_s=145.0, flag_end_s=112.0, policy="none"))
         with self.assertRaises(ValueError):
             watch_url(ID_A, 100.0, end_s=145.0, flag_end_s=112.0, policy="mute")
@@ -387,10 +381,6 @@ class FlaggedAudioTests(Base):
         self.assertIn("&t=", clear["audio_url"])  # its own timed link stays (Patrick's rule)
         self.assertIsNone(clear["source_url"])  # the 0:00 watch link goes: this sermon has a flagged passage
         self.assertNotIn("audio_withheld", clear)
-        shifted = self.served("shifted")
-        self.assertIn("&t=", shifted["soup"]["audio_url"])
-        self.assertGreater(shifted["soup"]["play_from_s"], 8.4)  # after Timothy, the last flagged word
-        self.assertEqual(shifted["zephyrgrace"], clear)
         played = self.served("play")
         self.assertTrue(played["soup"]["audio_url"])
         self.assertNotIn("play_from_s", played["soup"])
@@ -412,7 +402,6 @@ class FlaggedAudioTests(Base):
             sys.path.pop(0)
         flagged = replace(self.hit(112.0), audio_url="https://archive.org/download/x/y.mp3")
         self.assertIn("withheld", query.hit_play(flagged, "none"))
-        self.assertIn("#t=112.5", query.hit_play(flagged, "shifted"))
         self.assertIn("#t=99.25", query.hit_play(flagged, "play"))
         clear = replace(flagged, flag_end_s=None)
         self.assertIn("#t=99.25", query.hit_play(clear, "none"))

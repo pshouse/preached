@@ -3,7 +3,7 @@
 A merged card keeps only its main chunk's flag fields, so a flagged chunk
 must never be merged into another card. Under the default ``none`` policy no
 card that touches a flagged chunk may carry a play or watch link, on the API,
-the page or the CLI. Under ``shifted`` a YouTube link jumps past the name.
+the page or the CLI. 
 Every name below is invented.
 """
 
@@ -209,25 +209,7 @@ class ServedTests(Base):
         self.assertEqual(len(results), 1)
         return results[0]
 
-    def test_shifted_watch_link_jumps_past_the_name(self) -> None:
-        card = self.soup(self.app(flagged_audio="shifted"))
-        (cid,) = card["chunk_ids"]
-        row = self.flagged[cid]
-        match = re.fullmatch(rf"https://www\.youtube\.com/watch\?v={ID_A}&t=(\d+)s", card["audio_url"])
-        self.assertIsNotNone(match, card["audio_url"])
-        t = int(match.group(1))
-        self.assertGreater(t, row["flag_end_s"])  # past the last flagged word
-        self.assertEqual(t, math.ceil(card["play_from_s"]))
-        self.assertEqual(card["start_s"], card["play_from_s"])
-        self.assertNotEqual(card["audio_url"], row["audio_url"])  # rebuilt, not the stored link
 
-    def test_bad_stored_link_is_withheld_under_shifted(self) -> None:
-        payload = hit_dict(yt_hit(audio_url="https://www.youtube.com/watch?v=short&t=0s", source_url=None,
-                                  video_id="short", start_s=10.0, end_s=60.0, flag_end_s=12.0), "shifted")
-        self.assertIsNone(payload["audio_url"])
-        self.assertTrue(payload["audio_withheld"])
-        mismatched = hit_dict(yt_hit(video_id=ID_B, start_s=10.0, end_s=60.0, flag_end_s=12.0), "shifted")
-        self.assertIsNone(mismatched["audio_url"])
 
     def run_page(self, cards: list[dict], checks: str) -> None:
         if not shutil.which("deno"):
@@ -261,16 +243,6 @@ CARDS.forEach(function (card) {
 });
 """)
 
-    def test_page_shifted_label_and_link_use_the_shifted_start(self) -> None:
-        card = self.soup(self.app(flagged_audio="shifted"))
-        whole = int(card["play_from_s"])
-        label = f"0:{whole // 60:02d}:{whole % 60:02d}"
-        self.run_page([card], f"""
-var all = text(CARDS[0]);
-if (!all.includes("Watch on YouTube at {label}")) throw new Error("label: " + all);
-var links = hrefs(CARDS[0]);
-if (links.length !== 1 || links[0] !== CARDS[0].audio_url) throw new Error("href: " + links);
-""")
 
     def cli_output(self, policy: str, query_text: str) -> str:
         query = import_query_module()
@@ -297,13 +269,6 @@ if (links.length !== 1 || links[0] !== CARDS[0].audio_url) throw new Error("href
                 self.assertNotIn("youtube", block)
         self.assertGreater(withheld, 0)
 
-    def test_cli_shifted_jumps_past_the_name(self) -> None:
-        out = self.cli_output("shifted", "soup")
-        block = next(b for b in out.split("\n[")[1:] if "soup" in b)
-        cid = re.search(r", ([^)]+)\)\n", block).group(1)
-        match = re.search(rf"play: https://www\.youtube\.com/watch\?v={ID_A}&t=(\d+)s  \(starts after", block)
-        self.assertIsNotNone(match, block)
-        self.assertGreater(int(match.group(1)), self.flagged[cid]["flag_end_s"])
 
 
 class ChurchAsrServedTests(unittest.TestCase):

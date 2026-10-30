@@ -176,8 +176,7 @@ def hit_play(hit, policy: str, near_flag: bool = False, sermon_flagged: bool = F
     """The play line for a hit. A chunk with ``[name]`` or a review flag follows the flagged-audio policy.
 
     A flagged YouTube chunk gets a link rebuilt from validated parts (the
-    stored one may point at the name): ``t=`` is the shifted start under
-    ``shifted``. If it cannot be rebuilt, audio is withheld. ``near_flag``
+    stored one may point at the name): If it cannot be rebuilt, audio is withheld. ``near_flag``
     (``search.touches_flagged``) withholds audio under ``none``, as the API does.
     ``sermon_flagged`` (``search.sermon_flagged``): an unflagged passage in a
     sermon with a flagged one keeps only its own timed link, as in the API.
@@ -185,7 +184,7 @@ def hit_play(hit, policy: str, near_flag: bool = False, sermon_flagged: bool = F
     flag_end_s = getattr(hit, "flag_end_s", None)
     if near_flag and policy == "none":
         return WITHHELD
-    _, _, play_from, allowed = public_times(hit.start_s, getattr(hit, "end_s", None), flag_end_s, policy)
+    _, _, allowed = public_times(hit.start_s, getattr(hit, "end_s", None), flag_end_s, policy)
     if not allowed:
         return WITHHELD
     if flag_end_s is not None:
@@ -195,10 +194,7 @@ def hit_play(hit, policy: str, near_flag: bool = False, sermon_flagged: bool = F
             url = policy_watch_url(vid, hit.start_s, getattr(hit, "end_s", None), flag_end_s, policy)
             if url is None:
                 return WITHHELD
-            note = "starts after the redacted name" if play_from is not None else f"{PREROLL_S:g} s pre-roll"
-            return f"{clean(url)}  ({note})"
-    if play_from is not None:
-        return f"{play_url(hit.audio_url, play_from + PREROLL_S)}  (starts after the redacted name)"
+            return f"{clean(url)}  ({PREROLL_S:g} s pre-roll)"
     if sermon_flagged and flag_end_s is None and policy != "play":
         source_url = getattr(hit, "source_url", None)
         if youtube_like(hit.audio_url) or youtube_like(source_url):
@@ -238,8 +234,8 @@ def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "no
         print("Nothing found in the indexed sermons.")
         return
     for rank, hit in enumerate(hits, start=1):
-        # A flagged chunk under none/shifted shows no exact chunk start (see audio_policy.public_times).
-        start_s, _, _, _ = public_times(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
+        # A flagged chunk under none shows no exact chunk start (see audio_policy.public_times).
+        start_s, _, _ = public_times(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
         near = connection is not None and policy == "none" and touches_flagged(connection, hit)
         in_flagged = connection is not None and sermon_flagged(connection, hit.sermon_id)
         if near:

@@ -179,11 +179,10 @@ function seekWhenReady(audio) {
   }
 }
 
-function playClip(url, start, button, caption, exact) {
+function playClip(url, start, button, caption) {
   var audio = document.getElementById("player");
   var token = ++playToken;
   var seconds = playStart(start);
-  if (exact) seconds = Number(start);
   audio.dataset.token = String(token);
   audio.dataset.seek = seconds == null ? "" : String(seconds);
   if (audio.dataset.srcUrl !== url) {
@@ -237,18 +236,13 @@ function renderCard(hit) {
     card.appendChild(el("p", "timing", "Audio timing coming soon"));
   } else {
     var startLabel = formatTime(hit.start_s);
-    /* A chunk holding a redacted name may start later (play_from_s, exact, no
-       pre-roll; the server then sends start_s = play_from_s and no end_s). */
-    var shifted = hit.play_from_s != null ? Number(hit.play_from_s) : null;
-    if (shifted != null && !Number.isFinite(shifted)) shifted = null;
     var endLabel = formatTime(hit.end_s);
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
-    var playLabel = shifted != null ? formatTime(shifted) : startLabel;
+    var playLabel = startLabel;
     if (youtube && playLabel) {
       watchHref = youtube;
-      /* Rebuilt watch URL, including a validated &t= pre-roll (or, for a
-         shifted passage, its t= past the redacted name). Not loaded in <audio>. */
+      /* Rebuilt watch URL, including a validated &t= pre-roll. Not loaded in <audio>. */
       var watch = el("a", "play", "Watch on YouTube at " + playLabel);
       watch.href = youtube;
       watch.target = "_blank";
@@ -263,8 +257,7 @@ function renderCard(hit) {
       if (playLabel) caption += " · " + playLabel;
       if (spoken) caption += " · " + spoken;
       button.addEventListener("click", function () {
-        if (shifted != null) playClip(audioHref, shifted, button, caption, true);
-        else playClip(audioHref, hit.start_s, button, caption);
+        playClip(audioHref, hit.start_s, button, caption);
       });
       card.appendChild(button);
     } else {

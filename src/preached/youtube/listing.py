@@ -263,10 +263,8 @@ def watch_url(
     that is a positive finite sermon length, and always at 24 h.
 
     ``flag_end_s`` (end of the last redacted or review-flagged word in the
-    chunk) applies the flagged-audio policy: ``none`` returns None, ``shifted``
-    seeks just after that word (rounded up), ``play`` is the normal link.
-    Without ``flag_end_s`` nothing changes. A shifted seek that is not finite
-    or that the cap would pull back onto the name returns None (no link).
+    chunk) applies the flagged-audio policy: ``none`` returns None, ``play`` is
+    the normal link. Without ``flag_end_s`` nothing changes.
 
     This is the only function that turns a start time into a watch link, and
     the string itself comes from ``_watch_link``: an 11-character
@@ -274,17 +272,9 @@ def watch_url(
     """
     if not isinstance(video_id, str) or not VIDEO_ID.fullmatch(video_id):
         return None
-    allowed, play_from = flagged_play(start_s, end_s, flag_end_s, policy)
-    if not allowed:
+    if not flagged_play(start_s, end_s, flag_end_s, policy):
         return None
     cap = _seek_cap(duration_s)
-    if play_from is not None:
-        if not math.isfinite(play_from) or play_from < 0:
-            return None
-        seconds = math.ceil(play_from)
-        if seconds > cap:
-            return None
-        return _watch_link(video_id, int(seconds))
     if start_s is None:
         return _watch_link(video_id, None)
     if isinstance(start_s, bool) or not isinstance(start_s, (int, float)):
