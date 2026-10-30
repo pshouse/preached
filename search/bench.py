@@ -465,6 +465,8 @@ def main() -> None:
                         help="SQLite index. ONNX re-embeds refuse the shipped wesley.sqlite")
     parser.add_argument("--latency-repeats", type=int, default=1,
                         help="extra passes over the 40 queries for p50/p95")
+    parser.add_argument("--allow-cached", action="store_true",
+                        help="score the vectors already stored, even if the backend tag differs; never re-embeds")
     args = parser.parse_args()
 
     if args.embed_backend == "onnx":
@@ -523,7 +525,10 @@ def main() -> None:
                     batch_size=args.batch_size,
                 )
                 variant = embedder.variant
-            if args.reembed or not cache_matches(connection, key, spec, n_chunks, args.embed_backend, variant):
+            if args.allow_cached:
+                entry["embed"] = {**_embedding_meta(connection, key), "cached": True, "allow_cached": True}
+                print("scoring stored vectors (--allow-cached)", flush=True)
+            elif args.reembed or not cache_matches(connection, key, spec, n_chunks, args.embed_backend, variant):
                 if args.embed_backend == "onnx" and args.index.resolve() == INDEX_PATH.resolve():
                     raise SystemExit(
                         f"refusing to write ONNX embeddings into {INDEX_PATH}. "
