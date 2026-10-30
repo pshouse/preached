@@ -11,9 +11,11 @@ same trigger-maintained ``chunks_fts`` table. There is no vector database.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -28,6 +30,15 @@ EXTRA_COLUMNS = (
     ("video_id", "TEXT"),
     ("title", "TEXT"),
     ("published", "TEXT"),
+    ("flag_end_s", "REAL"),
+)
+
+# Publish gate, on the videos table. A sermon is served only when
+# approved_sha256 equals review_sha256 (see preached.store.hidden_rowids).
+VIDEO_EXTRA_COLUMNS = (
+    ("review_sha256", "TEXT"),
+    ("approved_sha256", "TEXT"),
+    ("approved_at", "TEXT"),
 )
 
 MODEL_KEY = DEFAULT_MODEL
@@ -53,6 +64,10 @@ def ensure_library(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    have_videos = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
+    for name, kind in VIDEO_EXTRA_COLUMNS:
+        if name not in have_videos:
+            connection.execute(f"ALTER TABLE videos ADD COLUMN {name} {kind}")
     connection.commit()
 
 
@@ -132,8 +147,12 @@ def index_video(
     uploader: str | None,
     chunks: list[dict],
     matrix: np.ndarray,
+    review_sha256: str | None = None,
 ) -> list[int]:
     """Replace any earlier attempt at this video and commit chunks plus vectors.
+
+    The video lands unpublished: ``review_sha256`` is stored and any earlier
+    approval is cleared, so a re-import needs a new ``approve_review``.
 
     One transaction so a crash does not leave chunks without embeddings.
     The next run then sees the video is not ``ok`` and tries again.
@@ -162,12 +181,12 @@ def index_video(
                     chunk_id, sermon_id, sermon_title, text, start_s, end_s,
                     sermon_number, scripture, source_url, word_count, word_start,
                     word_end, librivox_id, audio_url, reader, text_source,
-                    video_id, title, published
+                    video_id, title, published, flag_end_s
                 ) VALUES (
                     :chunk_id, :sermon_id, :sermon_title, :text, :start_s, :end_s,
                     :sermon_number, :scripture, :source_url, :word_count, :word_start,
                     :word_end, :librivox_id, :audio_url, :reader, :text_source,
-                    :video_id, :title, :published
+                    :video_id, :title, :published, :flag_end_s
                 )
                 """,
                 {
@@ -190,6 +209,7 @@ def index_video(
                     "video_id": video_id,
                     "title": title,
                     "published": published_text,
+                    "flag_end_s": chunk.get("flag_end_s"),
                 },
             )
             rowids.append(int(cursor.lastrowid))
@@ -210,6 +230,10 @@ def index_video(
             uploader=uploader,
             status="ok",
             error=None,
+        )
+        connection.execute(
+            "UPDATE videos SET review_sha256 = ?, approved_sha256 = NULL, approved_at = NULL WHERE video_id = ?",
+            (review_sha256, video_id),
         )
         connection.execute(
             "INSERT INTO meta (key, value) VALUES ('embed_model', ?) "
@@ -240,3 +264,32 @@ def _stamp_fingerprint(connection: sqlite3.Connection) -> None:
                 f"but search/models.toml gives {expected}"
             )
     save_embedding_info(connection, MODEL_KEY, {"fingerprint": expected})
+
+
+def approve_review(connection: sqlite3.Connection, video_id: str, review_file) -> str:
+    """Record a human's approval of this sermon's review file; return its sha256.
+
+    Refuses when the file is missing, the video is not ``ok``, or the file's
+    sha256 differs from the one stored at import (the list changed since).
+    """
+    row = connection.execute(
+        "SELECT status, review_sha256 FROM videos WHERE video_id = ?", (video_id,)
+    ).fetchone()
+    if row is None or row[0] != "ok":
+        raise RuntimeError(f"{video_id}: not imported")
+    try:
+        digest = file_sha256(review_file)
+    except OSError as exc:
+        raise RuntimeError(f"{video_id}: review file is missing ({exc.__class__.__name__})") from exc
+    if row[1] != digest:
+        raise RuntimeError(f"{video_id}: review file changed since import; re-import before approving")
+    connection.execute(
+        "UPDATE videos SET approved_sha256 = ?, approved_at = ? WHERE video_id = ?",
+        (digest, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), video_id),
+    )
+    connection.commit()
+    return digest
+
+
+def file_sha256(path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()

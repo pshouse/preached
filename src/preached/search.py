@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weighted_fusion
-from preached.store import bm25_search, check_fingerprint, load_embeddings
+from preached.store import bm25_search, check_fingerprint, hidden_rowids, load_embeddings
 
 CANDIDATES = 100
 # GET /api/search asks the ranker for this many hits, then de-dups down to k.
@@ -66,6 +66,8 @@ class Hit:
     text_source: str | None = None
     word_start: int | None = None
     word_end: int | None = None
+    video_id: str | None = None
+    flag_end_s: float | None = None
 
 
 class Searcher:
@@ -81,9 +83,13 @@ class Searcher:
         silently mixing old document vectors with new query vectors."""
         self.connection = connection
         self.model = model
+        # Unapproved church sermons are never loaded, so no ranker can return
+        # them. Approving a sermon takes effect when the Searcher is rebuilt.
+        self._hidden = hidden_rowids(connection)
         self._rows = {
             int(row["rowid"]): row
             for row in connection.execute("SELECT * FROM chunks")
+            if int(row["rowid"]) not in self._hidden
         }
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
@@ -96,6 +102,10 @@ class Searcher:
                 fingerprint = MODELS[model].fingerprint()
             check_fingerprint(connection, model, fingerprint)
             self._rowids, self._matrix = load_embeddings(connection, model)
+            if self._hidden:
+                keep = [i for i, rowid in enumerate(self._rowids) if rowid not in self._hidden]
+                self._rowids = [self._rowids[i] for i in keep]
+                self._matrix = self._matrix[keep]
 
     def _pack(self, scored: list[tuple[int, float]], limit: int) -> list[Hit]:
         hits = []
@@ -106,8 +116,16 @@ class Searcher:
             hits.append(hit_from_row(row, score))
         return hits
 
+    def _lexical(self, query: str, limit: int) -> list[tuple[int, float]]:
+        """BM25 over visible chunks only; asks for extra rows to cover hidden ones."""
+        found = bm25_search(self.connection, query, limit + len(self._hidden))
+        return [item for item in found if item[0] not in self._hidden][:limit]
+
     def bm25(self, query: str, limit: int) -> list[Hit]:
-        return self._pack(bm25_search(self.connection, query, limit), limit)
+        return self._pack(self._lexical(query, limit), limit)
+
+    def visible_count(self) -> int:
+        return len(self._rows)
 
     def dense(self, vector: np.ndarray, limit: int) -> list[Hit]:
         if self._matrix is None or self._rowids is None:
@@ -127,7 +145,7 @@ class Searcher:
     ) -> list[Hit]:
         if self._matrix is None or self._rowids is None:
             raise RuntimeError("hybrid search needs a model index")
-        lexical = bm25_search(self.connection, query, candidates)
+        lexical = self._lexical(query, candidates)
         scores = dense_scores(vector, self._matrix)
         semantic = dense_hits(self._rowids, scores, candidates)
         if fusion == "weighted":
@@ -200,6 +218,8 @@ def hit_from_row(row: sqlite3.Row, score: float) -> Hit:
         text_source=_text_or_none(row_value(row, "text_source")),
         word_start=_optional_int(row_value(row, "word_start")),
         word_end=_optional_int(row_value(row, "word_end")),
+        video_id=_text_or_none(row_value(row, "video_id")),
+        flag_end_s=_optional_float(row_value(row, "flag_end_s")),
     )
 
 

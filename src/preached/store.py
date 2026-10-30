@@ -341,3 +341,32 @@ def embedding_bytes(connection: sqlite3.Connection, model: str) -> int:
 def file_bytes(path: Path | None = None) -> int:
     index_path = path or INDEX_PATH
     return index_path.stat().st_size if index_path.exists() else 0
+
+
+def hidden_rowids(connection: sqlite3.Connection) -> set[int]:
+    """Rowids that search, the API and the page must not serve.
+
+    A church library's chunks carry a ``video_id``. They are served only when
+    that sermon's ``videos`` row is ``ok`` and a human approved the review file
+    whose sha256 is stored (``approved_sha256 == review_sha256``). A library
+    file without those columns fails closed. Wesley's index has no
+    ``video_id`` column and is never gated.
+    """
+    chunk_cols = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    if "video_id" not in chunk_cols:
+        return set()
+    video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
+    if not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+        return {int(r[0]) for r in connection.execute("SELECT rowid FROM chunks WHERE video_id IS NOT NULL")}
+    rows = connection.execute(
+        """
+        SELECT c.rowid FROM chunks c
+        WHERE c.video_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM videos v
+            WHERE v.video_id = c.video_id AND v.status = 'ok'
+              AND v.approved_sha256 IS NOT NULL AND v.review_sha256 IS NOT NULL
+              AND v.approved_sha256 = v.review_sha256
+        )
+        """
+    )
+    return {int(r[0]) for r in rows}

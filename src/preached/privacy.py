@@ -73,6 +73,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from preached.audio_policy import check_flagged_audio
+
 DATA = Path(__file__).with_name("privacy_data")
 TOKEN = "[name]"
 CONFIG_ENV = "PREACHED_PRIVACY"
@@ -317,10 +319,11 @@ class Config:
     block: frozenset[str] = frozenset()
     drop: tuple[tuple[str | None, float, float], ...] = ()
     token: str = TOKEN
+    flagged_audio: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
-        unknown = set(data) - {"allow", "block", "drop", "token"}
+        unknown = set(data) - {"allow", "block", "drop", "token", "flagged_audio"}
         if unknown:
             raise ValueError(f"unknown privacy settings: {', '.join(sorted(unknown))}")
         allow = frozenset(_phrase(name) for name in data.get("allow", []) if _phrase(name))
@@ -331,7 +334,16 @@ class Config:
             if end <= start:
                 raise ValueError(f"drop window ends before it starts: {window}")
             drop.append((window.get("source"), start, end))
-        return cls(allow=allow, block=block, drop=tuple(drop), token=str(data.get("token", TOKEN)))
+        flagged = data.get("flagged_audio")
+        if flagged is not None:
+            check_flagged_audio(flagged)
+        return cls(
+            allow=allow,
+            block=block,
+            drop=tuple(drop),
+            token=str(data.get("token", TOKEN)),
+            flagged_audio=flagged,
+        )
 
 
 def load_config(path: str | os.PathLike[str]) -> Config:
@@ -406,7 +418,7 @@ def redact(words: list, *, config: Config | None = None, source: str | None = No
     without a ``source`` apply to every input.
     """
     config = default_config() if config is None else config
-    kept = [w for w in words if not _dropped(w, config, source)] if config.drop else words
+    kept = apply_drops(words, config, source)
     texts = [_text(word) for word in kept]
     hide = decide(texts, config)
     if not any(hide):
@@ -415,6 +427,12 @@ def redact(words: list, *, config: Config | None = None, source: str | None = No
         _with_text(word, _mask(text, config.token)) if flag else word
         for word, text, flag in zip(kept, texts, hide)
     ]
+
+
+def apply_drops(words: list, config: Config | None = None, source: str | None = None) -> list:
+    """The words left after ``drop`` windows for ``source`` are removed."""
+    config = default_config() if config is None else config
+    return [w for w in words if not _dropped(w, config, source)] if config.drop else words
 
 
 def redact_text(text: str, config: Config | None = None) -> str:

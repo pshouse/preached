@@ -149,7 +149,7 @@ class ListingTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=samplevid001",
         )
         words = sample_words(12.2)
-        records = _chunks_for(video, words, {})
+        records, _ = _chunks_for(video, words, {})
         self.assertEqual(records[0]["chunk_id"], "samplevid001-c0000")
         self.assertEqual(records[0]["start_s"], words[0].start)
         self.assertAlmostEqual(records[0]["start_s"], 12.2)
@@ -529,6 +529,8 @@ class ImportTests(unittest.TestCase):
                 transcriber=lambda _path: sample_words(12.2),
                 embedder=embedder,
             )
+            self.assertEqual(code, 0, err)
+            code, _out, err = self._run(["--library", "sample", "--ack-review", "samplevid001"], root)
             self.assertEqual(code, 0, err)
             path = root / "sample.sqlite"
             connection = open_readonly(path, check_same_thread=False)

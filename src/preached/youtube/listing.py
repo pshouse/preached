@@ -8,10 +8,13 @@ metadata, which the import fetches only for videos it is about to keep.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
+
+from preached.audio_policy import flagged_play
 
 # A YouTube video id is 11 characters. That is also the form /api/sermon/<id> accepts.
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -85,13 +88,30 @@ class Video:
         return f"https://www.youtube.com/watch?v={self.id}"
 
 
-def watch_url(video_id: str, start_s: float | None = None) -> str:
+def watch_url(
+    video_id: str,
+    start_s: float | None = None,
+    *,
+    end_s: float | None = None,
+    flag_end_s: float | None = None,
+    policy: str = "none",
+) -> str | None:
     """YouTube watch URL. ``t=`` is the play position, not the stored onset.
 
     ``start_s`` is the first word. The player starts ``PREROLL_S`` earlier.
     YouTube's ``t=`` parameter is a whole number of seconds.
+
+    ``flag_end_s`` (end of the last redacted or review-flagged word in the
+    chunk) applies the flagged-audio policy: ``none`` returns None, ``shifted``
+    seeks just after that word (rounded up), ``play`` is the normal link.
+    Without ``flag_end_s`` nothing changes.
     """
     base = f"https://www.youtube.com/watch?v={video_id}"
+    allowed, play_from = flagged_play(start_s, end_s, flag_end_s, policy)
+    if not allowed:
+        return None
+    if play_from is not None:
+        return f"{base}&t={math.ceil(play_from)}s"
     if start_s is None:
         return base
     seconds = int(max(0, start_s - PREROLL_S))

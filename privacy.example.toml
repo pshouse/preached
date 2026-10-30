@@ -9,6 +9,15 @@
 # Changing allow, block or drop does NOT touch sermons that are already
 # imported. Re-import them (--redo) for a change to take effect.
 
+# What a play link may do for a chunk that contains [name] or overlaps a
+# review() flag. Redaction changes text only; the recording still has the name
+# spoken at that time. The policy is pending Patrick's decision.
+#   "none"    (default) no play link; the page shows text only
+#   "shifted" start just after the last flagged word; "none" if no audio is left
+#   "play"    the normal link with pre-roll (plays the name)
+# PREACHED_FLAGGED_AUDIO and --flagged-audio override this key.
+flagged_audio = "none"
+
 # Names to keep: the pastor and staff who have agreed to be named. Each entry
 # is matched as a whole run of words, so "Pastor Jordan" keeps "Pastor Jordan"
 # but not a congregant called Jordan.
