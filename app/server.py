@@ -9,6 +9,10 @@ Security choices:
 - the Host header must match the allowlist
 - request target, header, and body size are limited; the socket times out
 - clients never receive a traceback
+- /healthz reports the index version and the model sha256, never a path
+- each client IP has a request cap; X-Forwarded-For is ignored
+- a kill file or PREACHED_DISABLED stops serving without a restart
+- access logs keep the path and drop the query string
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import re
 import sys
 import threading
 import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -79,7 +84,12 @@ LIBRARY = "wesley"
 LIBRARY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_TARGET = 2048
 MAX_BODY = 4096
+MAX_HEADER_BYTES = 8192
 REQUEST_TIMEOUT_S = 15
+# A shared test process issues well under this. serve.sh sets a tighter cap.
+DEFAULT_RATE_LIMIT = 120
+DEFAULT_RATE_WINDOW_S = 60.0
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 # Wesley ids are lowercase slugs (wesley-001), at most 64 characters. A
 # YouTube video id is 11 characters and case-sensitive. Dots and slashes are
 # not in either form, so a path cannot be an id.
@@ -113,6 +123,69 @@ class BadRequest(Exception):
         super().__init__(message)
         self.message = message
         self.status = status
+
+
+def public_sha256(value: object) -> str | None:
+    """A lowercase sha256 hex string, or None. Anything else is dropped."""
+    if isinstance(value, str) and SHA256_HEX.fullmatch(value):
+        return value
+    return None
+
+
+def _positive_int(raw: str | None, default: int) -> int:
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 1 else default
+
+
+def _positive_float(raw: str | None, default: float) -> float:
+    try:
+        value = float(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+class RateLimiter:
+    """Fixed window per key. The table is capped so a flood of IPs cannot grow it."""
+
+    def __init__(self, limit: int, window_s: float, max_keys: int = 4096) -> None:
+        self.limit = limit
+        self.window_s = window_s
+        self.max_keys = max_keys
+        self.retry_after = max(1, int(window_s))
+        self._hits: dict[str, deque] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str, now: float | None = None) -> bool:
+        moment = time.monotonic() if now is None else now
+        with self._lock:
+            hits = self._hits.get(key)
+            if hits is None:
+                if len(self._hits) >= self.max_keys:
+                    self._evict(moment)
+                if key not in self._hits:
+                    if len(self._hits) >= self.max_keys:
+                        return False
+                    hits = deque()
+                    self._hits[key] = hits
+                else:
+                    hits = self._hits[key]
+            cutoff = moment - self.window_s
+            while hits and hits[0] <= cutoff:
+                hits.popleft()
+            if len(hits) >= self.limit:
+                return False
+            hits.append(moment)
+            return True
+
+    def _evict(self, now: float) -> None:
+        cutoff = now - self.window_s
+        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] <= cutoff]
+        for key in stale:
+            del self._hits[key]
 
 
 def rss_bytes() -> int | None:
@@ -247,6 +320,7 @@ def default_loader(
     encode.backend = embedder.backend
     encode.variant = getattr(embedder, "variant", None)
     encode.threads = getattr(embedder, "threads", None)
+    encode.model_sha256 = getattr(embedder, "model_sha256", None)
     return searcher, encode
 
 
@@ -297,6 +371,9 @@ class App:
         floor=None,
         backend=None,
         library: str = LIBRARY,
+        rate_limit: int | None = None,
+        rate_window_s: float | None = None,
+        kill_file: Path | None = None,
     ):
         self.connection = connection
         self.searcher = searcher
@@ -316,6 +393,14 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
+        if rate_limit is None:
+            rate_limit = _positive_int(os.environ.get("PREACHED_RATE_LIMIT"), DEFAULT_RATE_LIMIT)
+        if rate_window_s is None:
+            rate_window_s = _positive_float(
+                os.environ.get("PREACHED_RATE_WINDOW_S"), DEFAULT_RATE_WINDOW_S
+            )
+        self.rate_limiter = RateLimiter(rate_limit, rate_window_s)
+        self.kill_file = Path(kill_file) if kill_file else None
         self._stamp = self._capture_stamp()
         # A failed read must not let the next success adopt a stamp without
         # reloading. Init counts: the searcher was built before this read.
@@ -384,12 +469,51 @@ class App:
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
 
+    def disabled(self) -> bool:
+        """True when the operator has thrown the kill switch.
+
+        PREACHED_DISABLED is read on each call. A kill file is present or
+        absent; its contents are never read and its path is never returned.
+        """
+        flag = os.environ.get("PREACHED_DISABLED", "").strip().lower()
+        if flag in {"1", "true", "yes", "on"}:
+            return True
+        path = self.kill_file
+        if path is None:
+            raw = os.environ.get("PREACHED_KILL_FILE", "").strip()
+            path = Path(raw) if raw else None
+        if path is None:
+            return False
+        try:
+            return path.is_file()
+        except OSError:
+            return False
+
+    def _index_version(self) -> str | None:
+        """chunks_sha256 from meta, if it is 64 hex chars. Not a path."""
+        try:
+            row = self.connection.execute(
+                "SELECT value FROM meta WHERE key = 'chunks_sha256'"
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None:
+            return None
+        return public_sha256(row[0])
+
     def health(self) -> dict:
+        if self.disabled():
+            return {"ok": False, "disabled": True}
         with self.lock:
             self._refresh_if_stale()
             count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
+            index_version = self._index_version()
+        model_sha = None
+        if self.encode is not None:
+            model_sha = public_sha256(getattr(self.encode, "model_sha256", None))
         return {
             "ok": True,
+            "disabled": False,
             "library": self.library,
             "chunks": count,
             "model": self.model_name,
@@ -397,6 +521,8 @@ class App:
             "dense": self.encode is not None,
             "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
+            "index_version": index_version,
+            "model_sha256": model_sha,
         }
 
     def search(self, query: str, k: int, mode: str) -> dict:
@@ -471,6 +597,9 @@ def build_app(
     ort_threads: int | None = None,
     variant: str | None = None,
     library: str = LIBRARY,
+    rate_limit: int | None = None,
+    rate_window_s: float | None = None,
+    kill_file: Path | None = None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -506,6 +635,9 @@ def build_app(
         hosts=hosts,
         static_dir=static_dir,
         library=library,
+        rate_limit=rate_limit,
+        rate_window_s=rate_window_s,
+        kill_file=kill_file,
     )
 
 
@@ -517,7 +649,16 @@ def make_handler(app: App):
         timeout = REQUEST_TIMEOUT_S
 
         def log_message(self, fmt, *args):
-            logging.info("%s %s", self.address_string(), fmt % args)
+            # Drop anything after ? so a query is not written to the log.
+            text = fmt % args if args else str(fmt)
+            if "?" in text:
+                text = text.split("?", 1)[0]
+            logging.info("%s %s", self.client_address[0], text)
+
+        def log_request(self, code="-", size="-"):
+            path = (self.path or "/").split("?", 1)[0] or "/"
+            status = getattr(code, "value", code)
+            logging.info("%s %s %s %s", self.client_address[0], self.command, path, status)
 
         def version_string(self):
             return "Preached"
@@ -550,10 +691,20 @@ def make_handler(app: App):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Frame-Options", "DENY")
 
-        def _send(self, status: int, body: bytes, content_type: str, include_body: bool) -> None:
+        def _send(
+            self,
+            status: int,
+            body: bytes,
+            content_type: str,
+            include_body: bool,
+            extra_headers: dict | None = None,
+        ) -> None:
             self._started = True
             self.send_response(status)
             self._security_headers()
+            if extra_headers:
+                for key, value in extra_headers.items():
+                    self.send_header(key, value)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
@@ -561,11 +712,29 @@ def make_handler(app: App):
             if include_body:
                 self.wfile.write(body)
 
-        def _send_json(self, status: int, payload: dict, include_body: bool) -> None:
+        def _send_json(
+            self,
+            status: int,
+            payload: dict,
+            include_body: bool,
+            extra_headers: dict | None = None,
+        ) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self._send(status, body, "application/json; charset=utf-8", include_body)
+            self._send(
+                status,
+                body,
+                "application/json; charset=utf-8",
+                include_body,
+                extra_headers=extra_headers,
+            )
 
         def _limits_and_host(self) -> None:
+            try:
+                header_bytes = len(self.headers.as_string().encode("latin-1", "replace"))
+            except Exception as exc:
+                raise BadRequest("request too large", 431) from exc
+            if header_bytes > MAX_HEADER_BYTES:
+                raise BadRequest("request too large", 431)
             if len(self.path) > MAX_TARGET:
                 raise BadRequest("request too large", 414)
             if self.headers.get("Transfer-Encoding"):
@@ -582,15 +751,45 @@ def make_handler(app: App):
             if len(hosts) != 1 or not app.host_allowed(hosts[0]):
                 raise BadRequest("host not allowed", 421)
 
-        def _route(self, include_body: bool) -> None:
+        def _limited_headers(self) -> dict:
+            return {"Retry-After": str(app.rate_limiter.retry_after)}
+
+        def _blocked(self, include_body: bool) -> str | None:
+            """Size and host checks, then the kill switch, then the rate cap.
+
+            Returns 'disabled' or 'limited' when the handler already replied.
+            """
             self._limits_and_host()
+            parsed = urlsplit(self.path)
+            path = parsed.path or "/"
+            if app.disabled():
+                if path == "/healthz":
+                    self._send_json(503, {"ok": False, "disabled": True}, include_body)
+                else:
+                    self._send_json(503, {"error": "unavailable"}, include_body)
+                return "disabled"
+            # The socket peer, never X-Forwarded-For. A proxy in front shares one bucket.
+            if not app.rate_limiter.allow(self.client_address[0]):
+                self._send_json(
+                    429,
+                    {"error": "too many requests"},
+                    include_body,
+                    extra_headers=self._limited_headers(),
+                )
+                return "limited"
+            return None
+
+        def _route(self, include_body: bool) -> None:
+            if self._blocked(include_body):
+                return
             parsed = urlsplit(self.path)
             path = parsed.path or "/"
             if path == "/":
                 self._send_page(include_body)
                 return
             if path == "/healthz":
-                self._send_json(200, app.health(), include_body)
+                payload = app.health()
+                self._send_json(200 if payload.get("ok") else 503, payload, include_body)
                 return
             if path == "/api/search":
                 try:
@@ -645,9 +844,11 @@ def make_handler(app: App):
                 if getattr(self, "_started", False):
                     self.close_connection = True
                     return
-                self._send_json(exc.status, {"error": exc.message}, include_body)
-            except Exception:
-                logging.exception("request failed")
+                extra = self._limited_headers() if exc.status == 429 else None
+                self._send_json(exc.status, {"error": exc.message}, include_body, extra_headers=extra)
+            except Exception as exc:
+                # The exception text can quote the user's query. Log the type only.
+                logging.error("request failed: %s", type(exc).__name__)
                 if getattr(self, "_started", False):
                     self.close_connection = True
                     return
@@ -661,12 +862,14 @@ def make_handler(app: App):
 
         def _reject_method(self) -> None:
             try:
-                self._limits_and_host()
+                if self._blocked(True):
+                    return
             except BadRequest as exc:
-                self._send_json(exc.status, {"error": exc.message}, True)
+                extra = self._limited_headers() if exc.status == 429 else None
+                self._send_json(exc.status, {"error": exc.message}, True, extra_headers=extra)
                 return
-            except Exception:
-                logging.exception("request failed")
+            except Exception as exc:
+                logging.error("request failed: %s", type(exc).__name__)
                 self._send_json(500, {"error": "internal error"}, True)
                 return
             body = json.dumps({"error": "method not allowed"}).encode("utf-8")
@@ -773,6 +976,7 @@ def main(argv: list[str] | None = None) -> None:
     elif app.encode is None:
         logging.info("BM25 only; the embedding model was not loaded")
     else:
+        logging.info("index opened read-only for library %s", library)
         logging.info(
             "embed backend=%s variant=%s threads=%s",
             getattr(app.encode, "backend", None),
