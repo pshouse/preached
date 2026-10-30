@@ -24,6 +24,7 @@ import numpy as np
 from app.server import STATIC_DIR, STALE_NOTE, App, make_server
 from preached.corpus import load_chunk_config
 from preached.models import MODELS
+from preached.search import PREROLL_S as SEARCH_PREROLL_S
 from preached.search import Searcher
 from preached.store import connect, load_embeddings, open_readonly, stored_fingerprint
 from preached.youtube.chunking import chunk_words
@@ -31,6 +32,8 @@ from preached.youtube.cli import main
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
 from preached.youtube.library import MODEL_KEY
 from preached.youtube.listing import (
+    PREROLL_S,
+    WATCH_HOSTS,
     BadChannelUrl,
     ChannelRefused,
     Video,
@@ -38,6 +41,7 @@ from preached.youtube.listing import (
     creative_commons,
     parse_listing,
     watch_url,
+    youtube_watch_url,
 )
 from preached.youtube.privacy import redact
 from preached.youtube.sermon import is_sung, load_windows, sermon_span, speech_runs, words_in_span
@@ -137,25 +141,73 @@ class ListingTests(unittest.TestCase):
     def test_watch_url_preroll_clamps_at_zero(self) -> None:
         self.assertEqual(watch_url("abcdefghijk", 0.5), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
 
+    def test_preroll_is_the_search_constant(self) -> None:
+        self.assertIs(PREROLL_S, SEARCH_PREROLL_S)
+        self.assertEqual(PREROLL_S, 0.75)
+        self.assertEqual(WATCH_HOSTS, frozenset({"youtube.com", "www.youtube.com", "m.youtube.com"}))
+
+    def test_youtube_watch_url_accepts_stored_links(self) -> None:
+        stored = "https://www.youtube.com/watch?v=abcdefghijk&t=11s"
+        self.assertEqual(youtube_watch_url(stored), stored)
+        apex = "https://youtube.com/watch?v=abcdefghijk&t=0s"
+        self.assertEqual(youtube_watch_url(apex), apex)
+        mobile = "https://m.youtube.com/watch?v=abcdefghijk&t=3s"
+        self.assertEqual(youtube_watch_url(mobile), mobile)
+        mixed = "https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s"
+        self.assertEqual(youtube_watch_url(mixed), mixed)
+        explicit_port = "https://www.youtube.com:443/watch?v=abcdefghijk&t=11s"
+        self.assertEqual(youtube_watch_url(explicit_port), explicit_port)
+        kept_hash = "https://www.youtube.com/watch?v=abcdefghijk&t=11s#keep"
+        self.assertEqual(youtube_watch_url(kept_hash), kept_hash)
+
+    def test_youtube_watch_url_rejects_hostile_and_other_shapes(self) -> None:
+        rejected = (
+            "https://www.youtube.com.evil.com/watch?v=abcdefghijk",
+            "javascript:alert(1)",
+            "javascript:https://www.youtube.com/watch?v=abcdefghijk",
+            "http://www.youtube.com/watch?v=abcdefghijk",
+            "https://evil.com@www.youtube.com/watch?v=abcdefghijk",
+            "https://user:pw@www.youtube.com/watch?v=abcdefghijk",
+            "https://youtu.be/abcdefghijk",
+            "https://www.youtube.com/embed/abcdefghijk",
+            "https://www.youtube.com/watch?v=short",
+            "https://www.youtube.com/watch?v=abcdefghijkl",
+            "https://www.youtube.com/watch?v=abcdefghijk&v=zzzzzzzzzzz",
+            "https://www.youtube.com:8443/watch?v=abcdefghijk",
+            "https://www.youtube.com:abc/watch?v=abcdefghijk",
+            "https://www.youtube.com:99999/watch?v=abcdefghijk",
+            "https://[::1]/watch?v=abcdefghijk",
+            "https://[gggg::1]/watch?v=abcdefghijk",
+            "https://www.youtube.com./watch?v=abcdefghijk",
+            "https://www.youtube.com/watch/?v=abcdefghijk",
+            "https://archive.org/download/x/y.mp3",
+            "https://www.youtube.com/watch?v=abcdefghijk&t=11s\x1b",
+            None,
+            "",
+        )
+        for url in rejected:
+            with self.subTest(url=url):
+                self.assertIsNone(youtube_watch_url(url))
+
     def test_stored_start_s_is_the_word_onset(self) -> None:
         """The chunk record keeps the first word. Only the watch URL is pre-rolled."""
         from preached.youtube.pipeline import _chunks_for
 
         video = Video(
-            "samplevid001",
+            "samplevid01",
             "On Mercy",
             40,
             date(2024, 6, 2),
-            "https://www.youtube.com/watch?v=samplevid001",
+            "https://www.youtube.com/watch?v=samplevid01",
         )
         words = sample_words(12.2)
         records = _chunks_for(video, words, {})
-        self.assertEqual(records[0]["chunk_id"], "samplevid001-c0000")
+        self.assertEqual(records[0]["chunk_id"], "samplevid01-c0000")
         self.assertEqual(records[0]["start_s"], words[0].start)
         self.assertAlmostEqual(records[0]["start_s"], 12.2)
         self.assertEqual(
             records[0]["audio_url"],
-            "https://www.youtube.com/watch?v=samplevid001&t=11s",
+            "https://www.youtube.com/watch?v=samplevid01&t=11s",
         )
 
     def test_blocked_channel_name_is_refused(self) -> None:
@@ -511,11 +563,11 @@ class ImportTests(unittest.TestCase):
             self.assertEqual(seen["meta"], 1)
 
     def test_schema_matches_the_search_server(self) -> None:
-        video = Video("samplevid001", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid001")
+        video = Video("samplevid01", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             code, _out, err = self._run(
-                ["https://www.youtube.com/watch?v=samplevid001", "--library", "sample"],
+                ["https://www.youtube.com/watch?v=samplevid01", "--library", "sample"],
                 root,
                 lister=lambda _url: [video],
                 metadata=lambda _video: {
@@ -525,7 +577,7 @@ class ImportTests(unittest.TestCase):
                     "uploader": "A Speaker",
                     "duration": 40,
                 },
-                downloader=lambda _video, dest: dest / "samplevid001.m4a",
+                downloader=lambda _video, dest: dest / "samplevid01.m4a",
                 transcriber=lambda _path: sample_words(12.2),
                 embedder=embedder,
             )
@@ -548,7 +600,7 @@ class ImportTests(unittest.TestCase):
                 stored = connection.execute(
                     "SELECT video_id, title, published, reader, text_source FROM chunks"
                 ).fetchone()
-                self.assertEqual(stored["video_id"], "samplevid001")
+                self.assertEqual(stored["video_id"], "samplevid01")
                 self.assertEqual(stored["title"], "On Mercy")
                 self.assertEqual(stored["published"], "2024-06-02")
                 self.assertIsNone(stored["reader"])
@@ -578,7 +630,7 @@ class ImportTests(unittest.TestCase):
                 self.assertIn("zephyrgrace", hit["text"])
                 self.assertAlmostEqual(hit["start_s"], 12.2, places=5)
                 self.assertGreater(hit["end_s"], hit["start_s"])
-                self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid001&t=11s")
+                self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid01&t=11s")
                 self.assertIsNone(hit["reader"])
                 self.assertEqual(hit["text_source"], "asr")
                 self.assertEqual(hit["sermon_title"], "On Mercy")

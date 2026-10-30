@@ -254,6 +254,21 @@ blockquote {
   font-weight: 600;
 }
 
+.card a.play {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.card a.play:hover { background: #000; }
+
 .play.is-playing {
   outline: 3px solid var(--ink);
   outline-offset: 2px;
