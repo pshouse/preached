@@ -270,6 +270,19 @@ The 35-question column reproduces the audit rerun exactly for every model and mo
 
 **The default is not changed** (`default = "granite-english-r2"`, hybrid RRF). Whether to weight dense more for natural-language questions, or to switch modes by query type, is Patrick's call; this set is too small to tune it on.
 
+### Wider grading and blind questions (EVAL-GRADE, labels proposed)
+
+Most of the `plain` zero was narrow labels. EVAL-GRADE added 558 proposed grade-1 labels from a pool: the top 20 of every ranker, read by a grader. It also added 30 questions written blind to the corpus (`plain-blind`). Nothing below is confirmed by a person yet, and nothing was tuned on it.
+
+Granite hybrid RRF (default), strict → lenient, with sermon-level hits:
+
+| group | nDCG@10 strict | nDCG@10 lenient | hit@10 strict | hit@10 lenient | sermon@10 | sermon@50 |
+| --- | --- | --- | --- | --- | --- | --- |
+| plain (25) | 0.028 | 0.132 | 0.08 | 0.72 | 0.56 | 0.84 |
+| plain-blind (28) | 0.032 | 0.027 | 0.07 | 0.11 | 0.36 | 0.82 |
+
+On `plain-blind`, Granite dense alone beats the default on lenient hit@10 by +0.29 [+0.14, +0.46] (8 wins, 0 losses). The abstain floor no longer holds on that group. Full tables: `reports/EVAL-GRADE.md` and `eval/results/2026-10-30-grade.md`.
+
 ## Decision
 
 **Keep Granite English R2 + BM25 hybrid RRF (k=60) as the default** (`default` in `search/models.toml`). The reasons:
