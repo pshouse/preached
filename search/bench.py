@@ -48,6 +48,8 @@ from preached.stats import bootstrap_ci, paired_bootstrap  # noqa: E402
 from preached.store import (  # noqa: E402
     connect,
     embedding_bytes,
+    save_embedding_info,
+    stored_fingerprint,
     sync_chunks,
     write_embeddings,
 )
@@ -206,18 +208,6 @@ def summarize(per_query: dict[str, dict]) -> dict:
 
 # ---------- embedding cache ----------
 
-def stored_fingerprint(connection, key: str) -> str | None:
-    row = connection.execute("SELECT value FROM meta WHERE key = ?", (f"embeddings:{key}",)).fetchone()
-    return json.loads(row[0]).get("fingerprint") if row else None
-
-
-def save_fingerprint(connection, key: str, info: dict) -> None:
-    connection.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (f"embeddings:{key}", json.dumps(info))
-    )
-    connection.commit()
-
-
 def embed_corpus(spec, rows, batch_size: int, connection) -> dict:
     import torch
 
@@ -246,7 +236,7 @@ def embed_corpus(spec, rows, batch_size: int, connection) -> dict:
         "dim": int(matrix.shape[1]),
         "embedded_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    save_fingerprint(connection, spec.key, {"fingerprint": spec.fingerprint(), **stats})
+    save_embedding_info(connection, spec.key, {"fingerprint": spec.fingerprint(), **stats})
     return stats
 
 

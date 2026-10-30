@@ -113,7 +113,7 @@ question_prefix = "Represent this sentence for searching relevant passages: "
 # Considered and not run. Reasons and sources are in docs/research/embeddings.md.
 [[excluded]]
 hf_id = "nomic-ai/nomic-embed-text-v2-moe"
-reason = "Benchmarked in W1-B, then excluded on lineage review (CTO, PR #2): English training data was hard-negative-mined with Alibaba gte-base, the negative-mining teacher is Stella 1.5B v5 (built on Qwen2), and the paper uses BAAI BGE-M3 for filtering. AGENTS.md excludes models built with PRC models. Also the only trust_remote_code load. arXiv:2502.07972."
+reason = "Benchmarked in W1-B, then excluded on lineage review (CTO, PR #2): the paper uses BAAI BGE-M3 to filter hard negatives for English and multilingual data (arXiv:2502.07972 sec. 4.4). AGENTS.md excludes models built with PRC models. Weaker notes: English pretraining pairs inherit Nomic v1 gte-base consistency filtering (arXiv:2402.01613); the sec. 7.3 ablation found Stella 1.5B (Qwen2-based) the best negative-mining teacher, final teacher not stated. Also the only trust_remote_code load."
 
 [[excluded]]
 hf_id = "Snowflake/snowflake-arctic-embed-l-v2.0"

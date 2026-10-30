@@ -18,7 +18,7 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import connect, sync_chunks  # noqa: E402
+from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 
 
 def ensure_chunks(connection) -> None:
@@ -77,7 +77,10 @@ def main() -> None:
             spec = MODELS[model_name]
             loaded = load_model(spec, device=args.device, batch_size=1)
             vector = encode_query(loaded, args.query)
-            searcher = Searcher(connection, model=model_name)
+            try:
+                searcher = Searcher(connection, model=model_name)
+            except EmbeddingMismatch as exc:
+                raise SystemExit(f"error: {exc}\nOr search without vectors: --mode bm25") from exc
             if args.mode == "dense":
                 hits = searcher.dense(vector, args.k)
             else:
