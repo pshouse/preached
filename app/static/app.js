@@ -35,6 +35,19 @@ function safeUrl(value) {
   return null;
 }
 
+/* Player pre-roll: start_s is the exact onset of the passage's first word,
+   and the label shows it. The player seeks this much earlier so a slightly
+   late alignment never clips the first word. Same value as
+   preached.search.PREROLL_S. */
+var PREROLL_S = 0.75;
+
+function playStart(start) {
+  if (start == null || start === "") return null;
+  var value = Number(start);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.max(0, Math.round((value - PREROLL_S) * 100) / 100);
+}
+
 /* Media fragment for a start time. Replaces any fragment the URL already has. */
 function mediaUrlAt(href, seconds) {
   if (seconds == null || seconds === "") return href;
@@ -78,9 +91,9 @@ function seekWhenReady(audio) {
 function playClip(url, start, button, caption) {
   var audio = document.getElementById("player");
   var token = ++playToken;
-  var seconds = Number(start);
+  var seconds = playStart(start);
   audio.dataset.token = String(token);
-  audio.dataset.seek = Number.isFinite(seconds) ? String(seconds) : "";
+  audio.dataset.seek = seconds == null ? "" : String(seconds);
   if (audio.dataset.srcUrl !== url) {
     audio.dataset.srcUrl = url;
     audio.src = mediaUrlAt(url, seconds);

@@ -32,7 +32,8 @@ Track: **Discipleship & Spiritual Growth**.
 - Must be built with AI and/or use AI in what it does.
 - **Privacy:** no real personal information of church members in the demo.
   Sermons themselves are fine (public teaching), but flag and strip congregant
-  names from transcripts (assisted, not guaranteed: a human reviews before publishing) (stories like "my friend Dave in the choir") and avoid
+  names from transcripts (e.g. "my friend Dave in the choir"); stripping is
+  assisted, not guaranteed, and a human reviews before publishing. Avoid
   crowd shots. Use sample data for anything member-related.
 - Content must be theologically sound, honest about AI, keep humans in the loop.
 - Submission: name, ≤250-word description, track, **demo video ≤5 min**

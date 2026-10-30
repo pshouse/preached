@@ -1,0 +1,1293 @@
+{
+ "note": "Derived from the W1-C alignment: the gold span and the chunk times come from the same per-word alignment, so overlap hit@k equals the text hit@k by construction. It is not an independent audio-accuracy result. Audio accuracy is the W1-C spot-check (start_s vs audio: median 0.42 s, max 0.76 s, covered by the 0.75 s pre-roll).",
+ "summary": {
+  "questions": 40,
+  "answerable": 35,
+  "g2_inside_hit@1": 5,
+  "g2_inside_hit@5": 7,
+  "g2_overlap_hit@1": 14,
+  "g2_overlap_hit@5": 23,
+  "g2_text_hit@1": 14,
+  "g2_text_hit@5": 23,
+  "any_inside_hit@1": 5,
+  "any_inside_hit@5": 7,
+  "any_overlap_hit@1": 14,
+  "any_overlap_hit@5": 23
+ },
+ "questions": [
+  {
+   "id": "q-worry",
+   "type": "conceptual",
+   "query": "I keep worrying about money and what will happen tomorrow. What did Wesley say about anxiety and taking thought for the future?",
+   "top1": {
+    "chunk_id": "wesley-029-c0062",
+    "start_s": 2576.04
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-029",
+     "words": [
+      259,
+      285
+     ],
+     "file_id": "wesley-s1-29",
+     "start_s": 159.89,
+     "end_s": 173.29,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-028",
+     "words": [
+      0,
+      21
+     ],
+     "file_id": "wesley-s1-28",
+     "start_s": 29.97,
+     "end_s": 38.59,
+     "grade": 1
+    },
+    {
+     "sermon_id": "wesley-028",
+     "words": [
+      1780,
+      1801
+     ],
+     "file_id": "wesley-s1-28",
+     "start_s": 760.59,
+     "end_s": 768.98,
+     "grade": 1
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": -2416.15
+  },
+  {
+   "id": "q-assurance",
+   "type": "conceptual",
+   "query": "How can I know that I am really a child of God? What did Wesley teach about the assurance of salvation?",
+   "top1": {
+    "chunk_id": "wesley-043-c0022",
+    "start_s": 712.29
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-010",
+     "words": [
+      1703,
+      1759
+     ],
+     "file_id": "wesley-s1-10",
+     "start_s": 710.4,
+     "end_s": 730.85,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-011",
+     "words": [
+      3516,
+      3532
+     ],
+     "file_id": "wesley-s1-11",
+     "start_s": 1386.19,
+     "end_s": 1391.09,
+     "grade": 1
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-money",
+   "type": "conceptual",
+   "query": "Is it wrong for a Christian to try to earn more money? What did Wesley say about making a living?",
+   "top1": {
+    "chunk_id": "wesley-028-c0076",
+    "start_s": 2309.57
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-050",
+     "words": [
+      1017,
+      1044
+     ],
+     "file_id": "wesley-s1-51",
+     "start_s": 432.31,
+     "end_s": 442.4,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-riches",
+   "type": "conceptual",
+   "query": "Can a Christian be wealthy without it hurting their soul? What did Wesley say about the danger of riches?",
+   "top1": {
+    "chunk_id": "wesley-087-c0044",
+    "start_s": 1405.02
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-087",
+     "words": [
+      0,
+      25
+     ],
+     "file_id": "wesley-s2-34",
+     "start_s": 28.97,
+     "end_s": 39.15,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-108",
+     "words": [
+      215,
+      254
+     ],
+     "file_id": "wesley-s2-55",
+     "start_s": 108.06,
+     "end_s": 119.91,
+     "grade": 1
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": -1376.05
+  },
+  {
+   "id": "q-prayer",
+   "type": "conceptual",
+   "query": "How should I pray when I am alone? What did Wesley say about private prayer?",
+   "top1": {
+    "chunk_id": "wesley-025-c0075",
+    "start_s": 2283.35
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-026",
+     "words": [
+      146,
+      182
+     ],
+     "file_id": "wesley-s1-26",
+     "start_s": 77.46,
+     "end_s": 90.18,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-forgiveness",
+   "type": "conceptual",
+   "query": "Someone hurt me and I cannot let it go. What did Wesley say about forgiving people who wrong us?",
+   "top1": {
+    "chunk_id": "wesley-026-c0072",
+    "start_s": 2239.57
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-026",
+     "words": [
+      299,
+      328
+     ],
+     "file_id": "wesley-s1-26",
+     "start_s": 137.49,
+     "end_s": 148.76,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 5,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 5,
+   "g2_text_first_rank": 5,
+   "top1_lead_s": -2102.08
+  },
+  {
+   "id": "q-perfection",
+   "type": "conceptual",
+   "query": "What does Wesley mean by Christian perfection? Can a believer be made perfect in this life?",
+   "top1": {
+    "chunk_id": "wesley-127-c0005",
+    "start_s": 152.42
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-040",
+     "words": [
+      2079,
+      2111
+     ],
+     "file_id": "wesley-s1-40",
+     "start_s": 788.7,
+     "end_s": 804.0,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-076",
+     "words": [
+      15,
+      29
+     ],
+     "file_id": "wesley-s2-23",
+     "start_s": 39.56,
+     "end_s": 44.62,
+     "grade": 1
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 3,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 3,
+   "g2_text_first_rank": 3,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-heaviness",
+   "type": "conceptual",
+   "query": "I have been sad for a long time and my faith feels heavy. What did Wesley say about heaviness and sorrow in a believer?",
+   "top1": {
+    "chunk_id": "wesley-047-c0017",
+    "start_s": 548.92
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-047",
+     "words": [
+      49,
+      66
+     ],
+     "file_id": "wesley-s1-48",
+     "start_s": 51.29,
+     "end_s": 57.79,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": -497.62999999999994
+  },
+  {
+   "id": "q-mourning",
+   "type": "conceptual",
+   "query": "My child died and I do not know how to grieve. What did Wesley say about mourning the dead?",
+   "top1": {
+    "chunk_id": "wesley-135-c0003",
+    "start_s": 114.39
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-135",
+     "words": [
+      0,
+      26
+     ],
+     "file_id": "wesley-s3to5-27",
+     "start_s": 34.72,
+     "end_s": 43.74,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-135",
+     "words": [
+      241,
+      267
+     ],
+     "file_id": "wesley-s3to5-27",
+     "start_s": 131.01,
+     "end_s": 139.17,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 16.61999999999999
+  },
+  {
+   "id": "q-satan",
+   "type": "conceptual",
+   "query": "I feel like the devil is attacking my faith. What did Wesley say about Satan's devices?",
+   "top1": {
+    "chunk_id": "wesley-042-c0008",
+    "start_s": 174.56
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-042",
+     "words": [
+      502,
+      534
+     ],
+     "file_id": "wesley-s1-43",
+     "start_s": 174.56,
+     "end_s": 183.22,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 1,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": 1,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.0
+  },
+  {
+   "id": "q-temptation",
+   "type": "conceptual",
+   "query": "The temptation I am facing feels too strong to bear. What did Wesley say about God making a way to escape?",
+   "top1": {
+    "chunk_id": "wesley-082-c0036",
+    "start_s": 976.02
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-082",
+     "words": [
+      0,
+      49
+     ],
+     "file_id": "wesley-s2-29",
+     "start_s": 23.67,
+     "end_s": 40.84,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": -952.35
+  },
+  {
+   "id": "q-communion",
+   "type": "conceptual",
+   "query": "How often should a Christian receive the Lord's Supper? What did Wesley teach about communion?",
+   "top1": {
+    "chunk_id": "wesley-101-c0001",
+    "start_s": 49.33
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-101",
+     "words": [
+      536,
+      563
+     ],
+     "file_id": "wesley-s2-48",
+     "start_s": 225.68,
+     "end_s": 234.68,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": 176.35000000000002
+  },
+  {
+   "id": "q-means",
+   "type": "conceptual",
+   "query": "What are the means of grace, and do they actually help a person grow?",
+   "top1": {
+    "chunk_id": "wesley-016-c0013",
+    "start_s": 392.67
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-016",
+     "words": [
+      1016,
+      1051
+     ],
+     "file_id": "wesley-s1-16",
+     "start_s": 399.29,
+     "end_s": 413.91,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 6.6200000000000045
+  },
+  {
+   "id": "q-salvation",
+   "type": "conceptual",
+   "query": "If I cannot earn heaven, how is a person saved? What did Wesley say about salvation by faith?",
+   "top1": {
+    "chunk_id": "wesley-043-c0003",
+    "start_s": 127.59
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-001",
+     "words": [
+      2614,
+      2646
+     ],
+     "file_id": "wesley-s1-01",
+     "start_s": 1052.83,
+     "end_s": 1066.91,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-justification",
+   "type": "conceptual",
+   "query": "What does it mean to be justified? Does Wesley say God justifies good people or ungodly people?",
+   "top1": {
+    "chunk_id": "wesley-011-c0028",
+    "start_s": 882.22
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-005",
+     "words": [
+      0,
+      19
+     ],
+     "file_id": "wesley-s1-05",
+     "start_s": 31.18,
+     "end_s": 39.98,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-043",
+     "words": [
+      577,
+      601
+     ],
+     "file_id": "wesley-s1-44",
+     "start_s": 256.11,
+     "end_s": 265.37,
+     "grade": 1
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-faith-works",
+   "type": "conceptual",
+   "query": "If we are saved by faith alone, do good works still matter? What did Wesley say about faith and works together?",
+   "top1": {
+    "chunk_id": "wesley-091-c0032",
+    "start_s": 723.3
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-043",
+     "words": [
+      2771,
+      2802
+     ],
+     "file_id": "wesley-s1-44",
+     "start_s": 1102.54,
+     "end_s": 1113.9,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": null
+  },
+  {
+   "id": "q-new-birth",
+   "type": "conceptual",
+   "query": "What does it mean to be born again? What did Wesley preach about the new birth?",
+   "top1": {
+    "chunk_id": "wesley-045-c0003",
+    "start_s": 134.9
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-045",
+     "words": [
+      9,
+      70
+     ],
+     "file_id": "wesley-s1-46",
+     "start_s": 43.15,
+     "end_s": 70.05,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-018",
+     "words": [
+      306,
+      317
+     ],
+     "file_id": "wesley-s1-18",
+     "start_s": 146.76,
+     "end_s": 151.08,
+     "grade": 1
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 3,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 3,
+   "g2_text_first_rank": 3,
+   "top1_lead_s": -91.75
+  },
+  {
+   "id": "q-sin-believers",
+   "type": "conceptual",
+   "query": "I am a Christian and I still struggle with pride and unbelief. Did Wesley say that sin remains in believers?",
+   "top1": {
+    "chunk_id": "wesley-013-c0063",
+    "start_s": 1869.92
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-013",
+     "words": [
+      4416,
+      4446
+     ],
+     "file_id": "wesley-s1-13",
+     "start_s": 1857.41,
+     "end_s": 1868.23,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 2,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 2,
+   "g2_text_first_rank": 2,
+   "top1_lead_s": -12.509999999999991
+  },
+  {
+   "id": "q-original-sin",
+   "type": "conceptual",
+   "query": "Are people basically good? What did Wesley teach about original sin and the human heart?",
+   "top1": {
+    "chunk_id": "wesley-044-c0048",
+    "start_s": 1598.42
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-044",
+     "words": [
+      15,
+      27
+     ],
+     "file_id": "wesley-s1-45",
+     "start_s": 33.28,
+     "end_s": 37.74,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-044",
+     "words": [
+      602,
+      614
+     ],
+     "file_id": "wesley-s1-45",
+     "start_s": 290.25,
+     "end_s": 295.45,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 2,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 2,
+   "g2_text_first_rank": 2,
+   "top1_lead_s": -1308.17
+  },
+  {
+   "id": "q-catholic-spirit",
+   "type": "conceptual",
+   "query": "How should I treat Christians who disagree with me on doctrine? What did Wesley mean by a catholic spirit?",
+   "top1": {
+    "chunk_id": "wesley-039-c0054",
+    "start_s": 1634.9
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-039",
+     "words": [
+      4307,
+      4333
+     ],
+     "file_id": "wesley-s1-39",
+     "start_s": 1666.56,
+     "end_s": 1676.31,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 31.659999999999854
+  },
+  {
+   "id": "q-backsliders",
+   "type": "conceptual",
+   "query": "I used to believe and then I fell away. What did Wesley say to backsliders who think God will not take them back?",
+   "top1": {
+    "chunk_id": "wesley-086-c0007",
+    "start_s": 274.1
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-086",
+     "words": [
+      627,
+      662
+     ],
+     "file_id": "wesley-s2-33",
+     "start_s": 288.2,
+     "end_s": 302.36,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 14.099999999999966
+  },
+  {
+   "id": "q-self-denial",
+   "type": "conceptual",
+   "query": "What does it mean to deny yourself and take up your cross? What did Wesley say about self-denial?",
+   "top1": {
+    "chunk_id": "wesley-048-c0028",
+    "start_s": 816.18
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-048",
+     "words": [
+      238,
+      288
+     ],
+     "file_id": "wesley-s1-49",
+     "start_s": 134.77,
+     "end_s": 155.44,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 4,
+   "g2_overlap_first_rank": 4,
+   "any_inside_first_rank": 4,
+   "any_overlap_first_rank": 4,
+   "g2_text_first_rank": 4,
+   "top1_lead_s": -681.41
+  },
+  {
+   "id": "q-wandering-thoughts",
+   "type": "conceptual",
+   "query": "My mind wanders when I try to pray. Are wandering thoughts a sin? What did Wesley say?",
+   "top1": {
+    "chunk_id": "wesley-041-c0003",
+    "start_s": 116.57
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-041",
+     "words": [
+      348,
+      365
+     ],
+     "file_id": "wesley-s1-42",
+     "start_s": 140.73,
+     "end_s": 145.21,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 24.159999999999997
+  },
+  {
+   "id": "q-wilderness",
+   "type": "conceptual",
+   "query": "I used to feel close to God, and now everything feels dark. What did Wesley say about the wilderness state?",
+   "top1": {
+    "chunk_id": "wesley-046-c0064",
+    "start_s": 2235.58
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-046",
+     "words": [
+      165,
+      179
+     ],
+     "file_id": "wesley-s1-47",
+     "start_s": 97.45,
+     "end_s": 103.85,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 5,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 5,
+   "g2_text_first_rank": 5,
+   "top1_lead_s": -2138.13
+  },
+  {
+   "id": "q-evil-speaking",
+   "type": "conceptual",
+   "query": "Is it gossip if what I say about someone is true? What did Wesley teach about evil-speaking?",
+   "top1": {
+    "chunk_id": "wesley-049-c0002",
+    "start_s": 103.57
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-049",
+     "words": [
+      167,
+      200
+     ],
+     "file_id": "wesley-s1-50",
+     "start_s": 104.19,
+     "end_s": 117.58,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.6200000000000045
+  },
+  {
+   "id": "k-romans-8-16",
+   "type": "keyword",
+   "query": "Romans 8:16",
+   "top1": {
+    "chunk_id": "wesley-011-c0000",
+    "start_s": 32.81
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-010",
+     "words": [
+      0,
+      15
+     ],
+     "file_id": "wesley-s1-10",
+     "start_s": 33.26,
+     "end_s": 37.64,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-011",
+     "words": [
+      0,
+      15
+     ],
+     "file_id": "wesley-s1-11",
+     "start_s": 32.81,
+     "end_s": 37.99,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-011",
+     "words": [
+      1148,
+      1163
+     ],
+     "file_id": "wesley-s1-11",
+     "start_s": 473.36,
+     "end_s": 477.98,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-011",
+     "words": [
+      1481,
+      1496
+     ],
+     "file_id": "wesley-s1-11",
+     "start_s": 606.47,
+     "end_s": 610.83,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-018",
+     "words": [
+      2278,
+      2293
+     ],
+     "file_id": "wesley-s1-18",
+     "start_s": 909.92,
+     "end_s": 914.78,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 1,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": 1,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.0
+  },
+  {
+   "id": "k-christian-perfection",
+   "type": "keyword",
+   "query": "Christian perfection",
+   "top1": {
+    "chunk_id": "wesley-040-c0023",
+    "start_s": 788.436
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-040",
+     "words": [
+      2079,
+      2111
+     ],
+     "file_id": "wesley-s1-40",
+     "start_s": 788.7,
+     "end_s": 804.0,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.26400000000001
+  },
+  {
+   "id": "k-means-of-grace",
+   "type": "keyword",
+   "query": "means of grace",
+   "top1": {
+    "chunk_id": "wesley-016-c0013",
+    "start_s": 392.67
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-016",
+     "words": [
+      1016,
+      1051
+     ],
+     "file_id": "wesley-s1-16",
+     "start_s": 399.29,
+     "end_s": 413.91,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 6.6200000000000045
+  },
+  {
+   "id": "k-witness-of-the-spirit",
+   "type": "keyword",
+   "query": "witness of the Spirit",
+   "top1": {
+    "chunk_id": "wesley-010-c0005",
+    "start_s": 169.96
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-010",
+     "words": [
+      1703,
+      1759
+     ],
+     "file_id": "wesley-s1-10",
+     "start_s": 710.4,
+     "end_s": 730.85,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": null,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": null,
+   "g2_text_first_rank": null,
+   "top1_lead_s": 540.4399999999999
+  },
+  {
+   "id": "k-gain-all-you-can",
+   "type": "keyword",
+   "query": "Gain all you can",
+   "top1": {
+    "chunk_id": "wesley-050-c0012",
+    "start_s": 430.33
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-050",
+     "words": [
+      1017,
+      1044
+     ],
+     "file_id": "wesley-s1-51",
+     "start_s": 432.31,
+     "end_s": 442.4,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 1.9800000000000182
+  },
+  {
+   "id": "k-philippians-3-12",
+   "type": "keyword",
+   "query": "Philippians 3:12",
+   "top1": {
+    "chunk_id": "wesley-040-c0000",
+    "start_s": 25.88
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-040",
+     "words": [
+      0,
+      11
+     ],
+     "file_id": "wesley-s1-40",
+     "start_s": 25.88,
+     "end_s": 30.28,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 1,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": 1,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.0
+  },
+  {
+   "id": "k-1-corinthians-10-13",
+   "type": "keyword",
+   "query": "1 Corinthians 10:13",
+   "top1": {
+    "chunk_id": "wesley-082-c0010",
+    "start_s": 245.85
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-082",
+     "words": [
+      0,
+      49
+     ],
+     "file_id": "wesley-s2-29",
+     "start_s": 23.67,
+     "end_s": 40.84,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 2,
+   "g2_overlap_first_rank": 2,
+   "any_inside_first_rank": 2,
+   "any_overlap_first_rank": 2,
+   "g2_text_first_rank": 2,
+   "top1_lead_s": -222.18
+  },
+  {
+   "id": "k-matthew-6-34",
+   "type": "keyword",
+   "query": "Matthew 6:34",
+   "top1": {
+    "chunk_id": "wesley-006-c0061",
+    "start_s": 1759.22
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-029",
+     "words": [
+      259,
+      285
+     ],
+     "file_id": "wesley-s1-29",
+     "start_s": 159.89,
+     "end_s": 173.29,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": null,
+   "g2_overlap_first_rank": 2,
+   "any_inside_first_rank": null,
+   "any_overlap_first_rank": 2,
+   "g2_text_first_rank": 2,
+   "top1_lead_s": null
+  },
+  {
+   "id": "k-2-corinthians-2-11",
+   "type": "keyword",
+   "query": "2 Corinthians 2:11",
+   "top1": {
+    "chunk_id": "wesley-042-c0000",
+    "start_s": 23.57
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-042",
+     "words": [
+      0,
+      7
+     ],
+     "file_id": "wesley-s1-43",
+     "start_s": 23.57,
+     "end_s": 26.13,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 1,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": 1,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.0
+  },
+  {
+   "id": "k-luke-22-19",
+   "type": "keyword",
+   "query": "Luke 22:19",
+   "top1": {
+    "chunk_id": "wesley-101-c0000",
+    "start_s": 27.91
+   },
+   "gold": [
+    {
+     "sermon_id": "wesley-101",
+     "words": [
+      0,
+      6
+     ],
+     "file_id": "wesley-s2-48",
+     "start_s": 27.91,
+     "end_s": 30.06,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-101",
+     "words": [
+      197,
+      203
+     ],
+     "file_id": "wesley-s2-48",
+     "start_s": 98.37,
+     "end_s": 100.43,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-101",
+     "words": [
+      1201,
+      1207
+     ],
+     "file_id": "wesley-s2-48",
+     "start_s": 471.51,
+     "end_s": 473.99,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-101",
+     "words": [
+      3774,
+      3780
+     ],
+     "file_id": "wesley-s2-48",
+     "start_s": 1431.61,
+     "end_s": 1433.33,
+     "grade": 2
+    },
+    {
+     "sermon_id": "wesley-120",
+     "words": [
+      384,
+      390
+     ],
+     "file_id": "wesley-s3to5-12",
+     "start_s": 176.93,
+     "end_s": 178.95,
+     "grade": 2
+    }
+   ],
+   "g2_inside_first_rank": 1,
+   "g2_overlap_first_rank": 1,
+   "any_inside_first_rank": 1,
+   "any_overlap_first_rank": 1,
+   "g2_text_first_rank": 1,
+   "top1_lead_s": 0.0
+  },
+  {
+   "id": "u-book-of-mormon",
+   "type": "unanswerable",
+   "query": "What did Wesley say about the Book of Mormon?",
+   "top1": {
+    "chunk_id": "wesley-073-c0000",
+    "start_s": 36.28
+   }
+  },
+  {
+   "id": "u-nuclear-weapons",
+   "type": "unanswerable",
+   "query": "What did Wesley teach about nuclear weapons?",
+   "top1": {
+    "chunk_id": "wesley-095-c0010",
+    "start_s": 331.73
+   }
+  },
+  {
+   "id": "u-smartphones",
+   "type": "unanswerable",
+   "query": "What did Wesley say about smartphones and social media?",
+   "top1": {
+    "chunk_id": "wesley-087-c0070",
+    "start_s": 2211.21
+   }
+  },
+  {
+   "id": "u-vaccines",
+   "type": "unanswerable",
+   "query": "What did Wesley say about vaccines?",
+   "top1": {
+    "chunk_id": "wesley-069-c0051",
+    "start_s": 1651.96
+   }
+  },
+  {
+   "id": "u-pretrib-rapture",
+   "type": "unanswerable",
+   "query": "Did Wesley teach a secret pre-tribulation rapture of the church?",
+   "top1": {
+    "chunk_id": "wesley-032-c0049",
+    "start_s": 1783.13
+   }
+  }
+ ],
+ "spot_check": [
+  {
+   "id": "k-luke-22-19",
+   "chunk_id": "wesley-101-c0000",
+   "start_s": 27.91,
+   "end_s": 68.06,
+   "audio_file_id": "wesley-s2-48",
+   "chunk_words": 115,
+   "whisper_words": 115,
+   "chunk_covered": 0.991,
+   "whisper_covered": 0.991,
+   "whisper_sample": "Do this in remembrance of me. Luke 22, 19. It is no wonder that men who have no ..."
+  },
+  {
+   "id": "q-justification",
+   "chunk_id": "wesley-011-c0028",
+   "start_s": 882.22,
+   "end_s": 928.4,
+   "audio_file_id": "wesley-s1-11",
+   "chunk_words": 120,
+   "whisper_words": 120,
+   "chunk_covered": 0.983,
+   "whisper_covered": 0.983,
+   "whisper_sample": "and can it be any otherwise, if a man is justified by faith without the works of the ..."
+  },
+  {
+   "id": "q-self-denial",
+   "chunk_id": "wesley-048-c0028",
+   "start_s": 816.18,
+   "end_s": 860.84,
+   "audio_file_id": "wesley-s1-49",
+   "chunk_words": 123,
+   "whisper_words": 122,
+   "chunk_covered": 0.992,
+   "whisper_covered": 1.0,
+   "whisper_sample": "On the whole, then, to deny ourselves is to deny our own will, where it does not fall ..."
+  },
+  {
+   "id": "k-christian-perfection",
+   "chunk_id": "wesley-040-c0023",
+   "start_s": 788.436,
+   "end_s": 849.72,
+   "audio_file_id": "wesley-s1-40",
+   "chunk_words": 147,
+   "whisper_words": 138,
+   "chunk_covered": 0.939,
+   "whisper_covered": 1.0,
+   "whisper_sample": "Christian perfection, therefore, does not imply, as some men seem to have imagined, an exemption either from ignorance, ..."
+  },
+  {
+   "id": "q-money",
+   "chunk_id": "wesley-028-c0076",
+   "start_s": 2309.57,
+   "end_s": 2352.5,
+   "audio_file_id": "wesley-s1-28",
+   "chunk_words": 134,
+   "whisper_words": 135,
+   "chunk_covered": 0.985,
+   "whisper_covered": 0.978,
+   "whisper_sample": "If we waste our money, we are not only guilty of wasting a talent which God has given ..."
+  }
+ ]
+}

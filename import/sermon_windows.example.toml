@@ -1,0 +1,8 @@
+# Copy this file and pass it with --windows.
+# Times are seconds on the YouTube video. A listed video id replaces the
+# speech-span rule. Only words that start inside [start_s, end_s) are indexed.
+# This example id is not a real upload.
+
+[videos.abcdefghijk]
+start_s = 90
+end_s = 2100

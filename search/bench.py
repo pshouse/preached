@@ -48,7 +48,7 @@ from preached.embed import (  # noqa: E402
 )
 from preached.metrics import mrr_at, ndcg_at, recall_at  # noqa: E402
 from preached.models import EXCLUDED, MODELS, REFERENCE, config_path  # noqa: E402
-from preached.paths import CHUNKS_JSONL, INDEX_PATH, chunk_config_path, questions_path, repo_root  # noqa: E402
+from preached.paths import INDEX_PATH, StaleChunks, chunk_config_path, index_chunks_jsonl, questions_path, repo_root  # noqa: E402
 from preached.search import SEARCH_POOL, Searcher, api_search, dedupe_adjacent  # noqa: E402
 from preached.stats import bootstrap_ci, paired_bootstrap  # noqa: E402
 from preached.store import (  # noqa: E402
@@ -113,7 +113,7 @@ def environment() -> dict:
         "cpu": cpu,
         "torch_threads": torch.get_num_threads(),
         "questions_sha256": sha256(questions_path()),
-        "chunks_sha256": sha256(CHUNKS_JSONL),
+        "chunks_sha256": sha256(index_chunks_jsonl()),
         "chunk_config": json.loads(chunk_config_path().read_text()),
         "models_toml_sha256": sha256(config_path()),
     }
@@ -160,9 +160,13 @@ def is_gated(exc: BaseException) -> bool:
 
 
 def ensure_chunks(connection) -> int:
-    if not CHUNKS_JSONL.exists():
-        raise SystemExit(f"missing {CHUNKS_JSONL}. Run corpus/fetch_wesley.py and corpus/chunk_sermons.py")
-    return sync_chunks(connection, CHUNKS_JSONL)
+    try:
+        chunks_path = index_chunks_jsonl()
+    except StaleChunks as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    if not chunks_path.exists():
+        raise SystemExit(f"missing {chunks_path}. Run corpus/fetch_wesley.py and corpus/chunk_sermons.py")
+    return sync_chunks(connection, chunks_path)
 
 
 API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
