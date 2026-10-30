@@ -1,0 +1,24 @@
+# Capitalized place words that are also given names, or that a sermon names
+# often. Never a person on their own; a title ("Sister Charlotte") still wins.
+America American Americans United States USA Canada Mexico England English Britain British
+London Scotland Scottish Ireland Irish Wales France French Paris Germany German Holland Dutch
+Italy Italian Rome Roman Romans Spain Spanish Russia Russian China Chinese Japan India Indian
+Africa African Asia Europe European Israel Israeli Jerusalem Egypt Iraq Iran Syria Ukraine
+Guatemala Honduras Haiti Brazil Kenya Uganda Nigeria Korea Vietnam Burma Burmese Philippines
+Carolina North South Charlotte Gastonia Gaston Belmont Raleigh Durham Greensboro Asheville
+Salisbury Greenville Columbia Atlanta Georgia Virginia Tennessee Nashville Texas Dallas
+Houston Austin Florida Orlando Alabama Kentucky Ohio Chicago Boston Washington Philadelphia
+Savannah Jordan Sharon Galilee Bethlehem Nazareth Damascus Corinth Ephesus Philippi Antioch
+Babylon Nineveh Samaria Judea Canaan Sinai Zion Eden Calvary Golgotha Gethsemane Bethany
+Jericho Moriah Carmel Shiloh Hebron Patmos Macedonia Galatia Colossae Thessalonica Athens
+Wittenberg Oxford Cambridge Aldersgate Epworth Kingswood Bristol Northampton Enfield
+Montreat Lynchburg Phoenix Denver Memphis Dakota Montana Nevada Arizona Indiana Kansas
+Missouri Alaska Sydney Victoria Lebanon Asheboro Hickory Concord Shelby Kings Mountain
+Geneva Zurich Worms Constance Prague Canterbury Edinburgh Strasbourg Basel Augsburg Erfurt
+Eisleben Herrnhut Haarlem Amsterdam Leiden Plymouth Bedford Ecuador Madras Calcutta Serampore
+Shanghai Peking Beijing Hippo Carthage Alexandria Constantinople Nicaea Chalcedon Smyrna
+Ravensbruck Flossenburg Dachau Auschwitz Moscow Jamestown Massachusetts Connecticut Georgia
+Pennsylvania Mississippi Louisiana Arkansas Oklahoma Michigan Wisconsin Minnesota Iowa
+Nebraska Colorado Utah Idaho Oregon California Seattle Portland Vegas Angeles Francisco
+Detroit Cleveland Cincinnati Pittsburgh Baltimore Richmond Norfolk Charleston Myrtle
+Wilmington Fayetteville Boone Lincolnton Cherryville Dallas Mooresville Matthews Huntersville

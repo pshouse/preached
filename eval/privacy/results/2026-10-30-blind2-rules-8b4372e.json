@@ -1,0 +1,46 @@
+[
+  {
+    "set": "eval/privacy/blind2.jsonl",
+    "sentences": 234,
+    "private_words": 166,
+    "private_redacted": 135,
+    "recall": 0.8133,
+    "public_words": 285,
+    "public_redacted": 35,
+    "false_redaction_rate": 0.1228,
+    "other_words": 4407,
+    "other_redacted": 19,
+    "other_rate": 0.0043,
+    "by_category": {
+      "announcement": {
+        "other": "10/734",
+        "private": "41/53",
+        "public": "0/15"
+      },
+      "church_history": {
+        "other": "2/715",
+        "private": "4/4",
+        "public": "11/90"
+      },
+      "prayer_request": {
+        "other": "3/765",
+        "private": "49/63",
+        "public": "0/4"
+      },
+      "quoted_author": {
+        "other": "2/711",
+        "private": "4/5",
+        "public": "18/84"
+      },
+      "scripture_narration": {
+        "other": "0/660",
+        "public": "4/76"
+      },
+      "testimony": {
+        "other": "2/822",
+        "private": "37/41",
+        "public": "2/16"
+      }
+    }
+  }
+]
