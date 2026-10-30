@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import sqlite3
 import subprocess
@@ -1042,6 +1043,78 @@ class UnreadBodyTests(unittest.TestCase):
         self.assertIn(b"Connection: close", data)
         self.assertTrue(closed, data)
         self.assertNotIn(b"HTTP/1.1 200", data)
+
+
+class FramingTests(unittest.TestCase):
+    """Raw-socket desync cases: each must get one reply and a closed socket."""
+
+    SMUGGLED = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+
+    def _exchange(self, port: int, payload: bytes) -> tuple[list[bytes], bytes, bool]:
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(payload)
+            sock.settimeout(2)
+            data = b""
+            closed = False
+            while True:
+                try:
+                    block = sock.recv(4096)
+                except socket.timeout:
+                    break
+                if not block:
+                    closed = True
+                    break
+                data += block
+        # A pipelined reply follows the previous body with no CRLF, so count
+        # status lines anywhere in the stream.
+        found = re.findall(rb"HTTP/1\.1 [0-9]{3}", data)
+        return found, data, closed
+
+    def test_plain_zero_length_keeps_the_connection(self) -> None:
+        # Control: the smuggled request IS parsed when the framing is clean,
+        # so the refusals below are not an artifact of the test.
+        port, _app, _server = RateAndKillTests._serve(self)
+        payload = (
+            b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\n\r\n" + self.SMUGGLED
+        )
+        found, data, _closed = self._exchange(port, payload)
+        self.assertEqual(len(found), 2, data)
+        self.assertTrue(all(line.startswith(b"HTTP/1.1 200") for line in found), data)
+
+    def test_ambiguous_framing_is_refused_and_closed(self) -> None:
+        port, _app, _server = RateAndKillTests._serve(self)
+        cases = {
+            "duplicate content-length": b"Content-Length: 0\r\nContent-Length: 0\r\n",
+            "duplicate content-length, different": b"Content-Length: 0\r\nContent-Length: 45\r\n",
+            "plus sign": b"Content-Length: +0\r\n",
+            "minus sign": b"Content-Length: -0\r\n",
+            "comma list": b"Content-Length: 0, 0\r\n",
+            "hex": b"Content-Length: 0x0\r\n",
+            "underscore": b"Content-Length: 0_0\r\n",
+            "empty content-length": b"Content-Length:\r\n",
+            "empty transfer-encoding": b"Transfer-Encoding:\r\n",
+            "chunked": b"Transfer-Encoding: chunked\r\n",
+            "identity": b"Transfer-Encoding: identity\r\n",
+            "lower-case transfer-encoding": b"transfer-encoding: chunked\r\n",
+            "transfer-encoding and length": b"Transfer-Encoding: chunked\r\nContent-Length: 0\r\n",
+            "space before colon": b"Content-Length : 0\r\n",
+            "obs-fold": b"X-Note: a\r\n Content-Length: 0\r\n",
+        }
+        for method in (b"GET", b"POST", b"BREW"):
+            for name, header in cases.items():
+                with self.subTest(method=method, case=name):
+                    payload = (
+                        method + b" /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n" + header + b"\r\n" + self.SMUGGLED
+                    )
+                    found, data, closed = self._exchange(port, payload)
+                    self.assertEqual(len(found), 1, data)
+                    self.assertTrue(
+                        found[0].startswith(b"HTTP/1.1 400") or found[0].startswith(b"HTTP/1.1 501"),
+                        data,
+                    )
+                    self.assertIn(b"Connection: close", data)
+                    self.assertTrue(closed, data)
+                    self.assertNotIn(b"HTTP/1.1 200", data)
 
 
 if __name__ == "__main__":

@@ -108,6 +108,9 @@ LIBRARY = "wesley"
 LIBRARY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_TARGET = 2048
 MAX_BODY = 4096
+# RFC 9110 token, and a Content-Length of digits with optional SP/HTAB around.
+HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+CONTENT_LENGTH = re.compile(r"[ \t]*[0-9]{1,10}[ \t]*")
 MAX_HEADER_BYTES = 8192
 REQUEST_TIMEOUT_S = 15
 # One deadline for the request line and all headers together. A per-read
@@ -1006,27 +1009,54 @@ def make_handler(app: App):
             raw._sock = _HeaderDeadlineSocket(sock, deadline)
             return raw
 
+        def _framing_problem(self) -> int | None:
+            """Status to refuse a request whose body framing is not plain, or None.
+
+            No route reads a body, so the only framing this server accepts is
+            none, or exactly one Content-Length of ASCII digits. Anything a
+            proxy might frame differently is refused and the connection is
+            closed: any Transfer-Encoding (even empty), a repeated
+            Content-Length, a sign, a comma list, or a header name that is
+            not a token (``Content-Length :``).
+            """
+            headers = getattr(self, "headers", None)
+            if headers is None:
+                return None
+            # A line the header parser could not take ("Content-Length : 5")
+            # ends the headers early and lands in the payload. Refuse it, and
+            # refuse obs-fold continuation lines, rather than guess.
+            if getattr(headers, "defects", None) or headers.get_payload():
+                return 400
+            for name, value in headers.items():
+                if not HEADER_NAME.fullmatch(name) or "\r" in value or "\n" in value:
+                    return 400
+            if headers.get_all("Transfer-Encoding"):
+                return 501
+            lengths = headers.get_all("Content-Length") or []
+            if len(lengths) > 1:
+                return 400
+            if lengths and not CONTENT_LENGTH.fullmatch(lengths[0]):
+                return 400
+            return None
+
         def _has_unread_body(self) -> bool:
             """True when the client declared a body this server did not read.
 
             No route reads a body. Leaving those bytes on a keep-alive
             connection makes the next ``handle_one_request`` parse them as a
             second request (a POST body smuggled after a 405, or after any
-            earlier error).
+            earlier error). Framing that is not one plain zero
+            Content-Length counts as a body.
             """
             headers = getattr(self, "headers", None)
-            if not headers:
+            if headers is None:
                 return False
-            if headers.get("Transfer-Encoding"):
+            if self._framing_problem() is not None:
                 return True
-            raw = headers.get("Content-Length")
-            if raw is None:
+            lengths = headers.get_all("Content-Length") or []
+            if not lengths:
                 return False
-            try:
-                length = int(raw)
-            except (TypeError, ValueError):
-                return True
-            return length != 0
+            return int(lengths[0]) != 0
 
         def _close_if_unread_body(self) -> None:
             if self._has_unread_body():
@@ -1074,6 +1104,14 @@ def make_handler(app: App):
                 except OSError:
                     pass
             if not parsed:
+                return
+            # Refuse ambiguous body framing before any route runs. The
+            # connection closes, so bytes after the headers are never parsed
+            # as a second request.
+            framing = self._framing_problem()
+            if framing is not None:
+                self.close_connection = True
+                self.send_error(framing)
                 return
             try:
                 method_name = "do_" + str(self.command)
@@ -1201,16 +1239,11 @@ def make_handler(app: App):
                 raise BadRequest("request too large", 431)
             if len(self.path) > MAX_TARGET:
                 raise BadRequest("request too large", 414)
-            if self.headers.get("Transfer-Encoding"):
-                raise BadRequest("request too large", 413)
+            if self._framing_problem() is not None:
+                raise BadRequest("bad request")
             raw_length = self.headers.get("Content-Length")
-            if raw_length is not None:
-                try:
-                    length = int(raw_length)
-                except ValueError as exc:
-                    raise BadRequest("bad content length") from exc
-                if length > MAX_BODY:
-                    raise BadRequest("request too large", 413)
+            if raw_length is not None and int(raw_length) > MAX_BODY:
+                raise BadRequest("request too large", 413)
             hosts = self.headers.get_all("Host") or []
             if len(hosts) != 1 or not app.host_allowed(hosts[0]):
                 raise BadRequest("host not allowed", 421)
