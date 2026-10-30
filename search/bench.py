@@ -138,28 +138,29 @@ def embed_corpus(spec, rows, batch_size: int):
     """
     titles = [document_title(row["sermon_title"], row["scripture"]) for row in rows]
     texts = [row["text"] for row in rows]
-    loaded = load_model(spec, device="cuda" if _cuda() else "cpu", batch_size=batch_size)
-    try:
-        prompts = describe_prompts(loaded)
-        with VramWatch() as watch:
+    # Watch from before the weights load. Encode-only deltas hide the model.
+    with VramWatch() as watch:
+        loaded = load_model(spec, device="cuda" if _cuda() else "cpu", batch_size=batch_size)
+        try:
+            prompts = describe_prompts(loaded)
             started = time.perf_counter()
             matrix = encode_documents(loaded, titles, texts)
             elapsed = time.perf_counter() - started
-        stats = {
-            "device": loaded.device,
-            "batch_size": loaded.batch_size,
-            "seconds": round(elapsed, 3),
-            "chunks_per_s": round(len(texts) / elapsed, 2) if elapsed else None,
-            "vram_peak_mib": watch.peak,
-            "vram_baseline_mib": watch.baseline,
-            "vram_delta_mib": watch.delta_mib,
-            "dim": int(matrix.shape[1]),
-            "prompts": prompts,
-        }
-        return loaded, matrix, stats
-    except Exception:
-        unload(loaded)
-        raise
+        except Exception:
+            unload(loaded)
+            raise
+    stats = {
+        "device": loaded.device,
+        "batch_size": loaded.batch_size,
+        "seconds": round(elapsed, 3),
+        "chunks_per_s": round(len(texts) / elapsed, 2) if elapsed else None,
+        "vram_peak_mib": watch.peak,
+        "vram_baseline_mib": watch.baseline,
+        "vram_delta_mib": watch.delta_mib,
+        "dim": int(matrix.shape[1]),
+        "prompts": prompts,
+    }
+    return loaded, matrix, stats
 
 
 def _cuda() -> bool:
