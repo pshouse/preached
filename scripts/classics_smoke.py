@@ -24,9 +24,7 @@ sys.path.insert(0, str(ROOT / "search"))
 import query  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_DIR  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import connect  # noqa: E402
 
 
 def main() -> int:
@@ -41,8 +39,9 @@ def main() -> int:
         for lib in sorted({q["library"] for q in questions}):
             if args.library and lib != args.library:
                 continue
-            # Gated like the server: only the library's own build is exempt (store.public_domain_file).
-            searcher = Searcher(connect(INDEX_DIR / f"{lib}.sqlite"), model=DEFAULT_MODEL, gated=True, library=lib)
+            # Read-only, from the canonical path only (query.open_index, as search/query.py --library),
+            # and gated like the server: only the library's own build is exempt (store.public_domain_file).
+            searcher = Searcher(query.open_index(None, lib), model=DEFAULT_MODEL, gated=True, library=lib)
             for q in (q for q in questions if q["library"] == lib):
                 hits = searcher.hybrid(q["question"], encode_query(model, q["question"]), args.k)
                 rank = next((i for i, h in enumerate(hits, 1) if h.sermon_id in q["expect"]), None)

@@ -19,19 +19,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from preached import env  # noqa: F401, E402
 from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
-from preached.privacy import default_config  # noqa: E402
+from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start, touches_flagged  # noqa: E402
-from preached.store import EmbeddingMismatch, chunks_in_sync, connect, open_readonly, sync_chunks  # noqa: E402
+from preached.store import (  # noqa: E402
+    EmbeddingMismatch,
+    chunks_in_sync,
+    classic_file_problem,
+    connect,
+    open_readonly,
+    sync_chunks,
+)
 from preached.youtube.listing import chunk_video_id, policy_watch_url, youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
 # C0 (incl. ESC, newline), DEL and C1 controls: none belong in one terminal line.
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 UNSAFE_URL = "n/a (unsafe URL hidden)"
+# Same shape as app/server.py's LIBRARY_SLUG: no path separators or dots.
+LIBRARY_SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 
 def clean(value: object) -> str:
@@ -73,13 +82,29 @@ def open_index(index: Path | None, library: str | None):
     """
     if library is not None:
         if not is_public_domain(library):
-            raise SystemExit(
-                f"error: --library {library!r} refused: only public-domain libraries ({', '.join(PUBLIC_DOMAIN)})"
-            )
+            # A church library: searched only with a privacy config loaded and
+            # the publish gate on (main always passes gated=True for it).
+            if library == "wesley" or not LIBRARY_SLUG.fullmatch(library):
+                raise SystemExit(f"error: --library {library!r} refused")
+            try:
+                required_config()
+            except MissingConfig as exc:
+                raise SystemExit(
+                    f"error: --library {library!r} refused: {exc}. Without one only the public-domain "
+                    f"libraries ({', '.join(PUBLIC_DOMAIN)}) are searched."
+                ) from exc
+            except (ValueError, OSError) as exc:
+                raise SystemExit(f"error: privacy config: {exc}") from exc
+            return open_target(INDEX_DIR / f"{library}.sqlite")
         problem = classic_index_problem(library, INDEX_DIR / f"{library}.sqlite", INDEX_DIR)
         if problem is not None:
             raise SystemExit(f"error: {problem}")
-        return open_target(INDEX_DIR / f"{library}.sqlite")
+        connection = open_target(INDEX_DIR / f"{library}.sqlite")
+        problem = classic_file_problem(connection, library, INDEX_DIR)
+        if problem is not None:
+            connection.close()
+            raise SystemExit(f"error: {problem}")
+        return connection
     path = index if index is not None else INDEX_PATH
     if is_library_file(path):
         raise SystemExit(

@@ -7,13 +7,16 @@ Search is brute force in numpy. There is no vector database.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 from pathlib import Path
 
 import numpy as np
 
 from preached.fts import to_fts_query
-from preached.libraries import is_public_domain
+from preached import paths
+from preached.libraries import classic_index_problem, is_public_domain
 from preached.paths import INDEX_PATH
 
 SCHEMA = """
@@ -392,18 +395,76 @@ def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
 
 
+def database_path(connection: sqlite3.Connection) -> str | None:
+    """The file behind the connection's main database, or None (in-memory, temp)."""
+    for row in connection.execute("PRAGMA database_list"):
+        if row[1] == "main":
+            return row[2] or None
+    return None
+
+
+def owner_only_problem(path: str | os.PathLike[str]) -> str | None:
+    """Why ``path`` is not safe from other users, or None.
+
+    It must be owned by this process's user and not writable by group or
+    others. Checked with ``lstat``, so a symlink is never followed.
+    """
+    try:
+        info = os.lstat(path)
+    except OSError as exc:
+        return f"cannot stat {path} ({exc.strerror})"
+    if stat.S_ISLNK(info.st_mode):
+        return f"{path} is a symlink"
+    if info.st_uid != os.geteuid():
+        return f"{path} is owned by uid {info.st_uid}, not {os.geteuid()}"
+    if info.st_mode & 0o022:
+        return f"{path} is writable by group or others (mode {stat.S_IMODE(info.st_mode):o})"
+    return None
+
+
+def classic_file_problem(connection: sqlite3.Connection, library: object, index_dir: Path | None = None) -> str | None:
+    """Why the file behind ``connection`` may not be served as the classic ``library``, or None.
+
+    The file the connection actually opened (``PRAGMA database_list``, not a
+    path the caller claims) must pass ``libraries.classic_index_problem``
+    (allow-listed slug, canonical INDEX_DIR/<slug>.sqlite, no symlinks,
+    realpath equality); then that file and INDEX_DIR itself must be owned by
+    this user and not group/other-writable (``owner_only_problem``). So a
+    library marker in a file anyone else could have written is not trusted.
+    ``index_dir`` defaults to ``preached.paths.INDEX_DIR`` read at call time.
+    """
+    index_dir = paths.INDEX_DIR if index_dir is None else Path(index_dir)
+    path = database_path(connection)
+    if path is None:
+        return "not a file on disk"
+    problem = classic_index_problem(library, Path(path), index_dir)
+    if problem is not None:
+        return problem
+    # INDEX_DIR as named (not a symlink) and as resolved, then the file itself.
+    for checked in (index_dir, os.path.realpath(index_dir), os.path.realpath(path)):
+        problem = owner_only_problem(checked)
+        if problem is not None:
+            return problem
+    return None
+
+
 def public_domain_file(connection: sqlite3.Connection, library: str | None) -> bool:
     """True when ``library`` is exempt from the publish gate for this file.
 
-    Keyed on the slug, never on a missing column: only a slug on the
-    public-domain allow-list (``preached.libraries``: spurgeon, edwards) can
-    be exempt, and only when the file is that library's own build: meta
-    ``library`` equals the slug (``search/build_library.py`` writes it), no
-    sermon carries a review hash and no chunk is flagged. So a church file
-    served as ``--library spurgeon --index church.sqlite``, or church chunks
-    written into a classics file, stay gated. Anything else returns False.
+    Keyed on the slug and the file, never on a missing column. All must hold:
+    the slug is on the public-domain allow-list (``preached.libraries``:
+    spurgeon, edwards); the file is that library's canonical
+    INDEX_DIR/<slug>.sqlite, owned by this user in a directory nobody else
+    can write (``classic_file_problem``); and it is that library's own build:
+    meta ``library`` equals the slug (``search/build_library.py`` writes it),
+    no sermon carries a review hash and no chunk is flagged. So a forged
+    marker in any other file (``--index /tmp/x.sqlite``), a church file served
+    as ``--library spurgeon``, or church chunks written into a classics file
+    stay gated. Anything else returns False.
     """
     if not is_public_domain(library):
+        return False
+    if classic_file_problem(connection, library) is not None:
         return False
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     if "meta" not in tables or "chunks" not in tables:

@@ -8,10 +8,12 @@ Every name below is invented. The classics fixture is built by the real
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
 import sqlite3
+import stat
 import sys
 import tempfile
 import unittest
@@ -30,6 +32,7 @@ import build_library  # noqa: E402
 import query  # noqa: E402
 import run as ingest_run  # noqa: E402
 from app.server import STATIC_DIR, App  # noqa: E402
+from preached import paths as preached_paths  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN  # noqa: E402
 from preached.search import Searcher, touches_flagged  # noqa: E402
 from preached.store import open_readonly, public_domain_file  # noqa: E402
@@ -52,8 +55,8 @@ def make_app(connection, library: str) -> App:
                model_name=None, hosts={"127.0.0.1"}, static_dir=STATIC_DIR, library=library)
 
 
-class ClassicsVisibleTests(unittest.TestCase):
-    """The classics are exempt from the gate by slug; nothing else is."""
+class ClassicsBase(unittest.TestCase):
+    """A real classics build at the canonical (patched) INDEX_DIR/spurgeon.sqlite."""
 
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -63,7 +66,11 @@ class ClassicsVisibleTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.index_dir = self.root / "index"
-        self.index_dir.mkdir()
+        self.index_dir.mkdir(mode=0o755)
+        # The exemption binds to the canonical INDEX_DIR/<slug>.sqlite (store.classic_file_problem).
+        paths_patch = patch.object(preached_paths, "INDEX_DIR", self.index_dir)
+        paths_patch.start()
+        self.addCleanup(paths_patch.stop)
         self.index = self.build("spurgeon")
 
     def build(self, slug: str) -> Path:
@@ -74,8 +81,23 @@ class ClassicsVisibleTests(unittest.TestCase):
         (tdir / f"{SPURGEON_ROW}.json").write_text(json.dumps({
             "searchable_start": 0.0, "searchable_end": 1e9, "segments": [{"words": words}],
         }))
+        # #14 checks each sermon's audio sha256 against provenance before indexing it.
+        # Synthetic audio, with the committed provenance entry's sha256 swapped for its hash.
+        audio = b"synthetic audio for " + SPURGEON_ROW.encode()
+        real_files = build_library.provenance_files
+
+        def provenance_files(lib: str, rows: list[dict]) -> dict[str, dict]:
+            entries = real_files(lib, rows)
+            entry = entries[SPURGEON_ROW] = dict(entries[SPURGEON_ROW])
+            entry["sha256"] = hashlib.sha256(audio).hexdigest()
+            adir = self.root / "audio" / lib
+            adir.mkdir(parents=True, exist_ok=True)
+            (adir / entry["file_name"]).write_bytes(audio)
+            return entries
+
         with patch.object(build_library, "CACHE_ROOT", self.root), \
                 patch.object(build_library, "INDEX_DIR", self.index_dir), \
+                patch.object(build_library, "provenance_files", provenance_files), \
                 patch.object(build_library, "_embed_on_cpu", embedder), \
                 patch.object(sys, "argv", ["build_library.py", slug]), redirect_stderr(StringIO()):
             self.assertEqual(build_library.main(), 0)
@@ -85,6 +107,10 @@ class ClassicsVisibleTests(unittest.TestCase):
         connection = open_readonly(path or self.index, check_same_thread=False)
         self.addCleanup(connection.close)
         return connection
+
+
+class ClassicsVisibleTests(ClassicsBase):
+    """The classics are exempt from the gate by slug and canonical file; nothing else is."""
 
     def test_classics_stay_visible_in_the_server(self) -> None:
         connection = self.connection()
@@ -119,10 +145,11 @@ class ClassicsVisibleTests(unittest.TestCase):
                 self.assertFalse(public_domain_file(connection, slug))
                 self.assertEqual(make_app(connection, slug).search("corner stone", 5, "bm25")["results"], [])
         # Church chunks written into a classics file (a review hash or a flag): the whole file is gated again.
+        clean_build = self.index.read_bytes()
         for column, value in (("review_sha256", "videos"), ("flag_end_s", "chunks")):
             with self.subTest(column=column):
-                copy = self.root / f"spurgeon-{column}.sqlite"
-                copy.write_bytes(self.index.read_bytes())
+                copy = self.index  # the canonical path, so only the taint decides
+                copy.write_bytes(clean_build)
                 writer = sqlite3.connect(copy)
                 writer.execute(f"UPDATE {value} SET {column} = {'1.0' if column == 'flag_end_s' else repr('x' * 64)}")
                 writer.commit()
@@ -145,9 +172,155 @@ class ClassicsVisibleTests(unittest.TestCase):
             return out.getvalue()
 
         self.assertIn(SPURGEON_ROW, search("spurgeon"))
-        # The same file under a church slug is gated: nothing approved, nothing shown.
+        # The same file under a church slug: refused without a privacy config ...
         (self.index_dir / "church.sqlite").write_bytes(self.index.read_bytes())
-        self.assertIn("Nothing found", search("church"))
+        with self.assertRaises(SystemExit) as ctx:
+            search("church")
+        self.assertIn("privacy config", str(ctx.exception.code))
+        # ... and with one it is gated: nothing approved, nothing shown.
+        toml = self.root / "privacy.toml"
+        toml.write_text("# none\n")
+        with patch.dict(os.environ, {"PREACHED_PRIVACY": str(toml)}):
+            self.assertIn("Nothing found", search("church"))
+
+
+class ForgedMarkerTests(ClassicsBase):
+    """CTO repro (#12 must-fix 1): a church file carrying the spurgeon marker at any
+    --index path was served as public domain. The exemption now needs the canonical
+    path, owner-only, no symlinks (store.classic_file_problem)."""
+
+    PASSAGES = 14
+
+    def forged(self, where: Path) -> Path:
+        """A copy of a real classics build (marker 'spurgeon', no approvals) outside the canonical path."""
+        where.parent.mkdir(parents=True, exist_ok=True)
+        where.write_bytes(self.index.read_bytes())
+        return where
+
+    def assert_gated(self, connection) -> None:
+        self.assertFalse(public_domain_file(connection, "spurgeon"))
+        self.assertEqual(Searcher(connection, gated=True, library="spurgeon").bm25("corner stone", self.PASSAGES), [])
+        app = make_app(connection, "spurgeon")
+        self.assertEqual(app.search("corner stone", self.PASSAGES, "bm25")["results"], [])
+        self.assertIsNone(app.sermon(SPURGEON_ROW))
+        self.assertEqual(app.health()["chunks"], 0)
+        self.assertIn("pending_review", app.health())
+
+    def test_canonical_build_is_served(self) -> None:
+        self.assertEqual(len(make_app(self.connection(), "spurgeon").search("corner stone", self.PASSAGES, "bm25")["results"]),
+                         min(self.PASSAGES, self.connection().execute("SELECT count(*) FROM chunks").fetchone()[0]))
+
+    def test_forged_marker_at_any_other_path_is_church_content(self) -> None:
+        for where in (self.root / "tmp" / "forged.sqlite", self.root / "spurgeon.sqlite",
+                      self.index_dir / "sub" / "spurgeon.sqlite", self.index_dir / "edwards.sqlite"):
+            with self.subTest(where=where):
+                self.assert_gated(self.connection(self.forged(where)))
+
+    def test_server_and_cli_refuse_the_forged_file(self) -> None:
+        from app import server
+
+        forged = self.forged(self.root / "tmp" / "forged.sqlite")
+        with self.assertRaises(SystemExit) as ctx:
+            server.main(["--library", "spurgeon", "--index", str(forged), "--bm25-only"])
+        self.assertIn("served only from", str(ctx.exception.code))
+        # query.py --index on a library file is refused; --library only opens the canonical path.
+        with patch.object(query, "INDEX_DIR", self.index_dir), self.assertRaises(SystemExit):
+            query.open_index(forged, None)
+
+    def test_symlink_at_the_canonical_path_is_not_exempt(self) -> None:
+        forged = self.forged(self.root / "tmp" / "forged.sqlite")
+        self.index.unlink()
+        self.index.symlink_to(forged)
+        self.assert_gated(self.connection(self.index))
+        with patch.object(query, "INDEX_DIR", self.index_dir), self.assertRaises(SystemExit):
+            query.open_index(None, "spurgeon")
+
+    def test_symlinked_index_dir_is_not_exempt(self) -> None:
+        real = self.root / "real-index"
+        self.index_dir.rename(real)
+        self.index_dir.symlink_to(real)
+        self.assert_gated(self.connection(real / "spurgeon.sqlite"))
+
+    def test_group_or_world_writable_is_not_exempt(self) -> None:
+        for target in (self.index_dir, self.index):
+            for mode in (0o775, 0o757):
+                with self.subTest(target=target.name, mode=oct(mode)):
+                    before = stat.S_IMODE(target.stat().st_mode)
+                    target.chmod(mode if target.is_dir() else mode & 0o666)
+                    try:
+                        self.assert_gated(self.connection())
+                    finally:
+                        target.chmod(before)
+        self.assertTrue(public_domain_file(self.connection(), "spurgeon"))
+
+    def test_another_owner_is_not_exempt(self) -> None:
+        real = os.geteuid()
+        with patch("preached.store.os.geteuid", return_value=real + 1):
+            self.assert_gated(self.connection())
+
+    def test_in_memory_or_unknown_file_is_not_exempt(self) -> None:
+        memory = sqlite3.connect(":memory:")
+        self.addCleanup(memory.close)
+        memory.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+        memory.execute("CREATE TABLE chunks (rowid INTEGER PRIMARY KEY)")
+        memory.execute("INSERT INTO meta VALUES ('library', 'spurgeon')")
+        self.assertFalse(public_domain_file(memory, "spurgeon"))
+
+
+class ChurchServeTests(Base):
+    """#14 refuses church libraries in check_servable; #12 relaxes it ONLY with a
+    privacy config loaded and the publish gate on."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.assertEqual(self.importer()[0], 0)
+
+    def serve(self, env: dict[str, str]):
+        from app import server
+
+        class Started(Exception):
+            pass
+
+        def fake_build_app(connection, **kwargs):
+            app = server.App(connection=connection, searcher=Searcher(connection), encode=None, fallback_note=None,
+                             model_name=None, hosts=kwargs["hosts"], static_dir=STATIC_DIR, library=kwargs["library"])
+            raise Started(app)
+
+        with patch.dict(os.environ, env), patch.object(server, "INDEX_DIR", self.root), \
+                patch.object(server, "build_app", fake_build_app):
+            server.main(["--library", "wire", "--bm25-only"])
+
+    def test_refused_without_a_privacy_config(self) -> None:
+        os.environ.pop("PREACHED_PRIVACY", None)
+        with self.assertRaises(SystemExit) as ctx:
+            self.serve({})
+        self.assertIn("privacy config", str(ctx.exception.code))
+
+    def test_refused_without_the_gate(self) -> None:
+        from app import server
+
+        os.environ.pop("PREACHED_PRIVACY", None)
+        connection = open_readonly(self.root / "wire.sqlite")
+        self.addCleanup(connection.close)
+        with self.assertRaises(SystemExit):
+            server.check_servable(connection, "wire", self.root / "wire.sqlite")
+        server.check_servable(connection, "wire", self.root / "wire.sqlite", church_gate=True)
+
+    def test_served_gated_with_a_privacy_config(self) -> None:
+        with self.assertRaises(Exception) as ctx:
+            self.serve({"PREACHED_PRIVACY": str(self.empty_config)})
+        app = ctx.exception.args[0]
+        self.assertIsInstance(app, App)
+        self.assertTrue(app.gated)
+        self.assertEqual(app.health()["chunks"], 0)  # nothing approved yet
+        self.assertEqual(app.health()["pending_review"], 2)
+        app.connection.close()
+
+    def test_bad_privacy_config_is_refused(self) -> None:
+        bad = self.root / "bad.toml"
+        bad.write_text("flagged_audio = 'play'\n")
+        with self.assertRaises(SystemExit):
+            self.serve({"PREACHED_PRIVACY": str(bad)})
 
 
 class FailClosedTests(Base):

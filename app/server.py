@@ -46,16 +46,16 @@ from preached.search import (  # noqa: E402
     _text_or_none,
 )
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
-from preached.privacy import default_config  # noqa: E402
+from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.store import (  # noqa: E402
     EmbeddingMismatch,
     open_readonly,
+    owner_only_problem,
     pending_review_count,
     public_domain_file,
     visible_count,
     visible_sql,
 )
-from preached.libraries import is_public_domain  # noqa: E402
 from preached.youtube.listing import chunk_video_id, policy_watch_url, public_audio_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
@@ -700,17 +700,20 @@ CHURCH_COLUMNS = frozenset({"video_id", "title", "published", "flag_end_s"})
 REVIEW_COLUMN = re.compile(r"approv|review", re.IGNORECASE)
 
 
-def check_servable(connection, library: str, index: Path) -> None:
-    """SystemExit unless this file is the Wesley index or an allow-listed public-domain library.
+def check_servable(connection, library: str, index: Path, *, church_gate: bool = False) -> None:
+    """SystemExit unless this file may be served as ``library``.
 
-    Nothing else is served: church libraries (YouTube imports) have no
-    redaction or approval gate yet, so they are refused (fail closed) until
-    PR #12 lands.
+    Served: the Wesley index; an allow-listed public-domain library; and a
+    church library ONLY when ``church_gate`` is true, which ``main`` sets only
+    when a privacy config is loaded and the publish gate is on (every library
+    but wesley is gated: ``App.gated``). Without both, church libraries are
+    refused (fail closed).
 
     A classic (``--library spurgeon``/``edwards``) is served only from its
     canonical INDEX_DIR/<slug>.sqlite (``libraries.classic_index_problem``:
-    realpath equality, no symlinks), and that file must carry the matching
-    ``library`` marker. A marker anywhere else is not trusted.
+    realpath equality, no symlinks), owned by this user in a directory nobody
+    else can write (``store.owner_only_problem``), and that file must carry the
+    matching ``library`` marker. A marker anywhere else is not trusted.
 
     Wesley must look like the Wesley index: chunks, every sermon id
     ``wesley-*``, no ``videos`` table, no ``library`` marker, and no chunk
@@ -723,8 +726,17 @@ def check_servable(connection, library: str, index: Path) -> None:
         row = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
         marker = row[0] if row is not None else None
     allowed = f"allowed: {', '.join((LIBRARY, *PUBLIC_DOMAIN))}"
+    if library != LIBRARY and not is_public_domain(library):
+        if not church_gate:
+            raise SystemExit(
+                f"error: --library {library!r} refused: church libraries are served only with a privacy "
+                "config ($PREACHED_PRIVACY) and the publish gate on."
+            )
+        return
     if library != LIBRARY:
         problem = classic_index_problem(library, index, INDEX_DIR)
+        for path in (INDEX_DIR, os.path.realpath(INDEX_DIR), os.path.realpath(index)):
+            problem = problem or owner_only_problem(path)
         if problem is not None:
             raise SystemExit(f"error: {problem}")
         if marker != library:
@@ -782,11 +794,22 @@ def main(argv: list[str] | None = None) -> None:
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
-    if library != LIBRARY and not is_public_domain(library):
-        raise SystemExit(
-            f"error: --library {library!r} refused: only {', '.join((LIBRARY, *PUBLIC_DOMAIN))} are served. "
-            "Church libraries are not served until redaction and approval are in place."
-        )
+    # Every library but wesley is gated (App.gated). A church library is
+    # served only with that gate on and a privacy config loaded.
+    gated = library != LIBRARY
+    church = gated and not is_public_domain(library)
+    church_gate = False
+    if church:
+        try:
+            required_config()  # $PREACHED_PRIVACY, the same config App reads
+        except MissingConfig as exc:
+            raise SystemExit(
+                f"error: --library {library!r} refused: {exc}. Only {', '.join((LIBRARY, *PUBLIC_DOMAIN))} "
+                "are served without one."
+            ) from exc
+        except (ValueError, OSError) as exc:
+            raise SystemExit(f"error: privacy config: {exc}") from exc
+        church_gate = gated
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
@@ -795,7 +818,7 @@ def main(argv: list[str] | None = None) -> None:
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
     try:
-        check_servable(connection, library, index)
+        check_servable(connection, library, index, church_gate=church_gate)
     except sqlite3.DatabaseError as exc:
         connection.close()
         raise SystemExit(f"error: {index} is not a SQLite index ({exc})") from exc
@@ -814,6 +837,9 @@ def main(argv: list[str] | None = None) -> None:
         static_dir=STATIC_DIR,
         library=library,
     )
+    if church and not app.gated:
+        connection.close()
+        raise SystemExit("error: refusing to serve a church library with the publish gate off")
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)
     elif app.encode is None:
