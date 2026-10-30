@@ -530,6 +530,44 @@ class ServerTests(unittest.TestCase):
         self.assertIn('href="https://librivox.org/"', page)
         self.assertIn("(public domain)", page.split("LibriVox</a>", 1)[1])
 
+    def test_hit_dict_audio_url_matches_the_page_allow_list(self) -> None:
+        from preached.search import Hit
+
+        def hit(audio_url):
+            return Hit(
+                rowid=1, score=1.0, chunk_id="c", sermon_id="wesley-001", sermon_title="T",
+                text="grace", start_s=1.0, end_s=2.0, source_url=None, scripture=None,
+                audio_url=audio_url,
+            )
+
+        archive = "https://archive.org/download/x/y.mp3"
+        self.assertEqual(hit_dict(hit(archive))["audio_url"], archive)
+        self.assertEqual(hit_dict(hit("/fixture/a.mp3"))["audio_url"], "/fixture/a.mp3")
+        self.assertIsNone(hit_dict(hit(None))["audio_url"])
+        for blocked in (
+            "javascript:alert(1)",
+            "data:audio/mp3;base64,AAAA",
+            "http://archive.org/download/x/y.mp3",
+            "file:///etc/passwd",
+            "//evil.example/a.mp3",
+            "https://www.youtube.com/watch?v=abcdefghijk&v=",
+            "https://www.youtube.com:abc/watch?v=abcdefghijk",
+        ):
+            with self.subTest(url=blocked):
+                self.assertIsNone(hit_dict(hit(blocked))["audio_url"])
+        hostile = (
+            "https://www.youtube.com/watch?v=abcdefghijk"
+            "&t=javascript:alert(1)&redirect=https://evil.example"
+        )
+        self.assertEqual(
+            hit_dict(hit(hostile))["audio_url"],
+            "https://www.youtube.com/watch?v=abcdefghijk",
+        )
+        extra = "https://m.youtube.com/watch?v=abcdefghijk&t=11s&redirect=https://evil.example"
+        cleaned = hit_dict(hit(extra))["audio_url"]
+        self.assertEqual(cleaned, "https://www.youtube.com/watch?v=abcdefghijk&t=11s")
+        self.assertNotIn("redirect", cleaned)
+
     def test_excerpt_hides_paragraph_numbers(self) -> None:
         from preached.search import Hit
 

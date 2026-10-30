@@ -137,7 +137,7 @@ def _chunks_for(video: Video, words: list[Word], windows: dict[str, tuple[float,
             {
                 **piece,
                 "chunk_id": f"{video.id}-c{index:04d}",
-                "audio_url": watch_url(video.id, piece["start_s"]),
+                "audio_url": watch_url(video.id, piece["start_s"], duration_s=video.duration_s),
                 "source_url": video.watch_url(),
             }
         )
