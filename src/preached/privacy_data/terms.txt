@@ -1,0 +1,28 @@
+# Capitalized words in sermons that are not people's names. Several are also
+# given names (Grace, Faith, Hope, Christian, Trinity, King); those are
+# redacted only after a title, a "my/our <relative>" cue or a prayer cue
+# ("pray for Grace").
+God Lord LORD Jesus Christ Spirit Holy Ghost Father Son Savior Saviour Messiah Lamb Shepherd
+King Kingdom Lordship Almighty Creator Redeemer Word Scripture Scriptures Bible Bibles Gospel
+Gospels Testament Old New Heaven Hell Hades Satan Devil Lucifer Trinity Triune Grace Faith
+Hope Love Joy Peace Mercy Truth Glory Christian Christians Christianity Church Baptist
+Baptists Methodist Methodists Presbyterian Lutheran Catholic Catholics Pentecostal Anglican
+Episcopal Wesleyan Puritan Puritans Reformed Reformation Protestant Protestants Orthodox
+Evangelical Amen Hallelujah Alleluia Hosanna Sabbath Passover Pentecost Easter Christmas
+Advent Lent Thanksgiving Good Friday Palm Resurrection Sunday Sundays Monday Tuesday
+Wednesday Thursday Friday Saturday January February March April May June July August
+September October November December Jew Jews Jewish Gentile Gentiles Pharisee Pharisees
+Sadducee Sadducees Israelite Israelites Hebrew Hebrews Greek Greeks Levite Levites
+Samaritan Samaritans Philistine Philistines Muslim Muslims Islam Allah Psalm Psalms Proverbs
+Genesis Exodus Leviticus Numbers Deuteronomy Judges Kings Chronicles Ecclesiastes Song Songs
+Lamentations Acts Romans Corinthians Galatians Ephesians Philippians Colossians
+Thessalonians Revelation Revelations Epistle Apostle Apostles Prophet Prophets Disciples
+Supper Communion Baptism School Sunday-School VBS Vacation Upward Awana Wednesday-night
+Fellowship Hall Sanctuary Chapel Tabernacle Temple Cross Calvary Ark Covenant Commandments
+Beatitudes Sermon Mount Lord's God's Christ's Jesus' Mr Mrs Ms Dr St Saint Pastor Reverend
+OK Okay Amen. Y'all Yall Gonna Wanna Gotta Ain't Uh Um Hmm Mm Oh Yeah Yes No Hey Wow Alright
+Facebook YouTube Google Instagram Twitter Netflix Walmart Target Amazon Bojangles Chick-fil-A
+COVID Covid ICU ER VA YMCA NFL NBA NASCAR Panthers Hornets Clemson Duke UNC Carolina's
+American-Christian Bethel Zion Grace Calvary Hillsong Elevation Passion Lifeway
+Methodism Calvinism Calvinist Calvinists Arminian Arminians Wesleyans Puritanism Anabaptist Anabaptists
+Moravian Moravians Huguenot Huguenots Quaker Quakers Amish Mennonite Mennonites Pietist Pietists

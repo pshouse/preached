@@ -1,0 +1,15 @@
+# Biblical people a sermon names often enough that, alone and without a
+# private cue, the name means the Bible figure. Hand-curated. Names here that
+# are also common given names are kept unless the sentence reads as a prayer
+# request, announcement or personal story (see privacy.py).
+Aaron Abel Abigail Abraham Abram Absalom Adam Ahab Amos Ananias Andrew Anna Apollos Aquila
+Barnabas Bartholomew Bathsheba Benjamin Boaz Caiaphas Cain Caleb Cornelius Daniel David
+Deborah Delilah Dorcas Eli Elijah Elisha Elizabeth Elisabeth Enoch Esau Esther Eve Ezekiel
+Ezra Gabriel Gideon Goliath Hagar Hannah Herod Hezekiah Hosea Isaac Isaiah Ishmael Jacob James
+Jairus Jeremiah Jesse Jezebel Joab Job Joel John Jonah Jonathan Joseph Joshua Josiah Judas
+Jude Judah Laban Lazarus Leah Levi Lot Luke Lydia Malachi Mark Martha Mary Matthew Matthias
+Micah Michael Miriam Mordecai Moses Naaman Nahum Naomi Nathan Nathanael Nehemiah Nicodemus Noah
+Obadiah Paul Peter Pharaoh Philemon Philip Pilate Priscilla Rachel Rahab Rebekah Rebecca Reuben
+Ruth Samson Samuel Sarah Sarai Saul Seth Silas Simeon Simon Solomon Stephen Thaddaeus Thomas
+Timothy Titus Uriah Zacchaeus Zechariah Zacharias Zebedee Zephaniah Zipporah Jesus Christ
+Immanuel Emmanuel Messiah

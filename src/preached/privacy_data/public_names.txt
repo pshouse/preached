@@ -1,0 +1,370 @@
+# Public and historical people a sermon may quote or tell about. Hand-curated.
+# One name per line as usually spoken. A whole line is kept when it appears as
+# a run of capitalized words. A one-word line is kept alone ("Spurgeon said");
+# if that word is also a common given name (Lewis, Calvin, Graham) it is kept
+# unless the sentence reads as a personal story. A title only keeps a name
+# when the titled form is listed ("Mr. Wesley").
+# Church fathers and medieval
+Augustine
+Athanasius
+Polycarp
+Ignatius
+Irenaeus
+Tertullian
+Origen
+Chrysostom
+John Chrysostom
+Jerome
+Ambrose
+Anselm
+Aquinas
+Thomas Aquinas
+Bernard of Clairvaux
+Francis of Assisi
+Saint Patrick
+Constantine
+Justin Martyr
+Clement of Rome
+Gregory the Great
+Benedict
+Bede
+Thomas a Kempis
+Julian of Norwich
+Brother Lawrence
+Brother Andrew
+John Wycliffe
+Wycliffe
+Jan Hus
+John Huss
+Erasmus
+# Reformation
+Martin Luther
+Luther
+John Calvin
+Calvin
+Ulrich Zwingli
+Zwingli
+John Knox
+Knox
+William Tyndale
+Tyndale
+Thomas Cranmer
+Cranmer
+Hugh Latimer
+Latimer
+Nicholas Ridley
+Philip Melanchthon
+Melanchthon
+Menno Simons
+Katharina von Bora
+Katie Luther
+# Puritans and after
+John Bunyan
+Bunyan
+John Owen
+Richard Baxter
+Baxter
+Thomas Watson
+Thomas Manton
+Thomas Brooks
+Thomas Goodwin
+Stephen Charnock
+Charnock
+Matthew Henry
+William Gurnall
+Samuel Rutherford
+Rutherford
+John Flavel
+Flavel
+Jeremiah Burroughs
+Burroughs
+Thomas Boston
+John Milton
+Milton
+Blaise Pascal
+Pascal
+Isaac Watts
+Watts
+Philip Doddridge
+William Law
+# Revival and Methodism
+John Wesley
+Charles Wesley
+Susanna Wesley
+Susannah Wesley
+Samuel Wesley
+Wesley
+Wesleys
+George Whitefield
+Whitefield
+Jonathan Edwards
+Edwards
+Sarah Edwards
+David Brainerd
+Brainerd
+Francis Asbury
+Asbury
+Thomas Coke
+Count Zinzendorf
+Zinzendorf
+Peter Bohler
+Selina Hastings
+Lady Huntingdon
+Charles Finney
+Finney
+Peter Cartwright
+Richard Allen
+Barton Stone
+Alexander Campbell
+# Nineteenth century
+Charles Spurgeon
+Charles Haddon Spurgeon
+C. H. Spurgeon
+Spurgeon
+Susannah Spurgeon
+D. L. Moody
+Dwight L. Moody
+Dwight Moody
+Moody
+Ira Sankey
+Sankey
+George Muller
+Muller
+Hudson Taylor
+J. Hudson Taylor
+William Carey
+Carey
+Adoniram Judson
+Judson
+Ann Judson
+Lottie Moon
+Annie Armstrong
+David Livingstone
+Livingstone
+Robert Moffat
+Mary Slessor
+Slessor
+Henry Martyn
+Robert Murray McCheyne
+McCheyne
+Andrew Murray
+J. C. Ryle
+Ryle
+John Newton
+Newton
+William Cowper
+Cowper
+William Wilberforce
+Wilberforce
+William Booth
+Catherine Booth
+Booth
+Fanny Crosby
+Crosby
+Frances Havergal
+Horatio Spafford
+Spafford
+Philip Bliss
+Charlotte Elliott
+George MacDonald
+MacDonald
+John Henry Newman
+Newman
+T. De Witt Talmage
+DeWitt Talmage
+Talmage
+Soren Kierkegaard
+Kierkegaard
+Charles Hodge
+B. B. Warfield
+Warfield
+John Broadus
+Broadus
+Phoebe Palmer
+Sojourner Truth
+Frederick Douglass
+Douglass
+Harriet Tubman
+Tubman
+Charles Simeon
+Robert Raikes
+Hannah More
+# Twentieth century and recent
+C. S. Lewis
+Lewis
+Jack Lewis
+A. W. Tozer
+Tozer
+Dietrich Bonhoeffer
+Bonhoeffer
+Corrie ten Boom
+Betsie ten Boom
+ten Boom
+Amy Carmichael
+Carmichael
+Jim Elliot
+Elisabeth Elliot
+Elliot
+Nate Saint
+Oswald Chambers
+Chambers
+G. K. Chesterton
+Chesterton
+Billy Graham
+Franklin Graham
+Ruth Graham
+Graham
+Billy Sunday
+Watchman Nee
+Nee
+Eric Liddell
+Liddell
+Martyn Lloyd-Jones
+Lloyd-Jones
+Francis Schaeffer
+Schaeffer
+J. I. Packer
+Packer
+John Stott
+Stott
+R. C. Sproul
+Sproul
+Tim Keller
+Timothy Keller
+Keller
+John Piper
+Piper
+Charles Stanley
+Andy Stanley
+Adrian Rogers
+W. A. Criswell
+Criswell
+Max Lucado
+Lucado
+Rick Warren
+Warren
+Chuck Swindoll
+Swindoll
+Philip Yancey
+Yancey
+Ravi Zacharias
+Henri Nouwen
+Nouwen
+Richard Foster
+Dallas Willard
+Willard
+Mother Teresa
+Martin Luther King
+Martin Luther King Jr
+Dr. King
+E. M. Bounds
+Bounds
+Andrew Bonar
+Leonard Ravenhill
+Ravenhill
+Vance Havner
+Havner
+Warren Wiersbe
+Wiersbe
+Jerry Bridges
+John MacArthur
+MacArthur
+David Platt
+Francis Chan
+Chan
+Tony Evans
+Priscilla Shirer
+Beth Moore
+Joni Eareckson Tada
+Brennan Manning
+Dorothy Sayers
+J. R. R. Tolkien
+Tolkien
+Richard Wurmbrand
+Wurmbrand
+Brother Yun
+Gladys Aylward
+Aylward
+Mary McLeod Bethune
+Bethune
+Desmond Tutu
+Pope Francis
+John Paul
+# World history and letters
+Abraham Lincoln
+Lincoln
+George Washington
+Washington
+Thomas Jefferson
+Jefferson
+Benjamin Franklin
+Franklin
+Winston Churchill
+Churchill
+Adolf Hitler
+Hitler
+Napoleon
+Napoleon Bonaparte
+Julius Caesar
+Caesar
+Nero
+Alexander the Great
+Plato
+Aristotle
+Socrates
+Shakespeare
+William Shakespeare
+Charles Dickens
+Dickens
+Leo Tolstoy
+Tolstoy
+Fyodor Dostoevsky
+Dostoevsky
+Victor Hugo
+Charles Darwin
+Darwin
+Sigmund Freud
+Freud
+Karl Marx
+Marx
+Friedrich Nietzsche
+Nietzsche
+Albert Einstein
+Einstein
+Isaac Newton
+Galileo
+Christopher Columbus
+Columbus
+Mark Twain
+Twain
+Benjamin Franklin
+Rosa Parks
+Ronald Reagan
+Reagan
+John F. Kennedy
+Kennedy
+Theodore Roosevelt
+Franklin Roosevelt
+Roosevelt
+Harriet Beecher Stowe
+Helen Keller
+Florence Nightingale
+Nightingale
+Josephus
+Flavius Josephus
+Herodotus
+Tacitus
+Pliny
+Mr. Wesley
+Mrs. Wesley
+Mr. Spurgeon
+Mr. Moody
+Mr. Whitefield
+Mr. Edwards
+Dr. Lloyd-Jones
+Dr. Graham
+Saint Augustine
+St. Augustine
+Saint Francis
+St. Francis
+St. Patrick
