@@ -1,6 +1,11 @@
-"""Score ``preached.skip.propose`` on hand-marked synthetic service transcripts.
+"""Score ``preached.skip.propose`` on LLM-written synthetic service transcripts.
 
-Each line of a set is ``{"id", "text"}`` (plus an optional ``note``). In
+**The data is synthetic and LLM-written.** Claude (an LLM, working task
+W3-PRIV-SKIP) wrote every transcript and marked every gold stretch; no person
+wrote or checked them, and none comes from a real service. Every line carries
+``provenance`` saying so, and this script refuses a line without it.
+
+Each line of a set is ``{"id", "provenance", "text"}`` (plus an optional ``note``). In
 ``text``, ``[[announcements]]``, ``[[prayer]]`` or ``[[testimony]]`` opens a
 gold stretch and ``[[/]]`` closes it; the markers are separate words and are
 removed before scoring. Words are split on spaces.
@@ -30,6 +35,7 @@ from preached.skip import propose  # noqa: E402
 
 OPEN = re.compile(r"^\[\[(announcements|prayer|testimony)\]\]$")
 CLOSE = "[[/]]"
+PROVENANCE_PREFIX = "synthetic: written by an LLM"
 
 
 def parse(text: str) -> tuple[list[str], list[tuple[int, int, str]]]:
@@ -61,6 +67,8 @@ def score(path: Path, show: bool) -> dict:
         if not line.strip():
             continue
         doc = json.loads(line)
+        if not str(doc.get("provenance", "")).startswith(PROVENANCE_PREFIX):
+            raise ValueError(f"{path}: {doc.get('id')} has no LLM-written synthetic provenance label")
         words, gold = parse(doc["text"])
         stretches = propose(words)
         excluded = {i for s in stretches for i in range(s.start, s.end)}

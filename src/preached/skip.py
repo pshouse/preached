@@ -7,9 +7,12 @@ public teaching; these stretches are not.
 
 **This proposes; a person decides.** The stretches go into the sermon's
 private review file, where the approving human confirms, widens or adds
-stretches (``preached.exclusions``). Measured on a small synthetic set that I
-(Claude) wrote by hand, see ``reports/W3-PRIV-SKIP.md``; it is not measured
-on real services. The human review is the real safeguard.
+stretches (``preached.exclusions``). Measured only on a small synthetic set
+that an LLM (Claude) wrote, transcripts and gold labels alike (see
+``eval/skip`` and ``reports/W3-PRIV-SKIP.md``); it is not measured on real
+services. Word recall there was 0.870, so the cues are not enough alone: the
+reviewer must listen through the whole recording before approving. That
+human check is the real control.
 
 Deterministic rules, no model. The words are split into units (sentences,
 or 30-word pieces when Whisper gave no punctuation), and each unit is

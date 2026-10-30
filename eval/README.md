@@ -63,3 +63,9 @@ The current file `/cache/corpus/wesley/chunks.jsonl` has 8,383 chunks (median 12
 ## Natural-language probes (W3-POLISH, not human-reviewed)
 
 `nl-questions-w3polish.jsonl` holds 18 short questions **written by the W3-POLISH coding agent (an LLM, Claude), not reviewed by a person**. They avoid sermon-title words where possible and include the CTO's "worry" and "How do I stop worrying?". Each lists the sermon(s) the agent expects to answer it (`expected_sermons`), checked only against sermon titles and a text grep, so treat them as probes, not labels. They are not part of `questions.jsonl`, are not used by `bench.py`, and the abstain floor is **not** fitted on them. `uv run --group bench scripts/check_nl_questions.py` prints the abstain level for each and what a refit would do. Results: `reports/W3-POLISH.md`, fix-up section.
+
+## Stretch-exclusion set (`skip/`, W3-PRIV-SKIP): synthetic, LLM-written, not human-reviewed
+
+`skip/dev.jsonl` (8 docs) and `skip/test.jsonl` (12 docs) are **synthetic service transcripts written by an LLM (Claude, the W3-PRIV-SKIP coding agent)**. The same LLM marked every gold stretch (announcements, prayer requests, testimonies). No person wrote or checked them, and nothing in them was transcribed from a real service; every name is invented. Each line carries a `provenance` field saying so, and `skip/evaluate.py` refuses a line without it. The same agent also wrote the rules being scored (`src/preached/skip.py`), which is weak protection against overfitting.
+
+On the test split the rules excluded 635 of 730 gold words (word recall 0.870). **The cues are not enough alone.** The human check is the real control: whoever approves a church sermon must listen through the whole recording before approving (CTO ruling, 2026-10-30). Real services are unmeasured. Results: `skip/results-2026-10-30.json` and `reports/W3-PRIV-SKIP.md`.
