@@ -35,9 +35,17 @@ Branch `feat/w1-ingest`. Code in `ingest/`.
   Range, verifies **size + md5** against archive.org metadata, renames
   atomically, and retries 4×.
 - **Transcription** (`ingest/transcribe.py`): faster-whisper **large-v3-turbo**,
-  `BatchedInferencePipeline` (Silero VAD chunks), fp16, batch 8, beam 5,
-  `word_timestamps=True`, `language="en"`, and a one-line prompt
-  `"<work title>, by John Wesley."` (see the finding below).
+  two passes per file, both on the original timeline:
+  1. **Intro probe**: the first 60 s, sequential, no VAD, no prompt. This
+     mode does transcribe the LibriVox disclaimer. It finds the cut where the
+     sermon starts: just before the reader's last announcement of the work
+     title ("Sermons on Several Occasions, … by John Wesley"), with a
+     boilerplate-regex + pause fallback. Probe words before the cut become a
+     `boilerplate: true` segment.
+  2. **Main pass**: `BatchedInferencePipeline` (Silero VAD chunks), fp16,
+     batch 8, beam 5, `word_timestamps=True`, `language="en"`, a one-line
+     prompt `"<work title>, by John Wesley."`, run on `audio[cut:]`, with `cut`
+     added back to every timestamp (`meta.intro_cut_s`).
   - **CUDA OOM back-off**: steps down `(fp16, 8) → (fp16, 4) → (int8_float16, 4)
     → (int8_float16, 1)`, waits 10 s, reloads the model if the compute type
     changes, and retries the same file. Tested by injecting OOM errors. The
@@ -52,7 +60,7 @@ Branch `feat/w1-ingest`. Code in `ingest/`.
   **Indexers should keep words with `searchable_start <= start < searchable_end`.**
   The window is computed at word level, so a segment that ends with "...Amen.
   End of section two." keeps its sermon words but loses the outro.
-  Sample: `ingest/samples/wesley-s1-02.json` (103 KB).
+  Sample: `ingest/samples/wesley-s1-07.json` (136 KB; intro + outro both marked).
 - **One command**, resumable and idempotent (`ingest/run.py`): skips finished
   transcripts, writes each one atomically (`.tmp` + rename, so a crash loses
   at most the file in flight), prefetches the next download while the GPU
@@ -70,16 +78,21 @@ Branch `feat/w1-ingest`. Code in `ingest/`.
    punctuation. Batched mode applies the prompt to every chunk, so I checked
    for leakage: "Several Occasions" appears only where readers say it
    (`qa.py` flags files with more than 2 occurrences).
-2. **Whisper mostly skips LibriVox boilerplate on its own** ("This is a LibriVox
-   recording…", and usually "End of section N"), even when the prompt mentions
-   LibriVox. It was likely trained on LibriVox text with the disclaimers
-   stripped. The marker therefore handles both cases: when the phrases are
-   transcribed (outros sometimes are, e.g. "End of section two."), regexes in
-   the first/last 120 s mark them, including a reader-credit tail of up to 12
-   words. When Whisper skipped them, the searchable window starts at the
-   first transcribed word, so skipped boilerplate can't produce false hits.
-   The cut is at word level, so a Wesley dateline ("Preached at Balham,
-   February 19th, 1790") right before "End of section 11" stays searchable.
+2. **Batched Whisper skips the LibriVox disclaimer, and that shifted
+   timestamps.** It drops "This is a LibriVox recording…" even when the
+   prompt mentions LibriVox (it was likely trained on LibriVox text with the
+   disclaimers stripped). The word aligner then spread the next words
+   ("Sermons on Several Occasions…") back over the disclaimer audio, putting
+   the first ~30 s chunk up to **18 s early**. QA caught this in the first
+   full run (sermons starting at 2 s), so I stopped the run, added the intro
+   probe + cut above, and restarted from scratch. Check after the fix: word
+   start times agree with an independent sequential decode of sermon 1 to a
+   **median 0.01 s, p90 0.05 s, p99 0.33 s** (4,065 matched words, no real
+   outliers). Outros ("End of section 7. Recording by …") are marked by
+   regex in the last 120 s, cut at word level, so a Wesley dateline
+   ("Preached at Balham, February 19th, 1790") right before "End of section"
+   stays searchable. Dropped outros need no marking, since they can't
+   produce search hits.
 3. **Sequential (non-batched) decoding was worse**: 3.9% WER vs 1.4% on sermon 1,
    because it silently dropped a whole sentence (a known
    condition-on-previous-text failure), and it ran at half the speed. Batched
@@ -111,11 +124,14 @@ RESULTS_PLACEHOLDER
 
 ## 4. Open issues / risks
 
-- **The intro disclaimer is not in the transcripts** because Whisper drops it
-  (see finding 2). If a later model starts transcribing it, the regex marker
-  handles it (tested on a synthetic intro). The title/scripture announcement
-  ("Sermon 2. The Almost Christian.") is kept as searchable. It's the
-  reader voicing Wesley's heading, which is harmless and useful.
+- **The intro cut depends on readers announcing the work title** (all
+  sampled files across the three series do). If a file lacks it, the regex +
+  pause fallback applies, and if that finds nothing the whole file is the
+  main pass (cut 0). Some readers' disclaimers are skipped even by the probe
+  (e.g. s2-06): `boilerplate_intro` is then empty, but the cut still lands
+  correctly on the title announcement. The title/scripture announcement
+  ("Sermon 7. The Way to the Kingdom.") stays searchable. It's the reader
+  voicing Wesley's heading, which is harmless and useful.
 - **Paragraph-number WER**: readers don't voice the printed "1." / "II."
   numbers or inline references like "Luke 4:34". `wer_check.py` drops
   paragraph numbers, but the inline references still count as errors, so the
