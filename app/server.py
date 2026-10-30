@@ -32,6 +32,15 @@ if str(SRC) not in sys.path:
 
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
+from preached.library import (  # noqa: E402
+    CHURCH_EMPTY,
+    CHURCH_LABEL,
+    CLASSIC_LABEL,
+    church_index_matches,
+    is_sample_library,
+    read_label,
+    resolve_church_path,
+)
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -158,7 +167,16 @@ def _first(args: dict, name: str) -> str | None:
     return values[0]
 
 
-def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, str]:
+def parse_search_args(
+    args: dict, *, library: str = LIBRARY, libraries: list[str] | None = None
+) -> tuple[str, int, str, str]:
+    """Query, k, mode, and the library slug this search is scoped to.
+
+    ``libraries`` is the files this process has open (classic, then church).
+    A slug outside that list is a 400. The default slug is the classic one,
+    so a request that omits ``library`` stays on the library the page already
+    asks for.
+    """
     raw_q = _first(args, "q")
     if raw_q is None:
         raise BadRequest("q is required")
@@ -184,11 +202,12 @@ def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, 
     if mode not in MODES:
         raise BadRequest("mode must be hybrid, bm25, or dense")
 
+    allowed = list(libraries) if libraries else [library]
     raw_library = _first(args, "library")
-    chosen = library if raw_library is None or raw_library.strip() == "" else raw_library.strip()
-    if chosen != library:
-        raise BadRequest(f"library must be {library}")
-    return query, k, mode
+    chosen = allowed[0] if raw_library is None or raw_library.strip() == "" else raw_library.strip()
+    if chosen not in allowed:
+        raise BadRequest("library must be " + " or ".join(allowed))
+    return query, k, mode, chosen
 
 
 def hit_dict(hit) -> dict:
@@ -209,6 +228,33 @@ def hit_dict(hit) -> dict:
         "score": float(hit.score),
     }
     return {key: payload[key] for key in RESULT_FIELDS}
+
+
+def _side_body(
+    payload: dict,
+    *,
+    library: str,
+    label: str,
+    sample: bool,
+    present: bool,
+    empty_message: str | None,
+) -> dict:
+    """One column of /api/side. Hit fields are the same object ``search`` returns."""
+    results = payload["results"]
+    empty = not results
+    return {
+        "library": library,
+        "label": label,
+        "sample": sample,
+        "present": present,
+        "empty": empty,
+        "message": empty_message if empty and empty_message else None,
+        "mode": payload["mode"],
+        "results": results,
+        "note": payload["note"],
+        "abstain": payload["abstain"],
+        "confidence": payload["confidence"],
+    }
 
 
 def default_loader(connection, model_key: str):
@@ -244,8 +290,44 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
     return searcher, encode, None
 
 
+def load_church_searcher(connection, model_key: str, *, bm25_only: bool):
+    """Searcher for the church file, plus a note when that side is BM25 only.
+
+    A bad or missing church vector file does not take the classic side down
+    with it. The church column falls back to keyword search and says so.
+    """
+    if bm25_only:
+        return Searcher(connection), None
+    try:
+        return Searcher(connection, model=model_key), None
+    except EmbeddingMismatch:
+        logging.exception("church vectors do not match search/models.toml; that side is BM25 only")
+        return Searcher(connection), STALE_NOTE
+    except Exception:
+        logging.exception("church vectors unavailable; that side is BM25 only")
+        return Searcher(connection), STALE_NOTE
+
+
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, floor=None, library: str = LIBRARY):
+    def __init__(
+        self,
+        connection,
+        searcher,
+        encode,
+        fallback_note,
+        model_name,
+        hosts,
+        static_dir,
+        floor=None,
+        library: str = LIBRARY,
+        church_connection=None,
+        church_searcher=None,
+        church_library: str | None = None,
+        church_label: str | None = None,
+        church_sample: bool | None = None,
+        church_note: str | None = None,
+        classic_label: str | None = None,
+    ):
         self.connection = connection
         self.searcher = searcher
         self.encode = encode
@@ -258,6 +340,26 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
+        self.classic_label = classic_label or read_label(connection) or (
+            CLASSIC_LABEL if library == LIBRARY else library
+        )
+        # A church side exists only when both the file and its searcher are here.
+        # Missing is the empty state, not a failed server.
+        if church_searcher is None or not church_library:
+            self.church_connection = None
+            self.church_searcher = None
+            self.church_library = None
+            self.church_label = CHURCH_LABEL
+            self.church_sample = False
+            self.church_note = None
+        else:
+            self.church_connection = church_connection
+            self.church_searcher = church_searcher
+            self.church_library = church_library
+            self.church_label = church_label or read_label(church_connection) or CHURCH_LABEL
+            detected = is_sample_library(church_library, church_connection)
+            self.church_sample = detected if church_sample is None else bool(church_sample) or detected
+            self.church_note = church_note
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
@@ -273,21 +375,46 @@ class App:
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
             "abstain_calibrated": self.floor is not None,
+            "church": self.church_library,
         }
 
-    def search(self, query: str, k: int, mode: str) -> dict:
+    def library_names(self) -> list[str]:
+        """Slugs this process will search. Classic first, then the church file."""
+        names = [self.library]
+        if self.church_library and self.church_library not in names:
+            names.append(self.church_library)
+        return names
+
+    def search(self, query: str, k: int, mode: str, *, library: str | None = None) -> dict:
+        """Search one open library. ``library`` defaults to the classic file."""
+        chosen = self.library if library is None else library
+        if chosen == self.library:
+            searcher = self.searcher
+            side_note = None
+        elif chosen == self.church_library and self.church_searcher is not None:
+            searcher = self.church_searcher
+            side_note = self.church_note
+        else:
+            raise BadRequest("library must be " + " or ".join(self.library_names()))
         started = time.perf_counter()
-        note = None
-        effective = mode
         with self.lock:
-            if self.encode is None:
-                if self.fallback_note:
+            note = None
+            effective = mode
+            # No query encoder, or this file has no usable vectors: keyword
+            # search, same rule as a BM25-only process. The other side is
+            # unaffected because it has its own searcher.
+            if self.encode is None or searcher._matrix is None:
+                if self.encode is None and self.fallback_note:
                     note = self.fallback_note
+                elif side_note:
+                    note = side_note
                 elif mode != "bm25":
                     note = BM25_ONLY_NOTE
                 effective = "bm25"
             vector = None if effective == "bm25" else self.encode(query)
-            kept, confidence = search_with_confidence(self.searcher, query, vector, effective, k, self.floor)
+            kept, confidence = search_with_confidence(
+                searcher, query, vector, effective, k, self.floor
+            )
         return {
             "query": query,
             "mode": effective,
@@ -298,6 +425,53 @@ class App:
             # closest passages stay in results so a person can still look.
             "abstain": confidence.abstain,
             "confidence": confidence.as_dict(),
+        }
+
+    def side(self, query: str, k: int, mode: str) -> dict:
+        """Top ``k`` hits from the classic library and from your church.
+
+        Each side uses the same abstain rule as ``search``. A missing church
+        file is a 200 with an empty church side, not an error.
+        """
+        started = time.perf_counter()
+        classic = _side_body(
+            self.search(query, k, mode, library=self.library),
+            library=self.library,
+            label=self.classic_label,
+            sample=False,
+            present=True,
+            empty_message=None,
+        )
+        if self.church_searcher is None:
+            church = {
+                "library": None,
+                "label": CHURCH_LABEL,
+                "sample": False,
+                "present": False,
+                "empty": True,
+                "message": CHURCH_EMPTY,
+                "mode": None,
+                "results": [],
+                "note": None,
+                "abstain": False,
+                "confidence": None,
+            }
+        else:
+            church = _side_body(
+                self.search(query, k, mode, library=self.church_library),
+                library=self.church_library,
+                label=self.church_label,
+                sample=self.church_sample,
+                present=True,
+                empty_message=CHURCH_EMPTY,
+            )
+        return {
+            "query": query,
+            "mode": mode,
+            "k": k,
+            "took_ms": int(round((time.perf_counter() - started) * 1000)),
+            "classic": classic,
+            "church": church,
         }
 
     def sermon(self, sermon_id: str) -> dict | None:
@@ -334,7 +508,19 @@ class App:
 
 
 def build_app(
-    connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, floor=None, library: str = LIBRARY
+    connection,
+    *,
+    model_key: str,
+    bm25_only: bool,
+    hosts,
+    static_dir,
+    loader=None,
+    floor=None,
+    library: str = LIBRARY,
+    church_connection=None,
+    church_library: str | None = None,
+    church_label: str | None = None,
+    church_sample: bool | None = None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -357,6 +543,12 @@ def build_app(
             # keeps any other surprise from stopping the server.
             logging.exception("abstain calibration unusable; abstain floor disabled")
             floor = None
+    church_searcher = None
+    church_note = None
+    if church_connection is not None and church_library:
+        church_searcher, church_note = load_church_searcher(
+            church_connection, model_key, bm25_only=bm25_only or encode is None
+        )
     return App(
         floor=floor,
         connection=connection,
@@ -367,6 +559,12 @@ def build_app(
         hosts=hosts,
         static_dir=static_dir,
         library=library,
+        church_connection=church_connection,
+        church_searcher=church_searcher,
+        church_library=church_library,
+        church_label=church_label,
+        church_sample=church_sample,
+        church_note=church_note,
     )
 
 
@@ -453,13 +651,18 @@ def make_handler(app: App):
             if path == "/healthz":
                 self._send_json(200, app.health(), include_body)
                 return
-            if path == "/api/search":
+            if path in ("/api/search", "/api/side"):
                 try:
                     args = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=32)
                 except ValueError as exc:
                     raise BadRequest("request too large", 414) from exc
-                query, k, mode = parse_search_args(args, library=app.library)
-                self._send_json(200, app.search(query, k, mode), include_body)
+                query, k, mode, chosen = parse_search_args(args, libraries=app.library_names())
+                if path == "/api/side":
+                    # Both columns. ``library`` is still checked so a bad slug
+                    # cannot widen what this process is willing to open.
+                    self._send_json(200, app.side(query, k, mode), include_body)
+                else:
+                    self._send_json(200, app.search(query, k, mode, library=chosen), include_body)
                 return
             if path.startswith("/api/sermon/"):
                 self._send_sermon(path[len("/api/sermon/") :], include_body)
@@ -580,8 +783,19 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Serve Preached search on this machine.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--library", default=LIBRARY, help="Library slug. Index defaults to /cache/index/<slug>.sqlite")
+    parser.add_argument("--library", default=LIBRARY, help="Classic library slug. Index defaults to /cache/index/<slug>.sqlite")
     parser.add_argument("--index", type=Path, default=None, help="SQLite index. Defaults to /cache/index/<library>.sqlite")
+    parser.add_argument(
+        "--church-library",
+        default=None,
+        help="Slug marked as your church. Default: the single index with meta role=church",
+    )
+    parser.add_argument(
+        "--church-index",
+        type=Path,
+        default=None,
+        help="SQLite file for your church. Overrides --church-library and the role mark",
+    )
     parser.add_argument(
         "--hosts",
         default="127.0.0.1,localhost",
@@ -599,37 +813,75 @@ def main(argv: list[str] | None = None) -> None:
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
+    church_library = args.church_library.strip() if args.church_library else None
+    if church_library is not None and not LIBRARY_SLUG.fullmatch(church_library):
+        raise SystemExit("church library must be a short slug: lowercase letters, digits, and hyphens")
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    church_path = resolve_church_path(
+        INDEX_DIR,
+        classic=index,
+        church_index=args.church_index,
+        church_library=church_library,
+    )
+    if church_path is None and (args.church_index is not None or church_library):
+        logging.info("church library file is missing; that side will say nothing is there yet")
+    elif args.church_index is None and not church_library:
+        marks = church_index_matches(INDEX_DIR, exclude=index)
+        if len(marks) > 1:
+            logging.info(
+                "more than one library is marked your church (%s); name one with --church-library",
+                ", ".join(path.stem for path in marks),
+            )
+    church_slug = church_library
+    if church_path is not None and church_slug is None:
+        church_slug = church_path.stem if LIBRARY_SLUG.fullmatch(church_path.stem) else None
+        if church_slug is None:
+            logging.info("church index name %s is not a library slug; that side is empty", church_path.name)
+            church_path = None
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
-    hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
-    bound = args.host.strip().lower()
-    if bound not in {"0.0.0.0", "::", ""}:
-        hosts.add(bound)
-    app = build_app(
-        connection,
-        model_key=args.model,
-        bm25_only=args.bm25_only,
-        hosts=hosts,
-        static_dir=STATIC_DIR,
-        library=library,
-    )
-    if app.fallback_note:
-        logging.warning("%s", app.fallback_note)
-    elif app.encode is None:
-        logging.info("BM25 only; the embedding model was not loaded")
-    server = make_server(app, args.host, args.port)
+    church_connection = None
     try:
-        serve_forever(server)
-    except KeyboardInterrupt:
-        logging.info("stopping")
+        if church_path is not None:
+            try:
+                church_connection = open_readonly(church_path, check_same_thread=False)
+            except FileNotFoundError:
+                logging.info("church library file is missing; that side will say nothing is there yet")
+                church_connection = None
+                church_slug = None
+        hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
+        bound = args.host.strip().lower()
+        if bound not in {"0.0.0.0", "::", ""}:
+            hosts.add(bound)
+        app = build_app(
+            connection,
+            model_key=args.model,
+            bm25_only=args.bm25_only,
+            hosts=hosts,
+            static_dir=STATIC_DIR,
+            library=library,
+            church_connection=church_connection,
+            church_library=church_slug if church_connection is not None else None,
+        )
+        if app.fallback_note:
+            logging.warning("%s", app.fallback_note)
+        elif app.encode is None:
+            logging.info("BM25 only; the embedding model was not loaded")
+        server = make_server(app, args.host, args.port)
+        try:
+            serve_forever(server)
+        except KeyboardInterrupt:
+            logging.info("stopping")
+        finally:
+            server.server_close()
     finally:
-        server.server_close()
         connection.close()
+        if church_connection is not None:
+            church_connection.close()
 
 
 if __name__ == "__main__":
