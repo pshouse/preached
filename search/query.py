@@ -19,11 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from preached import env  # noqa: F401, E402
 from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
-from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
-from preached.store import EmbeddingMismatch, connect, open_readonly, sync_chunks  # noqa: E402
+from preached.store import EmbeddingMismatch, chunks_in_sync, connect, open_readonly, sync_chunks  # noqa: E402
 from preached.youtube.listing import youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
@@ -58,20 +58,25 @@ def is_library_file(path: Path) -> bool:
 
 
 def open_index(index: Path | None, library: str | None):
-    """Connect to the index to search. Only the Wesley index file is opened for writing.
+    """Open the index to search, read-only (sqlite ``mode=ro``, ``query_only``).
 
-    The Wesley index (INDEX_PATH) gets the chunk sync, as on main. Everything
-    else is opened read-only (sqlite ``mode=ro``) and never created: --library
-    takes an allow-listed public-domain slug and opens
-    /cache/index/<slug>.sqlite as built; any other --index path is searched
-    as it is. --index must not be a library file: the Wesley sync would
-    replace its chunks and drop its vectors.
+    --library takes an allow-listed public-domain slug and opens only its
+    canonical /cache/index/<slug>.sqlite as built
+    (``libraries.classic_index_problem``: no symlinks, realpath equality).
+    The Wesley index (INDEX_PATH) gets main's chunk sync first, through a
+    read-write connection that is opened only when the index is out of date
+    (``ensure_chunks``); the search itself then runs read-only. Any other
+    --index path is searched as it is. --index must not be a library file:
+    the Wesley sync would replace its chunks and drop its vectors.
     """
     if library is not None:
         if not is_public_domain(library):
             raise SystemExit(
                 f"error: --library {library!r} refused: only public-domain libraries ({', '.join(PUBLIC_DOMAIN)})"
             )
+        problem = classic_index_problem(library, INDEX_DIR / f"{library}.sqlite", INDEX_DIR)
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
         return open_target(INDEX_DIR / f"{library}.sqlite")
     path = index if index is not None else INDEX_PATH
     if is_library_file(path):
@@ -79,11 +84,9 @@ def open_index(index: Path | None, library: str | None):
             f"error: {path} is a library index, not the Wesley index. "
             f"Search it with --library {path.stem} (it is never synced with Wesley chunks)."
         )
-    if path.resolve() != INDEX_PATH.resolve():
-        return open_target(path)
-    connection = connect(path)
-    ensure_chunks(connection)
-    return connection
+    if path.resolve() == INDEX_PATH.resolve():
+        ensure_chunks(path)
+    return open_target(path)
 
 
 def open_target(path: Path):
@@ -105,7 +108,13 @@ def open_target(path: Path):
     return connection
 
 
-def ensure_chunks(connection) -> None:
+def ensure_chunks(path: Path) -> None:
+    """Sync the Wesley index at ``path`` with the chunk file, as on main.
+
+    Checked read-only first; ``connect`` (which may create the file, add
+    columns and write chunks) runs only when that check says the sync would
+    change something.
+    """
     try:
         chunks_path = index_chunks_jsonl()
     except StaleChunks as exc:
@@ -114,7 +123,19 @@ def ensure_chunks(connection) -> None:
         raise SystemExit(
             f"missing {chunks_path}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
         )
-    sync_chunks(connection, chunks_path)
+    if path.is_file():
+        reader = open_readonly(path)
+        try:
+            current = chunks_in_sync(reader, chunks_path)
+        finally:
+            reader.close()
+        if current:
+            return
+    connection = connect(path)
+    try:
+        sync_chunks(connection, chunks_path)
+    finally:
+        connection.close()
 
 
 def fmt_time(value) -> str:
