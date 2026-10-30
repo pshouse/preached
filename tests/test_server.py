@@ -53,6 +53,7 @@ AUDIO = "https://archive.org/download/sermonsfirstseries_1307_librivox/example.m
 CCEL = "https://ccel.org/ccel/wesley/sermons/sermons.v.i.html"
 RESULT_KEYS = {
     "chunk_id",
+    "chunk_ids",
     "sermon_id",
     "sermon_number",
     "sermon_title",

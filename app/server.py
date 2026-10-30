@@ -84,6 +84,7 @@ STALE_NOTE = "Stored passage vectors do not match the configured model; results 
 
 RESULT_FIELDS = (
     "chunk_id",
+    "chunk_ids",
     "sermon_id",
     "sermon_number",
     "sermon_title",
@@ -188,6 +189,7 @@ def parse_search_args(args: dict) -> tuple[str, int, str]:
 def hit_dict(hit) -> dict:
     payload = {
         "chunk_id": hit.chunk_id,
+        "chunk_ids": hit.chunk_ids,
         "sermon_id": hit.sermon_id,
         "sermon_number": hit.sermon_number,
         "sermon_title": hit.sermon_title,
