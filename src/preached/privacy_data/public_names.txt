@@ -368,3 +368,303 @@ St. Augustine
 Saint Francis
 St. Francis
 St. Patrick
+# Saints and early church, more
+Monica
+Saint Monica
+Perpetua
+Felicity
+Perpetua and Felicity
+Cyprian
+Basil the Great
+Gregory of Nyssa
+Gregory of Nazianzus
+Macrina
+Antony of Egypt
+Saint Antony
+Simeon Stylites
+Columba
+Boniface
+Cyril and Methodius
+Catherine of Siena
+Teresa of Avila
+John of the Cross
+Ignatius of Loyola
+Francis Xavier
+Thomas More
+Joan of Arc
+Hildegard of Bingen
+# Non-Western church history
+Sundar Singh
+Sadhu Sundar Singh
+Pandita Ramabai
+Ramabai
+Samuel Ajayi Crowther
+Ajayi Crowther
+Crowther
+John Sung
+Wang Mingdao
+Bakht Singh
+Toyohiko Kagawa
+Kagawa
+Kim Kyo-Shin
+Festo Kivengere
+Janani Luwum
+William Wade Harris
+Simon Kimbangu
+Desmond Tutu
+Tutu
+Ravi Zacharias
+Brother Yun
+Samuel Lamb
+Ka Ying
+# Modern authors, pastors, teachers
+Eugene Peterson
+John Ortberg
+Ortberg
+Henri Nouwen
+Brennan Manning
+Jerry Bridges
+Kevin DeYoung
+Mark Dever
+Ligon Duncan
+Albert Mohler
+Russell Moore
+J. D. Greear
+Matt Chandler
+Louie Giglio
+Christine Caine
+Lysa TerKeurst
+Ann Voskamp
+Jen Wilkin
+Rebecca McLaughlin
+Sam Allberry
+Tim Mackie
+N. T. Wright
+Tom Wright
+Scot McKnight
+Alistair Begg
+Begg
+Sinclair Ferguson
+Paul David Tripp
+Paul Tripp
+David Jeremiah
+Charles Swindoll
+Chuck Smith
+Greg Laurie
+Jack Hayford
+Jim Cymbala
+Steven Furtick
+T. D. Jakes
+Joel Osteen
+Osteen
+Rick Warren
+Bob Goff
+Francis Chan
+Kyle Idleman
+Mark Batterson
+Craig Groeschel
+Dave Ramsey
+Ramsey
+James Dobson
+Dobson
+Josh McDowell
+Lee Strobel
+Strobel
+William Lane Craig
+Os Guinness
+Frederick Buechner
+Buechner
+Madeleine L'Engle
+Flannery O'Connor
+Wendell Berry
+Marilynne Robinson
+Annie Dillard
+Dorothy Day
+Thomas Merton
+Merton
+Karl Barth
+Barth
+Paul Tillich
+Reinhold Niebuhr
+Niebuhr
+Jurgen Moltmann
+Abraham Kuyper
+Kuyper
+Herman Bavinck
+Bavinck
+Cornelius Van Til
+Geerhardus Vos
+Gresham Machen
+J. Gresham Machen
+Carl Henry
+Harold Ockenga
+Bill Bright
+Henrietta Mears
+Aimee Semple McPherson
+Kathryn Kuhlman
+Smith Wigglesworth
+William Seymour
+Oral Roberts
+Jimmy Swaggart
+Jim Bakker
+Billy Sunday
+Gipsy Smith
+R. A. Torrey
+Torrey
+Andrew Fuller
+Fuller
+Luther Rice
+Shubal Stearns
+Annie Armstrong
+Bertha Smith
+E. Stanley Jones
+Hudson Taylor
+Gladys Aylward
+Jim and Elisabeth Elliot
+Nate Saint
+Rachel Saint
+Mark Twain
+# Hymn writers
+Isaac Watts
+Charles Wesley
+Fanny Crosby
+Horatio Spafford
+Augustus Toplady
+Toplady
+William Cowper
+John Newton
+Philip Bliss
+Ira Sankey
+Thomas Chisholm
+Edward Mote
+Robert Lowry
+Frances Havergal
+Charlotte Elliott
+Joseph Scriven
+Keith Getty
+Kristyn Getty
+Stuart Townend
+Bill Gaither
+Gloria Gaither
+Gaither
+# Sports, music, entertainment, public life
+Tony Dungy
+Dungy
+Vince Lombardi
+Lombardi
+Tim Tebow
+Tebow
+Eric Liddell
+Jackie Robinson
+Babe Ruth
+Michael Jordan
+LeBron James
+Muhammad Ali
+Tom Brady
+Peyton Manning
+Dale Earnhardt
+Richard Petty
+Arnold Palmer
+Tiger Woods
+Simone Biles
+Steph Curry
+Stephen Curry
+Johnny Cash
+Elvis Presley
+Dolly Parton
+Willie Nelson
+Hank Williams
+Andy Griffith
+Mayberry
+Barney Fife
+Will Rogers
+Walt Disney
+Truett Cathy
+S. Truett Cathy
+Steve Jobs
+Bill Gates
+Elon Musk
+Henry Ford
+Thomas Edison
+Edison
+Albert Schweitzer
+Schweitzer
+Florence Nightingale
+Clara Barton
+Booker T. Washington
+George Washington Carver
+Carver
+Frederick Douglass
+Harriet Tubman
+Rosa Parks
+Martin Luther King Jr
+Coretta Scott King
+John Lewis
+Nelson Mandela
+Mandela
+Gandhi
+Mahatma Gandhi
+Mother Teresa
+Princess Diana
+Queen Elizabeth
+Abraham Lincoln
+Ulysses Grant
+Robert E. Lee
+Stonewall Jackson
+Andrew Jackson
+Teddy Roosevelt
+Harry Truman
+Truman
+Dwight Eisenhower
+Eisenhower
+Jimmy Carter
+Ronald Reagan
+George Bush
+Barack Obama
+Obama
+Donald Trump
+Trump
+Joe Biden
+Biden
+Margaret Thatcher
+Thatcher
+Neil Armstrong
+John Glenn
+Amelia Earhart
+Wright brothers
+Orville Wright
+C. T. Studd
+Studd
+Steve Saint
+Søren Kierkegaard
+Blaise Pascal
+Pascal
+Isaac Newton
+Johann Sebastian Bach
+Bach
+Handel
+George Frideric Handel
+Mozart
+Beethoven
+Michelangelo
+Rembrandt
+Leonardo da Vinci
+Dante
+John Donne
+Donne
+George Herbert
+Gerard Manley Hopkins
+T. S. Eliot
+Eliot
+Charles Dickens
+Jane Austen
+Austen
+Victor Hugo
+Jean Valjean
+Ebenezer Scrooge
+Scrooge
+Tiny Tim
+Aslan
+Frodo
+Gandalf
+Narnia

@@ -128,6 +128,12 @@ SCRIPTURE_CONTEXT = {
     "paul", "acts", "apostle's", "church", "churches", "macedonia", "rome", "corinth",
     "ephesus", "philippi", "thessalonica", "galatia", "colossae", "antioch", "athens",
 }
+# Scripture words that do not also turn up in announcements ("praise God").
+NARRATION_CONTEXT = SCRIPTURE_CONTEXT - {
+    "god", "lord", "jesus", "christ", "church", "churches", "preached", "sermon", "sermons",
+    "bible", "book", "letter", "letters", "wrote", "writes", "written", "spirit", "century",
+    "revival", "hymn", "hymns",
+}
 PRIVATE_CONTEXT = {
     "hospital", "surgery", "chemo", "cancer", "doctor", "doctors", "biopsy", "diagnosis",
     "diagnosed", "rehab", "icu", "sick", "visitation", "funeral", "birthday", "anniversary",
@@ -136,6 +142,23 @@ PRIVATE_CONTEXT = {
     "email", "meals", "cards", "praying", "y'all", "tonight", "yesterday", "camp", "school",
     "college", "nursing", "truck", "car", "wreck", "phone", "wedding", "retiring", "retired",
     "buddy", "neighbor", "boss", "potluck", "volunteer", "cookout", "breakfast", "overdosed",
+}
+# Words that never turn up in Bible narration. A Bible name beside one of
+# them, with no scripture words around, is somebody in the congregation
+# ("Timothy had his scan", "Lydia and Stephen are waiting on the adoption").
+MODERN_CONTEXT = {
+    "hospital", "surgery", "chemo", "cancer", "scan", "biopsy", "doctor", "doctors", "nurse",
+    "icu", "rehab", "therapy", "diagnosis", "diagnosed", "deployed", "deployment", "army",
+    "navy", "marines", "football", "baseball", "soccer", "basketball", "practice", "college",
+    "school", "van", "car", "truck", "donuts", "coffee", "phone", "text", "texted", "email",
+    "online", "internet", "wedding", "reception", "adoption", "conference", "retreat",
+    "nursery", "youth", "dealership", "office", "insurance", "divorce", "apartment",
+    "grandson", "granddaughter", "grandkids", "grandbaby", "monday", "tuesday", "wednesday",
+    "thursday", "friday", "saturday",
+    "tonight", "yesterday", "week", "weekend", "results", "test", "pins", "labor", "funeral",
+    "visitation", "birthday", "anniversary", "graduation", "sanctuary", "fellowship",
+    "potluck", "choir", "deacon", "deacons", "committee", "volunteer", "signup", "trip",
+    "flight", "plane", "highway", "interstate", "nursing", "covid", "pandemic", "cell",
 }
 NUMBER_WORDS = {
     "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
@@ -159,9 +182,9 @@ SUBJECT_VERBS = {
 # Same, for place names that are also given names ("Austin came up to me").
 AGENT_VERBS = SUBJECT_VERBS - {"was", "is", "has", "had", "and", "just", "used", "who", "won't", "can't", "didn't"}
 # Same, for virtue names ("Joy asked us", not "Faith comes by hearing").
-HUMAN_VERBS = {"told", "asked", "texted", "emailed", "shared", "wanted", "laughed", "cried", "drove", "sang", "brought", "works", "worked"}
+HUMAN_VERBS = {"told", "asked", "texted", "emailed", "shared", "wanted", "laughed", "cried", "drove", "sang", "brought", "works", "worked", "needs"}
 # Capitalized words for God that are also given names in the SSA list.
-DIVINE = {"God", "Lord", "Jesus", "Christ", "Spirit", "Father", "Son", "Messiah", "Savior", "Saviour", "Emmanuel", "Immanuel", "Holy", "Trinity"}
+DIVINE = {"God", "Lord", "Jesus", "Christ", "Spirit", "Father", "Son", "Messiah", "Savior", "Saviour", "Emmanuel", "Immanuel", "Holy"}
 # A lone unknown capitalized word after these is a place or thing ("at Flossenburg").
 LOCATIVES = {"at", "in", "from", "near", "into", "across", "outside", "through", "of", "to", "toward", "towards", "around"}
 FAMILY_WORDS = {"family", "families", "household", "kids", "clan", "boys", "girls", "crew"}
@@ -175,12 +198,18 @@ FUNCTION_WORDS = {
     "just", "all", "when", "then", "there", "here", "what", "which", "about", "up", "out",
     "they're", "he's", "she's", "it's", "that's", "we're", "i'm",
 }
-PLACE_PREFIXES = {"Fort", "Ft", "Camp", "Lake", "Mount", "Mt", "Port", "Cape", "Saint", "St", "San", "Santa"}
+PLACE_PREFIXES = {
+    "Fort", "Ft", "Camp", "Lake", "Mount", "Mt", "Port", "Cape", "Saint", "St", "San", "Santa",
+    "New", "North", "South", "East", "West", "Las", "Los", "El", "Upper", "Lower",
+}
 PLACE_SUFFIXES = {
     "County", "Street", "Road", "Avenue", "Hospital", "Church", "School", "University",
     "College", "Elementary", "Academy", "Baptist", "Methodist", "Presbyterian", "Chapel",
     "Center", "Memorial", "Boulevard", "Highway", "Drive", "Funeral", "Lake", "River",
+    "Speedway", "Airport", "Mall", "Stadium", "Arena", "Island", "Beach", "Mountains",
 }
+# Two-word unknown runs after these are places ("in Da Nang").
+SOFT_CUES = {"see", "meet", "call", "visit", "visiting", "hug", "text", "email", "contact"}
 CONTEXT_SPAN = 12
 NEARBY_SPAN = 20
 BACKREF_SPAN = 80
@@ -191,9 +220,12 @@ WORD = re.compile(rf"^(?P<lead>[^\w]*)(?P<core>{LETTER}(?:(?:{LETTER}|['’.-])*
 INITIALS = re.compile(r"^(?:[A-Z]\.)+$|^[A-Z]$")
 
 
+FOLD = str.maketrans({"Ø": "O", "ø": "o", "Æ": "AE", "æ": "ae", "ß": "ss", "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "’": "'"})
+
+
 def fold(text: str) -> str:
-    """'Müller' -> 'Muller', 'à' -> 'a', curly apostrophes -> straight."""
-    text = unicodedata.normalize("NFKD", text.replace("’", "'"))
+    """'Müller' -> 'Muller', 'Søren' -> 'Soren', curly apostrophes -> straight."""
+    text = unicodedata.normalize("NFKD", text.translate(FOLD))
     return "".join(ch for ch in text if not unicodedata.combining(ch))
 
 
@@ -375,6 +407,31 @@ def decide(texts: Sequence[str], config: Config | None = None) -> list[bool]:
     return _Pass(texts, config or Config()).run()
 
 
+def review(words: list, *, config: Config | None = None) -> list[dict]:
+    """Names a person should look at before a sermon is published.
+
+    Two kinds: Bible or public names kept although they are also given names
+    and the sentence sounds personal ("John" near "hospital"), and full names
+    redacted only because they are not on the public list (a quoted author
+    the list lacks). Each item has ``start`` and
+    ``end`` (seconds), ``text`` (the original words) and ``reason``. Fix a
+    wrong call with ``allow`` or ``block`` in privacy.toml and re-import.
+    """
+    config = default_config() if config is None else config
+    texts = [_text(word) for word in words]
+    run = _Pass(texts, config)
+    run.run()
+    return [
+        {
+            "start": _time(words[a], "start", 0),
+            "end": _time(words[b - 1], "end", 1),
+            "text": " ".join(texts[a:b]),
+            "reason": why,
+        }
+        for a, b, why in sorted(run.reviews)
+    ]
+
+
 @dataclass
 class Tok:
     lead: str = ""
@@ -412,6 +469,8 @@ class _Pass:
         self.config = config
         self.toks = self._tokens(texts)
         self.backrefs: list[tuple[str, int]] = []
+        self.reviews: list[tuple[int, int, str]] = []
+        self.reasons: list[tuple[int, int, str]] = []
 
     # ------------------------------------------------------------ setup
 
@@ -451,7 +510,7 @@ class _Pass:
         L, name = self.L, tok.name
         if not tok.cap or tok.initials or not name:
             return None
-        if tok.lower in FUNCTION_WORDS:
+        if tok.lower in FUNCTION_WORDS or all(p in NUMBER_WORDS or p == "hundred" for p in tok.lower.split("-")):
             return "word"
         if name in L.terms or name in L.places:
             return "term"
@@ -563,14 +622,19 @@ class _Pass:
                 tok.joinable = True
             elif kind == "term":
                 verbs = AGENT_VERBS if tok.name in L.places else HUMAN_VERBS
-                tok.seed = given and tok.name not in DIVINE and following in verbs
+                tok.seed = given and tok.name not in DIVINE and (following in verbs or self._acting(i))
                 tok.joinable = given and tok.name not in L.places
             elif kind == "word":
                 tok.seed = self._family(i)
-                tok.joinable = not tok.start_of_sentence
+                tok.joinable = not tok.start_of_sentence and tok.lower not in FUNCTION_WORDS and "'" not in tok.lower
             elif kind == "given" and self._is_word(tok.lower):
                 # "Will you...", "Rose early" vs "Crystal was addicted", "Hunter and the youth".
-                tok.seed = (not tok.start_of_sentence or following in SUBJECT_VERBS) and not self._title_case_run(i)
+                owned = i > 0 and toks[i - 1].lower in WEAK_POSSESSORS | {"my", "our"}  # "their Eagle Scout"
+                tok.seed = (
+                    (not tok.start_of_sentence or following in SUBJECT_VERBS)
+                    and not self._title_case_run(i)
+                    and not owned
+                )
                 tok.joinable = True
             elif kind == "major" and tok.start_of_sentence and self._is_word(tok.lower):
                 tok.seed = following in SUBJECT_VERBS  # "Mark my words"
@@ -579,6 +643,14 @@ class _Pass:
                 tok.seed = True
             if tok.lower in self.config.block:
                 tok.seed = True
+
+    def _acting(self, i: int) -> bool:
+        """'Charlotte is collecting shoeboxes', 'Austin is driving the van'."""
+        toks = self.toks
+        if i + 2 >= len(toks) or toks[i].breaks_after or toks[i + 1].lower not in {"is", "was"}:
+            return False
+        verb = toks[i + 2].lower
+        return verb.endswith("ing") and verb not in {"going", "coming", "growing", "getting", "amazing", "booming", "changing", "everything", "nothing", "something"}
 
     def _title_case_run(self, i: int) -> bool:
         """'The Normal Christian Life', 'Sinners in the Hands of an Angry God', 'Rock of Ages'."""
@@ -752,13 +824,31 @@ class _Pass:
         for index in list(range(lo, start)) + list(range(end, hi)):
             tok = toks[index]
             if tok.keep or (tok.kind in ("bible", "public", "major") and not tok.redact):
-                if tok.kind == "major" and self._given(tok) and tok.lower not in {"jesus", "christ"}:
-                    continue
                 return True
         return False
 
     def _backref(self, tok: Tok, index: int) -> bool:
         return any(name == tok.name and abs(at - index) <= BACKREF_SPAN for name, at in self.backrefs)
+
+    def _personal(self, start: int, end: int) -> bool:
+        """Any private or modern-life word in the sentence."""
+        toks = self.toks
+        lo, hi = max(0, start - CONTEXT_SPAN), min(len(toks), end + CONTEXT_SPAN)
+        return any(toks[i].lower in PRIVATE_CONTEXT or toks[i].lower in MODERN_CONTEXT for i in range(lo, hi))
+
+    def _modern(self, start: int, end: int) -> bool:
+        """A modern-life word in the sentence and no scripture words."""
+        toks = self.toks
+        lo = start
+        while lo > 0 and start - lo < CONTEXT_SPAN and not toks[lo].start_of_sentence:
+            lo -= 1
+        hi = end
+        while hi < len(toks) and hi - end < CONTEXT_SPAN and not toks[hi].start_of_sentence:
+            hi += 1
+        window = list(range(lo, start)) + list(range(end, hi))
+        if not any(toks[i].lower in MODERN_CONTEXT for i in window):
+            return False
+        return not any(toks[i].lower in NARRATION_CONTEXT or toks[i].keep for i in window)
 
     def _leans_scripture(self, start: int, end: int) -> bool:
         toks = self.toks
@@ -785,7 +875,7 @@ class _Pass:
         names = [t for t in span if not t.initials]
         parts = tuple(part for tok in span for part in tok.parts)
         if any(part in config.block for part in parts):
-            return self._hide(span)
+            return self._hide(span, why="blocked in privacy.toml")
         titled = start > 0 and self._is_title(toks[start - 1])
         if parts in config.allow or (titled and (toks[start - 1].lower.rstrip("."),) + parts in config.allow):
             return
@@ -796,19 +886,26 @@ class _Pass:
         cue = self._cue_before(start)
         kinds = [t.kind for t in names]
         if cue in ("title", "relation", "appositive", "family"):
-            return self._hide(span)
+            return self._hide(span, why=f"{cue} before the name")
         if cue == "verb":
             if all(k in ("bible", "term", "public") and not self._given(t) for k, t in zip(kinds, names)):
                 return  # "pray for Israel"
+            soft = start > 0 and toks[start - 1].lower in SOFT_CUES
+            if soft and all(k in ("bible", "major", "public") or t.name in L.bible for k, t in zip(kinds, names)):
+                return  # "rode out to meet David", "call me Mara"
             if self._book_reference(start, end):
                 return
-            return self._hide(span)
+            return self._hide(span, why="prayer or announcement verb before the name")
         if cue == "weak":
             if len(names) == 1 and kinds[0] in ("major", "bible", "public"):
+                if self._modern(start, end):
+                    return self._hide(span, why="weak cue in a modern setting")
                 return  # "his brother Andrew", "his wife Elisabeth"
+            if self._modern(start, end):
+                return self._hide(span, why="weak cue in a modern setting")
             if self._nearby_public(start, end):
-                return  # "Moody's teacher was a man named Edward Kimball"
-            return self._hide(span)
+                return  # "Moody's teacher was a man named Edward Kimball", "a baby named Obed"
+            return self._hide(span, why="'named' or 'his/her <relative>' before the name")
         if len(names) >= 2:
             if all(k in ("bible", "major", "term") or t.name in L.bible for k, t in zip(kinds, names)):
                 return  # "Simon Peter", "Mary Magdalene"
@@ -816,7 +913,7 @@ class _Pass:
                 return
             if kinds.count("word") + kinds.count("term") >= 2:
                 return  # "Vacation Bible School"
-            return self._hide(span, by_default=True)
+            return self._hide(span, by_default=True, why="full name not on the public list")
         tok, kind = names[0], kinds[0]
         if not tok.seed:
             return
@@ -824,14 +921,21 @@ class _Pass:
             return
         given = self._given(tok)
         if kind == "term":
-            return self._hide(span) if given else None  # seeded by "Austin came..."
+            if given:  # seeded by "Austin came...", "Joy asked us..."
+                self._hide(span, why="place or word used as a person's name")
+            return
         if kind in ("major", "public"):
             if given and self._private_after(end):
-                return self._hide(span)
+                return self._hide(span, why="private event after the name")
+            taught = start > 0 and toks[start - 1].lower in {"about", "like", "of"}
+            if given and kind == "major" and not taught and self._modern(start, end):
+                return self._hide(span, why="Bible name in a modern setting")
+            if given and self._personal(start, end):
+                self._review(span, "kept: Bible or public name in a personal setting")
             return
         if kind == "bible":
             if given and not self._leans_scripture(start, end):
-                return self._hide(span, by_default=True)
+                return self._hide(span, by_default=True, why="rare Bible name, not in a scripture setting")
             return
         if kind == "given" and tok.name in L.bible and self._leans_scripture(start, end):
             return
@@ -841,7 +945,7 @@ class _Pass:
             return
         if kind == "word" and not self._family(start):
             return
-        self._hide(span, by_default=True)
+        self._hide(span, by_default=True, why="given name" if kind == "given" else "capitalized word on no list")
 
     def _place_name(self, start: int, end: int) -> bool:
         """'Fort Liberty', 'Levine Children's Hospital', 'Lake Junaluska'."""
@@ -849,6 +953,11 @@ class _Pass:
         before = toks[start - 1] if start > 0 else None
         if before is not None and before.cap and before.name in PLACE_PREFIXES and not before.breaks_after:
             return True
+        if toks[start].name in PLACE_PREFIXES and end - start >= 2:
+            return True  # "Lake Junaluska", "New York"
+        names = [t for t in toks[start:end] if not t.initials]
+        if before is not None and before.lower in LOCATIVES and all(t.kind == "unknown" for t in names):
+            return self._cue_before(start) is None  # "in Da Nang", but not "thanks to Oluwaseun"
         k = end
         while k < len(toks) and k < end + 2 and toks[k].cap and not toks[k - 1].breaks_after:
             if toks[k].name in PLACE_SUFFIXES:
@@ -885,10 +994,18 @@ class _Pass:
         before = toks[start - 1].lower
         return before in LOCATIVES or before == "the"
 
-    def _hide(self, span: list[Tok], by_default: bool = False) -> None:
+    def _hide(self, span: list[Tok], by_default: bool = False, why: str = "") -> None:
         for tok in span:
             tok.redact = True
             tok.by_default = by_default
+        if by_default and len(span) >= 2:
+            self._review(span, f"redacted: {why}; add to allow if this is a public figure")
+        else:
+            self.reasons.append((self.toks.index(span[0]), self.toks.index(span[0]) + len(span), why))
+
+    def _review(self, span: list[Tok], why: str) -> None:
+        start = self.toks.index(span[0])
+        self.reviews.append((start, start + len(span), why))
 
     def _coordinate(self) -> None:
         """'Peter and Brenda': a kept given-name span joined to a private one."""
@@ -903,6 +1020,7 @@ class _Pass:
                     other = toks[j]
                     if other.redact and other.cap:
                         tok.redact = True
+                        self.reasons.append((i, i + 1, "joined by 'and' to a private name"))
 
     def _lowercase(self) -> None:
         """'pray for brenda', 'her boy tyler': a lowercase given name after a cue."""
@@ -919,3 +1037,4 @@ class _Pass:
             cue = self._cue_before(i)
             if cue in ("title", "relation", "verb", "appositive") or (cue == "weak" and name not in L.bible):
                 tok.redact = True
+                self.reasons.append((i, i + 1, "lowercase given name after a cue"))

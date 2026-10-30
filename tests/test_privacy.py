@@ -123,8 +123,29 @@ class RuleTests(unittest.TestCase):
         self.assertMasked("pray for brenda and her boy tyler", "pray for [name] and her boy [name]")
         self.assertKept("pray for peace and for wisdom")
 
+    def test_modern_setting_and_places(self) -> None:
+        self.assertMasked("Timothy had his scan Tuesday and it's clear.", "[name] had his scan Tuesday and it's clear.")
+        self.assertKept("Timothy was a young pastor in Ephesus.")
+        self.assertKept("Sign up for the retreat at Lake Junaluska.")
+        self.assertMasked("Charlotte is collecting shoeboxes.", "[name] is collecting shoeboxes.")
+        self.assertKept("Bonhoeffer could have stayed in New York.")
+
     def test_decide_matches_words(self) -> None:
         self.assertEqual(decide(["Pray", "for", "Ashley."]), [False, False, True])
+
+
+class ReviewTests(unittest.TestCase):
+    def test_review_lists_ambiguous_calls_with_times(self) -> None:
+        source = words("Lewis wrote about grief after the funeral and so did Harold Pemberton.")
+        items = privacy.review(source, config=Config())
+        texts = {item["text"]: item for item in items}
+        self.assertIn("Lewis", texts)
+        self.assertIn("Harold Pemberton.", texts)
+        self.assertEqual((texts["Lewis"]["start"], texts["Lewis"]["end"]), (0.0, 0.3))
+        self.assertIn("allow", texts["Harold Pemberton."]["reason"])
+
+    def test_review_is_empty_for_plain_scripture(self) -> None:
+        self.assertEqual(privacy.review(words("Moses went up the mountain."), config=Config()), [])
 
 
 class ConfigTests(unittest.TestCase):
