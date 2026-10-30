@@ -1,4 +1,4 @@
-"""Index a transcribed classic-preacher library (talmage, spurgeon, edwards) into its own SQLite file.
+"""Index a transcribed public-domain classic library (spurgeon, edwards) into its own SQLite file.
 
     uv run search/build_library.py spurgeon        # -> /cache/index/spurgeon.sqlite
 
@@ -7,6 +7,9 @@ keeps the searchable word window, chunks with corpus/chunk_config.json, embeds w
 CPU and writes through the same library writer as the YouTube import. Text is ASR (text_source
 'asr'); the audio_url is the plain archive.org file, as in the Wesley index. A sermon already
 imported is skipped unless --redo.
+
+Only slugs on the allow-list in src/preached/libraries.py are accepted (never wesley, never a
+church library): these files get no redaction and no review, so nothing else may be written here.
 """
 
 from __future__ import annotations
@@ -24,7 +27,9 @@ import numpy as np  # noqa: E402
 
 import manifest  # noqa: E402
 from preached.corpus import load_chunk_config  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
 from preached.paths import CACHE_ROOT, INDEX_DIR  # noqa: E402
+from preached.store import open_readonly  # noqa: E402
 from preached.youtube.chunking import chunk_words  # noqa: E402
 from preached.youtube.library import imported_ok, index_video, open_library  # noqa: E402
 from preached.youtube.pipeline import _embed_on_cpu  # noqa: E402
@@ -48,16 +53,48 @@ def chunks_for(row: dict, words: list[Word], config: dict) -> list[dict]:
     ]
 
 
+def check_slug(slug: str) -> str:
+    """The slug, or SystemExit unless it is an allow-listed public-domain library."""
+    if not is_public_domain(slug):
+        raise SystemExit(
+            f"error: {slug!r} is not a public-domain library (allowed: {', '.join(PUBLIC_DOMAIN)}). "
+            "Wesley is built by search/build_index.py; church libraries go through redaction and review."
+        )
+    return slug
+
+
+def check_target(path: Path, slug: str) -> None:
+    """Refuse a file that is not this library's: another library's, or a Wesley-style index."""
+    if not path.is_file():
+        return
+    connection = open_readonly(path)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        marker = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone() if "meta" in tables else None
+        has_chunks = "chunks" in tables and connection.execute("SELECT 1 FROM chunks LIMIT 1").fetchone() is not None
+    finally:
+        connection.close()
+    if marker is not None and marker[0] != slug:
+        raise SystemExit(f"error: {path} is the {marker[0]!r} library, not {slug!r}")
+    if has_chunks and "videos" not in tables:
+        raise SystemExit(f"error: {path} holds chunks but is not a library file (a Wesley-style index?)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("slug")
     ap.add_argument("--redo", action="store_true")
     args = ap.parse_args()
-    manifest.check_name(args.slug, manifest.ID_RE)
-    rows = manifest.load(manifest.MANIFEST.with_name(f"{args.slug}.jsonl"))
-    tdir = CACHE_ROOT / "transcripts" / args.slug
+    slug = check_slug(args.slug)
+    rows = manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl"))
+    tdir = CACHE_ROOT / "transcripts" / slug
     config = load_chunk_config()
-    connection = open_library(INDEX_DIR / f"{args.slug}.sqlite")
+    target = INDEX_DIR / f"{slug}.sqlite"
+    check_target(target, slug)
+    connection = open_library(target)
+    # Marks the file as a library so search/query.py --index refuses it.
+    connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('library', ?)", (slug,))
+    connection.commit()
     done = set() if args.redo else imported_ok(connection)
     n = 0
     for row in rows:
@@ -81,7 +118,7 @@ def main() -> int:
         n += 1
         print(f"indexed {row['id']}: {len(records)} chunks", file=sys.stderr, flush=True)
     total = connection.execute("SELECT count(*), count(DISTINCT sermon_id) FROM chunks").fetchone()
-    print(f"{args.slug}: +{n} sermons; index has {total[0]} chunks in {total[1]} sermons", file=sys.stderr)
+    print(f"{slug}: +{n} sermons; index has {total[0]} chunks in {total[1]} sermons", file=sys.stderr)
     connection.close()
     return 0
 

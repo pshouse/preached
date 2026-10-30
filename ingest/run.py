@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fetch  # noqa: E402
 import manifest  # noqa: E402
 import transcribe  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
 
 LOG = transcribe.TRANSCRIPT_DIR / "progress.log"
 META_KEYS = [
@@ -74,10 +75,20 @@ def out_path(row: dict) -> Path:
     return manifest.safe_child(transcribe.TRANSCRIPT_DIR, f"{row['id']}.json")
 
 
+def check_library(slug: str) -> str:
+    """The slug, or SystemExit unless it is an allow-listed public-domain library."""
+    if not is_public_domain(slug):
+        raise SystemExit(
+            f"error: --library {slug!r} refused: only public-domain libraries ({', '.join(PUBLIC_DOMAIN)}). "
+            "For Wesley leave out --library."
+        )
+    return slug
+
+
 def use_library(slug: str) -> None:
-    """Point manifest, audio and transcript folders at one library (default: wesley)."""
+    """Point manifest, audio and transcript folders at one public-domain library."""
     global LOG
-    manifest.check_name(slug, manifest.ID_RE)
+    check_library(slug)
     fetch.AUDIO_DIR = fetch.CACHE_ROOT / "audio" / slug
     transcribe.TRANSCRIPT_DIR = transcribe.CACHE_ROOT / "transcripts" / slug
     LOG = transcribe.TRANSCRIPT_DIR / "progress.log"
@@ -121,14 +132,15 @@ def main() -> int:
     sel.add_argument("--all", action="store_true")
     sel.add_argument("--limit", type=int, help="first N manifest rows")
     sel.add_argument("--ids", nargs="+")
-    ap.add_argument("--library", default="wesley",
-                    help="manifest slug: ingest/manifest/<slug>.jsonl (default wesley)")
+    ap.add_argument("--library", help=f"public-domain library ({', '.join(PUBLIC_DOMAIN)}): "
+                    "ingest/manifest/<slug>.jsonl (default: the Wesley manifest)")
     ap.add_argument("--redo", action="store_true", help="retranscribe even if done")
     ap.add_argument("--download-only", action="store_true")
     args = ap.parse_args()
 
-    use_library(args.library)
-    rows = manifest.load(manifest.MANIFEST.with_name(f"{args.library}.jsonl"))
+    if args.library is not None:
+        use_library(args.library)
+    rows = manifest.load(manifest.MANIFEST.with_name(f"{args.library or 'wesley'}.jsonl"))
     if args.limit:
         rows = rows[: args.limit]
     elif args.ids:

@@ -38,7 +38,7 @@ class ManifestTests(unittest.TestCase):
             run.use_library("spurgeon")
             self.assertEqual(fetch.AUDIO_DIR.name, "spurgeon")
             self.assertEqual(transcribe.TRANSCRIPT_DIR.name, "spurgeon")
-            with self.assertRaises(manifest.UnsafeRow):
+            with self.assertRaises(SystemExit):
                 run.use_library("../x")
         finally:
             fetch.AUDIO_DIR, transcribe.TRANSCRIPT_DIR, run.LOG = old
