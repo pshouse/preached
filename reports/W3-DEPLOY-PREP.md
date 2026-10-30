@@ -117,3 +117,26 @@ Real bundle, this machine, Wesley index and the pinned fp32 ONNX files. `sha256s
 Code head: `781e9b4`. This report is the commit after it. `git log -1` on `feat/w3-deploy-prep` is the branch head.
 
 Open, and required before anything goes public: trusted-proxy `X-Forwarded-For` keying plus a global backstop. Not in this PR. `test_per_ip_limit_ignores_forwarded_for` still checks that the header is ignored.
+
+## Fix-up: CTO round 2 of PR #18 (11-W3-DEPLOY-FIX2)
+
+Reviewed head `75cabe24f65317e06c7b636b1e0473e1661154f2`. No merge was required. No rebase, no force-push. The paragraphs above are the first cut and the round-1 fix-up. Where they disagree with this section, this section is the current behaviour. In particular, `serve.sh` does not clear the write bit on a bundle index.
+
+| Item | Commit | Tests and checks |
+| --- | --- | --- |
+| Must: delete the `serve.sh` mode repair (old lines 82–88). A world-writable bundle is refused by `check_servable`, not chmod'd back to 755/755/444. The script does not follow a `PREACHED_INDEX` symlink and does not fail on a root-owned tree. `docs/DEPLOY.md` no longer says the start script repeats the chmod. | `ee15140` | `test_world_writable_bundle_is_refused_not_repaired` (modes stay 0777/0777/0666, stderr says writable). `test_deploy_doc_modes_and_the_review_rule` (the script contains no `chmod`). |
+| Must: the unpack recipe must not be `chmod u=rw,go=r` on every file. That is 0644, so step 5 ran `serve.sh` and exited 126, and the model stayed 0644 while the table says 0444. Directories `0755`, `scripts/serve.sh` `0755`, index and model files `0444`. | `ee15140` | `test_deploy_doc_modes_and_the_review_rule` |
+| Must: the #19 human-review rule. The reviewer listens through the whole recording, start to end, before approving a church sermon. ASR word recall on the synthetic set is 0.870 (635/730). | `ee15140` | `test_deploy_doc_modes_and_the_review_rule` (`whole recording`, `0.870`) |
+| Should: `bundle_manifest.copy_index` opens the source with `mode=ro`, so the backup cannot write the live index. | `ee15140` | `test_copy_index_opens_the_source_read_only` (source left at 0444, copy is DELETE mode, one chunk) |
+| Should: after a 405, or any earlier error, an unread body closes the connection. A POST body is not parsed as a second request. Same bug on main; fixed in `app/server.py`. | `ee15140` | `test_unread_body_is_not_parsed_as_a_request` (raw socket: POST with a body to a GET-only path; also 421 and 413. One status line, `Connection: close`, then EOF) |
+| Should: `serve.sh`'s preflight runs under the same `env -i` allow-list as the server. | `ee15140` | `test_preflight_uses_the_scrubbed_environment` (names only: `FAKE_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `SPRITE_TOKEN`, `SPRITES_TOKEN`, `OP_SERVICE_ACCOUNT_TOKEN`, `HF_TOKEN` absent; `PATH`, `HOME`, `PREACHED_CACHE`, `PYTHONPATH` present) |
+| Should: the env-absence test names `SPRITES_TOKEN` and `OP_SERVICE_ACCOUNT_TOKEN`. Names only. | `ee15140` | `test_serve_sh_drops_secret_names` |
+| Should: `PREACHED_BUNDLE_SKIP_PINS` can be faked by the parent command line. `MANIFEST.sha256` records `# preached-pins-skipped: 0` or `: 1` (`sha256sum -c` ignores the comment). The server refuses `: 1` unless that process itself is the unit tests. `serve.sh` is not. | `ee15140` | `test_skipped_pins_are_recorded_and_refused_outside_the_tests` (bash `-c` whose argv contains `unittest` still builds, the manifest says `: 1`, in-process `check_servable` allows it, `python -c` and `serve.sh` refuse). `test_skip_pins_is_ignored_outside_the_tests` still fails the build when the parent is not the tests. |
+
+`uv run python -m unittest discover -s tests`: **386 tests, 27.304s, OK**. That is the round-1 380 plus the six tests named above.
+
+`uv lock --check`: clean (79 packages resolved). No lockfile change. No new dependencies. No LLM.
+
+Round-2 code head: `ee15140c3cedf05b46f03238936461a1f5714d17`. This section is the commit after it. `git rev-parse HEAD` on `feat/w3-deploy-prep` is the branch head.
+
+Open, unchanged: trusted-proxy `X-Forwarded-For` keying plus a global backstop, before anything is public. Not in this PR.
