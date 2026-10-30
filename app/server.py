@@ -40,10 +40,8 @@ from preached.library import (  # noqa: E402
     CHURCH_EMPTY,
     CHURCH_LABEL,
     CLASSIC_LABEL,
-    church_index_matches,
     classic_church_refusal,
     read_label,
-    resolve_church_path,
 )
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
@@ -1094,69 +1092,24 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
-def prepare_church(
-    index_dir: Path,
-    *,
-    classic: Path,
-    church_index: Path | None,
-    church_library: str | None,
-) -> tuple[Path | None, str | None]:
-    """Resolve the church file. Do not open it.
+def prepare_church(*, church_index: Path | None, church_library: str | None) -> None:
+    """Refuse an explicit classic as the church. Open nothing, log nothing.
 
-    An explicit wesley, spurgeon, or edwards name (slug or index path) raises
-    ``SystemExit``. A classic file that only showed up because it was marked
-    ``role=church`` is ignored, so a mistaken mark does not stop the server.
-    Several marks are not a guess: the side stays empty and the slugs are logged.
+    ``--church-library`` and ``--church-index`` are checked by name and path
+    only (``library.classic_church_refusal``: slug, realpath, inode,
+    hardlink count); no file is opened, so no ``-shm`` or ``-wal`` appears
+    beside it. The index directory is not scanned for a ``role=church``
+    mark. Startup output is the same with or without a church.
 
-    The returned path is not served. ``load_church_searcher`` stays unused
-    until PR #12's gate is on main. TODO(post-#12): open this path, run it
-    through #12's gate and per-request ``visible_sql``, withhold audio on
+    TODO(post-#12): open the church file through #12's gate and per-request
+    ``visible_sql`` (``search.Searcher(gated=True)``), withhold audio on
     flagged passages, apply the source_url rule to hits, and reload it with
     #10's index stamp. Church confidence is ``abstain.church_confidence``
-    (unrated) until a church floor exists. A church file passed as
-    ``--library`` is refused by ``check_servable``; do not add a second check.
-    Refusing wesley, spurgeon, or edwards as the church goes through
-    ``libraries.classic_index_problem`` (and the public-domain allow-list),
-    not a second copy of that path rule.
+    (unrated) until a church floor exists.
     """
-    explicit = church_index is not None or bool(church_library)
-    church_path = resolve_church_path(
-        index_dir,
-        classic=classic,
-        church_index=church_index,
-        church_library=church_library,
-    )
-    slug = church_library
-    if church_path is not None and slug is None:
-        stem = church_path.stem
-        slug = stem if LIBRARY_SLUG.fullmatch(stem) else None
-    # Check the name the operator asked for before treating a non-slug
-    # filename as merely empty. ``Wesley.sqlite`` is still wesley.
-    refusal = classic_church_refusal(church_library or slug, church_index or church_path)
+    refusal = classic_church_refusal(church_library, church_index)
     if refusal:
-        if explicit:
-            raise SystemExit(refusal)
-        logging.info("%s; that side is empty", refusal)
-        return None, None
-    if church_path is not None and slug is None:
-        logging.info("church index name %s is not a library slug; that side is empty", church_path.name)
-        return None, None
-    if church_path is None and explicit:
-        logging.info("church library file is missing; that side will say nothing is there yet")
-        return None, None
-    if not explicit:
-        marks = church_index_matches(index_dir, exclude=classic)
-        if len(marks) > 1:
-            logging.info(
-                "more than one library is marked your church (%s); name one with --church-library",
-                ", ".join(path.stem for path in marks),
-            )
-    if church_path is not None:
-        logging.info(
-            "church library %s is not served until the publish gate is on main; that side is empty",
-            slug or church_path.name,
-        )
-    return church_path, slug if church_path is not None else None
+        raise SystemExit(refusal)
 
 
 # The Wesley index schema (store.connect), lower-cased: every table and view
@@ -1284,13 +1237,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--church-library",
         default=None,
-        help="Slug marked as your church. Default: the single index with meta role=church",
+        help="Your church's library slug. Accepted and checked (never a classic); not served until the publish gate is wired",
     )
     parser.add_argument(
         "--church-index",
         type=Path,
         default=None,
-        help="SQLite file for your church. Overrides --church-library and the role mark",
+        help="SQLite file for your church. Accepted and checked (never a classic); not opened",
     )
     parser.add_argument(
         "--hosts",
@@ -1343,14 +1296,9 @@ def main(argv: list[str] | None = None) -> None:
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
-    # Refuses wesley / spurgeon / edwards as the church via libraries.py.
-    # Does not open that file. The church side stays empty until PR #12.
-    prepare_church(
-        INDEX_DIR,
-        classic=index,
-        church_index=args.church_index,
-        church_library=church_library,
-    )
+    # Refuses wesley / spurgeon / edwards as the church. Opens nothing.
+    # The church side stays empty until PR #12's gate serves it.
+    prepare_church(church_index=args.church_index, church_library=church_library)
     # The file checked must be the file opened: same (st_dev, st_ino) before
     # the open and after the checks, and again before every reload.
     identity = file_identity(index)

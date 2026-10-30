@@ -406,7 +406,7 @@ class HardlinkTests(unittest.TestCase):
                     self.assertTrue(is_protected_classic(link), link.name)
                     self.assertIsNotNone(classic_church_refusal(None, link), link.name)
                     with self.assertRaises(SystemExit) as caught:
-                        prepare_church(work, classic=sample, church_index=link, church_library=None)
+                        prepare_church(church_index=link, church_library=None)
                     self.assertIn("classic", str(caught.exception))
                     with self.assertRaises(ValueError):
                         mark_your_church_exclusive(link, work)
@@ -964,34 +964,37 @@ class ChurchRefusalTests(unittest.TestCase):
                 _plain_marked(path)
                 before = path.read_bytes()
                 with self.assertRaises(SystemExit) as caught:
-                    prepare_church(root, classic=classic, church_index=None, church_library=slug)
+                    prepare_church(church_index=None, church_library=slug)
                 self.assertIn(slug, str(caught.exception))
                 self.assertIn("classic", str(caught.exception))
                 with self.assertRaises(SystemExit):
-                    prepare_church(root, classic=classic, church_index=path, church_library=None)
+                    prepare_church(church_index=path, church_library=None)
                 self.assertEqual(path.read_bytes(), before)
             # A missing classic name is still refused.
             absent = root / "gone" / "edwards.sqlite"
             with self.assertRaises(SystemExit):
-                prepare_church(root, classic=classic, church_index=absent, church_library=None)
+                prepare_church(church_index=absent, church_library=None)
             titled = root / "Wesley.sqlite"
             _plain_marked(titled)
             titled_before = titled.read_bytes()
             with self.assertRaises(SystemExit) as titled_exit:
-                prepare_church(root, classic=classic, church_index=titled, church_library=None)
+                prepare_church(church_index=titled, church_library=None)
             self.assertIn("classic", str(titled_exit.exception))
             self.assertEqual(titled.read_bytes(), titled_before)
-            # Auto-detected mark on a wesley copy does not stop resolution.
-            found = prepare_church(root, classic=classic, church_index=None, church_library=None)
-            self.assertEqual(found, (None, None))
+            # No church named: nothing is scanned, opened, or refused.
+            self.assertIsNone(prepare_church(church_index=None, church_library=None))
             sample = root / "sample.sqlite"
             rows, vectors = church_rows()
             build_library(sample, rows[:1], vectors[:1], church=True, sample=True)
             before = sample.read_bytes()
-            path, slug = prepare_church(root, classic=classic, church_index=None, church_library="sample")
-            self.assertEqual(path, sample)
-            self.assertEqual(slug, "sample")
+            # Startup output is the same with or without a church: no log line.
+            with self.assertNoLogs(level="DEBUG"):
+                self.assertIsNone(prepare_church(church_index=None, church_library="sample"))
+                self.assertIsNone(prepare_church(church_index=sample, church_library=None))
+                self.assertIsNone(prepare_church(church_index=root / "missing.sqlite", church_library=None))
             self.assertEqual(sample.read_bytes(), before)
+            self.assertFalse(sample.with_name(sample.name + "-shm").exists())
+            self.assertFalse(sample.with_name(sample.name + "-wal").exists())
 
     def test_canonical_path_refusal_uses_classic_index_problem(self) -> None:
         """A path #14 would serve as spurgeon cannot be the church, whatever its name."""
@@ -1012,7 +1015,7 @@ class ChurchRefusalTests(unittest.TestCase):
 
             with patch("preached.library.classic_index_problem", side_effect=gate):
                 with self.assertRaises(SystemExit) as caught:
-                    prepare_church(root, classic=classic, church_index=weird, church_library=None)
+                    prepare_church(church_index=weird, church_library=None)
             self.assertIn("classic", str(caught.exception))
             self.assertEqual(weird.read_bytes(), before)
             self.assertFalse(weird.with_name(weird.name + "-wal").exists())
