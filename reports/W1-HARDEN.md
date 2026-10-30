@@ -37,3 +37,13 @@ uv run eval/timestamps.py --out /tmp/ts.json         # needs /cache data; CPU on
 ## 5. Dependencies added
 
 None.
+
+## Fix-up after CTO review of PR #9
+
+- **Crash test imports the checkout** (`tests/test_store.py`, `CRASH_SCRIPT` + `test_crash_after_replace_leaves_index_fully_old`). The subprocess still runs `python -I` (no PYTHONPATH, no user site), but the script now puts this checkout's `src` (passed as argv[3]) first on `sys.path` and exits 3 unless `preached.store.__file__` resolves under it; exit 7 is the crash hook, 0 means the hook doesn't exist (old code). Checked with a throwaway venv whose site-packages "installs" a different `src` via a `.pth`:
+  - old checkout (main's `store.py`) + fixed installed copy: original test **passed** (CTO's false pass), new test **fails** (`0 != 7`).
+  - fixed checkout + stale installed copy (main's `src`): original test **failed** (CTO's false fail), new test **passes**.
+  - a `src` without `preached` makes the guard exit 3 with "imported …, not this checkout's …".
+- **Model assigned only after the hash check** (`ingest/transcribe.py` `Transcriber._load`): the loaded model is held in a local and stored on `self` only after the post-load check passes, so a caught failure leaves `_model`/`_pipe` None and the retry verifies again. `verify_model_bin(..., required=True)` makes an absent `model.bin` after loading an error ("missing … refusing to use them"); the pre-download check still allows absent, and `PREACHED_SKIP_MODEL_SHA=1` still opts out. Tests: `TranscriberLoadTests` (fake `faster_whisper`, tiny fake weights: good download, bad download + retry, missing after load, opt-out, unpinned repo) and `ModelBinShaTests.test_missing_file_is_an_error_when_required`. All but the opt-out/unpinned cases fail on the f1f5aac code.
+- **`reports/W1-CLI.md`**: the "alignment lost nothing" sentence now says the stored times agree with the text, not the audio, and points to the W1-C spot-check (median 0.42 s, max 0.76 s, covered by the 0.75 s pre-roll).
+- Tests: `uv run python -m unittest discover -s tests`: 142 OK (was 136).

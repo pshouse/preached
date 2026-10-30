@@ -72,8 +72,9 @@ often repeats its text verse. Grade-2 passages only; grade 1 adds nothing (same 
 | Strict: `start_s` falls inside the gold span | 5/35 = 0.14 | 7/35 = 0.20 |
 
 - **Timestamp hits equal text hits exactly** (by construction, see the note above), question by question (after counting every
-  occurrence of the quote). So alignment lost nothing: whenever the right passage is retrieved, the
-  play position is on it.
+  occurrence of the quote). This only shows that the stored times agree with the text; it says
+  nothing about whether they match the audio. The audio evidence is W1-C's spot-check (chunk
+  starts vs the audio: |delta| median 0.42 s, max 0.76 s), which the 0.75 s pre-roll covers.
 - Strict is low by design, not an error: a chunk is ~45 s (median) and the gold quote is a sentence
   or two inside it, so `start_s` is the chunk's start, a little before the quote. Among the 14
   top-1 overlap hits, the quote starts 0 s after `start_s` in 5, ≤ 2 s in 8, and at most 31.7 s

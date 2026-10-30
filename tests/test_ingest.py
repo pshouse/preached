@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -422,9 +423,95 @@ class ModelBinShaTests(unittest.TestCase):
         self.assertFalse(transcribe.verify_model_bin(self.path, "0" * 64, env={"PREACHED_SKIP_MODEL_SHA": "1"}))
         self.assertFalse(transcribe.verify_model_bin(self.path.with_name("none.bin"), self.good, env={}))
 
+    def test_missing_file_is_an_error_when_required(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            transcribe.verify_model_bin(self.path.with_name("none.bin"), self.good, env={}, required=True)
+        # The opt-out still wins.
+        self.assertFalse(transcribe.verify_model_bin(
+            self.path.with_name("none.bin"), self.good, env={"PREACHED_SKIP_MODEL_SHA": "1"}, required=True))
+
     def test_pin_matches_the_report(self) -> None:
         report = (Path(__file__).resolve().parents[1] / "reports" / "W1-A.md").read_text()
         self.assertIn(transcribe.MODEL_BIN_SHA256, report)
+
+
+class TranscriberLoadTests(unittest.TestCase):
+    """PR #9 should-fix: `_load` sets the model only after the post-load hash
+    check, and a missing model.bin after loading is refused (fake faster_whisper,
+    tiny fake weights; no GPU, no real model)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.bin = Path(self._tmp.name) / "model.bin"
+        self.good = hashlib.sha256(b"fake weights").hexdigest()
+        self.loads = 0
+        self.content = b"fake weights"  # what a "download" writes; None = writes nothing
+        test = self
+
+        class WhisperModel:
+            def __init__(self, *args, **kwargs):
+                test.loads += 1
+                if test.content is not None and not test.bin.exists():
+                    test.bin.write_bytes(test.content)
+
+        class BatchedInferencePipeline:
+            def __init__(self, model):
+                self.model = model
+
+        fake = type(sys)("faster_whisper")
+        fake.WhisperModel = WhisperModel
+        fake.BatchedInferencePipeline = BatchedInferencePipeline
+        env = {k: v for k, v in os.environ.items() if k != "PREACHED_SKIP_MODEL_SHA"}
+        for patcher in (
+            mock.patch.dict(sys.modules, {"faster_whisper": fake}),
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(transcribe, "snapshot_model_bin", lambda repo, rev: self.bin),
+            mock.patch.object(transcribe, "MODEL_BIN_SHA256", self.good),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        transcribe._VERIFIED.clear()
+        self.addCleanup(transcribe._VERIFIED.clear)
+        self.t = transcribe.Transcriber.__new__(transcribe.Transcriber)
+        self.t.model_name, self.t.model_repo, self.t.revision = (
+            transcribe.MODEL, transcribe.MODEL_REPO, transcribe.MODEL_REVISION)
+        self.t.rung, self.t._model, self.t._pipe = 0, None, None
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_good_download_loads(self) -> None:
+        self.t._load()
+        self.assertIsNotNone(self.t._model)
+        self.assertIs(self.t._pipe.model, self.t._model)
+
+    def test_bad_download_never_sets_model_and_retry_rechecks(self) -> None:
+        self.content = b"corrupt weights"
+        for _ in range(2):
+            with self.assertRaisesRegex(RuntimeError, "Refusing to load"):
+                self.t._load()
+            self.assertIsNone(self.t._model)
+            self.assertIsNone(self.t._pipe)
+        # The retry re-verified: the now-cached bad file was refused before loading.
+        self.assertEqual(self.loads, 1)
+
+    def test_missing_model_bin_after_load_is_refused(self) -> None:
+        self.content = None  # weights "live in another cache": nothing to hash
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            self.t._load()
+        self.assertIsNone(self.t._model)
+
+    def test_opt_out_loads_without_model_bin(self) -> None:
+        self.content = None
+        with mock.patch.dict(os.environ, {"PREACHED_SKIP_MODEL_SHA": "1"}):
+            self.t._load()
+        self.assertIsNotNone(self.t._model)
+
+    def test_unpinned_repo_is_not_checked(self) -> None:
+        self.content = None
+        self.t.revision = "f" * 40
+        self.t._load()
+        self.assertIsNotNone(self.t._model)
 
 
 if __name__ == "__main__":

@@ -205,10 +205,18 @@ class InPlaceMetadataTests(unittest.TestCase):
         self.assertEqual(self.vectors(), 3)
 
 
+# Runs under `python -I` (no PYTHONPATH, no user site), so it must put this
+# checkout's src first itself and prove the import came from there: otherwise it
+# would exercise whatever copy of `preached` the venv has installed (PR #9 review).
 CRASH_SCRIPT = """
 import os, sys
 from pathlib import Path
+src = Path(sys.argv[3]).resolve()
+sys.path.insert(0, str(src))
 import preached.store as store
+if not Path(store.__file__).resolve().is_relative_to(src):
+    sys.stderr.write(f"imported {store.__file__}, not this checkout's {src}\\n")
+    os._exit(3)
 store._after_replace = lambda: os._exit(7)
 c = store.connect(Path(sys.argv[1]))
 store.sync_chunks(c, Path(sys.argv[2]))
@@ -251,11 +259,11 @@ class CrashWindowTests(unittest.TestCase):
         new = [dict(c, text=c["text"] + " Amended.") for c in self.old]
         write_jsonl(self.jsonl, new)
         src = str(Path(__file__).resolve().parents[1] / "src")
-        env = {**os.environ, "PYTHONPATH": src}
         proc = subprocess.run(
-            [sys.executable, "-I", "-c", CRASH_SCRIPT, str(self.db), str(self.jsonl)],
-            env={**env}, capture_output=True, text=True,
+            [sys.executable, "-I", "-c", CRASH_SCRIPT, str(self.db), str(self.jsonl), src],
+            capture_output=True, text=True,
         )
+        # 3: imported a copy other than this checkout; 0: no crash hook (old code).
         self.assertEqual(proc.returncode, 7, proc.stderr)
         self.connection = connect(self.db)
         rows = load_chunk_rows(self.connection)
