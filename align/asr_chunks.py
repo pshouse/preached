@@ -216,7 +216,29 @@ def private_sermon(transcript: dict, chunk_config: dict, privacy: Config, review
     return records, digest
 
 
-def index_library(index_path: Path, sermons: list[tuple[list[dict], str]], privacy: Config, embedder=None) -> None:
+def sermon_gaps(transcript: dict, audio_dir: Path | None, coverage, injected: bool = False) -> list[tuple[float, float]] | None:
+    """Uncovered non-silent spans in the searchable window, or None when the audio is not at hand.
+
+    None leaves the sermon's coverage unchecked, and approval refuses it.
+    """
+    from preached.youtube.coverage import clip_to_window
+    from preached.youtube.words import Word
+
+    sermon_id = transcript.get("meta", {})["id"]
+    found = sorted(p for p in audio_dir.glob(f"{sermon_id}.*") if p.is_file()) if audio_dir else []
+    if not found:
+        if not injected:
+            return None
+        found = [Path(sermon_id)]
+    words = [Word(float(a), float(b), t) for seg in transcript["segments"] for a, b, t in seg["words"]]
+    window = None
+    if "searchable_start" in transcript and "searchable_end" in transcript:
+        window = (float(transcript["searchable_start"]), float(transcript["searchable_end"]))
+    spans = clip_to_window(coverage(found[0], words), window)
+    return [(s.start_s, s.end_s) for s in spans]
+
+
+def index_library(index_path: Path, sermons: list[tuple], privacy: Config, embedder=None) -> None:
     """Load church sermons into a library file, each UNPUBLISHED until approved."""
     from preached.youtube.library import index_video, open_library
     from preached.youtube.pipeline import _embed_on_cpu
@@ -224,7 +246,7 @@ def index_library(index_path: Path, sermons: list[tuple[list[dict], str]], priva
     embed = embedder or _embed_on_cpu
     connection = open_library(index_path)
     try:
-        for records, review_sha in sermons:
+        for records, review_sha, gaps in sermons:
             if not records:
                 continue
             title = records[0]["sermon_title"]
@@ -241,13 +263,18 @@ def index_library(index_path: Path, sermons: list[tuple[list[dict], str]], priva
                 matrix=matrix,
                 review_sha256=review_sha,
                 privacy_sha256=config_sha256(privacy),
+                coverage_gaps=gaps,
             )
     finally:
         connection.close()
 
 
-def main(argv: list[str] | None = None, *, embedder=None) -> None:
+def main(argv: list[str] | None = None, *, embedder=None, coverage=None) -> None:
     from preached.paths import INDEX_DIR
+    from preached.youtube.coverage import check_coverage
+
+    injected = coverage is not None
+    coverage = coverage or check_coverage
 
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("transcripts", nargs="+", type=Path)
@@ -256,6 +283,7 @@ def main(argv: list[str] | None = None, *, embedder=None) -> None:
     parser.add_argument("--library", required=True, help="library slug. wesley is never redacted; any other library must have a privacy config")
     parser.add_argument("--privacy", type=Path, default=None, help="privacy TOML; defaults to $PREACHED_PRIVACY (not for wesley; required otherwise)")
     parser.add_argument("--index", type=Path, default=None, help="church library SQLite to load the sermons into, unpublished until --ack-review (not for wesley)")
+    parser.add_argument("--audio-dir", type=Path, default=None, help="folder holding <sermon id>.<ext> audio; checks that the transcript covers every stretch of sound. Without it approval is refused")
     args = parser.parse_args(argv)
     privacy = privacy_for(args.library, args.privacy)
     config = load_chunk_config(ROOT / "corpus" / "chunk_config.json")
@@ -272,8 +300,9 @@ def main(argv: list[str] | None = None, *, embedder=None) -> None:
     review_root = (args.index.with_suffix("") if args.index else INDEX_DIR / args.library) / "review"
     sermons = []
     for path in args.transcripts:
-        records, digest = private_sermon(json.loads(path.read_text()), config, privacy, review_root, args.pause)
-        sermons.append((records, digest))
+        transcript = json.loads(path.read_text())
+        records, digest = private_sermon(transcript, config, privacy, review_root, args.pause)
+        sermons.append((records, digest, sermon_gaps(transcript, args.audio_dir, coverage, injected)))
         rows.extend(records)
     write_jsonl(args.out, rows)
     flagged = sum(1 for row in rows if row["flag_end_s"] is not None)

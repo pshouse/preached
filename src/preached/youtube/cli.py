@@ -10,6 +10,7 @@ from pathlib import Path
 from preached.libraries import PUBLIC_DOMAIN
 from preached.paths import CACHE_ROOT, INDEX_DIR
 from preached.privacy import required_config
+from preached.youtube.coverage import check_coverage
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
 from preached.youtube.listing import SLUG, BadChannelUrl, ChannelRefused, assert_youtube_url
 from preached.youtube.pipeline import Settings, acknowledge, privacy_config, run
@@ -77,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedder=None, downloader=None, metadata=None, index_dir: Path | None = None, audio_root: Path | None = None) -> int:
+def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedder=None, downloader=None, metadata=None, coverage=None, index_dir: Path | None = None, audio_root: Path | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not SLUG.fullmatch(args.library):
@@ -141,6 +142,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
             embedder=embedder,
             downloader=downloader or download_audio,
             metadata=metadata or fetch_metadata,
+            coverage=coverage or check_coverage,
         )
     except (ChannelRefused, BadChannelUrl) as exc:
         print(str(exc), file=sys.stderr)

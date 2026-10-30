@@ -23,6 +23,7 @@ from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
 from preached.privacy import Config, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
+from preached.youtube.coverage import check_coverage, clip_to_window
 from preached.youtube.chunking import chunk_words
 from preached.youtube.library import approve_review, imported_ok, index_video, mark_video, open_library
 from preached.youtube.listing import Video, creative_commons, parse_date, watch_url
@@ -269,6 +270,7 @@ def run(
     embedder=None,
     downloader,
     metadata,
+    coverage=check_coverage,
 ) -> int:
     """Return 0 when every selected video was imported or skipped on purpose.
 
@@ -313,6 +315,7 @@ def run(
                     embedder=embed,
                     downloader=downloader,
                     metadata=metadata,
+                    coverage=coverage,
                     started=started,
                     config=config,
                     policy=policy,
@@ -352,6 +355,7 @@ def _import_one(
     downloader,
     metadata,
     started: float,
+    coverage=check_coverage,
     config: Config | None = None,
     policy: str = "none",
 ) -> None:
@@ -395,11 +399,16 @@ def _import_one(
     transcribe_s = time.perf_counter() - transcribe_started
     if not words:
         raise RuntimeError("transcript was empty")
+    # Sound with no word in it is a stretch the ASR dropped: approval refuses while it is open.
+    gaps = clip_to_window(coverage(audio_path, words, duration_s=video.duration_s), windows.get(video.id))
+    for gap in gaps:
+        print(f"coverage {video.id}: no transcript for sound at {gap.start_s:.1f}-{gap.end_s:.1f}s", file=sys.stderr, flush=True)
     records, items = _chunks_for(video, words, windows, config, policy)
     if not SAFE_ID.fullmatch(video.id):
         raise RuntimeError("video id is not usable as a file name")
     flagged = sum(1 for record in records if record["flag_end_s"] is not None)
     header = metadata_review_lines(video.title, description, original_title or video.title, original_description, config)
+    header.extend({"field": "coverage", "gap_start_s": gap.start_s, "gap_end_s": gap.end_s} for gap in gaps)
     _, review_sha = write_private_review([*header, *items], settings.review_root() / f"{video.id}.review.jsonl")
     titles = [video.title for _ in records]
     texts = [record["text"] for record in records]
@@ -418,6 +427,7 @@ def _import_one(
         matrix=matrix,
         review_sha256=review_sha,
         privacy_sha256=config_sha256(config),
+        coverage_gaps=[(gap.start_s, gap.end_s) for gap in gaps],
     )
     index_s = time.perf_counter() - index_started
     if not settings.keep_audio:
@@ -433,7 +443,8 @@ def _import_one(
     )
     print(
         f"imported {video.id} in {time.perf_counter() - started:.1f}s; UNPUBLISHED until its review file is "
-        f"acknowledged ({len(items)} review items, {flagged} flagged chunks)",
+        f"acknowledged ({len(items)} review items, {flagged} flagged chunks, {len(gaps)} coverage gaps"
+        f"{': approval is blocked' if gaps else ''})",
         file=sys.stderr,
         flush=True,
     )

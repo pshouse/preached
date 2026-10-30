@@ -25,6 +25,7 @@ from preached.youtube.words import Word
 GPU_BUSY_MIB = 6 * 1024
 GPU_MODEL = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 CPU_MODEL = "tiny.en"
+INITIAL_PROMPT = "English speech, with punctuation."
 
 
 def gpu_used_mib() -> int | None:
@@ -130,7 +131,7 @@ def _run(audio_path: Path, *, device: str, compute_type: str, model_name: str) -
             condition_on_previous_text=False,
             # A short punctuated prompt. Batched mode is not used here.
             # W1-A found batched decoding without a prompt drops punctuation.
-            initial_prompt="English speech, with punctuation.",
+            initial_prompt=INITIAL_PROMPT,
         )
         words: list[Word] = []
         for segment in segments:

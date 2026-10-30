@@ -41,6 +41,9 @@ VIDEO_EXTRA_COLUMNS = (
     ("approved_at", "TEXT"),
     # preached.privacy.config_sha256 of the config the import ran under.
     ("privacy_sha256", "TEXT"),
+    # JSON list of [start_s, end_s] uncovered non-silent spans (preached.youtube.coverage).
+    # NULL means the check never ran; approval refuses both NULL and a non-empty list.
+    ("coverage_gaps", "TEXT"),
 )
 
 MODEL_KEY = DEFAULT_MODEL
@@ -151,6 +154,7 @@ def index_video(
     matrix: np.ndarray,
     review_sha256: str | None = None,
     privacy_sha256: str | None = None,
+    coverage_gaps: list | None = None,
     reader: str | None = None,
     sermon_number: int | None = None,
     librivox_id: str | None = None,
@@ -238,9 +242,14 @@ def index_video(
             error=None,
         )
         connection.execute(
-            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, approved_sha256 = NULL, approved_at = NULL "
-            "WHERE video_id = ?",
-            (review_sha256, privacy_sha256, video_id),
+            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, coverage_gaps = ?, "
+            "approved_sha256 = NULL, approved_at = NULL WHERE video_id = ?",
+            (
+                review_sha256,
+                privacy_sha256,
+                None if coverage_gaps is None else json.dumps([[float(a), float(b)] for a, b in coverage_gaps]),
+                video_id,
+            ),
         )
         connection.execute(
             "INSERT INTO meta (key, value) VALUES ('embed_model', ?) "
@@ -279,16 +288,28 @@ def approve_review(connection: sqlite3.Connection, video_id: str, review_file, p
     Refuses when the file is missing, the video is not ``ok``, the file's
     sha256 differs from the one stored at import (the list changed since), or
     the privacy config in effect now (``privacy_sha256``) is not the one the
-    import ran under (the stored text came from other rules).
+    import ran under (the stored text came from other rules), or the ASR
+    coverage check found sound with no transcript (or never ran): a name in
+    that stretch was never transcribed, so never flagged or redacted.
 
     The review file is read here, once. Nothing re-reads it after approval:
     editing or deleting it later does not unpublish the sermon.
     """
     row = connection.execute(
-        "SELECT status, review_sha256, privacy_sha256 FROM videos WHERE video_id = ?", (video_id,)
+        "SELECT status, review_sha256, privacy_sha256, coverage_gaps FROM videos WHERE video_id = ?",
+        (video_id,),
     ).fetchone()
     if row is None or row[0] != "ok":
         raise RuntimeError(f"{video_id}: not imported")
+    if row[3] is None:
+        raise RuntimeError(f"{video_id}: ASR coverage was never checked; re-import with --redo")
+    gaps = json.loads(row[3])
+    if gaps:
+        shown = ", ".join(f"{a:.0f}-{b:.0f}s" for a, b in gaps[:6])
+        raise RuntimeError(
+            f"{video_id}: {len(gaps)} stretch(es) of sound have no transcript ({shown}). Listen, then "
+            "re-import with --redo (a --windows entry limits the check to the sermon)"
+        )
     if row[2] is None or row[2] != privacy_sha256:
         raise RuntimeError(
             f"{video_id}: privacy config changed since import (or the import predates the config hash); "

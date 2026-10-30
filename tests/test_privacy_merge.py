@@ -304,7 +304,7 @@ class ChurchAsrServedTests(unittest.TestCase):
         from preached.youtube.cli import main as youtube_main
 
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            asr_chunks.main(argv, embedder=embedder)
+            asr_chunks.main(argv, embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)],
                                 index_dir=root)
         self.assertEqual(code, 0)

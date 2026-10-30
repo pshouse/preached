@@ -84,6 +84,7 @@ class LiveGateTests(Base):
             metadata=lambda video: {"title": video.title, "duration": 400, "upload_date": "20240602"},
             downloader=lambda video, dest: dest / f"{video.id}.m4a",
             transcriber=lambda path: spoken[Path(path).stem],
+            coverage=lambda *_a, **_k: [],
             embedder=embedder,
         )
 
@@ -302,6 +303,7 @@ class TitleTests(Base):
             metadata=lambda video: {**meta[video.id], "duration": 400, "upload_date": "20240602"},
             downloader=lambda video, dest: dest / f"{video.id}.m4a",
             transcriber=lambda path: spoken[Path(path).stem],
+            coverage=lambda *_a, **_k: [],
             embedder=embedder,
         )
         self.assertEqual(code, 0, err)
@@ -439,7 +441,7 @@ class AsrGateTests(unittest.TestCase):
         code = 0
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                self.module.main([str(self.transcript_path), "--out", str(self.out), *argv], **kwargs)
+                self.module.main([str(self.transcript_path), "--out", str(self.out), *argv], **{"coverage": lambda *_a, **_k: [], **kwargs})
             except SystemExit as exc:
                 code = exc.code if isinstance(exc.code, int) else 2
         return code, out.getvalue(), err.getvalue()

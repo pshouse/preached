@@ -178,7 +178,7 @@ class AsrChunksSymlinkTests(unittest.TestCase):
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(self.transcript), "--out", str(self.root / "c.jsonl"), "--library", "church",
                              "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite")],
-                            embedder=embedder)
+                            embedder=embedder, coverage=lambda *_a, **_k: [])
 
     def test_symlink_at_the_review_file(self) -> None:
         review = self.index_dir / "church" / "review"

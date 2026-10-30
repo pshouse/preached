@@ -205,7 +205,7 @@ class AsrRuleTests(unittest.TestCase):
         self.index = root / "church.sqlite"
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(transcript), "--out", str(root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(toml), "--index", str(self.index)], embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)], index_dir=root)
         self.assertEqual(code, 0)
         self.connection = open_readonly(self.index, check_same_thread=False)

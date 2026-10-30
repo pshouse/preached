@@ -95,6 +95,7 @@ class Base(unittest.TestCase):
             metadata=lambda video: {"title": video.title, "duration": 400, "upload_date": "20240602"},
             downloader=lambda video, dest: dest / f"{video.id}.m4a",
             transcriber=lambda path: spoken[Path(path).stem],
+            coverage=lambda *_a, **_k: [],
             embedder=embedder,
         )
 
