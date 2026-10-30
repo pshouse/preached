@@ -26,7 +26,8 @@ from preached.corpus import load_chunk_config
 from preached.models import MODELS
 from preached.search import PREROLL_S as SEARCH_PREROLL_S
 from preached.search import Searcher
-from preached.store import load_embeddings, open_readonly, stored_fingerprint
+from preached.library import get_meta, is_your_church, mark_your_church
+from preached.store import connect, load_embeddings, open_readonly, stored_fingerprint
 from preached.youtube.chunking import chunk_words
 from preached.youtube.cli import main
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
@@ -830,6 +831,70 @@ class ImportTests(unittest.TestCase):
                 lister=self._boom,
             )
             self.assertEqual(code, 2)
+
+    def test_your_church_mark_is_exclusive_and_dry_run_writes_nothing(self) -> None:
+        video = Video(
+            "samplevid01",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid01",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                    "--dry-run",
+                ],
+                root,
+                lister=lambda _url: [video],
+                downloader=self._boom,
+                transcriber=self._boom,
+                metadata=self._boom,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertFalse((root / "sample.sqlite").exists())
+
+            other = connect(root / "other.sqlite")
+            mark_your_church(other)
+            other.commit()
+            other.close()
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                ],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            marked = open_readonly(root / "sample.sqlite")
+            try:
+                self.assertTrue(is_your_church(marked))
+                self.assertEqual(get_meta(marked, "sample"), "1")
+            finally:
+                marked.close()
+            cleared = open_readonly(root / "other.sqlite")
+            try:
+                self.assertFalse(is_your_church(cleared))
+            finally:
+                cleared.close()
 
     def test_privacy_hook_is_identity(self) -> None:
         words = sample_words()

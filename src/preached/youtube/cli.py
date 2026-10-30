@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Keep the downloaded audio after a successful import. By default that file is deleted. A failed video always keeps its file.",
     )
+    parser.add_argument(
+        "--your-church",
+        action="store_true",
+        help="Mark this library as your church (meta role=church). Clears that mark on any other index in the directory. Ignored by --dry-run.",
+    )
     return parser
 
 
@@ -87,7 +92,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         windows_path=args.windows,
     )
     try:
-        return run(
+        code = run(
             settings,
             lister=lister or list_channel,
             transcriber=transcriber or transcribe,
@@ -98,3 +103,14 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     except (ChannelRefused, BadChannelUrl) as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    # Dry-run writes nothing, including the church mark. A partial import
+    # still marks the file: the side view can say the library is empty.
+    if args.your_church and not args.dry_run and settings.index_path.is_file():
+        from preached.library import mark_your_church_exclusive
+
+        mark_your_church_exclusive(
+            settings.index_path,
+            index_root,
+            sample=args.library == "sample",
+        )
+    return code
