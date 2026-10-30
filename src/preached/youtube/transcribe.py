@@ -75,7 +75,43 @@ def transcribe(audio_path: Path) -> list[Word]:
     return _run(audio_path, device="cpu", compute_type="int8", model_name=CPU_MODEL)
 
 
+def _preload_cuda_libs() -> None:
+    """Load cuBLAS and cuDNN from the nvidia wheels.
+
+    This machine has no driver-side CUDA toolkit on the library path.
+    ctranslate2 asks for ``libcublas.so.12`` by soname. The wheel ships the
+    file, but Python does not add that directory to the loader path.
+    """
+    import ctypes
+    import glob
+
+    roots: list[Path] = []
+    for name in ("nvidia.cublas", "nvidia.cuda_nvrtc", "nvidia.cudnn"):
+        try:
+            module = __import__(name, fromlist=["_"])
+        except ImportError:
+            continue
+        for location in getattr(module, "__path__", ()):
+            roots.append(Path(location) / "lib")
+    libs: list[str] = []
+    for root in roots:
+        libs.extend(glob.glob(str(root / "lib*.so*")))
+    loaded: set[str] = set()
+    for key in ("cublasLt", "cublas", "nvrtc", "cudnn.so", "cudnn_"):
+        for lib in libs:
+            base = Path(lib).name
+            if key not in base or "nvblas" in base or lib in loaded:
+                continue
+            loaded.add(lib)
+            try:
+                ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+            except OSError:
+                continue
+
+
 def _run(audio_path: Path, *, device: str, compute_type: str, model_name: str) -> list[Word]:
+    if device == "cuda":
+        _preload_cuda_libs()
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
