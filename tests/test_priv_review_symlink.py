@@ -24,6 +24,7 @@ if str(ROOT / "align") not in sys.path:
     sys.path.insert(0, str(ROOT / "align"))
 
 import asr_chunks  # noqa: E402
+from preached.privacy import _open_private_dir  # noqa: E402
 from preached.youtube.pipeline import write_private_review  # noqa: E402
 from test_privacy_wire import FILLER, embedder, words_for  # noqa: E402
 
@@ -195,6 +196,44 @@ class AsrChunksSymlinkTests(unittest.TestCase):
         with self.assertRaises((RuntimeError, SystemExit)):
             self.run_asr()
         self.victim.untouched(self)
+
+
+class MkdirRaceTests(unittest.TestCase):
+    """Round 6: a lost mkdir race (EEXIST) retries the open once; a non-directory still fails closed."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.victim = Victim(self.root)
+
+    def race(self, plant) -> object:
+        """Run _open_private_dir on a missing folder; ``plant`` runs just before mkdir, as a rival would."""
+        real_mkdir = os.mkdir
+        target = self.root / "race"
+
+        def mkdir(path, mode=0o777, *, dir_fd=None):
+            if path == "race":
+                plant(target)
+            return real_mkdir(path, mode, dir_fd=dir_fd)
+
+        with patch("preached.privacy.os.mkdir", mkdir):
+            fd = _open_private_dir(target)
+        return fd
+
+    def test_rival_creates_the_directory_first(self) -> None:
+        fd = self.race(lambda target: target.mkdir(mode=0o700))
+        self.addCleanup(os.close, fd)
+        self.assertTrue(stat.S_ISDIR(os.fstat(fd).st_mode))
+
+    def test_rival_plants_a_symlink_fails_closed(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self.race(lambda target: target.symlink_to(self.victim.dir))
+        self.victim.untouched(self)
+
+    def test_rival_plants_a_file_fails_closed(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self.race(lambda target: target.write_text("x"))
 
 
 if __name__ == "__main__":

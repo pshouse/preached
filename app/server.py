@@ -235,11 +235,10 @@ def timed_link(hit) -> str | None:
 def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_flagged: bool = False) -> dict:
     """The JSON for one result. A chunk with ``[name]`` or a review flag follows
     the flagged-audio policy: ``none`` drops the play link and both times,
-    ``shifted`` starts after the flagged words (``start_s`` = ``play_from_s``,
-    no ``end_s``), ``play`` is the normal link. See ``audio_policy.public_times``.
+    ``play`` is the normal link. See ``audio_policy.public_times``.
     ``near_flag`` (``search.touches_flagged``) withholds audio under ``none``
     for a card whose span touches a flagged chunk. A YouTube link on a flagged
-    card is rebuilt from validated parts, and under ``none`` or ``shifted`` its
+    card is rebuilt from validated parts, and under ``none`` its
     YouTube source link (a watch link from 0:00) is dropped.
 
     ``sermon_flagged`` (``search.sermon_flagged``): Patrick's link rule. In a
@@ -274,16 +273,16 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_f
             return result
         # Unflagged, but its span touches a flagged chunk (search.touches_flagged):
         # under none a play link would run on into the name, so withhold it too.
-        start_s, end_s, play_from, allowed = None, None, None, False
+        start_s, end_s, allowed = None, None, False
     else:
-        start_s, end_s, play_from, allowed = public_times(hit.start_s, hit.end_s, flag_end_s, flagged_audio)
+        start_s, end_s, allowed = public_times(hit.start_s, hit.end_s, flag_end_s, flagged_audio)
     result["start_s"] = start_s
     result["end_s"] = end_s
     youtube = _youtube_like(hit.audio_url) or _youtube_like(hit.source_url)
     if flagged_audio != "play":
         # This sermon has a flagged passage: its source link (a YouTube watch
         # link or an archive.org page) plays from 0:00, which would reach the
-        # name; under none or shifted only the rebuilt link may remain.
+        # name; under none only the rebuilt link may remain.
         result["source_url"] = None
     if not allowed:
         result["audio_url"] = None
@@ -292,16 +291,13 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_f
     vid = chunk_video_id(hit.video_id, hit.audio_url, hit.source_url)
     if vid is not None or youtube:
         # Rebuilt from validated parts, never the stored link: its t= was set
-        # at import time and may sit on the name. Under shifted, t= is the
-        # shifted start. A YouTube link that does not validate is withheld.
+        # at import time and may sit on the name. A YouTube link that does not validate is withheld.
         result["audio_url"] = policy_watch_url(vid, hit.start_s, hit.end_s, hit.flag_end_s, flagged_audio)
         if result["audio_url"] is None:
             result["audio_withheld"] = True
             result["start_s"] = result["end_s"] = None
             result["source_url"] = None
             return result
-    if play_from is not None:
-        result["play_from_s"] = play_from
     return result
 
 
@@ -1077,7 +1073,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     args = parser.parse_args(argv)
     try:
-        # Always none (Patrick's decision); a stale shifted/play setting stops here.
+        # Always none (Patrick's decision); a stale play/shifted setting stops here.
         resolve_flagged_audio(default_config().flagged_audio)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"flagged audio policy: {exc}") from exc

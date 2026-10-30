@@ -1,7 +1,7 @@
 """W3-PRIV-WIRE fix-up (CTO review of PR #12).
 
 Live publish gate, the W1-C path failing closed, titles and descriptions in
-the review file, no exact times for withheld or shifted audio, symlink-safe
+the review file, no exact times for withheld audio, symlink-safe
 review files, and the privacy-config hash. Every name below is invented.
 """
 
@@ -204,7 +204,7 @@ class LiveGateTests(Base):
 
 
 class TimesTests(unittest.TestCase):
-    """Must-fix 5: no exact start_s/end_s under none or shifted."""
+    """Must-fix 5: no exact start_s/end_s under none."""
 
     def hit(self, flag_end_s):
         return Hit(
@@ -214,18 +214,17 @@ class TimesTests(unittest.TestCase):
         )
 
     def test_public_times(self) -> None:
-        self.assertEqual(public_times(100.0, 145.0, None, "none"), (100.0, 145.0, None, True))
-        self.assertEqual(public_times(100.0, 145.0, 112.0, "play"), (100.0, 145.0, None, True))
-        self.assertEqual(public_times(100.0, 145.0, 112.0, "none"), (None, None, None, False))
-        self.assertEqual(public_times(100.0, 145.0, 112.0, "shifted"), (112.5, None, 112.5, True))
-        self.assertEqual(public_times(100.0, 145.0, 144.9, "shifted"), (None, None, None, False))
+        self.assertEqual(public_times(100.0, 145.0, None, "none"), (100.0, 145.0, True))
+        self.assertEqual(public_times(100.0, 145.0, 112.0, "play"), (100.0, 145.0, True))
+        self.assertEqual(public_times(100.0, 145.0, 112.0, "none"), (None, None, False))
+        with self.assertRaises(ValueError):
+            public_times(100.0, 145.0, 112.0, "shifted")
 
     def test_no_field_brackets_the_name(self) -> None:
-        for policy in ("none", "shifted"):
-            payload = hit_dict(self.hit(112.0), policy)
-            self.assertNotEqual(payload["start_s"], 100.0, policy)
-            self.assertIsNone(payload["end_s"], policy)
-            self.assertNotIn(100.0, payload.values())
+        payload = hit_dict(self.hit(112.0), "none")
+        self.assertNotEqual(payload["start_s"], 100.0)
+        self.assertIsNone(payload["end_s"])
+        self.assertNotIn(100.0, payload.values())
 
     def test_query_cli_prints_no_exact_start(self) -> None:
         sys.path.insert(0, str(REPO_ROOT / "search"))
@@ -233,7 +232,7 @@ class TimesTests(unittest.TestCase):
             import query
         finally:
             sys.path.pop(0)
-        for policy, shown in (("none", "start_s=None"), ("shifted", "start_s=112.5"), ("play", "start_s=100.0")):
+        for policy, shown in (("none", "start_s=None"), ("play", "start_s=100.0")):
             out = StringIO()
             with redirect_stdout(out):
                 query.print_hits("q", "bm25", None, [self.hit(112.0)], policy)
@@ -260,10 +259,6 @@ class TimesTests(unittest.TestCase):
           audio_url: null, audio_withheld: true })).join("|");
         if (!withheld.includes("Text only")) throw new Error("withheld: " + withheld);
         if (withheld.includes("coming soon")) throw new Error("withheld shows coming soon");
-        var shifted = texts(renderCard({ sermon_title: "t", text: "x", start_s: 112.5, end_s: null,
-          play_from_s: 112.5, audio_url: "https://archive.org/a.mp3" })).join("|");
-        if (!shifted.includes("Play from 0:01:52")) throw new Error("shifted: " + shifted);
-        if (shifted.includes("0:01:40")) throw new Error("shifted shows chunk start");
         console.log("ok");
         """
         app_js = (REPO_ROOT / "app" / "static" / "app.js").read_text()

@@ -685,7 +685,10 @@ def _open_private_dir(folder: Path, create: bool = True) -> int:
                 except FileNotFoundError:
                     if not create:
                         raise
-                    os.mkdir(part, 0o700, dir_fd=current)
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=current)
+                    except FileExistsError:
+                        pass  # lost a mkdir race: retry the open once; it fails closed if it is not a plain directory
                     following = os.open(part, flags, dir_fd=current)
             except OSError as exc:
                 if not create and isinstance(exc, FileNotFoundError):

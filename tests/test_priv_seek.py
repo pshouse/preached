@@ -115,8 +115,13 @@ class SeekRule(unittest.TestCase):
         self.assertFalse(touches_flagged(self.connection(370.0, 369.0), self.hit()))
 
     def test_margin_is_wide_enough_for_late_asr_word_ends(self) -> None:
-        # Measured: word ends p99 0.48 s late, max 3.58 s; the margin is p99 + 0.5 s.
-        self.assertGreaterEqual(SEEK_SLACK_S, 0.48 + 0.5)
+        # Measured: word ends p99 0.48 s late, max 3.58 s; p99 + 0.5 s = 0.98 s, and
+        # 1.5 s is that plus headroom. The literal floor stops a quiet drop to 1.4.
+        self.assertGreaterEqual(SEEK_SLACK_S, 1.5)
+        self.assertEqual(seek_time(NEXT_START), 379.0)
+        # Literal case, independent of the constant: a flagged chunk ending 1.49 s
+        # before the seek still touches.
+        self.assertTrue(touches_flagged(self.connection(379.0 - 1.49), self.hit()))
         seek = seek_time(NEXT_START)
         # An end between seek - 1.5 and seek - 0.5 (the old margin) is now touching.
         for end in (seek - SEEK_SLACK_S + 0.01, seek - 1.0, seek - 0.51, seek - 0.5):
