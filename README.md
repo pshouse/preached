@@ -36,7 +36,7 @@ That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesl
 
 ## YouTube channel import
 
-Paste a channel (or one watch URL) and build a library the search server can read. Audio is downloaded only as a working file under `/cache/youtube/<slug>/` and deleted after the video is indexed. `--keep-audio` leaves the file. The index stores the transcript excerpt, the start and end seconds, and a YouTube watch URL with `t=<seconds>s`. The video stays on YouTube. `text_source` is `asr`. `reader` is left empty.
+Paste a channel (or one watch URL) and build a library the search server can read. Audio is downloaded only as a working file under `/cache/youtube/<slug>/` and deleted after the video is indexed. `--keep-audio` leaves the file. The index stores the transcript excerpt and the exact start and end seconds. The watch URL's `t=` starts 0.75 s before that start (never below 0) and is truncated to a whole second. The video stays on YouTube. `text_source` is `asr`. `reader` is left empty.
 
 ```bash
 uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --dry-run

@@ -8,7 +8,7 @@ Branch `feat/w2-youtube`. The first cut was based on `origin/feat/w2-web` before
 
 For each selected video the pipeline downloads audio only to `/cache/youtube/<slug>/`, transcribes words with timestamps, keeps the sermon window, calls `privacy.redact`, chunks the words, and writes the rows. One video's failure is recorded and the rest continue. The next run retries `error` rows and skips `ok` and `skipped` rows. `--redo` imports again. `--dry-run` prints `id`, `title`, `YYYY-MM-DD`, and duration in seconds, and does not download or write the index.
 
-The chunks table is the Wesley schema plus `audio_url`, `reader`, `text_source`, `video_id`, `title`, and `published`. FTS5 is the same trigger-maintained `chunks_fts`. Embeddings are `granite-english-r2` float32, L2-normalized, in the `embeddings` table. There is no vector database and no new embedding model. `reader` is NULL. `text_source` is `asr`. `audio_url` is `https://www.youtube.com/watch?v=<id>&t=<seconds>s`, with the seconds truncated toward zero so YouTube's `t=` parameter seeks to that second. `source_url` is the watch URL without `t=`.
+The chunks table is the Wesley schema plus `audio_url`, `reader`, `text_source`, `video_id`, `title`, and `published`. FTS5 is the same trigger-maintained `chunks_fts`. Embeddings are `granite-english-r2` float32, L2-normalized, in the `embeddings` table. There is no vector database and no new embedding model. `reader` is NULL. `text_source` is `asr`. `audio_url` is `https://www.youtube.com/watch?v=<id>&t=<seconds>s`. The stored `start_s` stays the onset of the first word. The `t=` value is `int(max(0, start_s - 0.75))`, the same 0.75 s pre-roll as the page player, truncated toward zero because YouTube's `t=` is whole seconds. `source_url` is the watch URL without `t=`.
 
 `app/server.py` still serves one index per process. `--library <slug>` opens `/cache/index/<slug>.sqlite` and accepts that slug on `/api/search`. The default remains `wesley` and `/cache/index/wesley.sqlite`. A request for a different slug is still a 400. The page keeps sending `library=wesley`.
 
@@ -144,3 +144,22 @@ A listing id must match `^[A-Za-z0-9_-]{11}$`, the same form `/api/sermon/<id>` 
 After `index_video` commits, the pipeline deletes the audio path the downloader returned, and only when that name and the resolved file both sit inside `settings.audio_dir`. A failed video keeps its file so the retry can resume. `--keep-audio` (default off) skips the delete.
 
 92 tests, `unittest discover -s tests`, all passing (88 before this pass). No YouTube download in this pass. No new dependency.
+
+## Main merge and dependencies
+
+Merged `origin/main` at `000b89d` (PR #7) into `feat/w2-youtube`. The merge-base before that was `6da9756` (PR #3). Main also has PR #5 (`f82d0be`, W1-A ingest) and PR #6 (`b57a623`, W1-C alignment). The merge commit is `02c14b4`. Git auto-merged a second `transcribe` table; the next commit deleted that duplicate and kept main's block, comments included.
+
+`pyproject.toml` extras, matching main's `transcribe` and `bench` group:
+
+- Runtime dependencies: `numpy>=2.1`, `sentence-transformers>=6.1.0`, `torch>=2.5`. No Pillow, no torchvision.
+- `transcribe`: `faster-whisper>=1.2.1,<1.3`, `av>=18.1,<19`, `nvidia-cublas-cu12>=12.4,<13`, `nvidia-cudnn-cu12>=9,<10`.
+- `youtube`: `yt-dlp==2026.10.26`.
+- `bench` group: `pillow>=10`, `torchvision>=0.29.2`.
+
+`uv.lock` was replaced with `origin/main`'s lock and regenerated with `uv lock`. `uv lock --check` passed (75 packages). The only lock change against `origin/main` is `yt-dlp` 2026.10.26 under the `youtube` extra. `uv sync --extra transcribe --extra youtube` resolved `faster-whisper` 1.2.1, `ctranslate2` 4.8.4, `av` 18.1.0, and `yt-dlp` 2026.10.26. A missing `yt_dlp` module raises `RuntimeError` naming `--extra youtube`. The app and the tests do not install it.
+
+The optional `transcribe-gpu` split was not done. Main's single `transcribe` extra is what produced the committed transcripts, and splitting the nvidia wheels would mean rewriting every `--extra transcribe` command on the W1-A side.
+
+Play URLs use `PREROLL_S = 0.75` in `src/preached/youtube/listing.py` (not imported from `preached.search`). `watch_url` sets `t=` to `int(max(0, start_s - PREROLL_S))`. Stored `start_s` and `end_s`, and the chunk id format, are unchanged. `app/static/app.js` was not edited. `start_s` 12.2 seeks at `&t=11s`. `start_s` 0.5 clamps to `&t=0s`.
+
+151 tests, `uv run python -m unittest discover -s tests`, all passing. No YouTube download in this pass.

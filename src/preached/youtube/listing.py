@@ -30,6 +30,9 @@ class BadChannelUrl(ValueError):
     """The channel URL is not https on a YouTube host."""
 
 
+# Matches the page player. The stored start stays the first word; only the seek is earlier.
+PREROLL_S = 0.75
+
 # yt-dlp will treat a leading dash as an option. Only these hosts, over https.
 YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
 _URL_MESSAGE = (
@@ -83,11 +86,15 @@ class Video:
 
 
 def watch_url(video_id: str, start_s: float | None = None) -> str:
-    """YouTube watch URL. ``t=<seconds>s`` opens the player at that second."""
+    """YouTube watch URL. ``t=`` is the play position, not the stored onset.
+
+    ``start_s`` is the first word. The player starts ``PREROLL_S`` earlier.
+    YouTube's ``t=`` parameter is a whole number of seconds.
+    """
     base = f"https://www.youtube.com/watch?v={video_id}"
     if start_s is None:
         return base
-    seconds = max(0, int(start_s))
+    seconds = int(max(0, start_s - PREROLL_S))
     return f"{base}&t={seconds}s"
 
 

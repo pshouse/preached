@@ -128,8 +128,35 @@ class ListingTests(unittest.TestCase):
 
     def test_watch_url_uses_integer_seconds(self) -> None:
         self.assertEqual(watch_url("abcdefghijk"), "https://www.youtube.com/watch?v=abcdefghijk")
+        # 12.8 - 0.75 = 12.05, then truncated to the whole second YouTube accepts.
         self.assertEqual(watch_url("abcdefghijk", 12.8), "https://www.youtube.com/watch?v=abcdefghijk&t=12s")
+        # 12.2 used to seek at 12s. Pre-roll moves the play position to 11s.
+        self.assertEqual(watch_url("abcdefghijk", 12.2), "https://www.youtube.com/watch?v=abcdefghijk&t=11s")
         self.assertEqual(watch_url("abcdefghijk", 0), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
+
+    def test_watch_url_preroll_clamps_at_zero(self) -> None:
+        self.assertEqual(watch_url("abcdefghijk", 0.5), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
+
+    def test_stored_start_s_is_the_word_onset(self) -> None:
+        """The chunk record keeps the first word. Only the watch URL is pre-rolled."""
+        from preached.youtube.pipeline import _chunks_for
+
+        video = Video(
+            "samplevid001",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid001",
+        )
+        words = sample_words(12.2)
+        records = _chunks_for(video, words, {})
+        self.assertEqual(records[0]["chunk_id"], "samplevid001-c0000")
+        self.assertEqual(records[0]["start_s"], words[0].start)
+        self.assertAlmostEqual(records[0]["start_s"], 12.2)
+        self.assertEqual(
+            records[0]["audio_url"],
+            "https://www.youtube.com/watch?v=samplevid001&t=11s",
+        )
 
     def test_blocked_channel_name_is_refused(self) -> None:
         with self.assertRaises(ChannelRefused):
@@ -551,7 +578,7 @@ class ImportTests(unittest.TestCase):
                 self.assertIn("zephyrgrace", hit["text"])
                 self.assertAlmostEqual(hit["start_s"], 12.2, places=5)
                 self.assertGreater(hit["end_s"], hit["start_s"])
-                self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid001&t=12s")
+                self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid001&t=11s")
                 self.assertIsNone(hit["reader"])
                 self.assertEqual(hit["text_source"], "asr")
                 self.assertEqual(hit["sermon_title"], "On Mercy")
@@ -690,7 +717,7 @@ class ImportTests(unittest.TestCase):
                     self.assertEqual(meta["sermon_title"], video.title)
                     self.assertEqual(
                         meta["audio_url"],
-                        f"https://www.youtube.com/watch?v={video_id}&t=12s",
+                        f"https://www.youtube.com/watch?v={video_id}&t=11s",
                     )
                     status, body = self._get(port, f"/api/sermon/{video_id.lower()}")
                     self.assertEqual(status, 404)
