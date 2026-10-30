@@ -30,7 +30,7 @@ Another library is a separate SQLite file. The server still serves one file per 
 uv run app/server.py --library <slug> --bm25-only
 ```
 
-That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`.
+That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`. Only `wesley` and the public-domain libraries in `src/preached/libraries.py` (`spurgeon`, `edwards`) are served; any other slug or `--index` file, including a church YouTube import, is refused until redaction and approval are in place.
 
 ## Credits
 

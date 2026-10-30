@@ -87,10 +87,11 @@ All on archive.org / LibriVox, public-domain audio (volunteer readers):
 - Jonathan Edwards, *Select Sermons* (~20 h): `select_sermons_edwards_0911_librivox`
 - Spurgeon, *Sermons May 1858* (~4 h): `spurgeons_sermons_librivox`
 - Calvin, *Most Celebrated Sermons*: `mostcelebratedsermonsjohncalvin_2104_librivox`
-- Also available: Chrysostom homilies (~200 h), Newman, Luther, Talmage,
+- Also available: Chrysostom homilies (~200 h), Newman, Luther,
   Moody, Catherine Booth, Thomas Watson, Thomas Manton.
-- Actual historical recording, public domain: T. De Witt Talmage,
-  *Sermon on the Mount* (1898), `SermonOnTheMountByT.DeWittTalmage1898`.
+- ~~Talmage~~ **Dropped** (Patrick's decision, Oct 30): no Talmage library,
+  including the historical recording *Sermon on the Mount* (1898),
+  `SermonOnTheMountByT.DeWittTalmage1898`.
 - Audio files are served from `*.us.archive.org`. Metadata via
   `https://archive.org/metadata/<identifier>`.
 - Sermon *text* for cross-checking transcripts: ccel.org (public domain).
