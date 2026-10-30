@@ -4,6 +4,8 @@
 Every regular file except the manifest itself is listed as
 ``<sha256><two spaces><relative posix path>``, sorted by path. The same
 bytes produce the same manifest. Modes and mtimes are not recorded.
+A final ``# preached-pins-skipped: 0`` or ``: 1`` line records whether the
+ONNX pin check was skipped. ``sha256sum -c`` ignores that comment.
 
 Also copies an index with SQLite's backup API (so a WAL is included) and
 strips int8 from a bundled ONNX manifest.
@@ -43,8 +45,10 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def manifest_text(root: Path) -> str:
+def manifest_text(root: Path, *, pins_skipped: bool = False) -> str:
     lines = [f"{sha256(root / rel)}  {rel}\n" for rel in iter_files(root)]
+    flag = "1" if pins_skipped else "0"
+    lines.append(f"# preached-pins-skipped: {flag}\n")
     return "".join(lines)
 
 
@@ -63,9 +67,10 @@ def copy_index(source: Path, dest: Path) -> None:
         extra = Path(str(dest) + suffix)
         if extra.exists():
             extra.unlink()
-    # A normal connection, not mode=ro: a WAL snapshot has to be readable,
-    # and mode=ro refuses to open when it cannot create the -shm file.
-    src = sqlite3.connect(source)
+    # mode=ro so the backup cannot checkpoint or write the live index.
+    # A WAL source still needs a writable directory for the -shm file.
+    uri = source.resolve().as_uri() + "?mode=ro"
+    src = sqlite3.connect(uri, uri=True)
     try:
         dst = sqlite3.connect(dest)
         try:
@@ -113,14 +118,19 @@ def strip_int8_manifest(path: Path) -> None:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: bundle_manifest.py DIRECTORY", file=sys.stderr)
+    args = argv[1:]
+    pins_skipped = False
+    if "--pins-skipped" in args:
+        pins_skipped = True
+        args = [arg for arg in args if arg != "--pins-skipped"]
+    if len(args) != 1:
+        print("usage: bundle_manifest.py DIRECTORY [--pins-skipped]", file=sys.stderr)
         return 2
-    root = Path(argv[1]).resolve()
+    root = Path(args[0]).resolve()
     if not root.is_dir():
         print("not a directory", file=sys.stderr)
         return 2
-    text = manifest_text(root)
+    text = manifest_text(root, pins_skipped=pins_skipped)
     target = root / "MANIFEST.sha256"
     target.write_text(text)
     print(hashlib.sha256(text.encode()).hexdigest())

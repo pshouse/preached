@@ -93,8 +93,11 @@ for name in "${MODEL_FILES[@]}"; do
 done
 
 # SKIP_PINS is for stand-in files in the unit tests. A shell that exports it
-# still has to match the pins. The parent command line is checked by name
-# only; it is not printed.
+# still has to match the pins, unless the parent command line looks like the
+# unit tests. That parent check can be faked. The manifest records whether
+# the pins were skipped, and the server refuses a skipped bundle unless the
+# server process itself is the unit tests. The parent command line is
+# checked by name only; it is not printed.
 pins_required=1
 if [ "${PREACHED_BUNDLE_SKIP_PINS:-}" = "1" ] && [ -r "/proc/${PPID}/cmdline" ]; then
   parent=$(tr '\0' ' ' < "/proc/${PPID}/cmdline" || true)
@@ -211,7 +214,11 @@ chmod 0755 "$OUT/scripts/serve.sh"
 chmod 0444 "$OUT/index/${LIBRARY}.sqlite"
 find "$OUT/model" -type f -exec chmod 0444 {} +
 
-PYTHONPATH="$SOURCE" "$PY" "$SOURCE/scripts/bundle_manifest.py" "$OUT" >/dev/null
+manifest_args=("$OUT")
+if [ "$pins_required" -eq 0 ]; then
+  manifest_args+=(--pins-skipped)
+fi
+PYTHONPATH="$SOURCE" "$PY" "$SOURCE/scripts/bundle_manifest.py" "${manifest_args[@]}" >/dev/null
 chmod 0644 "$OUT/MANIFEST.sha256"
 
 # Tar a private snapshot. A reflink of a live index or model still changes

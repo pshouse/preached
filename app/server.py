@@ -17,6 +17,8 @@ Security choices:
 - a regular kill file stops and resumes serving on the next request
 - anything unexpected at the kill path is treated as killed
 - access logs keep the path, drop the query string, and escape controls
+- a group- or world-writable bundle is refused; modes are not repaired
+- a 405, or any earlier error, that leaves a body unread closes the connection
 """
 
 from __future__ import annotations
@@ -838,6 +840,32 @@ def make_handler(app: App):
             raw._sock = _HeaderDeadlineSocket(sock, deadline)
             return raw
 
+        def _has_unread_body(self) -> bool:
+            """True when the client declared a body this server did not read.
+
+            No route reads a body. Leaving those bytes on a keep-alive
+            connection makes the next ``handle_one_request`` parse them as a
+            second request (a POST body smuggled after a 405, or after any
+            earlier error).
+            """
+            headers = getattr(self, "headers", None)
+            if not headers:
+                return False
+            if headers.get("Transfer-Encoding"):
+                return True
+            raw = headers.get("Content-Length")
+            if raw is None:
+                return False
+            try:
+                length = int(raw)
+            except (TypeError, ValueError):
+                return True
+            return length != 0
+
+        def _close_if_unread_body(self) -> None:
+            if self._has_unread_body():
+                self.close_connection = True
+
         def handle_one_request(self) -> None:
             # Headers share one deadline. The handler then runs under the
             # normal socket timeout, so a search is not cut off by the
@@ -894,6 +922,10 @@ def make_handler(app: App):
             except Exception as exc:
                 logging.error("request failed: %s", type(exc).__name__)
                 self.close_connection = True
+            finally:
+                # After a 405, or any earlier error, an unread body must not
+                # stay on the connection to be parsed as the next request.
+                self._close_if_unread_body()
 
         def log_message(self, fmt, *args):
             # Drop anything after ? so a query is not written to the log.
@@ -971,6 +1003,9 @@ def make_handler(app: App):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if self._has_unread_body():
+                self.close_connection = True
+                self.send_header("Connection", "close")
             self.end_headers()
             if include_body:
                 self.wfile.write(body)
@@ -1139,12 +1174,14 @@ def make_handler(app: App):
                 return
             body = json.dumps({"error": "method not allowed"}).encode("utf-8")
             self._started = True
+            self.close_connection = True
             self.send_response(405)
             self._security_headers()
             self.send_header("Allow", "GET, HEAD")
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
 
@@ -1312,6 +1349,87 @@ def file_identity(path: Path) -> tuple[int, int] | None:
     return st.st_dev, st.st_ino
 
 
+def writable_problem(index: Path) -> str | None:
+    """Why ``index`` is too writable to serve, or None.
+
+    The file and the directory that holds it must not be group- or
+    world-writable. When that directory is named ``index`` (a bundle, or
+    ``/cache/index``), its parent is checked too. That parent is the bundle
+    root. A loose file under a temp directory is not walked up into ``/tmp``.
+    ``serve.sh`` does not chmod these paths; a world-writable bundle is
+    refused here instead of being repaired.
+    """
+    index = Path(index)
+    targets: list[tuple[Path, str]] = [
+        (index, "index"),
+        (index.parent, "index directory"),
+    ]
+    if index.parent.name == "index":
+        targets.append((index.parent.parent, "index parent directory"))
+    for target, what in targets:
+        try:
+            st = os.stat(target)
+        except OSError as exc:
+            return f"cannot check {target} ({exc})"
+        if st.st_mode & 0o022:
+            return (
+                f"{what} {target} is group- or world-writable "
+                f"(mode {stat.S_IMODE(st.st_mode):o})"
+            )
+    return None
+
+
+# Written by scripts/bundle_manifest.py. sha256sum -c ignores a leading '#'.
+PINS_CHECKED_LINE = "# preached-pins-skipped: 0"
+PINS_SKIPPED_LINE = "# preached-pins-skipped: 1"
+
+
+def _server_process_is_unit_tests() -> bool:
+    """True when this process is the unit-test runner.
+
+    Only ``sys.argv[0]`` counts. The parent command line is not read:
+    ``build-bundle.sh`` can be fooled by a parent whose argv contains
+    ``unittest``, and that must not make a served bundle acceptable.
+    ``serve.sh`` starts ``python app/server.py`` (and the preflight as
+    ``python -``). Neither argv[0] is the test runner.
+    """
+    if not sys.argv:
+        return False
+    argv0 = sys.argv[0]
+    if "unittest" in argv0:
+        return True
+    name = Path(argv0).name
+    return name.startswith("test_") and name.endswith(".py")
+
+
+def pins_skip_problem(index: Path) -> str | None:
+    """Refuse a bundle whose manifest says the ONNX pins were skipped.
+
+    The parent-cmdline allow in ``build-bundle.sh`` can be faked, so the
+    bundle records the skip and the server refuses that bundle. The unit-test
+    process itself may open one (stand-in models). A server started by
+    ``serve.sh`` is not that process.
+    """
+    index = Path(index)
+    if index.parent.name != "index":
+        return None
+    manifest = index.parent.parent / "MANIFEST.sha256"
+    if not manifest.is_file():
+        return None
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        return f"cannot read {manifest} ({type(exc).__name__})"
+    if PINS_SKIPPED_LINE not in lines:
+        return None
+    if _server_process_is_unit_tests():
+        return None
+    return (
+        "bundle was built with PREACHED_BUNDLE_SKIP_PINS "
+        "(MANIFEST records preached-pins-skipped: 1); refusing to serve it"
+    )
+
+
 def check_servable(connection, library: str, index: Path) -> None:
     """SystemExit unless this file is the Wesley index or an allow-listed public-domain library.
 
@@ -1329,7 +1447,17 @@ def check_servable(connection, library: str, index: Path) -> None:
     ``wesley-*``, no ``videos`` table, no ``library`` marker, and only the
     tables and columns in WESLEY_SCHEMA (case-insensitive), so no column a
     church import or the review gate adds, in chunks or a side table.
+
+    A group- or world-writable bundle is refused, not repaired. A manifest
+    that records ``preached-pins-skipped: 1`` is refused outside the unit
+    tests.
     """
+    problem = writable_problem(index)
+    if problem is not None:
+        raise SystemExit(f"error: {problem}")
+    skipped = pins_skip_problem(index)
+    if skipped is not None:
+        raise SystemExit(f"error: {skipped}")
     tables = {row[0].lower() for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     marker = None
     if "meta" in tables:

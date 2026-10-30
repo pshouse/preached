@@ -5,7 +5,9 @@
 #
 # A small CPU box uses one intra-op thread. There is no debug flag and no
 # write route. The index is opened mode=ro. The only library gate is
-# app.server.check_servable.
+# app.server.check_servable. This script does not change modes: a group- or
+# world-writable tree is refused by that gate. The preflight and the server
+# both run under `env -i` and the allow-list below.
 
 set -euo pipefail
 
@@ -79,43 +81,10 @@ else
   exit 1
 fi
 
-# Drop group and world write on the bundle root, the index directory, and
-# the index file so classic_index_problem can pass for a classics bundle.
-# A worktree index under /cache is not chmod'd.
-if [ -d "$ROOT/index" ]; then
-  chmod u=rwx,go=rx "$ROOT" "$ROOT/index"
-  chmod a-w "$INDEX"
-fi
-
-if [ -n "$PY" ]; then
-  CHECK=( "$PY" )
-else
-  CHECK=(uv run --project "$ROOT" --frozen --no-sync --no-dev --no-default-groups python)
-fi
-PYTHONPATH="$ROOT/src:$ROOT" PREACHED_CACHE="$PREACHED_CACHE" \
-  "${CHECK[@]}" - "$LIBRARY" "$INDEX" <<'PY'
-import sqlite3
-import sys
-from pathlib import Path
-
-from app.server import check_servable
-from preached.store import open_readonly
-
-library = sys.argv[1]
-index = Path(sys.argv[2])
-try:
-    connection = open_readonly(index, check_same_thread=False)
-except Exception as exc:
-    raise SystemExit(f"error: cannot open {index} ({type(exc).__name__})") from exc
-try:
-    check_servable(connection, library, index)
-except SystemExit:
-    raise
-except sqlite3.DatabaseError as exc:
-    raise SystemExit(f"error: {index} is not a SQLite index ({type(exc).__name__})") from exc
-finally:
-    connection.close()
-PY
+# Modes are not changed here. check_servable refuses a group- or
+# world-writable bundle root, index directory, or index file. Repairing
+# them would hide that, follow a PREACHED_INDEX symlink, and fail when the
+# tree is owned by root.
 
 PREACHED_EMBED_BACKEND=onnx
 PREACHED_ONNX_VARIANT=fp32
@@ -136,8 +105,9 @@ LANG=${LANG:-C.UTF-8}
 LC_ALL=${LC_ALL:-$LANG}
 TMPDIR=${TMPDIR:-/tmp}
 
-# The server process sees only this list. Tokens and cloud credentials in
-# the shell are not passed through. Names, not values, are the contract.
+# The preflight and the server see only this list. Tokens and cloud
+# credentials in the shell are not passed through. Names, not values, are
+# the contract.
 ENV_ARGS=("PATH=${PATH}" "HOME=${HOME}" "LANG=${LANG}" "LC_ALL=${LC_ALL}" "TMPDIR=${TMPDIR}")
 pass() {
   local name=$1
@@ -166,6 +136,35 @@ pass PYTHONUNBUFFERED
 pass PYTHONNOUSERSITE
 pass PYTHONPATH
 pass TZ
+
+if [ -n "$PY" ]; then
+  CHECK=(env -i "${ENV_ARGS[@]}" "$PY")
+else
+  CHECK=(env -i "${ENV_ARGS[@]}" uv run --project "$ROOT" --frozen --no-sync --no-dev --no-default-groups python)
+fi
+"${CHECK[@]}" - "$LIBRARY" "$INDEX" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+from app.server import check_servable
+from preached.store import open_readonly
+
+library = sys.argv[1]
+index = Path(sys.argv[2])
+try:
+    connection = open_readonly(index, check_same_thread=False)
+except Exception as exc:
+    raise SystemExit(f"error: cannot open {index} ({type(exc).__name__})") from exc
+try:
+    check_servable(connection, library, index)
+except SystemExit:
+    raise
+except sqlite3.DatabaseError as exc:
+    raise SystemExit(f"error: {index} is not a SQLite index ({type(exc).__name__})") from exc
+finally:
+    connection.close()
+PY
 
 ARGS=(
   app/server.py

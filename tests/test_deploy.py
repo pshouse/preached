@@ -527,7 +527,14 @@ class BundleTests(unittest.TestCase):
             manifest_b = (second / "MANIFEST.sha256").read_bytes()
             self.assertEqual(manifest_a, manifest_b)
             self.assertEqual((Path(str(first) + ".tar.gz")).read_bytes(), (Path(str(second) + ".tar.gz")).read_bytes())
-            names = [line.split("  ", 1)[1].strip() for line in manifest_a.decode().splitlines()]
+            # Stand-in models skip the pin check, and the manifest says so.
+            # sha256sum -c ignores the comment line.
+            self.assertIn("# preached-pins-skipped: 1\n", manifest_a.decode())
+            names = [
+                line.split("  ", 1)[1].strip()
+                for line in manifest_a.decode().splitlines()
+                if "  " in line and not line.startswith("#")
+            ]
             joined = "\n".join(names)
             self.assertIn(f"model/{GRANITE_REVISION}/model.fp32.onnx", names)
             self.assertIn("index/wesley.sqlite", names)
@@ -661,6 +668,8 @@ class BundleTests(unittest.TestCase):
                 FAKE_TOKEN="dummy",
                 AWS_SECRET_ACCESS_KEY="dummy",
                 SPRITE_TOKEN="dummy",
+                SPRITES_TOKEN="dummy",
+                OP_SERVICE_ACCOUNT_TOKEN="dummy",
                 HF_TOKEN="dummy",
             )
             with log.open("w") as handle:
@@ -688,7 +697,14 @@ class BundleTests(unittest.TestCase):
                     for entry in raw.split(b"\0")
                     if entry
                 ]
-                for forbidden in ("FAKE_TOKEN", "AWS_SECRET_ACCESS_KEY", "SPRITE_TOKEN", "HF_TOKEN"):
+                for forbidden in (
+                    "FAKE_TOKEN",
+                    "AWS_SECRET_ACCESS_KEY",
+                    "SPRITE_TOKEN",
+                    "SPRITES_TOKEN",
+                    "OP_SERVICE_ACCOUNT_TOKEN",
+                    "HF_TOKEN",
+                ):
                     self.assertNotIn(forbidden, names)
                 for required in ("PATH", "HOME", "PREACHED_CACHE", "PREACHED_EMBED_BACKEND"):
                     self.assertIn(required, names)
@@ -714,6 +730,318 @@ class BundleTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn("sample", result.stderr)
         self.assertNotIn(FP32_ONNX_SHA256, result.stderr)
+
+    def test_copy_index_opens_the_source_read_only(self) -> None:
+        from scripts.bundle_manifest import copy_index
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.sqlite"
+            connection = connect(source)
+            _insert(connection, "By grace are ye saved through faith.")
+            connection.commit()
+            connection.close()
+            # A read-write open of a mode 0444 file fails. mode=ro must succeed.
+            source.chmod(0o444)
+            dest = root / "index" / "wesley.sqlite"
+            copy_index(source, dest)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o444)
+            opened = sqlite3.connect(f"{dest.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                count = opened.execute("SELECT count(*) FROM chunks").fetchone()[0]
+                journal = opened.execute("PRAGMA journal_mode").fetchone()[0]
+            finally:
+                opened.close()
+            self.assertEqual(count, 1)
+            self.assertEqual(journal, "delete")
+            self.assertFalse(Path(str(dest) + "-wal").exists())
+
+    def test_deploy_doc_modes_and_the_review_rule(self) -> None:
+        text = (ROOT / "docs" / "DEPLOY.md").read_text()
+        self.assertNotIn("chmod u=rw,go=r", text)
+        self.assertNotIn("repeats the chmod", text)
+        self.assertIn("chmod 0755 /srv/preached/<manifest-sha>/scripts/serve.sh", text)
+        self.assertIn("chmod 0444 /srv/preached/<manifest-sha>/index/*.sqlite", text)
+        self.assertIn(
+            "find /srv/preached/<manifest-sha>/model -type f -exec chmod 0444 {} +",
+            text,
+        )
+        self.assertIn("whole recording", text)
+        self.assertIn("0.870", text)
+        self.assertIn("preached-pins-skipped", text)
+        script = (ROOT / "scripts" / "serve.sh").read_text()
+        self.assertNotIn("chmod", script)
+        self.assertGreaterEqual(script.count("env -i"), 2)
+
+    def _serve_env(self, **extra: str) -> dict:
+        env = os.environ.copy()
+        for name in list(env):
+            if name.startswith("PREACHED_"):
+                env.pop(name)
+        env.update(extra)
+        return env
+
+    def test_world_writable_bundle_is_refused_not_repaired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "bundle"
+            (bundle / "scripts").mkdir(parents=True)
+            script = bundle / "scripts" / "serve.sh"
+            script.write_bytes((ROOT / "scripts" / "serve.sh").read_bytes())
+            script.chmod(0o755)
+            (bundle / "src").symlink_to(ROOT / "src")
+            (bundle / "app").symlink_to(ROOT / "app")
+            (bundle / ".venv").symlink_to(ROOT / ".venv")
+            index_dir = bundle / "index"
+            index_dir.mkdir()
+            index = index_dir / "wesley.sqlite"
+            connection = connect(index)
+            _insert(connection, "By grace are ye saved through faith.")
+            connection.commit()
+            connection.close()
+            bundle.chmod(0o777)
+            index_dir.chmod(0o777)
+            index.chmod(0o666)
+            before = (
+                bundle.stat().st_mode & 0o777,
+                index_dir.stat().st_mode & 0o777,
+                index.stat().st_mode & 0o777,
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=bundle,
+                env=self._serve_env(PREACHED_LIBRARY="wesley", PREACHED_HOST="127.0.0.1", PREACHED_PORT="0"),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            after = (
+                bundle.stat().st_mode & 0o777,
+                index_dir.stat().st_mode & 0o777,
+                index.stat().st_mode & 0o777,
+            )
+            self.assertEqual(before, (0o777, 0o777, 0o666))
+            self.assertEqual(after, before)
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertIn("writable", result.stderr)
+
+    def test_preflight_uses_the_scrubbed_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / "bundle"
+            (bundle / "scripts").mkdir(parents=True)
+            script = bundle / "scripts" / "serve.sh"
+            script.write_bytes((ROOT / "scripts" / "serve.sh").read_bytes())
+            script.chmod(0o755)
+            bindir = bundle / ".venv" / "bin"
+            bindir.mkdir(parents=True)
+            dump = root / "names.txt"
+            wrapper = bindir / "python"
+            wrapper.write_text(
+                "#!/usr/bin/python3\n"
+                "import os\n"
+                f"open({str(dump)!r}, 'w').write('\\n'.join(sorted(os.environ)))\n"
+                "raise SystemExit(86)\n"
+            )
+            wrapper.chmod(0o755)
+            index = bundle / "index" / "wesley.sqlite"
+            index.parent.mkdir()
+            index.write_bytes(b"not-opened")
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=bundle,
+                env=self._serve_env(
+                    PREACHED_LIBRARY="wesley",
+                    FAKE_TOKEN="dummy",
+                    AWS_SECRET_ACCESS_KEY="dummy",
+                    SPRITE_TOKEN="dummy",
+                    SPRITES_TOKEN="dummy",
+                    OP_SERVICE_ACCOUNT_TOKEN="dummy",
+                    HF_TOKEN="dummy",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertTrue(dump.is_file(), result.stderr)
+            names = dump.read_text().splitlines()
+            for forbidden in (
+                "FAKE_TOKEN",
+                "AWS_SECRET_ACCESS_KEY",
+                "SPRITE_TOKEN",
+                "SPRITES_TOKEN",
+                "OP_SERVICE_ACCOUNT_TOKEN",
+                "HF_TOKEN",
+            ):
+                self.assertNotIn(forbidden, names)
+            for required in ("PATH", "HOME", "PREACHED_CACHE", "PYTHONPATH", "PREACHED_EMBED_BACKEND"):
+                self.assertIn(required, names)
+            self.assertNotEqual(result.returncode, 0)
+
+    def test_skipped_pins_are_recorded_and_refused_outside_the_tests(self) -> None:
+        from app.server import check_servable
+        from preached.store import open_readonly
+
+        script = ROOT / "scripts" / "build-bundle.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            onnx_root, index = self._stand_in(root)
+            out = root / "out"
+            # Parent cmdline contains "unittest" but the parent is bash -c,
+            # not the test runner. That is enough to skip the pins today.
+            # The manifest has to record the skip, and a server that is not
+            # the test process has to refuse the bundle.
+            built = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'set -e; bash "$1" "$2"; true',
+                    "python -m unittest test_deploy",
+                    str(script),
+                    str(out),
+                ],
+                cwd=ROOT,
+                env=self._env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_INDEX=str(index),
+                    PREACHED_ONNX_DIR=str(onnx_root),
+                    PREACHED_BUNDLE_SKIP_PINS="1",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            self.assertEqual(built.returncode, 0, built.stderr)
+            manifest = (out / "MANIFEST.sha256").read_text()
+            self.assertIn("# preached-pins-skipped: 1\n", manifest)
+            checked = subprocess.run(
+                ["sha256sum", "-c", "MANIFEST.sha256"],
+                cwd=out,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            bundled = out / "index" / "wesley.sqlite"
+            # This process is the unit-test runner, so the gate allows it.
+            connection = open_readonly(bundled, check_same_thread=False)
+            try:
+                check_servable(connection, "wesley", bundled)
+            finally:
+                connection.close()
+            probe = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                "root = Path(sys.argv[1])\n"
+                "sys.path[:0] = [str(root), str(root / 'src')]\n"
+                "from app.server import check_servable\n"
+                "from preached.store import open_readonly\n"
+                "index = Path(sys.argv[2])\n"
+                "connection = open_readonly(index, check_same_thread=False)\n"
+                "try:\n"
+                "    check_servable(connection, 'wesley', index)\n"
+                "finally:\n"
+                "    connection.close()\n"
+                "print('served')\n"
+            )
+            refused = subprocess.run(
+                [sys.executable, "-c", probe, str(ROOT), str(bundled)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(refused.returncode, 0, refused.stderr)
+            self.assertIn("pins", refused.stderr)
+            self.assertNotIn("served", refused.stdout)
+            (out / ".venv").symlink_to(ROOT / ".venv")
+            served = subprocess.run(
+                ["bash", str(out / "scripts" / "serve.sh")],
+                cwd=out,
+                env=self._serve_env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_HOST="127.0.0.1",
+                    PREACHED_PORT="0",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(served.returncode, 0, served.stderr)
+            self.assertIn("preached-pins-skipped", served.stderr)
+            self.assertNotIn("PREACHED_LISTENING", served.stdout + served.stderr)
+
+
+class UnreadBodyTests(unittest.TestCase):
+    def test_unread_body_is_not_parsed_as_a_request(self) -> None:
+        port, _app, _server = RateAndKillTests._serve(self)
+        smuggled = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
+
+        def read_until_close(payload: bytes) -> tuple[bytes, bool]:
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+                sock.sendall(payload)
+                sock.settimeout(2)
+                data = b""
+                closed = False
+                while True:
+                    try:
+                        block = sock.recv(4096)
+                    except socket.timeout:
+                        break
+                    if not block:
+                        closed = True
+                        break
+                    data += block
+                return data, closed
+
+        def statuses(data: bytes) -> list[bytes]:
+            return [line for line in data.split(b"\r\n") if line.startswith(b"HTTP/1.1 ")]
+
+        post = (
+            b"POST /healthz HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            b"Content-Length: " + str(len(smuggled)).encode("ascii") + b"\r\n"
+            b"\r\n" + smuggled
+        )
+        data, closed = read_until_close(post)
+        found = statuses(data)
+        self.assertEqual(len(found), 1, data)
+        self.assertTrue(found[0].startswith(b"HTTP/1.1 405"), data)
+        self.assertIn(b"Connection: close", data)
+        self.assertTrue(closed, data)
+        self.assertNotIn(b"HTTP/1.1 200", data)
+
+        early = (
+            b"POST /healthz HTTP/1.1\r\n"
+            b"Host: evil.example\r\n"
+            b"Content-Length: " + str(len(smuggled)).encode("ascii") + b"\r\n"
+            b"\r\n" + smuggled
+        )
+        data, closed = read_until_close(early)
+        found = statuses(data)
+        self.assertEqual(len(found), 1, data)
+        self.assertTrue(found[0].startswith(b"HTTP/1.1 421"), data)
+        self.assertIn(b"Connection: close", data)
+        self.assertTrue(closed, data)
+        self.assertNotIn(b"HTTP/1.1 200", data)
+
+        too_big = (
+            b"GET /healthz HTTP/1.1\r\n"
+            b"Host: 127.0.0.1\r\n"
+            b"Content-Length: 99999\r\n"
+            b"\r\n" + smuggled
+        )
+        data, closed = read_until_close(too_big)
+        found = statuses(data)
+        self.assertEqual(len(found), 1, data)
+        self.assertTrue(found[0].startswith(b"HTTP/1.1 413"), data)
+        self.assertIn(b"Connection: close", data)
+        self.assertTrue(closed, data)
+        self.assertNotIn(b"HTTP/1.1 200", data)
 
 
 if __name__ == "__main__":

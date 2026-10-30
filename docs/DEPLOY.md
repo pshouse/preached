@@ -30,6 +30,15 @@ the pastor's permission is confirmed. A classic is served only from
 `PREACHED_CACHE/index/<slug>.sqlite`, owned by the server uid, with no group
 or world write, one hard link, and not a symlink.
 
+A church sermon is not approved on a cue-rule pass. The reviewer must listen
+through the whole recording, start to end, before approving a church sermon
+(CTO ruling, 2026-10-30, the human-review rule from #19). On the LLM-written
+synthetic test set the rules caught 635 of 730 words that should have been
+excluded (ASR word recall 0.870), so they miss some. Listening is the real
+control. Add an exclude line for every announcement, prayer request, prayer
+list, or testimony the rules missed. That rule is the one in the review
+file header (`reviewer_must`) and in `reports/W3-PRIV-SKIP.md`.
+
 ## What the server needs
 
 Python 3.12 (`.python-version`, `requires-python >=3.12,<3.14`). On this
@@ -105,8 +114,13 @@ uv sync --frozen --no-dev --no-default-groups
 `--extra youtube`, or `--group bench`.
 
 `PREACHED_BUNDLE_SKIP_PINS` does not skip the ONNX pin check unless the
-process was started by the unit tests. A deploy shell that exports it still
-checks the pins.
+parent command line looks like the unit tests. A deploy shell that exports
+it still checks the pins. That parent check can be faked. The bundle
+records the truth in `MANIFEST.sha256` as a comment line,
+`# preached-pins-skipped: 0` or `# preached-pins-skipped: 1`
+(`sha256sum -c` ignores the comment). The server refuses a bundle whose
+manifest says the pins were skipped, unless the server process itself is
+the unit tests. `scripts/serve.sh` is not that process.
 
 ## Run it locally
 
@@ -146,7 +160,7 @@ In the process:
 | --- | --- |
 | Read-only index | SQLite `mode=ro` and `query_only`. The bundled file is `journal_mode=DELETE` and mode `0444`. |
 | Read-only model | Bundle copies are mode `0444`. The loader does not download. |
-| Request size | Path at most 2048 bytes, headers at most 8192, body at most 4096. No chunked bodies. |
+| Request size | Path at most 2048 bytes, headers at most 8192, body at most 4096. No chunked bodies. A 405, or any earlier error, that leaves a body unread closes the connection, so those bytes are not parsed as a second request. |
 | Header deadline | 15 seconds for the request line and all headers together. A slow byte does not reset the clock. |
 | Connections | At most 32 concurrent connections, and at most 4 from one socket IP. Over the cap the accept thread returns 503 and does not start a handler thread. `PREACHED_MAX_CONNECTIONS` and `PREACHED_MAX_CLIENT_CONNECTIONS` override the numbers. |
 | Rate limit | 60 requests per 60 seconds per socket IP in `serve.sh` (the code default is 120, so the unit tests fit). `/healthz` uses the same bucket. `X-Forwarded-For` is ignored. A full table of live keys refuses a new IP. `429` and `Retry-After`. |
@@ -164,19 +178,26 @@ In the process:
 - Run the process as its own user, not root. `app/server.py` exits if the
   uid is 0.
 - Unpack the bundle as that user, then make sure the service user owns the
-  tree and nothing in it is group- or world-writable. `classic_index_problem`
-  checks the bundle root, `index/`, and the index file:
+  tree and nothing in it is group- or world-writable. `check_servable`
+  refuses a bundle whose root, `index/`, or index file is group- or
+  world-writable. It does not repair the modes. `scripts/serve.sh` does not
+  chmod and does not chown. Modes have to match the table above before
+  start. `scripts/serve.sh` has to stay executable or step 5 exits 126:
 
   ```bash
   chown -R preached:preached /srv/preached/<manifest-sha>
-  find /srv/preached/<manifest-sha> -type d -exec chmod u=rwx,go=rx {} +
-  find /srv/preached/<manifest-sha> -type f -exec chmod u=rw,go=r {} +
-  chmod a-w /srv/preached/<manifest-sha>/index/*.sqlite
+  find /srv/preached/<manifest-sha> -type d -exec chmod 0755 {} +
+  find /srv/preached/<manifest-sha> -type f -exec chmod 0644 {} +
+  chmod 0755 /srv/preached/<manifest-sha>/scripts/serve.sh
+  chmod 0444 /srv/preached/<manifest-sha>/index/*.sqlite
+  find /srv/preached/<manifest-sha>/model -type f -exec chmod 0444 {} +
   ```
 
-  `serve.sh` repeats the chmod on the bundle root, `index/`, and the index
-  file when it starts. It does not chown. The owner has to already be the
-  service user.
+  `0644` is `u=rw,go=r` and strips the execute bit, so it is not the last
+  chmod for `scripts/serve.sh` (mode `0755`). The model files and the index
+  stay mode `0444`, which is what the table above says. The owner of the
+  tree has to already be the service user. A root-owned tree is not chmod'd
+  by the start script.
 - Bind `PREACHED_HOST=127.0.0.1`. Leave `PREACHED_HOSTS` at
   `127.0.0.1,localhost` unless the operator is reaching the process through
   an existing tailnet. Then bind the tailscale address (or keep loopback and
