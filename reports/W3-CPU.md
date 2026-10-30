@@ -268,3 +268,69 @@ No new dependency. yt-dlp was already justified on main: the stdlib cannot speak
 - Default one thread is the safe Sprite setting. On this 24-thread CPU, four threads is the fast setting (26 ms embed+search p50). Measure again on the Sprite before raising it.
 - Retrieval knobs (chunking, RRF k=60, adjacent-chunk dedupe) are unchanged.
 - The bench group still resolves CUDA torch from PyPI so other models can be timed on the GPU later. That group must stay opt-in.
+
+## Merge with #11
+
+Merged `origin/main` at `6a16b1f` (no rebase). That is PR #11, W3-POLISH, the abstain floor. Merge commit `d4f513d0b63133df2f6d55fe7b1d398d91e6f0a5`. Parents are `abbf735` (this branch) and `6a16b1f`.
+
+Conflicts were `app/server.py`, `search/bench.py`, and `search/query.py`. `uv.lock` merged clean. It and `pyproject.toml` had changed only on this branch since the merge base `9c3e303`. `uv lock` and then `uv lock --check` each resolved 79 packages. `git diff uv.lock` was empty after both.
+
+`app/server.py` keeps both sides. From this branch: the ONNX default loader, `--embed-backend` / `--onnx-variant` / `--ort-threads`, the per-request reload, the BM25 fallback, and the `/healthz` `backend` field. From main: `search_with_confidence`, the `confidence` and `abstain` payload fields, `chunk_ids` on each hit, and the low-confidence page. `src/preached/search.py` (dedupe of overlapping neighbours, `Hit.chunk_ids`) auto-merged. `build_app` looks up `floor_for` on the encode callable's backend and variant. A missing backend attribute still means torch, so an older caller keeps the torch floor. The app stores that floor and puts it back when a reload still has vectors. A reload that falls back to BM25 clears it. `/healthz` adds `abstain_calibrated`.
+
+`search/bench.py` keeps `--embed-backend` (default torch), `--onnx-variant`, `--ort-threads`, `--index`, `--latency-repeats`, `--allow-cached`, `--tag`, `--out`, `--force-null-timings`, and main's `--abstain` / `--write-calibration`. `--write-calibration` upserts the row for this (model, backend, variant) and leaves every other row.
+
+`search/query.py` keeps the read-only index, the play URL, h:mm:ss, and `--embed-backend` / `--onnx-variant` / `--ort-threads`. It also keeps #11's default: low-confidence hits stay on the page under the banner, and `--hide-low-confidence` hides them. The floor is the one for the loaded embedder's backend and variant. BM25 mode skips it.
+
+The calibration file is a TOML array of tables, one `[[models]]` row per (model, backend, variant). #11 allowed one table per model, and every shipped row was torch/fp32, so the ONNX default server resolved no floor and never marked a hit low-confidence. A bad file still logs a warning and returns no floors. The server stays up. A duplicate (model, backend, variant) disables that combo. `dense_floor` has to be a finite cosine in [-1, 1]. `1` and `-1` are valid. `+inf`, `nan`, a string, and a value outside that range are not. Loading never raises.
+
+Granite ONNX fp32 was fitted with the existing bench command. The index was a copy, `/cache/w3-cpu/wesley-onnx-fp32-merge11.sqlite`, taken from `/cache/index/wesley-onnx-fp32.sqlite`. `/cache/index/wesley.sqlite` is still mtime 2026-10-30 13:21:53, 189042688 bytes. The source ONNX file is still mtime 13:10:32, 189050880 bytes. `ensure_chunks` updated metadata on the copy only (194768896 bytes, 14:35).
+
+```bash
+cd /work/preached/.worktrees/feat/w3-cpu
+CUDA_VISIBLE_DEVICES="" uv run --group bench search/bench.py \
+  --abstain --write-calibration --models granite-english-r2 \
+  --embed-backend onnx --onnx-variant fp32 \
+  --index /cache/w3-cpu/wesley-onnx-fp32-merge11.sqlite --tag w3cpu-merge11
+```
+
+| backend | in-sample floor | LOO precision | LOO recall | LOO floor range | in-sample recall |
+| --- | --- | --- | --- | --- | --- |
+| torch/fp32 (w3polish, `eval/results/2026-10-30-w3polish-abstain.md`) | 0.8129 | 1.000 | 0.600 | 0.7988–0.8129 | 0.800 |
+| onnx/fp32 (this merge) | 0.8129 | 1.000 | 0.600 | 0.7988–0.8129 | 0.800 |
+
+The committed cell is `dense_floor = 0.8129`. The markdown prints that cell as 0.813. EmbeddingGemma's torch floor stays 0.7413. Rows are in `search/abstain.toml`. Numbers are in `eval/results/2026-10-30-abstain-w3cpu-merge11.json` and `.md`. Those files name commit `abbf735` (dirty) because the bench ran before this merge commit, the same way #11's files name a pre-merge commit. False abstain is 0.000 on both. R@5 stays 0.657 and MRR@10 stays 0.540 when the floor abstains (an abstained answerable question counts as a miss, and LOO abstained none of them).
+
+The same copy, with `--dedupe --tag w3cpu-merge11`, matches the granite quality cells in `eval/results/2026-10-30-w3polish-dedupe.md` (torch, API path). The corpus vectors were already cached (fingerprint matches). No re-embed.
+
+| mode | R@5 | MRR@10 | nDCG@10 | sermon@5 | CPU p50 this ONNX run |
+| --- | --- | --- | --- | --- | --- |
+| dense | 0.629 | 0.471 | 0.510 | 0.800 | 61.8 ms |
+| hybrid_rrf | 0.657 | 0.540 | 0.590 | 0.971 | 64.3 ms |
+| hybrid_weighted | 0.600 | 0.515 | 0.576 | 0.943 | 66.0 ms |
+
+Bootstrap intervals on those four quality columns match the w3polish granite rows. CPU p50 is this ONNX run (the w3polish torch file records about 110–112 ms). Files: `eval/results/2026-10-30-dedupe-w3cpu-merge11.json` and `.md`.
+
+```bash
+CUDA_VISIBLE_DEVICES="" uv run --group bench search/bench.py \
+  --models granite-english-r2 --embed-backend onnx --onnx-variant fp32 \
+  --dedupe --tag w3cpu-merge11 \
+  --index /cache/w3-cpu/wesley-onnx-fp32-merge11.sqlite
+```
+
+Tests: `uv run python -m unittest discover -s tests` ran 274 tests in 19.077 s, OK. The count after the #4 merge was 235. `DefaultServerFloorTests.test_default_configuration_resolves_a_floor` checks that the default server (onnx, fp32, `granite-english-r2`) resolves a floor, that int8 resolves none, and that `build_app` with that encode sets `health["abstain_calibrated"]` and `backend == "onnx"`. `ServerTests.test_floor_survives_reload_and_is_skipped_on_bm25_fallback` checks that the floor still abstains after a chunk-hash reload that keeps the vectors, and that deleting the embeddings falls back to BM25 with level unrated and `abstain_calibrated` false. `test_floor_of_one_is_a_cosine` accepts `1`. The bad-file list includes `+inf`.
+
+Fresh runtime venv, separate from the worktree `.venv` (that one has the bench group's torch):
+
+```bash
+cd /work/preached/.worktrees/feat/w3-cpu
+UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-merge11-runtime \
+  uv sync --frozen --no-default-groups
+```
+
+That installed 21 packages: numpy 2.5.4, onnxruntime 1.31.1, tokenizers 0.23.3, and the huggingface-hub stack (anyio, click, filelock, flatbuffers, fsspec, h11, hf-xet, httpcore2, httpx2, huggingface-hub, idna, packaging, protobuf, pyyaml, tqdm, truststore, typing-extensions), plus preached 0.1.0 from this worktree. No torch, no `nvidia-*`, no sentence-transformers. Importing `app.server` and `preached.search` there left `torch` and `sentence_transformers` off `sys.modules`. onnxruntime loads when the embedder loads.
+
+No new dependency. Direct runtime dependencies are still numpy, onnxruntime, and tokenizers. Torch stays in the opt-in bench group.
+
+Run the calibrated server from this worktree with `uv sync` and `uv run app/server.py`. The default is onnx, fp32, `granite-english-r2`. `/healthz` reports `backend` `onnx` and `abstain_calibrated` true while the committed floor's fingerprints match `search/models.toml` and the query embedder.
+
+Open on this merge: int8 has no floor, on purpose, because int8 moves the top cosine. The floor is still the W3-POLISH heuristic on five unanswerable questions, with LLM-written labels pending human review. `search/bench.py` still imports torch inside `environment()` on an ONNX run, so the bench command needs `--group bench`. The runtime install does not.
