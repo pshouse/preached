@@ -15,6 +15,7 @@ from preached.models import MODELS
 from preached.search import Searcher
 from preached.store import (
     CHUNK_COLUMNS,
+    DuplicateChunkId,
     EmbeddingMismatch,
     connect,
     load_chunk_rows,
@@ -74,8 +75,10 @@ class SyncChunksTests(unittest.TestCase):
         cols = [r[1] for r in self.connection.execute("PRAGMA table_info(chunks)") if r[1] != "rowid"]
         self.assertEqual(tuple(cols), CHUNK_COLUMNS)
 
-    def test_legacy_index_with_new_timing_is_rebuilt(self) -> None:
-        # CTO's repro: same text, chunk 0 gains start_s/end_s (the W1-C flow).
+    def test_legacy_index_with_new_timing_lands_and_keeps_vectors(self) -> None:
+        # CTO's PR #2 repro: same text, chunk 0 gains start_s/end_s (the W1-C
+        # flow). The timing must land; since ids and embedding inputs are
+        # unchanged, it is updated in place and the vectors stay (PR #6 should-fix 1).
         chunks = make_chunks()
         self.build_legacy_index(chunks)
         aligned = [dict(c) for c in chunks]
@@ -84,8 +87,7 @@ class SyncChunksTests(unittest.TestCase):
         self.assertEqual(sync_chunks(self.connection, self.jsonl), 3)
         row = load_chunk_rows(self.connection)[0]
         self.assertEqual((row["start_s"], row["end_s"]), (12.5, 31.0))
-        # Rowids changed, so the old vectors and their fingerprints are gone.
-        self.assertEqual(self.connection.execute("SELECT count(*) FROM embeddings").fetchone()[0], 0)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM embeddings").fetchone()[0], 3)
         # And a second sync is a no-op that keeps the timing.
         self.assertEqual(sync_chunks(self.connection, self.jsonl), 3)
         self.assertEqual(load_chunk_rows(self.connection)[0]["start_s"], 12.5)
@@ -119,6 +121,84 @@ class SyncChunksTests(unittest.TestCase):
         sync_chunks(self.connection, self.jsonl)
         row = load_chunk_rows(self.connection)[1]
         self.assertEqual((row["start_s"], row["end_s"]), (40.0, 52.25))
+
+
+class InPlaceMetadataTests(unittest.TestCase):
+    """PR #6 should-fix 1: a timing/audio-only change keeps vectors."""
+
+    KEY = "granite-english-r2"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.jsonl = self.dir / "chunks.jsonl"
+        self.chunks = make_chunks()
+        write_jsonl(self.jsonl, self.chunks)
+        self.connection = connect(self.dir / "index.sqlite")
+        sync_chunks(self.connection, self.jsonl)
+        self.rowids = [int(r["rowid"]) for r in load_chunk_rows(self.connection)]
+        self.matrix = np.eye(3, 4, dtype=np.float32)
+        write_embeddings(self.connection, self.KEY, self.rowids, self.matrix)
+        save_embedding_info(self.connection, self.KEY, {"fingerprint": MODELS[self.KEY].fingerprint()})
+
+    def tearDown(self) -> None:
+        self.connection.close()
+        self._tmp.cleanup()
+
+    def resync(self, chunks: list[dict]) -> int:
+        write_jsonl(self.jsonl, chunks)
+        return sync_chunks(self.connection, self.jsonl)
+
+    def vectors(self) -> int:
+        return self.connection.execute("SELECT count(*) FROM embeddings").fetchone()[0]
+
+    def test_timing_and_audio_update_in_place(self) -> None:
+        aligned = [dict(c) for c in self.chunks]
+        for i, chunk in enumerate(aligned):
+            chunk.update(start_s=10.0 * i + 0.5, end_s=10.0 * i + 9.75,
+                         audio_url="https://archive.org/download/x/y.mp3", reader="Reader", text_source="canonical")
+        self.assertEqual(self.resync(aligned), 3)
+        rows = load_chunk_rows(self.connection)
+        self.assertEqual([int(r["rowid"]) for r in rows], self.rowids)
+        self.assertEqual([(r["start_s"], r["end_s"]) for r in rows], [(0.5, 9.75), (10.5, 19.75), (20.5, 29.75)])
+        self.assertEqual({r["reader"] for r in rows}, {"Reader"})
+        # Vectors, their meta and the fingerprint check all survive.
+        self.assertEqual(self.vectors(), 3)
+        Searcher(self.connection, model=self.KEY)  # no EmbeddingMismatch
+        # FTS still finds the rows after the UPDATE trigger ran.
+        hits = self.connection.execute("SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'grace'").fetchone()[0]
+        self.assertEqual(hits, 3)
+        # The new hash is recorded: a second sync is a no-op.
+        self.assertEqual(self.resync(aligned), 3)
+        self.assertEqual(self.vectors(), 3)
+
+    def test_text_change_drops_vectors(self) -> None:
+        changed = [dict(c) for c in self.chunks]
+        changed[1]["text"] += " Amended."
+        self.resync(changed)
+        self.assertEqual(self.vectors(), 0)
+        self.assertEqual(load_chunk_rows(self.connection)[1]["text"], changed[1]["text"])
+        with self.assertRaises(EmbeddingMismatch):
+            Searcher(self.connection, model=self.KEY)
+
+    def test_title_or_scripture_change_drops_vectors(self) -> None:
+        # Both feed the document title the vectors were built with.
+        for field, value in (("sermon_title", "Another"), ("scripture", "Rom 8:16")):
+            changed = [dict(c) for c in self.chunks]
+            changed[0][field] = value
+            self.resync(changed)
+            self.assertEqual(self.vectors(), 0, field)
+
+    def test_reorder_or_new_id_drops_vectors(self) -> None:
+        self.resync(list(reversed(self.chunks)))
+        self.assertEqual(self.vectors(), 0)
+
+    def test_duplicate_ids_are_refused_before_writing(self) -> None:
+        dup = [dict(c) for c in self.chunks] + [dict(self.chunks[0], text="other")]
+        with self.assertRaises(DuplicateChunkId):
+            self.resync(dup)
+        self.assertEqual(len(load_chunk_rows(self.connection)), 3)
+        self.assertEqual(self.vectors(), 3)
 
 
 class FingerprintCheckTests(unittest.TestCase):

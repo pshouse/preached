@@ -1,0 +1,116 @@
+"""PR #6 should-fixes 2 and 4: stale chunks_aligned.jsonl is refused, and the
+CLI play link seeks max(0, start_s - 0.75) while start_s stays exact."""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from preached import paths
+from preached.paths import StaleChunks, check_aligned_source, chunk_source_record
+from preached.search import PREROLL_S, play_start
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def rows(n: int = 3, timed: bool = False) -> list[dict]:
+    out = []
+    for i in range(n):
+        row = {"chunk_id": f"wesley-001-c{i:04d}", "text": f"text {i}", "start_s": None, "end_s": None}
+        if timed:
+            row.update(start_s=float(i), end_s=i + 0.9, text_source="canonical")
+        out.append(row)
+    return out
+
+
+class AlignedSourceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        d = Path(self._tmp.name)
+        self.text_only = d / "chunks.jsonl"
+        self.aligned = d / "chunks_aligned.jsonl"
+        self.source = d / "chunks_aligned.source.json"
+        self.config = d / "chunk_config.json"
+        self.config.write_text('{"max_words": 160}')
+        write_jsonl(self.text_only, rows())
+        write_jsonl(self.aligned, rows(timed=True))
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def check(self) -> str:
+        return check_aligned_source(self.aligned, self.text_only, self.source, self.config)
+
+    def record(self) -> None:
+        self.source.write_text(json.dumps(chunk_source_record(self.text_only, self.config)))
+
+    def test_recorded_hashes_match(self) -> None:
+        self.record()
+        self.assertEqual(self.check(), "hash")
+
+    def test_no_record_but_same_ids_and_text(self) -> None:
+        self.assertEqual(self.check(), "content")
+
+    def test_rechunked_text_only_file_is_refused(self) -> None:
+        # The CTO scenario: chunk_config changes, chunk_sermons.py rewrites
+        # chunks.jsonl, chunks_aligned.jsonl is left behind.
+        self.record()
+        write_jsonl(self.text_only, rows(4))
+        self.config.write_text('{"max_words": 120}')
+        with self.assertRaises(StaleChunks):
+            self.check()
+
+    def test_text_change_without_record_is_refused(self) -> None:
+        changed = rows()
+        changed[1]["text"] = "re-chunked"
+        write_jsonl(self.text_only, changed)
+        with self.assertRaises(StaleChunks):
+            self.check()
+
+    def test_config_only_change_with_same_content_is_accepted(self) -> None:
+        self.record()
+        self.config.write_text('{"max_words": 160, "note": 1}')
+        self.assertEqual(self.check(), "content")
+
+    def test_asr_rows_are_not_compared(self) -> None:
+        extra = rows(timed=True) + [{"chunk_id": "asr:church-1-c0000", "text": "heard", "text_source": "asr"}]
+        write_jsonl(self.aligned, extra)
+        self.assertEqual(self.check(), "content")
+
+    def test_resolved_at_call_time_and_env_override(self) -> None:
+        self.assertFalse(hasattr(paths, "INDEX_CHUNKS_JSONL"))
+        self.assertEqual(paths.index_chunks_jsonl({"PREACHED_CHUNKS": str(self.aligned)}), self.aligned)
+
+
+class PrerollTests(unittest.TestCase):
+    def test_play_start(self) -> None:
+        self.assertEqual(PREROLL_S, 0.75)
+        self.assertEqual(play_start(32.81), 32.06)
+        self.assertEqual(play_start(0.5), 0.0)
+        self.assertEqual(play_start(0), 0.0)
+        self.assertIsNone(play_start(None))
+        self.assertIsNone(play_start(-1))
+        self.assertIsNone(play_start(float("nan")))
+
+    def test_query_play_url(self) -> None:
+        spec = importlib.util.spec_from_file_location("preached_query", ROOT / "search" / "query.py")
+        query = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(query)
+        mp3 = "https://archive.org/download/x/y.mp3"
+        self.assertEqual(query.play_url(mp3, 32.81), mp3 + "#t=32.06")
+        self.assertEqual(query.play_url(mp3 + "#t=5", 0.4), mp3 + "#t=0")
+        self.assertEqual(query.play_url(mp3, None), mp3)
+        self.assertEqual(query.play_url(None, 3.0), "n/a")
+        # The printed time is the exact start, not the seek.
+        self.assertEqual(query.fmt_time(32.81), "0:00:32")
+
+
+if __name__ == "__main__":
+    unittest.main()

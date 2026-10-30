@@ -37,6 +37,7 @@ from preached.corpus import (  # noqa: E402
     word_tokens,
     write_jsonl,
 )
+from preached.paths import chunk_source_record  # noqa: E402
 from seqalign import EXACT, FUZZY, align_tokens, interpolate  # noqa: E402
 from textnorm import asr_tokens, canonical_tokens  # noqa: E402
 
@@ -45,7 +46,7 @@ TRANSCRIPTS = CACHE / "transcripts" / "wesley"
 SERMONS_JSONL = CACHE / "corpus" / "wesley" / "sermons.jsonl"
 ALIGNED_DIR = CACHE / "aligned" / "wesley"
 CHUNKS_ALIGNED = CACHE / "corpus" / "wesley" / "chunks_aligned.jsonl"
-SOURCE_MANIFEST = ROOT.parent / "w1-ingest" / "ingest" / "manifest" / "wesley.jsonl"
+SOURCE_MANIFEST = ROOT / "ingest" / "manifest" / "wesley.jsonl"  # W1-A, merged in #5
 MANIFEST = ROOT / "align" / "manifest" / "wesley.jsonl"
 QA_JSON = ALIGNED_DIR / "qa.json"
 CCEL_TEXT_URL = "https://www.ccel.org/ccel/w/wesley/sermons/cache/sermons.txt"
@@ -339,6 +340,14 @@ def cmd_chunks(args: argparse.Namespace) -> None:
     if missing:
         raise SystemExit(f"not aligned yet: {missing[:5]}... run `align` first")
     write_jsonl(CHUNKS_ALIGNED, rows)
+    # Record what these chunks were built from, so the index refuses this file
+    # once chunks.jsonl or chunk_config.json moves on (preached.paths).
+    record = chunk_source_record(CHUNKS_ALIGNED.parent / "chunks.jsonl", ROOT / "corpus" / "chunk_config.json")
+    record["chunks"] = len(rows)
+    source = CHUNKS_ALIGNED.with_name(CHUNKS_ALIGNED.stem + ".source.json")
+    tmp = source.with_suffix(".tmp")
+    tmp.write_text(json.dumps(record, indent=1) + "\n")
+    tmp.replace(source)
     shares = [row["alignment_anchored"] for row in rows]
     print(f"wrote {len(rows)} chunks to {CHUNKS_ALIGNED}; anchored share median "
           f"{statistics.median(shares):.3f}, chunks under 50% anchored: {sum(s < 0.5 for s in shares)}")
@@ -425,7 +434,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("step", choices=["map", "align", "chunks", "qa", "all"])
     parser.add_argument("--source-manifest", default=str(SOURCE_MANIFEST),
-                        help="W1-A manifest (ingest/manifest/wesley.jsonl on feat/w1-ingest)")
+                        help="W1-A manifest (default: ingest/manifest/wesley.jsonl in this tree)")
     parser.add_argument("--ids", nargs="*", help="sermon ids for `align` (default: all)")
     parser.add_argument("--seed", type=int, default=20261030, help="spot-check sample seed")
     args = parser.parse_args()

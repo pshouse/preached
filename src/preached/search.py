@@ -29,6 +29,23 @@ BOUNDARY_WORDS = 8
 # touch that is just float rounding.
 TIME_OVERLAP_S = 0.4
 
+# Player pre-roll. start_s stays the true onset of the chunk's first word
+# (honest for citations, same on the canonical and ASR paths); only the play
+# position starts this much earlier. W1-C's measured chunk starts are off by
+# a median 0.42 s and at most 0.76 s against the audio, sometimes late, so
+# 0.75 s keeps the first word. app/static/app.js uses the same value.
+PREROLL_S = 0.75
+
+
+def play_start(start_s: float | None) -> float | None:
+    """Where the player seeks for a passage: max(0, start_s - PREROLL_S)."""
+    if start_s is None:
+        return None
+    value = float(start_s)
+    if value != value or value < 0:  # NaN or negative: no seek
+        return None
+    return max(0.0, round(value - PREROLL_S, 2))
+
 
 @dataclass
 class Hit:
