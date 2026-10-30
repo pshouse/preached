@@ -161,11 +161,16 @@ def canonical_index(slug: str, index_dir: Path | None = None) -> Path:
     return (paths.INDEX_DIR if index_dir is None else Path(index_dir)) / f"{slug}.sqlite"
 
 
+# SQLite reads these next to a database file: a hot journal or a WAL is
+# replayed into what the reader sees, so each is as trusted as the file itself.
+SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
 def _owner_mode_problem(path: Path, st: os.stat_result, what: str) -> str | None:
-    """Owned by the server's uid, with no group or world write bit."""
+    """Owned by root or the server's effective uid, with no group or world write bit."""
     uid = os.geteuid()
-    if st.st_uid != uid:
-        return f"{what} {path} is owned by uid {st.st_uid}, not this server's uid {uid}"
+    if st.st_uid not in (0, uid):
+        return f"{what} {path} is owned by uid {st.st_uid}, not root or this server's uid {uid}"
     if st.st_mode & 0o022:
         return f"{what} {path} is group- or world-writable (mode {stat.S_IMODE(st.st_mode):o})"
     return None
@@ -181,10 +186,12 @@ def classic_index_problem(slug: object, path: Path, index_dir: Path | None = Non
     marker in any other file is never trusted. ``index_dir`` defaults to
     ``preached.paths.INDEX_DIR`` read at call time.
 
-    Nobody but this server's uid may have put the file there or changed it:
-    INDEX_DIR, its parent and the file are owned by the server's uid with no
-    group or world write; INDEX_DIR and the file are not symlinks; the file is
-    a regular file with one link (no hardlink from elsewhere).
+    Nobody but root or this server's effective uid may have put the file
+    there or changed it: INDEX_DIR, its parent and the file are owned by root
+    or the server's euid with no group or world write; INDEX_DIR and the file
+    are not symlinks; the file is a regular file with one link (no hardlink
+    from elsewhere). Any -wal, -shm or -journal file next to it
+    (SIDECAR_SUFFIXES) passes the same file checks, since SQLite reads it.
     """
     if not is_public_domain(slug):
         return f"{slug!r} is not a public-domain library (allowed: {', '.join(PUBLIC_DOMAIN)})"
@@ -212,9 +219,29 @@ def classic_index_problem(slug: object, path: Path, index_dir: Path | None = Non
         problem = _owner_mode_problem(target, st, what)
         if problem is not None:
             return problem
-    st = checks[2][1]
+    problem = _file_problem(canonical, checks[2][1], slug)
+    if problem is not None:
+        return problem
+    for suffix in SIDECAR_SUFFIXES:
+        sidecar = Path(f"{canonical}{suffix}")
+        try:
+            st = os.lstat(sidecar)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return f"cannot check {sidecar} ({exc})"
+        if stat.S_ISLNK(st.st_mode):
+            return f"{sidecar} is a symlink; the {slug} library is not served with it"
+        problem = _owner_mode_problem(sidecar, st, "index sidecar") or _file_problem(sidecar, st, slug)
+        if problem is not None:
+            return problem
+    return None
+
+
+def _file_problem(path: Path, st: os.stat_result, slug: str) -> str | None:
+    """A regular file with one link (no hardlink from elsewhere)."""
     if not stat.S_ISREG(st.st_mode):
-        return f"{canonical} is not a regular file"
+        return f"{path} is not a regular file"
     if st.st_nlink != 1:
-        return f"{canonical} has {st.st_nlink} hard links; the {slug} library is served only from a file with one"
+        return f"{path} has {st.st_nlink} hard links; the {slug} library is served only from files with one"
     return None

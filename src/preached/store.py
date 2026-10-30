@@ -515,8 +515,8 @@ def public_domain_file(connection: sqlite3.Connection, library: str | None) -> b
     Keyed on the slug and the file, never on a missing column. All must hold:
     the slug is on the public-domain allow-list (``preached.libraries``:
     spurgeon, edwards); the file is that library's canonical
-    INDEX_DIR/<slug>.sqlite, owned by this user in a directory nobody else
-    can write (``classic_file_problem``); and it is that library's own build:
+    INDEX_DIR/<slug>.sqlite, owned by root or this server's euid in a
+    directory nobody else can write, sidecars included (``classic_file_problem``); and it is that library's own build:
     meta ``library`` equals the slug (``search/build_library.py`` writes it),
     no sermon carries a review hash and no chunk is flagged. So a forged
     marker in any other file (``--index /tmp/x.sqlite``), a church file served

@@ -68,8 +68,8 @@ def open_index(index: Path | None, library: str | None):
     --library takes an allow-listed public-domain slug and opens only its
     canonical /cache/index/<slug>.sqlite as built
     (``libraries.classic_index_problem``: no symlinks, realpath equality,
-    owner and mode checks; checked again on the file actually opened by
-    ``store.classic_file_problem``). A church slug needs a
+    owner and mode checks, sidecar files too; checked again on the file
+    actually opened by ``store.classic_file_problem``). A church slug needs a
     privacy config. Nothing is ever synced or written: the Wesley index and
     any other --index path are searched as they are, so a text-only
     chunks.jsonl never nulls the aligned timestamps and audio. --index must

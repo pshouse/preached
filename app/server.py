@@ -992,7 +992,8 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
 
     A classic (``--library spurgeon``/``edwards``) is served only from its
     canonical INDEX_DIR/<slug>.sqlite (``libraries.classic_index_problem``:
-    realpath equality, no symlinks, owner and mode, one link), and that file
+    realpath equality, no symlinks, owner and mode, one link, and the same
+    checks on any -wal, -shm or -journal file next to it), and that file
     must carry the matching ``library`` marker. A marker anywhere else is
     not trusted.
 
