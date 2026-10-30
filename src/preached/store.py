@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS chunks (
     word_count INTEGER,
     word_start INTEGER,
     word_end INTEGER,
-    librivox_id TEXT
+    librivox_id TEXT,
+    audio_url TEXT,
+    reader TEXT,
+    text_source TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -81,6 +84,10 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.executescript(SCHEMA)
+    have = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    for column in LATE_COLUMNS:
+        if column not in have:
+            connection.execute(f"ALTER TABLE chunks ADD COLUMN {column} TEXT")
     connection.executescript(TRIGGERS)
     return connection
 
@@ -107,8 +114,46 @@ def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -
 CHUNK_COLUMNS = (
     "chunk_id", "sermon_id", "sermon_title", "text", "start_s", "end_s",
     "sermon_number", "scripture", "source_url", "word_count", "word_start",
-    "word_end", "librivox_id",
+    "word_end", "librivox_id", "audio_url", "reader", "text_source",
 )
+# Added by W1-C; an index created before them gets them by ALTER TABLE.
+LATE_COLUMNS = ("audio_url", "reader", "text_source")
+# Everything a stored document vector depends on (embed.document_title uses
+# sermon_title and scripture; the chunk text is the body), plus the id. When
+# these match row for row, in order, the vectors still describe the same rows.
+EMBED_KEY_COLUMNS = ("chunk_id", "sermon_title", "scripture", "text")
+# The rest (timing, audio, reader, spans, ...) can change without re-embedding.
+METADATA_COLUMNS = tuple(c for c in CHUNK_COLUMNS if c not in EMBED_KEY_COLUMNS)
+
+
+class DuplicateChunkId(ValueError):
+    """Two chunks in one file share a chunk_id (chunks.chunk_id is UNIQUE)."""
+
+
+def check_unique_ids(chunks: list[dict], source: object = "chunk file") -> None:
+    seen: set = set()
+    for chunk in chunks:
+        chunk_id = chunk.get("chunk_id")
+        if chunk_id in seen:
+            raise DuplicateChunkId(
+                f"duplicate chunk_id {chunk_id!r} in {source}; ASR chunk ids must keep their 'asr:' prefix"
+            )
+        seen.add(chunk_id)
+
+
+def update_chunk_metadata(connection: sqlite3.Connection, chunks: list[dict]) -> None:
+    """Rewrite only METADATA_COLUMNS, row for row, keeping rowids and vectors.
+
+    The caller has checked that EMBED_KEY_COLUMNS match in the same order.
+    """
+    rowids = [int(r[0]) for r in connection.execute("SELECT rowid FROM chunks ORDER BY rowid")]
+    if len(rowids) != len(chunks):
+        raise RuntimeError("update_chunk_metadata: row count changed")
+    assignments = ", ".join(f"{c} = :{c}" for c in METADATA_COLUMNS)
+    connection.executemany(
+        f"UPDATE chunks SET {assignments} WHERE rowid = :rowid",
+        [{**{c: chunk.get(c) for c in METADATA_COLUMNS}, "rowid": rowid} for rowid, chunk in zip(rowids, chunks)],
+    )
 
 
 def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
@@ -117,7 +162,8 @@ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
     connection.executemany(
         f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) "
         f"VALUES ({', '.join(':' + c for c in CHUNK_COLUMNS)})",
-        chunks,
+        # Text-only chunk files have no audio fields; missing keys are NULL.
+        [{column: chunk.get(column) for column in CHUNK_COLUMNS} for chunk in chunks],
     )
     connection.commit()
 
@@ -126,13 +172,19 @@ def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
     """Load chunks only when the chunk file's content changed.
 
     Compares the file's sha256 with the one recorded in meta. The hash is of
-    the whole file, so it covers every field, timing included. Same content:
-    nothing is touched, so cached embeddings survive. New content: chunks are
-    replaced and embeddings are dropped, because their rowids no longer match.
+    the whole file, so it covers every field, timing included.
 
-    An index built before the hash was recorded is adopted only when every
-    stored row equals the file's row in every column (not just the text).
-    Otherwise it is rebuilt.
+    - Same hash: nothing is touched, so cached embeddings survive.
+    - New hash, but the same chunk ids with the same embedding inputs
+      (EMBED_KEY_COLUMNS) in the same order: only the other columns (start_s,
+      end_s, audio, reader, ...) are updated in place. Rowids, vectors and
+      their fingerprints are kept, so an alignment re-run never re-embeds.
+    - Anything else: chunks are replaced and embeddings are dropped, because
+      their rowids or inputs no longer match.
+
+    An index built before the hash was recorded follows the same rule, so a
+    legacy index picks up new timing too (it is never adopted on text alone).
+    Duplicate chunk ids are refused before anything is written.
     """
     import hashlib
 
@@ -140,23 +192,19 @@ def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
     row = connection.execute("SELECT value FROM meta WHERE key = 'chunks_sha256'").fetchone()
     if row is not None and row[0] == digest:
         return chunk_count(connection)
-    if row is None and chunk_count(connection) > 0:
-        # Index built before the hash was recorded. Adopt it only if every
-        # column of every row matches; a text-only check would keep stale
-        # start_s/end_s forever once the hash is recorded.
-        wanted = [
-            tuple(chunk.get(c) for c in CHUNK_COLUMNS)
-            for chunk in (json.loads(line) for line in chunks_path.read_text().splitlines() if line.strip())
-        ]
+    chunks = [json.loads(line) for line in chunks_path.read_text().splitlines() if line.strip()]
+    check_unique_ids(chunks, chunks_path)
+    if chunk_count(connection) > 0:
         stored = [
             tuple(r)
-            for r in connection.execute(f"SELECT {', '.join(CHUNK_COLUMNS)} FROM chunks ORDER BY rowid")
+            for r in connection.execute(f"SELECT {', '.join(EMBED_KEY_COLUMNS)} FROM chunks ORDER BY rowid")
         ]
+        wanted = [tuple(chunk.get(c) for c in EMBED_KEY_COLUMNS) for chunk in chunks]
         if stored == wanted:
+            update_chunk_metadata(connection, chunks)
             connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('chunks_sha256', ?)", (digest,))
             connection.commit()
-            return len(stored)
-    chunks = [json.loads(line) for line in chunks_path.read_text().splitlines() if line.strip()]
+            return len(chunks)
     replace_chunks(connection, chunks)
     connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('chunks_sha256', ?)", (digest,))
     connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")

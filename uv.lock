@@ -715,6 +715,14 @@ transcribe = [
     { name = "nvidia-cudnn-cu12" },
 ]
 
+[package.optional-dependencies]
+transcribe = [
+    { name = "av" },
+    { name = "faster-whisper" },
+    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cudnn-cu12" },
+]
+
 [package.dev-dependencies]
 bench = [
     { name = "pillow" },
