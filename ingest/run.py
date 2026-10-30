@@ -3,6 +3,7 @@
     uv run --extra transcribe ingest/run.py --limit 3     # first 3 manifest rows
     uv run --extra transcribe ingest/run.py --all         # everything
     uv run --extra transcribe ingest/run.py --ids wesley-s2-06 --redo
+    uv run --extra transcribe ingest/run.py --library spurgeon --all   # see ingest/classics.py
 
 Finished transcripts are skipped; each is written atomically, so a crash loses
 at most the file in flight. Progress goes to $PREACHED_CACHE/transcripts/wesley/progress.log
@@ -73,12 +74,27 @@ def out_path(row: dict) -> Path:
     return manifest.safe_child(transcribe.TRANSCRIPT_DIR, f"{row['id']}.json")
 
 
+def use_library(slug: str) -> None:
+    """Point manifest, audio and transcript folders at one library (default: wesley)."""
+    global LOG
+    manifest.check_name(slug, manifest.ID_RE)
+    fetch.AUDIO_DIR = fetch.CACHE_ROOT / "audio" / slug
+    transcribe.TRANSCRIPT_DIR = transcribe.CACHE_ROOT / "transcripts" / slug
+    LOG = transcribe.TRANSCRIPT_DIR / "progress.log"
+
+
+def voice_note(row: dict) -> str:
+    if row.get("voice_note"):
+        return row["voice_note"]
+    return f"Read by LibriVox volunteer {row['reader']}; not {row['author']}'s voice."
+
+
 def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe.Transcriber) -> None:
     marks = transcribe.mark_boilerplate(segments, info["duration_s"])
     doc = {
         "meta": {
-            **{k: row[k] for k in META_KEYS},
-            "voice_note": f"Read by LibriVox volunteer {row['reader']}; not John Wesley's voice.",
+            **{k: row.get(k) for k in META_KEYS},
+            "voice_note": voice_note(row),
             "duration_s": info["duration_s"],
             "language": info["language"],
             "gaps_filled": info["gaps_filled"],  # see Transcriber.fill_gaps
@@ -105,11 +121,14 @@ def main() -> int:
     sel.add_argument("--all", action="store_true")
     sel.add_argument("--limit", type=int, help="first N manifest rows")
     sel.add_argument("--ids", nargs="+")
+    ap.add_argument("--library", default="wesley",
+                    help="manifest slug: ingest/manifest/<slug>.jsonl (default wesley)")
     ap.add_argument("--redo", action="store_true", help="retranscribe even if done")
     ap.add_argument("--download-only", action="store_true")
     args = ap.parse_args()
 
-    rows = manifest.load()
+    use_library(args.library)
+    rows = manifest.load(manifest.MANIFEST.with_name(f"{args.library}.jsonl"))
     if args.limit:
         rows = rows[: args.limit]
     elif args.ids:

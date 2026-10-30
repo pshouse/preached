@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from preached import env  # noqa: F401, E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
+from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 from manifest import UnsafeRow, check_audio_url  # noqa: E402
@@ -96,11 +96,18 @@ def main() -> None:
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--dense-weight", type=float, default=0.5)
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
+    parser.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, talmage, edwards); "
+                        "built by search/build_library.py, so no Wesley chunk sync")
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
     args = parser.parse_args()
 
-    connection = connect(args.index)
-    ensure_chunks(connection)
+    if args.library:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", args.library) or not (INDEX_DIR / f"{args.library}.sqlite").is_file():
+            raise SystemExit(f"error: no library {args.library!r} under {INDEX_DIR}")
+        connection = connect(INDEX_DIR / f"{args.library}.sqlite")
+    else:
+        connection = connect(args.index)
+        ensure_chunks(connection)
     model_name = None
     loaded = None
     vector = None

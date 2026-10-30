@@ -1,0 +1,14 @@
+{"library":"talmage","question":"blessed are the peacemakers","expect":["talmage-1898-01"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"talmage","question":"blessed are those who are persecuted for righteousness","expect":["talmage-1898-01"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"spurgeon","question":"who is the builder and the foundation of the church","expect":["spurgeon-191"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"spurgeon","question":"what is the duty of a Sunday school teacher","expect":["spurgeon-192"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"spurgeon","question":"these men have turned the world upside down","expect":["spurgeon-193"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"spurgeon","question":"is man responsible for his sin if God is sovereign","expect":["spurgeon-194"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"spurgeon","question":"look unto me and be ye saved","expect":["spurgeon-195"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"spurgeon","question":"religion that helps us now, not only after death","expect":["spurgeon-196"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"edwards","question":"sinners held over the pit of hell like a spider","expect":["edwards-01","edwards-02"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"edwards","question":"a spiritual light from God that is different from natural knowledge","expect":["edwards-03","edwards-04"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"edwards","question":"God chooses whom to save by his sovereign will","expect":["edwards-08","edwards-09"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"edwards","question":"Christ is both a lion and a lamb","expect":["edwards-16","edwards-17","edwards-18"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"edwards","question":"in my Father's house are many mansions","expect":["edwards-39"],"written_by":"Claude (agent), not human-reviewed"}
+{"library":"edwards","question":"is it just for God to condemn sinners to hell","expect":["edwards-26","edwards-27","edwards-28"],"written_by":"Claude (agent), not human-reviewed"}
