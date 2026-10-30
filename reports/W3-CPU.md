@@ -31,7 +31,7 @@ uv run search/query.py "what did Wesley say about worry" --mode hybrid -k 5
 uv run python -m unittest discover -s tests
 ```
 
-`default-groups` is empty, so `uv sync` and `uv sync --no-default-groups` install the same set. Optional flags: `--embed-backend onnx|torch`, `--onnx-variant fp32|int8`, `--ort-threads N`. The same knobs are `PREACHED_EMBED_BACKEND`, `PREACHED_ONNX_VARIANT`, and `PREACHED_ORT_INTRA_OP_THREADS`. Artifacts default to `/cache/models/granite-english-r2-onnx/<revision>/` (`PREACHED_ONNX_DIR` overrides the root).
+`default-groups` is empty, so `uv sync` and `uv sync --no-default-groups` install the same set. Optional flags: `--embed-backend onnx|torch`, `--onnx-variant fp32`, `--ort-threads N`. The same knobs are `PREACHED_EMBED_BACKEND`, `PREACHED_ONNX_VARIANT`, and `PREACHED_ORT_INTRA_OP_THREADS`. `PREACHED_ONNX_VARIANT=int8` is refused. Artifacts default to `/cache/models/granite-english-r2-onnx/<revision>/` (`PREACHED_ONNX_DIR` overrides the root).
 
 Export and quantize (bench group, CPU, writes the manifest):
 
@@ -353,3 +353,62 @@ uv run python -m unittest discover -s tests
 280 tests ran in 19.011 s, 0 failed, 0 skipped. The count after the #11 merge was 274.
 
 No new dependency. Direct runtime dependencies are still numpy, onnxruntime, and tokenizers.
+
+## Round-2 fix-up
+
+CTO review of PR #10, then a merge of `origin/main` at `4129646` (PR #15, YouTube source labels). Merge commit `5a9838b`. Parents are `48ed538` (this branch) and `4129646`. The only conflict was the import block in `app/server.py`. Both sides stayed: `EmbeddingMismatch`, `check_query_variant`, `index_stamp`, `open_readonly`, and `public_audio_url`. No rebase. `ModelSpec.fingerprint()` is unchanged, so the shipped `wesley.sqlite` fingerprint stays `13e0ed78bb32d86b`. `search/abstain.toml` is unchanged. There is still no int8 floor.
+
+### fp32 file name is pinned (`8111066`)
+
+`VARIANT_FILES` hard-codes `fp32` to `model.fp32.onnx`. `VARIANT_SHA256` pins that graph's digest by variant, not by the name the manifest writes. `resolve_variant` refuses a declared name that is not the hard-coded file, including when `enforce_pins` is false. `OnnxEmbedder` opens `VARIANT_FILES[chosen]`. An extra `variants.int8` key is ignored when `variants.fp32` is `model.fp32.onnx`. The real cache manifest still names `model.fp32.onnx` and still matches the pin.
+
+int8 is not a runtime variant. It is gone from `VARIANTS` and from `--onnx-variant` on `app/server.py`, `search/query.py`, `search/bench.py`, and `scripts/bench_api.py`. The export script may still write `model.int8.onnx`. The server does not open it. `scripts/measure_parity.py` was left as it was.
+
+A stored `embeddings` variant other than `fp32` is refused with `EmbeddingMismatch` (the BM25 note is `STALE_NOTE`). A missing variant is the shipped index and stays legal. A query variant other than `fp32` is refused too. `check_query_variant` runs in `default_loader` and again in `_reload_cached_index`.
+
+Tests: `ManifestTests.test_fp32_cannot_be_redirected_to_another_file`, `ManifestTests.test_int8_is_not_a_runtime_variant`, `FallbackTests.test_redirected_fp32_serves_keyword_search` (keyword hit, mode `bm25`, `FALLBACK_NOTE`), `VariantPairingTests.test_non_fp32_index_fingerprint_is_refused`, `ServerTests.test_non_fp32_index_fingerprint_is_refused_on_reload`.
+
+### Failed index read reloads on the next success (`8111066`)
+
+`_capture_stamp` still returns `None` on any exception and keeps the last good stamp. The first failed read, or any later failed read, sets `_status_failed` and serves keyword search with `INDEX_READ_NOTE`. Weights stay loaded. The next successful read reloads cached rows even when the stamp equals the last good one, then clears the flag. A later success can restore dense search.
+
+Test: `ServerTests.test_failed_index_read_reloads_on_the_next_success`.
+
+### query.py prints one line (`8111066`)
+
+`check_query_variant` sits in its own `try`. `EmbeddingMismatch` prints one `error:` line on stderr and exits 1. The traceback is not shown.
+
+Test: `VariantPairingTests.test_query_variant_mismatch_is_one_line`.
+
+### YouTube id length (`c035f87`)
+
+`tests/test_youtube.py` used the 12-character id `samplevid001`. PR #15 rejects that. The reload test now uses `samplevid02`. `test_server_reloads_youtube_library_and_falls_back` covers it.
+
+### Userinfo is not a source link (`8111066`)
+
+`public_audio_url` and `safeUrl` drop a URL whose username or password is set, before the host is labeled. `https://evil.com@ccel.org` is not a CCEL link. A plain `https://ccel.org/...` URL still is. Same-origin userinfo is dropped too.
+
+Tests: `ServerTests.test_hit_dict_audio_url_matches_the_page_allow_list` (also `user:pass@ccel.org` and `user:pass@archive.org`). `AppJsTests.test_url_rules` runs the page script under Deno: userinfo, user and password, audio userinfo, and same-origin userinfo are null; a CCEL URL without userinfo is kept; `renderCard` draws no text link and no CCEL label for `evil.com@ccel.org` or `user:pass@ccel.org`. The page was not opened in a browser.
+
+### Checks
+
+From this worktree:
+
+```bash
+cd /work/preached/.worktrees/feat/w3-cpu
+uv lock --check
+uv run python -m unittest discover -s tests
+UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-round2-runtime \
+  uv sync --frozen --no-default-groups
+```
+
+`uv lock --check` exited 0 (resolved 79 packages). The lockfile was not regenerated.
+
+288 tests ran in 18.458 s, 0 failed, 0 skipped. The count after the #13 merge was 280.
+
+The fresh runtime venv is `/cache/w3-cpu/venv-round2-runtime`, separate from the worktree `.venv` (that one has the bench group's torch) and from `/cache/w3-cpu/venv-merge11-runtime`. `uv sync --frozen --no-default-groups` installed 21 packages: numpy 2.5.4, onnxruntime 1.31.1, tokenizers 0.23.3, and the huggingface-hub stack (anyio, click, filelock, flatbuffers, fsspec, h11, hf-xet, httpcore2, httpx2, huggingface-hub, idna, packaging, protobuf, pyyaml, tqdm, truststore, typing-extensions), plus preached 0.1.0 from this worktree. No torch, no `nvidia-*`, no sentence-transformers. Importing `app.server` and `preached.search` there left `torch` and `sentence_transformers` off `sys.modules`. onnxruntime loads when the embedder loads.
+
+No new dependency. Direct runtime dependencies are still numpy, onnxruntime, and tokenizers.
+
+The historical int8 eval rows above stay. They record why int8 was not picked. Operators pass `--onnx-variant fp32` only.
+
