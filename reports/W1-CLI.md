@@ -106,9 +106,9 @@ audio, so this is text against ASR words, not an ear check.
 - Strict `start_s`-inside-span is 5/35. If the product wants the play button to land closer to the
   quote, the options are a sentence-level `start_s` for the best sentence in the chunk, or a small
   lead-in. I did not change it: the card shows the chunk's range, and the text it plays is the chunk.
-- The top hit for "what did Wesley say about worry" in the CLI example is a money anecdote
-  (Danger of Riches) and the Mount discourse 9 is rank 2. That is the retrieval ranking, not timing
-  (the question set has this as a miss at rank 1).
+- The CLI example "what did Wesley say about worry and tomorrow" is not an eval question. The
+  eval's own worry question (`q-worry`) is a miss in the top 5: the right passage is not retrieved,
+  so there is no timing to judge. That is the ranking, not alignment.
 - The labels in `eval/questions.jsonl` are LLM-made and still pending Patrick's review (see `eval/README.md`); these timestamp numbers inherit that.
 - Text and times come from the alignment; the reader's voice is a LibriVox volunteer, not Wesley's.
   The page already labels this.
