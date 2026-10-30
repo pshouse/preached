@@ -37,8 +37,8 @@ def md5sum(path: Path) -> str:
     return h.hexdigest()
 
 
-def audio_path(row: dict) -> Path:
-    return manifest.safe_child(AUDIO_DIR, row["file_name"])
+def audio_path(row: dict, audio_dir: Path | None = None) -> Path:
+    return manifest.safe_child(AUDIO_DIR if audio_dir is None else audio_dir, row["file_name"])
 
 
 def check_url(url: str) -> str:
@@ -72,9 +72,12 @@ def _open(req: urllib.request.Request, timeout: float):
     return _OPENER.open(req, timeout=timeout)
 
 
-def ensure_audio(row: dict, retries: int = 4) -> Path:
-    """Return the local path, downloading if missing/wrong. Verifies size + md5."""
-    dest = audio_path(row)
+def ensure_audio(row: dict, retries: int = 4, audio_dir: Path | None = None) -> Path:
+    """Return the local path, downloading if missing/wrong. Verifies size + md5.
+
+    audio_dir defaults to Wesley's AUDIO_DIR; ingest/run.py --library passes its own.
+    """
+    dest = audio_path(row, audio_dir)
     url = check_url(row["audio_url"])
     if dest.exists():
         if dest.stat().st_size == row["size"] and md5sum(dest) == row["md5"]:

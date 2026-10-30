@@ -565,6 +565,61 @@ class SideApiTests(unittest.TestCase):
             self.assertTrue(all(hit["audio_url"] == CLASSIC_AUDIO for hit in classic["classic"]["results"]))
             self.assert_missing_church(classic["church"])
 
+    def test_classic_side_covers_spurgeon_and_edwards(self) -> None:
+        """Spurgeon and edwards are classic libraries. The church column stays empty."""
+        for slug in ("spurgeon", "edwards"):
+            with self.subTest(slug=slug), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                classic_path = root / f"{slug}.sqlite"
+                church_path = root / "sample.sqlite"
+                build_library(classic_path, *classic_rows())
+                build_library(church_path, *church_rows(), church=True, sample=True)
+                connection = reopen(classic_path)
+                app = App(
+                    connection=connection,
+                    searcher=Searcher(connection, model="fixture", fingerprint=FIXTURE_FP),
+                    encode=encode_fixture,
+                    fallback_note=None,
+                    model_name="fixture",
+                    hosts={"127.0.0.1", "localhost"},
+                    static_dir=STATIC_DIR,
+                    library=slug,
+                    floor=0.5,
+                    church_connection=reopen(church_path),
+                    church_library="sample",
+                    church_label="Your church",
+                )
+                running = Running(app)
+                try:
+                    status, _, body = running.get(
+                        f"/api/search?q=classiconlytoken&library={slug}&mode=bm25&k=5"
+                    )
+                    self.assertEqual(status, 200, slug)
+                    payload = json.loads(body)
+                    self.assertIn("classiconlytoken", texts(payload))
+                    self.assertNotIn("churchonlytoken", texts(payload))
+                    self.assert_no_church_payload(body)
+                    bad, _, bad_body = running.get(
+                        "/api/search?q=classiconlytoken&library=sample&mode=bm25"
+                    )
+                    self.assertEqual(bad, 400, slug)
+                    self.assertEqual(json.loads(bad_body)["error"], f"library must be {slug}")
+                    side_status, _, side_body = running.get(
+                        "/api/side?q=classiconlytoken&mode=bm25&k=1"
+                    )
+                    self.assertEqual(side_status, 200, slug)
+                    side = json.loads(side_body)
+                    self.assertEqual(side["classic"]["library"], slug)
+                    self.assertEqual(side["classic"]["label"], slug)
+                    self.assertIn("classiconlytoken", texts(side["classic"]))
+                    self.assert_missing_church(side["church"])
+                    self.assert_no_church_payload(json.dumps(side["church"]).encode())
+                    health = json.loads(running.get("/healthz")[2])
+                    self.assertEqual(health["library"], slug)
+                    self.assertIsNone(health["church"])
+                finally:
+                    running.close()
+
     def assert_missing_church(self, church: dict) -> None:
         self.assertEqual(
             church,
@@ -672,6 +727,39 @@ class SideCliTests(unittest.TestCase):
                     ]
                 )
             self.assertIn("classic", str(caught.exception))
+
+    def test_classic_side_prints_spurgeon_and_edwards(self) -> None:
+        module = _load_query()
+        for slug in ("spurgeon", "edwards"):
+            with self.subTest(slug=slug), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                classic = root / f"{slug}.sqlite"
+                church = root / "sample.sqlite"
+                build_library(classic, *classic_rows())
+                build_library(church, *church_rows(), church=True, sample=True)
+                out = StringIO()
+                with redirect_stdout(out):
+                    module.main(
+                        [
+                            "classiconlytoken",
+                            "--mode",
+                            "bm25",
+                            "-k",
+                            "5",
+                            "--side",
+                            "--index",
+                            str(classic),
+                            "--church-index",
+                            str(church),
+                        ]
+                    )
+                text = out.getvalue()
+                self.assertIn(f"## Classic library: {slug}", text)
+                self.assertIn("classiconlytoken", _section(text, f"Classic library: {slug}"))
+                self.assertIn(CHURCH_EMPTY, _section(text, "Your church"))
+                self.assertNotIn("churchonlytoken", text)
+                self.assertNotIn("sample data", text)
+                self.assertNotIn("youtube.com", text)
 
     def test_church_confidence_is_unrated_not_the_wesley_floor(self) -> None:
         signals = Signals(bm25_hits=1, dense_top=0.2, agreement=True)
@@ -785,6 +873,30 @@ class ChurchRefusalTests(unittest.TestCase):
             self.assertEqual(path, sample)
             self.assertEqual(slug, "sample")
             self.assertEqual(sample.read_bytes(), before)
+
+    def test_canonical_path_refusal_uses_classic_index_problem(self) -> None:
+        """A path #14 would serve as spurgeon cannot be the church, whatever its name."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            classic = root / "built.sqlite"
+            build_library(classic, *classic_rows())
+            weird = root / "copy.sqlite"
+            _plain_marked(weird)
+            before = weird.read_bytes()
+
+            def gate(slug, path, index_dir=None):
+                if slug == "spurgeon" and Path(path) == weird:
+                    return None
+                from preached.libraries import classic_index_problem as real
+
+                return real(slug, path, index_dir)
+
+            with patch("preached.library.classic_index_problem", side_effect=gate):
+                with self.assertRaises(SystemExit) as caught:
+                    prepare_church(root, classic=classic, church_index=weird, church_library=None)
+            self.assertIn("classic", str(caught.exception))
+            self.assertEqual(weird.read_bytes(), before)
+            self.assertFalse(weird.with_name(weird.name + "-wal").exists())
 
 
 def _without_took(payload: dict) -> dict:

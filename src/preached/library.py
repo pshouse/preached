@@ -11,6 +11,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from preached.libraries import PUBLIC_DOMAIN, canonical_index, classic_index_problem
 from preached.store import connect, open_readonly
 
 # meta.key. One file holds role=church. Import --your-church clears the others.
@@ -23,13 +24,16 @@ CHURCH_EMPTY = "Nothing from your church yet."
 CHURCH_LABEL = "Your church"
 CLASSIC_LABEL = "John Wesley"
 SAMPLE_SLUG = "sample"
-# wesley is the built-in index. spurgeon and edwards are the public-domain
-# allow-list (PR #14). None of them is "your church". A copy is recognized
-# by its file stem, so the slug check does not depend on #14 being merged.
-CLASSIC_SLUGS = frozenset({"wesley", "spurgeon", "edwards"})
-CLASSIC_CHURCH_ERROR = (
-    "is a classic library (wesley, spurgeon, edwards) and cannot be your church"
-)
+
+
+def classic_names() -> tuple[str, ...]:
+    """Wesley, then #14's public-domain allow-list. Not a second copy of the names."""
+    return ("wesley", *PUBLIC_DOMAIN)
+
+
+def _classic_church_error(name: str) -> str:
+    listed = ", ".join(classic_names())
+    return f"error: {name} is a classic library ({listed}) and cannot be your church"
 
 
 def set_meta(connection: sqlite3.Connection, key: str, value: str) -> None:
@@ -104,8 +108,11 @@ def classic_heading(connection: sqlite3.Connection | None, slug: str) -> str:
 
 
 def is_classic_slug(slug: str | None) -> bool:
-    """True for wesley and the public-domain allow-list (spurgeon, edwards)."""
-    return isinstance(slug, str) and slug.casefold() in CLASSIC_SLUGS
+    """True for wesley and #14's public-domain allow-list (spurgeon, edwards)."""
+    if not isinstance(slug, str):
+        return False
+    folded = slug.casefold()
+    return any(folded == name for name in classic_names())
 
 
 def classic_church_refusal(slug: str | None, path: Path | None = None) -> str | None:
@@ -113,12 +120,14 @@ def classic_church_refusal(slug: str | None, path: Path | None = None) -> str | 
 
     An explicit ``--church-library wesley`` (or spurgeon, edwards) and a
     church index whose name or canonical path is one of those libraries are
-    both refused. The caller raises ``SystemExit`` for an explicit request
-    and leaves the side empty when the path was only auto-detected.
+    both refused. Spurgeon and edwards go through ``libraries.PUBLIC_DOMAIN``
+    and ``classic_index_problem``. The caller raises ``SystemExit`` for an
+    explicit request and leaves the side empty when the path was only
+    auto-detected.
     """
     if is_classic_slug(slug) or (path is not None and is_protected_classic(path)):
         name = slug or Path(path).name
-        return f"error: {name} {CLASSIC_CHURCH_ERROR}"
+        return _classic_church_error(name)
     return None
 
 
@@ -234,7 +243,7 @@ def mark_your_church_exclusive(
     """
     target = Path(path).resolve()
     if is_protected_classic(target):
-        raise ValueError(f"error: {target.name} {CLASSIC_CHURCH_ERROR}")
+        raise ValueError(_classic_church_error(target.name))
     for candidate in church_index_matches(index_dir, exclude=target):
         if is_protected_classic(candidate):
             continue
@@ -250,26 +259,30 @@ def mark_your_church_exclusive(
 def is_protected_classic(path: Path) -> bool:
     """True for a classic slug or a canonical classic index path.
 
-    The stem check covers a copy (``/tmp/wesley.sqlite``). The path check
-    covers the real index even when the name is unusual.
+    The stem check covers a copy (``/tmp/wesley.sqlite``). Spurgeon and
+    edwards canonical paths go through ``libraries.classic_index_problem``
+    and ``canonical_index``. Wesley's place is ``paths.INDEX_PATH``, read
+    at call time. The file is not opened.
     """
     if is_classic_slug(Path(path).stem):
         return True
     resolved = _resolve(path)
     if resolved is None:
         return False
-    return resolved in _canonical_classic_paths()
+    from preached import paths
 
-
-def _canonical_classic_paths() -> set[Path]:
-    from preached.paths import INDEX_DIR, INDEX_PATH
-
-    found: set[Path] = set()
-    for candidate in (INDEX_PATH, *(INDEX_DIR / f"{slug}.sqlite" for slug in CLASSIC_SLUGS)):
-        resolved = _resolve(candidate)
-        if resolved is not None:
-            found.add(resolved)
-    return found
+    for candidate in (paths.INDEX_PATH, paths.INDEX_DIR / "wesley.sqlite"):
+        canonical = _resolve(candidate)
+        if canonical is not None and resolved == canonical:
+            return True
+    for slug in PUBLIC_DOMAIN:
+        # None means #14 would serve this path as that classic library.
+        if classic_index_problem(slug, path) is None:
+            return True
+        canonical = _resolve(canonical_index(slug))
+        if canonical is not None and resolved == canonical:
+            return True
+    return False
 
 
 def _clear_church_mark(path: Path) -> None:

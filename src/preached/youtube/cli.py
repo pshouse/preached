@@ -67,8 +67,8 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         return 2
     from preached.library import is_classic_slug
 
-    # wesley is the built-in index. spurgeon and edwards are classic libraries
-    # too: --your-church must not mark them. A YouTube import is not that file.
+    # wesley is the built-in index. spurgeon and edwards come from
+    # libraries.PUBLIC_DOMAIN: --your-church must not mark them.
     if args.library == "wesley" or (args.your_church and is_classic_slug(args.library)):
         print(
             f"library {args.library} is a classic library and cannot be your church; choose another slug",

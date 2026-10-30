@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from preached import env  # noqa: F401, E402
 from preached.abstain import church_confidence, compute_signals, decide, floor_for  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.library import (  # noqa: E402
     CHURCH_EMPTY,
     classic_church_refusal,
@@ -26,7 +28,7 @@ from preached.library import (  # noqa: E402
     church_heading,
 )
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_PATH  # noqa: E402
+from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, check_query_variant, open_readonly  # noqa: E402
 from preached.youtube.listing import youtube_watch_url  # noqa: E402
@@ -40,6 +42,74 @@ UNSAFE_URL = "n/a (unsafe URL hidden)"
 def clean(value: object) -> str:
     """Printable text for the terminal: control characters become one space."""
     return CONTROL_RE.sub(" ", str(value))
+
+
+def is_library_file(path: Path) -> bool:
+    """A per-library index (YouTube import or build_library.py), not Wesley's.
+
+    Both writers create a ``videos`` table; build_library.py also records
+    ``library`` in meta. Read-only, so checking never changes the file.
+    """
+    if not path.is_file():
+        return False
+    connection = open_readonly(path)
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "videos" in tables:
+            return True
+        return "meta" in tables and connection.execute(
+            "SELECT 1 FROM meta WHERE key = 'library'"
+        ).fetchone() is not None
+    finally:
+        connection.close()
+
+
+def open_index(index: Path | None, library: str | None):
+    """Open the index to search, read-only (sqlite ``mode=ro``, ``query_only``).
+
+    --library takes an allow-listed public-domain slug and opens only its
+    canonical /cache/index/<slug>.sqlite as built
+    (``libraries.classic_index_problem``: no symlinks, realpath equality,
+    owner and mode checks). The Wesley index (INDEX_PATH, the default) and
+    any other --index path are searched as they are: nothing is synced, so
+    a text-only chunks.jsonl never nulls the aligned timestamps and audio.
+    --index must not be a library file: search those with --library.
+    """
+    if library is not None:
+        if not is_public_domain(library):
+            raise SystemExit(
+                f"error: --library {library!r} refused: only public-domain libraries ({', '.join(PUBLIC_DOMAIN)})"
+            )
+        problem = classic_index_problem(library, INDEX_DIR / f"{library}.sqlite", INDEX_DIR)
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
+        return open_target(INDEX_DIR / f"{library}.sqlite")
+    path = index if index is not None else INDEX_PATH
+    if is_library_file(path):
+        raise SystemExit(
+            f"error: {path} is a library index, not the Wesley index. "
+            f"Search it with --library {path.stem}."
+        )
+    return open_target(path)
+
+
+def open_target(path: Path):
+    """Open read-only (``mode=ro``, ``query_only``). A missing file is refused, not created."""
+    try:
+        connection = open_readonly(path)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    try:
+        has_chunks = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks'"
+        ).fetchone() is not None
+    except sqlite3.DatabaseError as exc:
+        connection.close()
+        raise SystemExit(f"error: {path} is not a SQLite index ({exc})") from exc
+    if not has_chunks:
+        connection.close()
+        raise SystemExit(f"error: {path} is not a search index (no chunks table)")
+    return connection
 
 
 def fmt_time(value) -> str:
@@ -67,10 +137,9 @@ def play_url(audio_url, start_s) -> str:
     if youtube is not None:
         return clean(youtube)
     try:
-        # Same rule as the manifest: https on archive.org, no credentials.
-        # UnsafeRow is a ValueError (bad port, off-host, credentials).
-        # urlsplit also raises ValueError for an invalid IPv6 netloc and
-        # some NFKC hosts, before check_audio_url can wrap it.
+        # Same rule as the manifest: https on archive.org, no credentials,
+        # no control characters. Every refusal is UnsafeRow, a ValueError
+        # (check_audio_url also wraps urlsplit's own ValueError).
         check_audio_url(audio_url)
     except ValueError:
         return UNSAFE_URL
@@ -210,7 +279,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--fusion", choices=("rrf", "weighted"), default="rrf")
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--dense-weight", type=float, default=0.5)
-    parser.add_argument("--index", type=Path, default=INDEX_PATH)
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument("--index", type=Path, default=None,
+                        help=f"SQLite index (default {INDEX_PATH}); searched read-only as it is, "
+                        "never synced; library files are refused")
+    target.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, edwards); "
+                        "built by search/build_library.py; read-only")
     parser.add_argument("--device", default="cpu", help="device for the torch query embedding")
     parser.add_argument(
         "--embed-backend",
@@ -246,10 +320,7 @@ def main(argv: list[str] | None = None) -> None:
     # Read-only, and it does not sync. A text-only chunks.jsonl matches the
     # aligned index on ids and text; syncing it would null every start_s,
     # end_s, audio_url, and reader.
-    try:
-        connection = open_readonly(args.index)
-    except FileNotFoundError as exc:
-        raise SystemExit(f"error: {exc}") from exc
+    connection = open_index(args.index, args.library)
     model_name = None
     embedder = None
     vector = None
@@ -346,7 +417,12 @@ def print_side(
     call to ``search_index(..., church=True)``, which rates that side unrated.
     """
     del backend, variant, vector
-    classic_slug = connection_slug(args.index, "wesley")
+    # --library spurgeon/edwards is the classic column. --index defaults to
+    # the Wesley file when it is omitted (open_index treats None that way).
+    if args.library:
+        classic_slug = args.library
+    else:
+        classic_slug = connection_slug(args.index if args.index is not None else INDEX_PATH, "wesley")
     # TODO(post-#12): open the church file and search_index(..., church=True)
     # under #12's gate. Do not print hits before that. Confidence is unrated.
     church_hits: list = []
