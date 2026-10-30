@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ingest"))
 sys.path.insert(0, str(ROOT / "search"))
 
+import app.server as server  # noqa: E402
 import build_library  # noqa: E402
 import manifest  # noqa: E402
 import query  # noqa: E402
@@ -357,6 +358,108 @@ class ProvenanceTests(unittest.TestCase):
             self.assertEqual(row["audio_url"], libraries.audio_url(prov["ia_identifier"], files[row["id"]]["file_name"]))
 
 
+class Stop(Exception):
+    """Raised by the patched build_app: main() got past every check."""
+
+
+class ServerGateTests(unittest.TestCase):
+    """app/server.py serves only the Wesley index and allow-listed public-domain libraries."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.wesley = self.dir / "wesley.sqlite"
+        connection = connect(self.wesley)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('wesley-001-c0', 'wesley-001', 'S', 'grace')"
+        )
+        connection.commit()
+        connection.close()
+        patches = [
+            mock.patch.object(server, "INDEX_PATH", self.wesley),
+            mock.patch.object(server, "INDEX_DIR", self.dir),
+            mock.patch.object(server, "build_app", side_effect=Stop),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def library_file(self, name: str, marker: str | None) -> Path:
+        path = self.dir / f"{name}.sqlite"
+        connection = open_library(path)
+        if marker is not None:
+            connection.execute("INSERT INTO meta (key, value) VALUES ('library', ?)", (marker,))
+            connection.commit()
+        connection.close()
+        return path
+
+    def served(self, *argv: str) -> bool:
+        try:
+            server.main(["--bm25-only", *argv])
+        except Stop:
+            return True
+        raise AssertionError("main returned without serving")
+
+    def refused(self, *argv: str) -> str:
+        with self.assertRaises(SystemExit) as ctx:
+            server.main(["--bm25-only", *argv])
+        self.assertNotIn(ctx.exception.code, (0, None))
+        return str(ctx.exception.code)
+
+    def test_wesley_spurgeon_edwards_are_served(self) -> None:
+        self.assertTrue(self.served())
+        self.assertTrue(self.served("--index", str(self.wesley)))
+        for slug in ("spurgeon", "edwards"):
+            with self.subTest(slug=slug):
+                path = self.library_file(slug, slug)
+                self.assertTrue(self.served("--library", slug))
+                self.assertTrue(self.served("--library", slug, "--index", str(path)))
+
+    def test_church_and_unknown_libraries_are_refused(self) -> None:
+        self.library_file("cc-speech", None)  # a YouTube import has no library marker
+        self.library_file("talmage", "talmage")
+        for slug in ("cc-speech", "talmage", "unknown-slug"):
+            with self.subTest(slug=slug):
+                self.assertIn("refused", self.refused("--library", slug))
+
+    def test_index_with_non_allow_listed_library_file_is_refused(self) -> None:
+        church = self.library_file("church-copy", None)
+        talmage = self.library_file("old", "talmage")
+        for path in (church, talmage):
+            for library in ("wesley", "spurgeon"):
+                with self.subTest(path=path.name, library=library):
+                    self.assertIn("not a public-domain library", self.refused("--library", library, "--index", str(path)))
+
+    def test_index_library_must_match_slug(self) -> None:
+        spurgeon = self.library_file("spurgeon", "spurgeon")
+        self.assertIn("--library spurgeon", self.refused("--library", "edwards", "--index", str(spurgeon)))
+        self.assertIn("--library spurgeon", self.refused("--index", str(spurgeon)))
+        self.assertIn("--library wesley", self.refused("--library", "spurgeon", "--index", str(self.wesley)))
+
+    def test_unknown_files_are_refused(self) -> None:
+        plain = self.dir / "plain.sqlite"
+        raw = sqlite3.connect(plain)
+        raw.execute("CREATE TABLE notes (x TEXT)")
+        raw.commit()
+        raw.close()
+        empty = self.dir / "empty-index.sqlite"
+        connect(empty).close()
+        other = self.dir / "other.sqlite"
+        connection = connect(other)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('x-c0', 'pastor-01', 'S', 'grace')"
+        )
+        connection.commit()
+        connection.close()
+        not_db = self.dir / "notes.txt"
+        not_db.write_text("not a database " * 100)
+        for path in (plain, empty, other):
+            with self.subTest(path=path.name):
+                self.assertIn("not the Wesley index", self.refused("--index", str(path)))
+        self.assertIn("not a SQLite index", self.refused("--index", str(not_db)))
+        self.assertIn("missing index", self.refused("--index", str(self.dir / "missing.sqlite")))
+        self.assertFalse((self.dir / "missing.sqlite").exists())
 
 
 if __name__ == "__main__":

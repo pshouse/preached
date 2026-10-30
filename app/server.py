@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -32,6 +33,7 @@ if str(SRC) not in sys.path:
 
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -574,6 +576,40 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
+def check_servable(connection, library: str, index: Path) -> None:
+    """SystemExit unless this file is the Wesley index or an allow-listed public-domain library.
+
+    Nothing else is served: church libraries (YouTube imports) have no
+    redaction or approval gate yet, so they are refused (fail closed) until
+    PR #12 lands. A library file (``videos`` table or meta ``library``) must
+    carry a ``library`` marker naming an allow-listed slug equal to
+    ``--library``. Any other file must look like the Wesley index (chunks,
+    every sermon id ``wesley-*``) and be served as ``wesley``.
+    """
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    marker = None
+    if "meta" in tables:
+        row = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
+        marker = row[0] if row is not None else None
+    allowed = f"allowed: {', '.join((LIBRARY, *PUBLIC_DOMAIN))}"
+    if "videos" in tables or marker is not None:
+        if marker is None or not is_public_domain(marker):
+            raise SystemExit(
+                f"error: {index} is not a public-domain library ({allowed}). Church libraries are not "
+                "served until redaction and approval are in place."
+            )
+        if marker != library:
+            raise SystemExit(f"error: {index} is the {marker!r} library; serve it with --library {marker}")
+        return
+    wesley = "chunks" in tables and connection.execute(
+        "SELECT count(*) > 0 AND count(*) = sum(sermon_id LIKE 'wesley-%') FROM chunks"
+    ).fetchone()[0]
+    if not wesley:
+        raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
+    if library != LIBRARY:
+        raise SystemExit(f"error: {index} is a Wesley index; serve it with --library {LIBRARY}")
+
+
 def main(argv: list[str] | None = None) -> None:
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -600,6 +636,11 @@ def main(argv: list[str] | None = None) -> None:
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
+    if library != LIBRARY and not is_public_domain(library):
+        raise SystemExit(
+            f"error: --library {library!r} refused: only {', '.join((LIBRARY, *PUBLIC_DOMAIN))} are served. "
+            "Church libraries are not served until redaction and approval are in place."
+        )
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
@@ -607,6 +648,14 @@ def main(argv: list[str] | None = None) -> None:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
+    try:
+        check_servable(connection, library, index)
+    except sqlite3.DatabaseError as exc:
+        connection.close()
+        raise SystemExit(f"error: {index} is not a SQLite index ({exc})") from exc
+    except BaseException:
+        connection.close()
+        raise
     hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
     bound = args.host.strip().lower()
     if bound not in {"0.0.0.0", "::", ""}:
