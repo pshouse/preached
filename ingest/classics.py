@@ -4,7 +4,7 @@ Sources are fixed below on purpose: never bulk-import by archive.org tag.
 Each library gets ingest/manifest/<slug>.jsonl in the same row schema as
 wesley.jsonl, so ingest/run.py --library <slug> transcribes it unchanged.
 
-    uv run ingest/classics.py                   # manifests for all three
+    uv run ingest/classics.py                   # manifests for both
     uv run ingest/classics.py --provenance      # + sha256 of downloaded audio (needs the audio in /cache)
 """
 
@@ -30,22 +30,9 @@ LIBRIVOX_NOTE = (
 )
 
 # slug -> source description. `librivox` is the LibriVox catalog title prefix used
-# to join per-section titles and readers; None for the Talmage disc.
+# to join per-section titles and readers. Talmage's 1898 disc was dropped (licence
+# unstated on archive.org, 58 s clip, rough transcript); see reports/W3-LIB.md.
 SOURCES = {
-    "talmage": {
-        "ia": "SermonOnTheMountByT.DeWittTalmage1898",
-        "author": "T. De Witt Talmage",
-        "work": "Sermon on the Mount (1898 recording)",
-        "audio_format": "VBR MP3",  # the original upload; the 64 kbps copy is lossier
-        "librivox": None,
-        "license_note": (
-            "Historical recording made in 1898 (Talmage died 1902), uploaded to archive.org "
-            "in the 78rpm collection with no licence field. Public domain in the US: it was "
-            "fixed before 1923, and Talmage's spoken words are not under copyright. "
-            "This is Talmage's own voice."
-        ),
-        "voice_note": "Historical 1898 recording; Talmage's own voice. Poor audio, ASR is approximate.",
-    },
     "spurgeon": {
         "ia": "spurgeons_sermons_librivox",
         "author": "Charles Haddon Spurgeon",
@@ -54,6 +41,13 @@ SOURCES = {
         "librivox": "^Spurgeon",
         "librivox_title": "Spurgeon's Sermons May 1858",
         "license_note": LIBRIVOX_NOTE.format(author="Charles Haddon Spurgeon", died="d. 1892"),
+        # Hand-written from the LibriVox catalog record (url_text_source, copyright_year);
+        # the linked page was a 404 when checked on 2026-10-30.
+        "text_edition": (
+            "Spurgeon's penny sermons nos. 191-196, preached and published in May 1858; LibriVox "
+            "records the readers' text source as the Spurgeon Archive index for 1858 "
+            "(https://www.spurgeon.org/index/c04.php, now a 404) and the text year as 1858."
+        ),
     },
     "edwards": {
         "ia": "select_sermons_edwards_0911_librivox",
@@ -63,6 +57,11 @@ SOURCES = {
         "librivox": "^Select Sermons",
         "librivox_title": "Select Sermons",
         "license_note": LIBRIVOX_NOTE.format(author="Jonathan Edwards", died="d. 1758"),
+        "text_edition": (
+            "Select Sermons of Jonathan Edwards as published by the Christian Classics Ethereal "
+            "Library; LibriVox records the readers' text source as "
+            "https://www.ccel.org/ccel/edwards/sermons.html and the text year as 1904."
+        ),
     },
 }
 
@@ -112,27 +111,15 @@ def build(slug: str) -> list[dict]:
         "audio_format": src["audio_format"],
         "ia_identifier": ident,
         "ia_url": f"https://archive.org/details/{ident}",
-        "text_source_url": None,
+        "text_source_url": None,  # set from LibriVox below
         "license_url": meta["metadata"].get("licenseurl"),
         "license_note": src["license_note"],
-        **({"voice_note": src["voice_note"]} if "voice_note" in src else {}),
     }
 
     def url(f: dict) -> str:
         return f"https://archive.org/download/{ident}/{urllib.parse.quote(f['name'])}"
 
     rows = []
-    if slug == "talmage":
-        for n, f in enumerate(sorted(files, key=lambda f: f["name"]), 1):
-            rows.append({
-                "id": f"talmage-1898-{n:02d}", "sermon_number": n, "kind": "sermon",
-                "title": "Sermon on the Mount (1898)", "reader": "T. De Witt Talmage",
-                "reader_ids": [], "duration_s": round(float(f["length"])),
-                "audio_url": url(f), "file_name": f["name"], "size": int(f["size"]), "md5": f["md5"],
-                "librivox_url": None, "librivox_section_id": None, **common,
-            })
-        return rows
-
     book, sections = librivox_sections(slug)
     files.sort(key=lambda f: int(sections[f["name"]]["section_number"]))
     assert len(files) == len(book["sections"]), (slug, len(files), len(book["sections"]))
@@ -152,6 +139,7 @@ def build(slug: str) -> list[dict]:
             "duration_s": int(sec["playtime"]),
             "audio_url": url(f), "file_name": f["name"], "size": int(f["size"]), "md5": f["md5"],
             "librivox_url": book["url_librivox"], "librivox_section_id": sec["id"], **common,
+            "text_source_url": book["url_text_source"] or None,
         })
     return rows
 
@@ -167,6 +155,7 @@ def sha256_file(path: Path) -> str:
 def provenance(slug: str, rows: list[dict]) -> dict:
     """Identifier, licence and per-file name/size/md5/sha256 of the audio actually used."""
     meta, _ = ia_files(slug)
+    book, _ = librivox_sections(slug)
     audio_dir = CACHE_ROOT / "audio" / slug
     files = []
     for r in rows:
@@ -184,6 +173,13 @@ def provenance(slug: str, rows: list[dict]) -> dict:
         "licenseurl": meta["metadata"].get("licenseurl"),
         "ia_collections": meta["metadata"].get("collection"),
         "license_note": SOURCES[slug]["license_note"],
+        # The printed text the LibriVox volunteers read from (not checked word for word).
+        "text_edition": {
+            "note": SOURCES[slug]["text_edition"],
+            "librivox_url_text_source": book["url_text_source"] or None,
+            "librivox_copyright_year": book.get("copyright_year"),
+            "librivox_url": book["url_librivox"],
+        },
         "audio_format": SOURCES[slug]["audio_format"],
         "audio_files": files,
         "ia_file_list": sorted(f["name"] for f in meta["files"]),

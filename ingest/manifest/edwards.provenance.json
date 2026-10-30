@@ -10,6 +10,12 @@
   "audio_bookspoetry"
  ],
  "license_note": "LibriVox recording, dedicated to the public domain (US); text by Jonathan Edwards (d. 1758) is public domain. Read by a volunteer LibriVox reader, NOT Jonathan Edwards's voice.",
+ "text_edition": {
+  "note": "Select Sermons of Jonathan Edwards as published by the Christian Classics Ethereal Library; LibriVox records the readers' text source as https://www.ccel.org/ccel/edwards/sermons.html and the text year as 1904.",
+  "librivox_url_text_source": "https://www.ccel.org/ccel/edwards/sermons.html",
+  "librivox_copyright_year": "1904",
+  "librivox_url": "https://librivox.org/select-sermons-of-jonathon-edwards-by-jonathon-edwards/"
+ },
  "audio_format": "64Kbps MP3",
  "audio_files": [
   {

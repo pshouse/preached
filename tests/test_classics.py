@@ -16,7 +16,7 @@ from preached.corpus import load_chunk_config  # noqa: E402
 
 class ManifestTests(unittest.TestCase):
     def test_committed_manifests_validate(self):
-        expected = {"talmage": 1, "spurgeon": 6, "edwards": 39}
+        expected = {"spurgeon": 6, "edwards": 39}
         for slug, count in expected.items():
             rows = manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl"))
             self.assertEqual(len(rows), count, slug)
@@ -25,6 +25,22 @@ class ManifestTests(unittest.TestCase):
                 self.assertTrue(r["id"].startswith(slug))
                 self.assertEqual(r["ia_identifier"], classics.SOURCES[slug]["ia"])
                 self.assertIn(f"/{r['ia_identifier']}/", r["audio_url"])
+
+    def test_provenance_records_text_edition(self):
+        for slug in ("spurgeon", "edwards"):
+            prov = json.loads(manifest.MANIFEST.with_name(f"{slug}.provenance.json").read_text())
+            edition = prov["text_edition"]
+            self.assertTrue(edition["note"])
+            self.assertTrue(edition["librivox_url_text_source"].startswith("https://"))
+            for r in manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl")):
+                self.assertEqual(r["text_source_url"], edition["librivox_url_text_source"])
+
+    def test_talmage_is_not_shipped(self):
+        self.assertNotIn("talmage", classics.SOURCES)
+        self.assertFalse(manifest.MANIFEST.with_name("talmage.jsonl").exists())
+        self.assertFalse(manifest.MANIFEST.with_name("talmage.provenance.json").exists())
+        questions = (ROOT / "eval" / "classics_questions.jsonl").read_text()
+        self.assertNotIn("talmage", questions)
 
     def test_clean_title(self):
         self.assertEqual(classics.clean_title("03 - Christ's Agony, pt. 2"), "Christ's Agony, pt 2")

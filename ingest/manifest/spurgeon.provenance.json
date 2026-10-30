@@ -10,6 +10,12 @@
   "audio_bookspoetry"
  ],
  "license_note": "LibriVox recording, dedicated to the public domain (US); text by Charles Haddon Spurgeon (d. 1892) is public domain. Read by a volunteer LibriVox reader, NOT Charles Haddon Spurgeon's voice.",
+ "text_edition": {
+  "note": "Spurgeon's penny sermons nos. 191-196, preached and published in May 1858; LibriVox records the readers' text source as the Spurgeon Archive index for 1858 (https://www.spurgeon.org/index/c04.php, now a 404) and the text year as 1858.",
+  "librivox_url_text_source": "https://www.spurgeon.org/index/c04.php",
+  "librivox_copyright_year": "1858",
+  "librivox_url": "https://librivox.org/spurgeons-sermons-may-1858-by-charles-spurgeon/"
+ },
  "audio_format": "64Kbps MP3",
  "audio_files": [
   {

@@ -1,5 +1,3 @@
-{"library":"talmage","question":"blessed are the peacemakers","expect":["talmage-1898-01"],"written_by":"Claude (agent), not human-reviewed"}
-{"library":"talmage","question":"blessed are those who are persecuted for righteousness","expect":["talmage-1898-01"],"written_by":"Claude (agent), not human-reviewed"}
 {"library":"spurgeon","question":"who is the builder and the foundation of the church","expect":["spurgeon-191"],"written_by":"Claude (agent), not human-reviewed"}
 {"library":"spurgeon","question":"what is the duty of a Sunday school teacher","expect":["spurgeon-192"],"written_by":"Claude (agent), not human-reviewed"}
 {"library":"spurgeon","question":"these men have turned the world upside down","expect":["spurgeon-193"],"written_by":"Claude (agent), not human-reviewed"}
