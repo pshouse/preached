@@ -155,6 +155,50 @@ def youtube_watch_url(url: object) -> str | None:
     return _watch_link(ids[0], _t_seconds(params.get("t", [])))
 
 
+def _same_origin_path(url: str) -> bool:
+    """A path the page's safeUrl treats as this origin. Not protocol-relative."""
+    if not url.startswith("/") or url.startswith("//") or "\\" in url:
+        return False
+    path = url.split("?", 1)[0].split("#", 1)[0]
+    return ".." not in path.split("/")
+
+
+def public_audio_url(url: object) -> str | None:
+    """The ``audio_url`` the page may receive. Same allow-list as the client.
+
+    A YouTube watch URL is rebuilt from the video id and an integer ``t=``.
+    A watch host that fails those rules is dropped, so ``t=javascript:`` and
+    extra parameters are not forwarded raw. Any other ``https`` URL is kept,
+    matching ``safeUrl``, as is a same-origin path. ``javascript:``, ``data:``,
+    and ``http:`` are dropped. Never raises.
+    """
+    rebuilt = youtube_watch_url(url)
+    if rebuilt is not None:
+        return rebuilt
+    if (
+        not isinstance(url, str)
+        or not url
+        or url.startswith("-")
+        or "\\" in url
+        or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)
+    ):
+        return None
+    if _same_origin_path(url):
+        return url
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        # .port raises ValueError for a non-numeric or out-of-range port.
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or not hostname:
+        return None
+    if hostname in WATCH_HOSTS and parsed.path == "/watch":
+        return None
+    return url
+
+
 def assert_allowed(text: str) -> None:
     if text and BLOCKED_CHANNEL.search(text):
         raise ChannelRefused(
