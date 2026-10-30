@@ -3,6 +3,10 @@
 Chunks overlap their neighbors by about 25% (see corpus/chunk_config.json).
 ``dedupe_adjacent`` drops a lower-ranked hit when it repeats a hit already
 kept from the same sermon, so a result list does not show those words twice.
+A neighbour the ranker placed inside the requested top k is merged into the
+kept hit instead of dropped when the passages stitch exactly within
+``MERGE_MAX_WORDS``; otherwise it is dropped and its words outside the kept
+passage are not shown.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ import logging
 import math
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -30,6 +34,12 @@ BOUNDARY_WORDS = 8
 # Timestamp fallback when word offsets are missing. Ignore a sub-second
 # touch that is just float rounding.
 TIME_OVERLAP_S = 0.4
+
+# A merged passage (dedupe_adjacent) stops growing at this many words: twice
+# the chunker's max_words (150, corpus/chunk_config.json), about two minutes
+# read aloud. Past it the neighbour is dropped, as before merging existed,
+# so a card never turns into a whole section of the sermon.
+MERGE_MAX_WORDS = 300
 
 # Player pre-roll. start_s stays the true onset of the chunk's first word
 # (honest for citations, same on the canonical and ASR paths); only the play
@@ -69,6 +79,13 @@ class Hit:
     word_end: int | None = None
     video_id: str | None = None
     flag_end_s: float | None = None
+    # Every chunk in this passage, in reading order, when dedupe_adjacent
+    # merged overlapping neighbours into it. Empty means just chunk_id.
+    merged_ids: tuple[str, ...] = ()
+
+    @property
+    def chunk_ids(self) -> list[str]:
+        return list(self.merged_ids) if self.merged_ids else [self.chunk_id]
 
 
 class Searcher:
@@ -327,22 +344,111 @@ def repeats_kept(hit: Hit, kept: Hit) -> bool:
     return boundary_overlap(hit.text or "", kept.text or "")
 
 
+def _boundary_size(first: list[str], second: list[str]) -> int:
+    """Longest run that ends ``first`` and starts ``second`` (0 if none)."""
+    for size in range(min(len(first), len(second)), 0, -1):
+        if first[-size:] == second[:size]:
+            return size
+    return 0
+
+
+def merge_overlapping(kept: Hit, neighbour: Hit, max_words: int = MERGE_MAX_WORDS) -> Hit | None:
+    """One passage covering both overlapping chunks, or None if they cannot
+    be stitched exactly.
+
+    The merged hit keeps ``kept``'s score and chunk_id (its rank does not
+    move). Text, word span, ``start_s`` and ``end_s`` cover both chunks, so
+    the player starts at the merged passage's first word. Only chunks with
+    word offsets, from the same sermon, audio file and text source, whose
+    texts share a boundary run (the chunker's sentence overlap) are merged.
+    Anything else, or a merge longer than ``max_words``, returns None and
+    the caller drops the neighbour as before.
+    """
+    if kept.sermon_id != neighbour.sermon_id:
+        return None
+    if None in (kept.word_start, kept.word_end, neighbour.word_start, neighbour.word_end):
+        return None
+    if kept.audio_url != neighbour.audio_url or kept.text_source != neighbour.text_source:
+        return None
+    if neighbour.word_start >= kept.word_start and neighbour.word_end <= kept.word_end:
+        return kept  # already inside the kept passage
+    if kept.word_start >= neighbour.word_start and kept.word_end <= neighbour.word_end:
+        return None  # the neighbour holds the kept passage; not an adjacent overlap
+    if neighbour.word_start < kept.word_start:
+        first, second = neighbour, kept
+    else:
+        first, second = kept, neighbour
+    first_words = (first.text or "").split()
+    second_words = (second.text or "").split()
+    size = _boundary_size(first_words, second_words)
+    if size == 0:
+        return None
+    words = first_words + second_words[size:]
+    if len(words) > max_words:
+        return None
+    return replace(
+        kept,
+        text=" ".join(words),
+        word_start=first.word_start,
+        word_end=second.word_end,
+        start_s=first.start_s,
+        end_s=second.end_s,
+        merged_ids=tuple(first.chunk_ids + second.chunk_ids),
+    )
+
+
 def dedupe_adjacent(hits: list[Hit], limit: int) -> list[Hit]:
     """Keep the best ``limit`` hits that do not repeat an adjacent neighbor.
 
     Higher score wins. Ties keep the earlier hit. The caller should pass a
     wider pool than ``limit`` so dropping a neighbor still leaves a full page.
+
+    A neighbour that ranks inside the top ``limit`` (so the list without
+    de-dup would have shown it) is merged into the kept passage(s) it
+    overlaps (``merge_overlapping``) when every join succeeds; if any join
+    fails (no exact boundary, different audio or text source, or past
+    ``MERGE_MAX_WORDS``) it is dropped and the kept passages are unchanged.
+    A neighbour ranked below ``limit`` is always dropped, so passages grow
+    only from hits the user would have seen.
+
+    Guaranteed: no two returned hits repeat each other by the rules of
+    ``repeats_kept`` (for chunks with word offsets: same sermon, overlapping
+    word ranges), so no word is shown twice; a merge never makes a passage
+    longer than ``MERGE_MAX_WORDS``; and the function is idempotent
+    (de-duping its own output returns the same list). Not guaranteed: every word of the plain top
+    ``limit`` stays on the page. A dropped neighbour's words outside the
+    kept passage are hidden, as before merging existed.
     """
     if limit <= 0:
         return []
     ordered = sorted(enumerate(hits), key=lambda item: (-item[1].score, item[0]))
     kept: list[Hit] = []
-    for _, hit in ordered:
-        if any(repeats_kept(hit, previous) for previous in kept):
+    for position, (_, hit) in enumerate(ordered):
+        overlapping = [index for index, previous in enumerate(kept) if repeats_kept(hit, previous)]
+        if not overlapping:
+            kept.append(hit)
+            if len(kept) >= limit:
+                break
             continue
-        kept.append(hit)
-        if len(kept) >= limit:
-            break
+        if position >= limit:
+            continue
+        # Fold the neighbour, and any kept passage it bridges to, into the
+        # best-ranked kept passage it overlaps.
+        # All or nothing: if any join fails (usually the word cap), the
+        # neighbour is dropped and the kept passages stay as they were.
+        # A partial merge would leave the merged card overlapping the kept
+        # passage it failed to absorb, so some words would show twice.
+        target = overlapping[0]
+        merged = merge_overlapping(kept[target], hit)
+        for index in overlapping[1:]:
+            if merged is None:
+                break
+            merged = merge_overlapping(merged, kept[index])
+        if merged is None:
+            continue
+        kept[target] = merged
+        for index in reversed(overlapping[1:]):
+            del kept[index]
     return kept
 
 

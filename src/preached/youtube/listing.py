@@ -12,7 +12,9 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+
+from preached.search import PREROLL_S
 
 from preached.audio_policy import flagged_play
 
@@ -33,11 +35,10 @@ class BadChannelUrl(ValueError):
     """The channel URL is not https on a YouTube host."""
 
 
-# Matches the page player. The stored start stays the first word; only the seek is earlier.
-PREROLL_S = 0.75
-
 # yt-dlp will treat a leading dash as an option. Only these hosts, over https.
 YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
+# Watch links use the importer's hosts except youtu.be, which is not /watch?v=.
+WATCH_HOSTS = YOUTUBE_HOSTS - {"youtu.be"}
 _URL_MESSAGE = (
     "channel URL must be https on youtube.com, www.youtube.com, m.youtube.com, or youtu.be"
 )
@@ -67,6 +68,52 @@ def assert_youtube_url(url: str) -> None:
         or parsed.port not in (None, 443)
     ):
         raise BadChannelUrl(_URL_MESSAGE)
+
+
+def youtube_watch_url(url: object) -> str | None:
+    """A stored YouTube watch URL, or None when it is not one.
+
+    Same host rule as the importer (https, no credentials, port 443 or the
+    default) limited to ``WATCH_HOSTS``, path ``/watch``, and one ``v`` of
+    11 characters. The string comes back unchanged: its ``&t=`` already
+    includes the pre-roll, and nothing here adds ``#t=``.
+
+    Never raises. ``urlsplit`` raises ``ValueError`` for an invalid IPv6
+    netloc, and ``.port`` raises ``ValueError`` for a non-numeric or
+    out-of-range port. Those, and anything else the parser rejects, are None.
+    """
+    if (
+        not isinstance(url, str)
+        or not url
+        or url.startswith("-")
+        or "\\" in url
+        or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)
+    ):
+        return None
+    try:
+        parsed = urlsplit(url)
+        # Read these inside the try. A matching host with a bad port used to
+        # raise from ``.port`` before the function could return None.
+        hostname = parsed.hostname
+        port = parsed.port
+        username = parsed.username
+        password = parsed.password
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or hostname not in WATCH_HOSTS
+        or username is not None
+        or password is not None
+        or port not in (None, 443)
+    ):
+        return None
+    if parsed.path != "/watch":
+        return None
+    ids = parse_qs(parsed.query).get("v", [])
+    if len(ids) != 1 or not VIDEO_ID.fullmatch(ids[0]):
+        return None
+    return url
 
 
 def assert_allowed(text: str) -> None:
@@ -105,17 +152,66 @@ def watch_url(
     chunk) applies the flagged-audio policy: ``none`` returns None, ``shifted``
     seeks just after that word (rounded up), ``play`` is the normal link.
     Without ``flag_end_s`` nothing changes.
+
+    Built only from validated parts: an 11-character ``video_id`` and an
+    integer ``t``. Anything else returns None (no link).
     """
+    if not isinstance(video_id, str) or not VIDEO_ID.fullmatch(video_id):
+        return None
     base = f"https://www.youtube.com/watch?v={video_id}"
     allowed, play_from = flagged_play(start_s, end_s, flag_end_s, policy)
     if not allowed:
         return None
     if play_from is not None:
-        return f"{base}&t={math.ceil(play_from)}s"
+        return f"{base}&t={int(math.ceil(play_from))}s"
     if start_s is None:
         return base
-    seconds = int(max(0, start_s - PREROLL_S))
-    return f"{base}&t={seconds}s"
+    value = float(start_s)
+    if not math.isfinite(value):
+        return base
+    return f"{base}&t={int(max(0.0, value - PREROLL_S))}s"
+
+
+def watch_video_id(url: object) -> str | None:
+    """The ``v`` of a validated YouTube watch URL, else None."""
+    if youtube_watch_url(url) is None:
+        return None
+    return parse_qs(urlsplit(url).query)["v"][0]
+
+
+def chunk_video_id(video_id: object, audio_url: object, source_url: object) -> str | None:
+    """The YouTube id of a chunk, from validated parts only, or None.
+
+    Taken from the ``v`` of the stored ``audio_url`` or, when that is empty
+    (an import under ``none`` stores no link), of ``source_url``; both must
+    be valid watch URLs. If the chunk's ``video_id`` is a YouTube id it must
+    agree, and when the URLs disagree with each other the answer is None.
+    """
+    ids = {vid for vid in (watch_video_id(audio_url), watch_video_id(source_url)) if vid is not None}
+    if len(ids) != 1:
+        return None
+    vid = ids.pop()
+    if isinstance(video_id, str) and VIDEO_ID.fullmatch(video_id) and video_id != vid:
+        return None
+    return vid
+
+
+def policy_watch_url(
+    vid: str | None,
+    start_s: float | None,
+    end_s: float | None,
+    flag_end_s: float | None,
+    policy: str,
+) -> str | None:
+    """Rebuild a chunk's YouTube link under ``policy`` (``vid`` from ``chunk_video_id``).
+
+    The stored ``audio_url`` was built at import time, possibly under another
+    policy, so its ``t=`` may sit on the name; callers must use this instead.
+    None when there is no id or the policy withholds audio.
+    """
+    if vid is None:
+        return None
+    return watch_url(vid, start_s, end_s=end_s, flag_end_s=flag_end_s, policy=policy)
 
 
 def parse_date(value) -> date | None:

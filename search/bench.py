@@ -18,7 +18,16 @@ api_search (src/preached/search.py), which takes the top SEARCH_POOL (100) and
 runs dedupe_adjacent down to 10. hybrid_weighted is not an API mode; it gets
 the same pool and de-dup. Those runs write eval/results/YYYY-MM-DD-dedupe[-N]
 .json and .md, so they never overwrite or mix with raw-ranker runs.
+
+--abstain evaluates the "nothing found" rule (src/preached/abstain.py) on the
+API path, hybrid, k=10, per model: in-sample (floor fitted on all 40
+questions) and leave-one-out (floor refitted without the held-out question).
+An abstained answerable question counts as a miss for R@5 and MRR@10. It
+writes eval/results/YYYY-MM-DD-abstain[-N].json and .md. Add
+--write-calibration to store the in-sample floors in search/abstain.toml.
+Corpus vectors must already be embedded (run the plain bench first).
 """
+
 
 from __future__ import annotations
 
@@ -46,6 +55,7 @@ from preached.embed import (  # noqa: E402
     load_model,
     unload,
 )
+from preached import abstain  # noqa: E402
 from preached.metrics import mrr_at, ndcg_at, recall_at  # noqa: E402
 from preached.models import EXCLUDED, MODELS, REFERENCE, config_path  # noqa: E402
 from preached.paths import INDEX_PATH, StaleChunks, chunk_config_path, index_chunks_jsonl, questions_path, repo_root  # noqa: E402
@@ -359,6 +369,230 @@ def markdown(report: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------- abstain ----------
+
+# Unlabelled probes, reported next to the eval but never used to fit. The
+# first four are the page's example chips; the rest are questions a visitor
+# might try. No ground truth: read their levels as a demo check only.
+PROBES = (
+    "What did Wesley say about worry?",
+    "How can I know that I am a child of God?",
+    "What did Wesley say about money?",
+    "Romans 8:16",
+    "What did Wesley say about drinking gin?",
+    "What did Wesley say about slavery?",
+    "What did Wesley say about electricity?",
+    "Is it okay for Christians to play video games?",
+    "What did Wesley say about dinosaurs?",
+    "What did Wesley think about the internet?",
+    "Did Wesley support the American Revolution?",
+    "What did Wesley teach about climate change and the environment?",
+)
+
+
+def abstain_rows(spec, connection, questions) -> tuple[list[dict], list[dict]]:
+    """Per-question signals and metrics on the API path (hybrid, k=10)."""
+    loaded = load_model(spec, device="cpu", batch_size=1)
+    try:
+        searcher = Searcher(connection, model=spec.key)
+        rows = []
+        for q in questions:
+            vector = encode_query(loaded, q["query"])
+            hits, conf = abstain.search_with_confidence(searcher, q["query"], vector, "hybrid", 10, None)
+            row = {"id": q["id"], "answerable": bool(q["relevant"]), **conf.as_dict()["signals"]}
+            if q["relevant"]:
+                texts = [h.text for h in hits]
+                row["recall@5"] = recall_at(texts, q["relevant"], 5)
+                row["mrr@10"] = mrr_at(texts, q["relevant"], 10)
+            rows.append(row)
+        probes = []
+        for text in PROBES:
+            vector = encode_query(loaded, text)
+            hits, conf = abstain.search_with_confidence(searcher, text, vector, "hybrid", 10, None)
+            probes.append({"query": text, **conf.as_dict()["signals"], "top": hits[0].chunk_id if hits else None})
+    finally:
+        unload(loaded)
+    return rows, probes
+
+
+def _signals(row: dict) -> "abstain.Signals":
+    return abstain.Signals(bm25_hits=row["bm25_hits"], dense_top=row["dense_top"], agreement=row["agreement"])
+
+
+def abstain_summary(rows: list[dict], levels: list[str]) -> dict:
+    """Abstention precision/recall on unanswerable, false abstains, and
+    R@5 / MRR@10 with abstained answerable questions scored 0."""
+    neg = [lv for r, lv in zip(rows, levels) if not r["answerable"]]
+    pos = [(r, lv) for r, lv in zip(rows, levels) if r["answerable"]]
+    abstained = sum(lv == "none" for lv in levels)
+    true_abstain = sum(lv == "none" for lv in neg)
+    flagged_neg = sum(lv in ("none", "weak") for lv in neg)
+    n_pos = len(pos)
+
+    def mean(values):
+        return round(sum(values) / len(values), 4) if values else None
+
+    return {
+        "n_answerable": n_pos,
+        "n_unanswerable": len(neg),
+        "abstained": abstained,
+        "abstain_precision": round(true_abstain / abstained, 4) if abstained else None,
+        "abstain_recall": round(true_abstain / len(neg), 4) if neg else None,
+        "flagged_recall": round(flagged_neg / len(neg), 4) if neg else None,
+        "false_abstain_rate": round(sum(lv == "none" for _, lv in pos) / n_pos, 4) if n_pos else None,
+        "weak_rate_answerable": round(sum(lv == "weak" for _, lv in pos) / n_pos, 4) if n_pos else None,
+        "recall@5": mean([r["recall@5"] for r, _ in pos]),
+        "recall@5_abstain": mean([0.0 if lv == "none" else r["recall@5"] for r, lv in pos]),
+        "mrr@10": mean([r["mrr@10"] for r, _ in pos]),
+        "mrr@10_abstain": mean([0.0 if lv == "none" else r["mrr@10"] for r, lv in pos]),
+        "levels": {lv: levels.count(lv) for lv in ("strong", "weak", "none", "unrated")},
+    }
+
+
+def abstain_eval(rows: list[dict]) -> dict:
+    pairs = [(_signals(r), r["answerable"]) for r in rows]
+    floor = abstain.fit_floor(pairs)
+    in_sample = [abstain.decide(s, floor).level for s, _ in pairs]
+    loo_levels, loo_floors = [], []
+    for index, (signals, _) in enumerate(pairs):
+        held_floor = abstain.fit_floor(pairs[:index] + pairs[index + 1:])
+        loo_floors.append(held_floor)
+        loo_levels.append(abstain.decide(signals, held_floor).level)
+    uncalibrated = [abstain.decide(s, None).level for s, _ in pairs]
+    for row, a, b, c, f in zip(rows, in_sample, loo_levels, uncalibrated, loo_floors):
+        row["level_in_sample"], row["level_loo"], row["level_uncalibrated"], row["loo_floor"] = a, b, c, f
+    return {
+        "floor": floor,
+        "in_sample": abstain_summary(rows, in_sample),
+        "leave_one_out": abstain_summary(rows, loo_levels),
+        "uncalibrated": abstain_summary(rows, uncalibrated),
+        "loo_floor_range": [min(f for f in loo_floors if f is not None), max(f for f in loo_floors if f is not None)]
+        if any(f is not None for f in loo_floors) else None,
+    }
+
+
+def abstain_markdown(report: dict) -> str:
+    lines = [
+        f"# Abstain rule, {report['started_at']}",
+        "",
+        "API path (hybrid RRF, top 100, `dedupe_adjacent`, k=10). Rule: `src/preached/abstain.py`. "
+        f"Questions: {report['n_answerable']} answerable, {report['n_unanswerable']} unanswerable "
+        "(LLM-written labels, pending human review). Commit "
+        f"`{report['environment']['git_commit']}`" + (" (dirty)" if report["environment"]["git_dirty"] else "") + ".",
+        "",
+        "Headline is leave-one-out (LOO): each question is judged with a floor fitted on the other 39. "
+        "An abstained answerable question counts as a miss.",
+        "",
+        "| model | eval | floor | abstain precision | abstain recall | flagged (weak or none) recall | "
+        "false abstain | weak on answerable | R@5 → with abstain | MRR@10 → with abstain |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+
+    def cell(value):
+        return "n/a" if value is None else f"{value:.3f}"
+
+    for key, entry in report["models"].items():
+        if entry.get("status") != "ok":
+            lines.append(f"| {key} | {entry.get('status')} | | | | | | | | |")
+            continue
+        ev = entry["abstain"]
+        for name, label in (("leave_one_out", "**LOO**"), ("in_sample", "in-sample"), ("uncalibrated", "no floor")):
+            s = ev[name]
+            floor = {"leave_one_out": "refit per fold (range " + (
+                f"{ev['loo_floor_range'][0]:.4f}–{ev['loo_floor_range'][1]:.4f}" if ev["loo_floor_range"] else "n/a") + ")",
+                "in_sample": cell(ev["floor"]) if ev["floor"] is not None else "n/a",
+                "uncalibrated": "none"}[name]
+            lines.append(
+                f"| {key} | {label} | {floor} | {cell(s['abstain_precision'])} | {cell(s['abstain_recall'])} | "
+                f"{cell(s['flagged_recall'])} | {cell(s['false_abstain_rate'])} | {cell(s['weak_rate_answerable'])} | "
+                f"{cell(s['recall@5'])} → {cell(s['recall@5_abstain'])} | {cell(s['mrr@10'])} → {cell(s['mrr@10_abstain'])} |"
+            )
+    lines += ["", "Per question (signals and levels; `agree` = a shown passage is in both BM25's and dense's top 100):", ""]
+    for key, entry in report["models"].items():
+        if entry.get("status") != "ok":
+            continue
+        lines += [f"## {key}", "", "| id | answerable | BM25 hits | dense top | agree | R@5 | in-sample | LOO | no floor |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+        for r in sorted(entry["rows"], key=lambda r: (r["answerable"], r["dense_top"] or 0)):
+            lines.append(
+                f"| {r['id']} | {'yes' if r['answerable'] else 'no'} | {r['bm25_hits']} | {r['dense_top']:.4f} | "
+                f"{'yes' if r['agreement'] else 'no'} | {r.get('recall@5', '')} | {r['level_in_sample']} | "
+                f"{r['level_loo']} | {r['level_uncalibrated']} |"
+            )
+        lines += ["", "Unlabelled probes (not used to fit; no ground truth), level with the in-sample floor:", "",
+                  "| query | BM25 hits | dense top | agree | level |", "| --- | --- | --- | --- | --- |"]
+        for p in entry["probes"]:
+            lines.append(f"| {p['query']} | {p['bm25_hits']} | {p['dense_top']:.4f} | "
+                         f"{'yes' if p['agreement'] else 'no'} | {p['level']} |")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def run_abstain(args, connection, questions, started) -> None:
+    answerable = [q for q in questions if q["relevant"]]
+    json_path, md_path = output_paths(args.results_dir, started.date().isoformat(), "abstain")
+    report = {
+        "started_at": started.isoformat(timespec="seconds"),
+        "note": args.note,
+        "mode": "hybrid_rrf (API path, dedupe, k=10)",
+        "n_answerable": len(answerable),
+        "n_unanswerable": len(questions) - len(answerable),
+        "index_path": str(INDEX_PATH),
+        "environment": environment(),
+        "rule": abstain.__doc__,
+        "models": {},
+    }
+    print(f"abstain eval, questions={len(questions)} -> {json_path}", flush=True)
+    calibrations = {k: v for k, v in abstain.load_calibrations().items() if isinstance(v, dict)}
+    for key in args.models:
+        spec = MODELS[key]
+        entry = {"hf_id": spec.hf_id, "revision": spec.revision, "fingerprint": spec.fingerprint(),
+                 "query_fingerprint": abstain.query_fingerprint(spec), "status": "pending"}
+        try:
+            if stored_fingerprint(connection, key) != spec.fingerprint():
+                raise RuntimeError(f"stored vectors for {key} are missing or stale; run: uv run --group bench "
+                                   f"search/bench.py --models {key}")
+            rows, probes = abstain_rows(spec, connection, questions)
+            entry["rows"] = rows
+            entry["abstain"] = abstain_eval(rows)
+            floor = entry["abstain"]["floor"]
+            for p in probes:
+                p["level"] = abstain.decide(_signals(p), floor).level
+            entry["probes"] = probes
+            entry["status"] = "ok"
+            for name in ("leave_one_out", "in_sample"):
+                s = entry["abstain"][name]
+                print(f"{key} {name}: floor={floor} precision={s['abstain_precision']} recall={s['abstain_recall']} "
+                      f"false_abstain={s['false_abstain_rate']} weak={s['weak_rate_answerable']} "
+                      f"R@5 {s['recall@5']}->{s['recall@5_abstain']} MRR {s['mrr@10']}->{s['mrr@10_abstain']}", flush=True)
+            if floor is not None:
+                calibrations[key] = {
+                    "dense_floor": floor,
+                    "fingerprint": spec.fingerprint(),
+                    "query_fingerprint": abstain.query_fingerprint(spec),
+                    # abstain_rows embeds queries with torch on CPU at dtype_cpu.
+                    "backend": "torch",
+                    "variant": spec.dtype_cpu,
+                    "fitted_on": f"eval/questions.jsonl sha256 {sha256(questions_path())[:16]}, "
+                                 f"{len(answerable)} answerable + {len(questions) - len(answerable)} unanswerable",
+                    "results": str(json_path.relative_to(repo_root())) if json_path.is_relative_to(repo_root())
+                    else json_path.name,
+                }
+        except Exception as exc:
+            entry["status"] = "error"
+            entry["error"] = f"{type(exc).__name__}: {exc}"
+            print(f"{key}: {entry['error']}", flush=True)
+        report["models"][key] = entry
+    report["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    json_path.write_text(json.dumps(report, indent=1) + "\n")
+    md_path.write_text(abstain_markdown(report))
+    print(f"wrote {json_path}\nwrote {md_path}")
+    if args.write_calibration:
+        path = abstain.calibration_path()
+        path.write_text(abstain.calibration_toml(calibrations))
+        print(f"wrote {path}")
+
+
 # ---------- main ----------
 
 def main() -> None:
@@ -372,12 +606,21 @@ def main() -> None:
     parser.add_argument("--note", default="", help="free text stored with the run")
     parser.add_argument("--dedupe", action="store_true",
                         help="score the API path: top SEARCH_POOL, then dedupe_adjacent to 10")
+    parser.add_argument("--abstain", action="store_true",
+                        help="evaluate the nothing-found rule per model (in-sample and leave-one-out)")
+    parser.add_argument("--write-calibration", action="store_true",
+                        help="with --abstain: store the fitted floors in search/abstain.toml")
     args = parser.parse_args()
+    if args.write_calibration and not args.abstain:
+        parser.error("--write-calibration needs --abstain")
 
     started = dt.datetime.now().astimezone()
     connection = connect(INDEX_PATH)
     n_chunks = ensure_chunks(connection)
     questions = read_jsonl(questions_path())
+    if args.abstain:
+        run_abstain(args, connection, questions, started)
+        return
     answerable = [q for q in questions if q["relevant"]]
     rows = list(connection.execute("SELECT rowid, sermon_title, scripture, text FROM chunks ORDER BY rowid"))
 

@@ -67,6 +67,38 @@ function isArchiveHost(href) {
   return host === "archive.org" || host.endsWith(".archive.org");
 }
 
+/* Importer hosts that serve /watch?v=. youtu.be is a short link, not this form. */
+var YOUTUBE_WATCH_HOSTS = { "youtube.com": 1, "www.youtube.com": 1, "m.youtube.com": 1 };
+var YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/* Valid https watch URL, or null. Returns the stored string so &t= stays put.
+   Does not add #t=. Host check matches the importer (no credentials, port 443
+   or default). media-src does not allow YouTube, so callers must not put
+   this URL on an <audio> element. */
+function youtubeWatchUrl(value) {
+  if (typeof value !== "string" || value === "") return null;
+  if (value.charAt(0) === "-" || value.indexOf("\\") !== -1) return null;
+  var i;
+  for (i = 0; i < value.length; i += 1) {
+    var code = value.charCodeAt(i);
+    if (code <= 32 || code === 127) return null;
+  }
+  var url;
+  try {
+    url = new URL(value);
+  } catch (err) {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  if (!YOUTUBE_WATCH_HOSTS[url.hostname]) return null;
+  if (url.username || url.password) return null;
+  if (url.port !== "" && url.port !== "443") return null;
+  if (url.pathname !== "/watch") return null;
+  var ids = url.searchParams.getAll("v");
+  if (ids.length !== 1 || !YOUTUBE_ID.test(ids[0])) return null;
+  return value;
+}
+
 function readerLabel(hit, href) {
   var name = typeof hit.reader === "string" ? hit.reader : "";
   var librivox = href ? isArchiveHost(href) : false;
@@ -136,6 +168,7 @@ function renderCard(hit) {
 
   var source = safeUrl(hit.source_url);
   var audioHref = safeUrl(hit.audio_url);
+  var youtube = youtubeWatchUrl(hit.audio_url);
   var spoken = readerLabel(hit, audioHref);
 
   if (hit.audio_withheld) {
@@ -153,7 +186,15 @@ function renderCard(hit) {
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
     var playLabel = shifted != null ? formatTime(shifted) : startLabel;
-    if (audioHref && playLabel) {
+    if (youtube && playLabel) {
+      /* Watch URL from the server, including its &t= pre-roll (or, for a
+         shifted passage, its t= past the redacted name). Not loaded in <audio>. */
+      var watch = el("a", "play", "Watch on YouTube at " + playLabel);
+      watch.href = youtube;
+      watch.target = "_blank";
+      watch.rel = "noopener noreferrer";
+      card.appendChild(watch);
+    } else if (audioHref && playLabel) {
       var button = el("button", "play", "Play from " + playLabel);
       button.type = "button";
       var sermonName = hit.sermon_number != null ? "sermon " + hit.sermon_number : (hit.sermon_title || "this sermon");
@@ -185,35 +226,140 @@ function renderCard(hit) {
   return item;
 }
 
-function showResults(data) {
-  var noteEl = document.getElementById("note");
-  var statusEl = document.getElementById("status");
+/* Page copy for each search state. Plain words; inserted with textContent. */
+var MESSAGES = {
+  loading: "Searching the sermons.",
+  nothing: "Nothing found in these sermons.",
+  emptyHint: "Try other words, or a Bible verse such as Romans 8:16.",
+  low: "Low confidence: these passages may not answer your question. " +
+    "This is a rough automatic check (a heuristic), so read them and judge for yourself.",
+  lowHidden: "Low-confidence results hidden.",
+  weak: "These passages may not answer your question. They are the closest matches, not strong ones.",
+  network: "Could not reach the search. Check your connection and try again.",
+  server: "The search had a problem on our side. Try again in a moment.",
+  garbled: "The search sent back something unexpected. Try again.",
+  enter: "Enter a question.",
+};
+
+/* "Hide low-confidence results" toggle. Off by default: the low-confidence
+   check is a heuristic fitted on very few questions and wrongly flags some
+   good answers, so results are shown under a banner unless the person asks
+   to hide them. The choice holds for later searches on this page. */
+var hideLowConfidence = false;
+
+function countLabel(count) {
+  return count === 1 ? "1 passage." : count + " passages.";
+}
+
+/* What the page shows for one search response. Pure (no DOM), so it is
+   tested in Deno. kind: results | weak | low | empty. ``hideLow`` is the
+   toggle; it only affects low-confidence (abstain) responses. */
+function describeResponse(data, hideLow) {
+  var results = data && Array.isArray(data.results) ? data.results : [];
+  var confidence = data && data.confidence && typeof data.confidence === "object" ? data.confidence : {};
+  var serverNote = typeof confidence.note === "string" && confidence.note ? confidence.note : null;
+  var fallback = data && typeof data.note === "string" && data.note ? data.note : null;
+  var state = {
+    kind: "results",
+    status: countLabel(results.length),
+    confidenceNote: null,
+    fallbackNote: fallback,
+    showResults: true,
+    canHide: false,
+    results: results,
+  };
+  if (results.length === 0) {
+    state.kind = "empty";
+    state.status = MESSAGES.nothing + " " + MESSAGES.emptyHint;
+    state.showResults = false;
+  } else if (data.abstain === true) {
+    state.kind = "low";
+    state.canHide = true;
+    state.confidenceNote = MESSAGES.low;
+    if (hideLow === true) {
+      state.status = MESSAGES.lowHidden;
+      state.showResults = false;
+    }
+  } else if (confidence.level === "weak") {
+    state.kind = "weak";
+    state.confidenceNote = serverNote || MESSAGES.weak;
+  }
+  return state;
+}
+
+/* Status text for a failed search. kind: network | http | garbled. */
+function failureMessage(kind, status, data) {
+  if (kind === "network") return MESSAGES.network;
+  if (kind === "garbled") return MESSAGES.garbled;
+  if (typeof status === "number" && status >= 500) return MESSAGES.server;
+  if (data && typeof data.error === "string" && data.error) return "Search failed: " + data.error + ".";
+  return MESSAGES.server;
+}
+
+var lastSearch = null;
+var lastData = null;
+
+function setText(id, text) {
+  var node = document.getElementById(id);
+  node.textContent = text || "";
+  node.hidden = !text;
+}
+
+function setBusy(busy) {
+  var section = document.getElementById("results-section");
+  section.setAttribute("aria-busy", busy ? "true" : "false");
+  section.classList.toggle("is-loading", busy);
+}
+
+function resetState() {
+  document.getElementById("results").replaceChildren();
+  setText("note", "");
+  setText("confidence", "");
+  document.getElementById("hide-low").hidden = true;
+  document.getElementById("retry").hidden = true;
+  document.getElementById("status").classList.remove("is-error");
+}
+
+function renderList(results) {
   var list = document.getElementById("results");
   list.replaceChildren();
-
-  if (data.note) {
-    noteEl.hidden = false;
-    noteEl.textContent = data.note;
-  } else {
-    noteEl.hidden = true;
-    noteEl.textContent = "";
-  }
-
-  var results = Array.isArray(data.results) ? data.results : [];
-  if (results.length === 0) {
-    statusEl.textContent = "Nothing strong found";
-    return;
-  }
-  statusEl.textContent = results.length === 1 ? "1 passage." : results.length + " passages.";
   for (var i = 0; i < results.length; i += 1) {
     list.appendChild(renderCard(results[i]));
   }
 }
 
+function showResults(data) {
+  resetState();
+  setBusy(false);
+  lastData = data;
+  var state = describeResponse(data, hideLowConfidence);
+  setText("note", state.fallbackNote);
+  document.getElementById("status").textContent = state.status;
+  if (state.showResults) {
+    setText("confidence", state.confidenceNote);
+    renderList(state.results);
+  }
+  var toggle = document.getElementById("hide-low");
+  toggle.hidden = !state.canHide;
+  toggle.setAttribute("aria-pressed", hideLowConfidence ? "true" : "false");
+}
+
+function toggleLowConfidence() {
+  hideLowConfidence = !hideLowConfidence;
+  if (!lastData) return;
+  showResults(lastData);
+  /* Keep focus on the toggle so it can be pressed again. */
+  document.getElementById("hide-low").focus();
+}
+
 function showFailure(message) {
-  document.getElementById("note").hidden = true;
-  document.getElementById("results").replaceChildren();
-  document.getElementById("status").textContent = message;
+  resetState();
+  setBusy(false);
+  lastData = null;
+  var statusEl = document.getElementById("status");
+  statusEl.textContent = message;
+  statusEl.classList.add("is-error");
+  document.getElementById("retry").hidden = !lastSearch;
 }
 
 async function runSearch(query) {
@@ -224,9 +370,11 @@ async function runSearch(query) {
   if (searchAbort) searchAbort.abort();
   searchAbort = new AbortController();
   var signal = searchAbort.signal;
-  statusEl.textContent = "Searching.";
-  document.getElementById("results").replaceChildren();
-  document.getElementById("note").hidden = true;
+  lastSearch = query;
+  lastData = null;
+  resetState();
+  setBusy(true);
+  statusEl.textContent = MESSAGES.loading;
 
   var params = new URLSearchParams();
   params.set("q", query);
@@ -244,7 +392,7 @@ async function runSearch(query) {
     text = await response.text();
   } catch (err) {
     if (err && err.name === "AbortError") return;
-    showFailure("Search failed. Try again.");
+    showFailure(failureMessage("network"));
     return;
   }
   if (signal.aborted) return;
@@ -253,12 +401,11 @@ async function runSearch(query) {
   try {
     data = JSON.parse(text);
   } catch (err) {
-    showFailure("Search failed. Try again.");
+    showFailure(failureMessage(response.ok ? "garbled" : "http", response.status, null));
     return;
   }
   if (!response.ok) {
-    var problem = data && typeof data.error === "string" ? data.error : "Search failed. Try again.";
-    showFailure(problem);
+    showFailure(failureMessage("http", response.status, data));
     return;
   }
   showResults(data);
@@ -277,11 +424,16 @@ function init() {
     event.preventDefault();
     var query = input.value.trim();
     if (!query) {
-      document.getElementById("status").textContent = "Enter a question.";
+      document.getElementById("status").textContent = MESSAGES.enter;
       input.focus();
       return;
     }
     runSearch(query);
+  });
+
+  document.getElementById("hide-low").addEventListener("click", toggleLowConfidence);
+  document.getElementById("retry").addEventListener("click", function () {
+    if (lastSearch) runSearch(lastSearch);
   });
 
   document.querySelectorAll("[data-query]").forEach(function (button) {

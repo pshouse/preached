@@ -25,7 +25,7 @@ The agent's steps were:
 
 A chunk matches a quote when `normalize(quote)` is contained in `normalize(chunk)`. Overlap can put one quote in two chunks. Metrics count that quote once, at the first ranked chunk that contains it. See `src/preached/metrics.py`.
 
-Recall@5, MRR@10, and nDCG@10 are computed only on questions with a relevant passage. Unanswerable questions are reported separately as the top-1 score, so a later threshold for "nothing strong found" can be chosen from the numbers rather than invented here.
+Recall@5, MRR@10, and nDCG@10 are computed only on questions with a relevant passage. Unanswerable questions are reported separately as the top-1 score, so a later threshold for "nothing strong found" can be chosen from the numbers rather than invented here. That threshold now exists as a heuristic, not a verdict: `search/bench.py --abstain` fits a per-model dense floor (`search/abstain.toml`) from the unanswerable items (in practice one of them sets it) and reports leave-one-out numbers. The page shows low-confidence results by default under a banner. See `reports/W3-POLISH.md`. It inherits every caveat on this page.
 
 ## Shared sentences
 
@@ -59,3 +59,7 @@ The current file `/cache/corpus/wesley/chunks.jsonl` has 8,383 chunks (median 12
 - Labels were found with keyword search, so passages that share words with the question are over-represented. That favors BM25 and hybrid modes.
 - 23 of the 35 answerable questions share a content word with the title of the sermon that answers them (for example "Christian perfection", "the means of grace", "the witness of the Spirit", "riches", "temptation"), and FTS5 indexes the title column. Absolute scores are optimistic for any lexical component.
 - 35 answerable questions is small: one question moves a mean by about 0.03. `search/bench.py` reports bootstrap 95% intervals; read differences inside them as ties.
+
+## Natural-language probes (W3-POLISH, not human-reviewed)
+
+`nl-questions-w3polish.jsonl` holds 18 short questions **written by the W3-POLISH coding agent (an LLM, Claude), not reviewed by a person**. They avoid sermon-title words where possible and include the CTO's "worry" and "How do I stop worrying?". Each lists the sermon(s) the agent expects to answer it (`expected_sermons`), checked only against sermon titles and a text grep, so treat them as probes, not labels. They are not part of `questions.jsonl`, are not used by `bench.py`, and the abstain floor is **not** fitted on them. `uv run --group bench scripts/check_nl_questions.py` prints the abstain level for each and what a refit would do. Results: `reports/W3-POLISH.md`, fix-up section.
