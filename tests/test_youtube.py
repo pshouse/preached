@@ -1,0 +1,486 @@
+"""YouTube import: listing fixtures, dry-run, resume, sermon span, chunks, schema.
+
+No network. Listings come from tests/fixtures. Transcription and download are fakes.
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+import urllib.error
+import urllib.request
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import date, datetime, timezone
+from io import StringIO
+from pathlib import Path
+
+import numpy as np
+
+from app.server import STATIC_DIR, App, make_server
+from preached.corpus import load_chunk_config
+from preached.search import Searcher
+from preached.store import load_embeddings, open_readonly
+from preached.youtube.chunking import chunk_words
+from preached.youtube.cli import main
+from preached.youtube.library import MODEL_KEY
+from preached.youtube.listing import (
+    ChannelRefused,
+    Video,
+    creative_commons,
+    parse_listing,
+    watch_url,
+)
+from preached.youtube.privacy import redact
+from preached.youtube.sermon import is_sung, load_windows, sermon_span, speech_runs, words_in_span
+from preached.youtube.words import Word
+
+FIXTURE = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "youtube" / "channel.json"
+
+
+def listing() -> list[Video]:
+    return parse_listing(json.loads(FIXTURE.read_text(encoding="utf-8")))
+
+
+def unique_words(start: float, end: float, step: float = 0.5) -> list[Word]:
+    """Distinct tokens so a long run is not mistaken for a repeated chorus."""
+    words = []
+    cursor = start
+    index = 0
+    while cursor < end:
+        words.append(Word(cursor, cursor + min(0.3, step * 0.6), f"w{index}"))
+        cursor += step
+        index += 1
+    return words
+
+
+def speech_words(start: float, end: float, text: str, step: float = 0.5) -> list[Word]:
+    words = []
+    cursor = start
+    piece = text.split()
+    index = 0
+    while cursor < end:
+        token = piece[index % len(piece)]
+        words.append(Word(cursor, cursor + min(0.3, step * 0.6), token))
+        cursor += step
+        index += 1
+    return words
+
+
+def embedder(titles: list[str], texts: list[str]) -> np.ndarray:
+    matrix = np.zeros((len(texts), 4), dtype=np.float32)
+    for index, _text in enumerate(texts):
+        matrix[index, index % 4] = 1.0
+    return matrix
+
+
+def sample_words(start: float = 12.2) -> list[Word]:
+    tokens = "zephyrgrace abides in the quiet heart today".split()
+    words = []
+    cursor = start
+    for index, token in enumerate(tokens):
+        text = token + "." if index == len(tokens) - 1 else token
+        words.append(Word(cursor, cursor + 0.4, text))
+        cursor += 0.5
+    return words
+
+
+class ListingTests(unittest.TestCase):
+    def test_fixture_flattens_tabs_and_skips_live(self) -> None:
+        videos = listing()
+        self.assertEqual([video.id for video in videos], ["abcdefghijk", "bbbcccddd11", "shortvid0001"])
+        hope = videos[0]
+        self.assertEqual(hope.title, "On Hope")
+        self.assertEqual(hope.published, date(2024, 3, 15))
+        self.assertEqual(hope.duration_s, 754)
+        self.assertEqual(hope.url, "https://www.youtube.com/watch?v=abcdefghijk")
+        faith = videos[1]
+        self.assertEqual(faith.published, datetime.fromtimestamp(1705276800, timezone.utc).date())
+        self.assertEqual(faith.url, "https://www.youtube.com/watch?v=bbbcccddd11")
+        self.assertEqual(videos[2].published, date(2022, 1, 2))
+
+    def test_creative_commons_field(self) -> None:
+        self.assertTrue(creative_commons("Creative Commons Attribution license (reuse allowed)"))
+        self.assertFalse(creative_commons("Standard YouTube License"))
+        self.assertFalse(creative_commons(None))
+
+    def test_watch_url_uses_integer_seconds(self) -> None:
+        self.assertEqual(watch_url("abcdefghijk"), "https://www.youtube.com/watch?v=abcdefghijk")
+        self.assertEqual(watch_url("abcdefghijk", 12.8), "https://www.youtube.com/watch?v=abcdefghijk&t=12s")
+        self.assertEqual(watch_url("abcdefghijk", 0), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
+
+    def test_blocked_channel_name_is_refused(self) -> None:
+        with self.assertRaises(ChannelRefused):
+            parse_listing({"title": "Gaston Community Church", "entries": []})
+
+
+class SermonTests(unittest.TestCase):
+    def test_longest_speech_beats_a_longer_chorus(self) -> None:
+        announcement = speech_words(0, 10, "welcome friends to this morning gathering")
+        chorus = speech_words(30, 500, "hallelujah")
+        sermon = unique_words(520, 800)
+        prayer = unique_words(820, 860)
+        words = announcement + chorus + sermon + prayer
+        self.assertTrue(is_sung(chorus))
+        self.assertFalse(is_sung(sermon))
+        start, end = sermon_span(words)
+        self.assertAlmostEqual(start, sermon[0].start)
+        self.assertAlmostEqual(end, sermon[-1].end)
+        kept = words_in_span(words, start, end)
+        self.assertEqual(kept[0].text, sermon[0].text)
+        self.assertNotIn("hallelujah", [word.text for word in kept])
+
+    def test_repeated_line_is_singing(self) -> None:
+        line = speech_words(0, 180, "alpha bravo charlie delta echo", step=0.4)
+        self.assertTrue(is_sung(line))
+
+    def test_fallback_when_every_run_is_sung(self) -> None:
+        chorus = speech_words(0, 90, "hallelujah")
+        start, end = sermon_span(chorus)
+        self.assertAlmostEqual(start, chorus[0].start)
+        self.assertAlmostEqual(end, chorus[-1].end)
+
+    def test_gap_of_fifteen_seconds_stays_one_run(self) -> None:
+        self.assertEqual(len(speech_runs([Word(0, 1, "alpha"), Word(16, 17, "beta")])), 1)
+        self.assertEqual(len(speech_runs([Word(0, 1, "alpha"), Word(16.01, 17, "beta")])), 2)
+
+    def test_override_replaces_the_rule(self) -> None:
+        words = speech_words(0, 40, "grace faith hope")
+        self.assertEqual(sermon_span(words, (10, 18)), (10, 18))
+        kept = words_in_span(words, 10, 18)
+        self.assertTrue(all(10 <= word.start < 18 for word in kept))
+
+    def test_toml_windows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.toml"
+            path.write_text("[videos.abcdefghijk]\nstart_s = 3\nend_s = 9\n", encoding="utf-8")
+            self.assertEqual(load_windows(path), {"abcdefghijk": (3.0, 9.0)})
+            self.assertEqual(load_windows(None), {})
+
+
+class ChunkTests(unittest.TestCase):
+    def test_chunks_carry_start_and_end_seconds(self) -> None:
+        config = load_chunk_config()
+        words = []
+        cursor = 5.0
+        for index in range(300):
+            token = f"word{index}." if index % 12 == 11 else f"word{index}"
+            words.append(Word(cursor, cursor + 0.3, token))
+            cursor += 0.4
+        chunks = chunk_words(words, config)
+        self.assertGreaterEqual(len(chunks), 2)
+        self.assertEqual(chunks[0]["start_s"], words[0].start)
+        self.assertEqual(chunks[-1]["end_s"], words[-1].end)
+        starts = [chunk["start_s"] for chunk in chunks]
+        self.assertEqual(starts, sorted(starts))
+        overlapped = False
+        for previous, nxt in zip(chunks, chunks[1:]):
+            self.assertEqual(previous["start_s"], words[previous["word_start"]].start)
+            self.assertEqual(previous["end_s"], words[previous["word_end"] - 1].end)
+            self.assertLess(previous["start_s"], previous["end_s"])
+            self.assertGreater(previous["word_end"], previous["word_start"])
+            if nxt["word_start"] < previous["word_end"]:
+                overlapped = True
+        self.assertTrue(overlapped)
+
+
+class ImportTests(unittest.TestCase):
+    def _run(self, argv: list[str], tmp: Path, **kwargs):
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main(argv, index_dir=tmp, audio_root=tmp / "audio", **kwargs)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_dry_run_lists_id_title_date_duration(self) -> None:
+        videos = listing()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, out, _err = self._run(
+                [
+                    "https://www.youtube.com/channel/UCexample",
+                    "--library",
+                    "sample",
+                    "--since",
+                    "2024-02-01",
+                    "--limit",
+                    "1",
+                    "--dry-run",
+                ],
+                root,
+                lister=lambda _url: videos,
+                downloader=self._boom,
+                transcriber=self._boom,
+                metadata=self._boom,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(out, "abcdefghijk\tOn Hope\t2024-03-15\t754\n")
+            self.assertFalse((root / "sample.sqlite").exists())
+
+    def test_dry_run_strips_tabs_in_titles(self) -> None:
+        videos = listing()
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, _err = self._run(
+                ["https://www.youtube.com/channel/UCexample", "--library", "sample", "--dry-run"],
+                Path(tmp),
+                lister=lambda _url: videos,
+            )
+            self.assertEqual(code, 0)
+            lines = out.splitlines()
+            self.assertEqual(len(lines), 3)
+            faith = lines[1].split("\t")
+            self.assertEqual(faith[0], "bbbcccddd11")
+            self.assertEqual(faith[1], "On Faith and love")
+            self.assertEqual(faith[3], "1800")
+
+    def test_refuses_blocked_channel_without_listing(self) -> None:
+        def lister(_url):
+            raise AssertionError("lister should not run")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/@gastoncommunitychurch6944/videos",
+                    "--library",
+                    "sample",
+                    "--dry-run",
+                ],
+                Path(tmp),
+                lister=lister,
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("permission", err)
+
+    def test_resume_skips_ok_and_continues_after_failure(self) -> None:
+        videos = [
+            Video("videookkk1", "First", 30, date(2024, 1, 2), "https://www.youtube.com/watch?v=videookkk1"),
+            Video("videofail1", "Second", 30, date(2024, 1, 3), "https://www.youtube.com/watch?v=videofail1"),
+            Video("videoalso1", "Third", 30, date(2024, 1, 4), "https://www.youtube.com/watch?v=videoalso1"),
+        ]
+        downloaded: list[str] = []
+        transcribed: list[str] = []
+        failures = {"videofail1": 0}
+
+        def downloader(video, dest: Path):
+            downloaded.append(video.id)
+            dest.mkdir(parents=True, exist_ok=True)
+            path = dest / f"{video.id}.m4a"
+            path.write_bytes(b"fake")
+            return path
+
+        def transcriber(path: Path):
+            transcribed.append(path.name)
+            if path.name.startswith("videofail1") and failures["videofail1"] == 0:
+                failures["videofail1"] += 1
+                raise RuntimeError("decoder blew up")
+            return sample_words()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = ["https://www.youtube.com/channel/UCexample", "--library", "sample"]
+            code, _out, err = self._run(
+                argv,
+                root,
+                lister=lambda _url: videos,
+                downloader=downloader,
+                transcriber=transcriber,
+                metadata=lambda _video: {},
+                embedder=embedder,
+            )
+            self.assertEqual(code, 1, err)
+            self.assertIn("videofail1", err)
+            self.assertEqual(downloaded, ["videookkk1", "videofail1", "videoalso1"])
+            connection = open_readonly(root / "sample.sqlite")
+            try:
+                ok = {
+                    row[0]
+                    for row in connection.execute("SELECT video_id FROM videos WHERE status = 'ok'")
+                }
+                failed = connection.execute(
+                    "SELECT status FROM videos WHERE video_id = 'videofail1'"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(ok, {"videookkk1", "videoalso1"})
+            self.assertEqual(failed[0], "error")
+
+            downloaded.clear()
+            transcribed.clear()
+            code, _out, err = self._run(
+                argv,
+                root,
+                lister=lambda _url: videos,
+                downloader=downloader,
+                transcriber=transcriber,
+                metadata=lambda _video: {},
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(downloaded, ["videofail1"])
+            self.assertEqual(transcribed, ["videofail1.m4a"])
+
+    def test_require_cc_skips_without_transcribing(self) -> None:
+        video = Video("cccheck0001", "Talk", 40, date(2024, 5, 1), "https://www.youtube.com/watch?v=cccheck0001")
+        seen = {"meta": 0, "audio": 0}
+
+        def metadata(_video):
+            seen["meta"] += 1
+            return {"license": "Standard YouTube License", "upload_date": "20240501", "uploader": "A Speaker"}
+
+        def downloader(_video, _dest):
+            seen["audio"] += 1
+            raise AssertionError("downloaded")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            argv = [
+                "https://www.youtube.com/watch?v=cccheck0001",
+                "--library",
+                "sample",
+                "--require-cc",
+            ]
+            code, _out, err = self._run(
+                argv,
+                root,
+                lister=lambda _url: [video],
+                metadata=metadata,
+                downloader=downloader,
+                transcriber=self._boom,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertIn("not Creative Commons", err)
+            self.assertEqual(seen, {"meta": 1, "audio": 0})
+            code, _out, err = self._run(
+                argv,
+                root,
+                lister=lambda _url: [video],
+                metadata=metadata,
+                downloader=downloader,
+                transcriber=self._boom,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(seen["meta"], 1)
+
+    def test_schema_matches_the_search_server(self) -> None:
+        video = Video("samplevid001", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid001")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                ["https://www.youtube.com/watch?v=samplevid001", "--library", "sample"],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid001.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            path = root / "sample.sqlite"
+            connection = open_readonly(path, check_same_thread=False)
+            try:
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+                for name in (
+                    "start_s",
+                    "end_s",
+                    "audio_url",
+                    "reader",
+                    "text_source",
+                    "video_id",
+                    "title",
+                    "published",
+                ):
+                    self.assertIn(name, columns)
+                stored = connection.execute(
+                    "SELECT video_id, title, published, reader, text_source FROM chunks"
+                ).fetchone()
+                self.assertEqual(stored["video_id"], "samplevid001")
+                self.assertEqual(stored["title"], "On Mercy")
+                self.assertEqual(stored["published"], "2024-06-02")
+                self.assertIsNone(stored["reader"])
+                self.assertEqual(stored["text_source"], "asr")
+                _rowids, matrix = load_embeddings(connection, MODEL_KEY)
+                self.assertEqual(matrix.dtype, np.float32)
+                self.assertEqual(matrix.ndim, 2)
+                self.assertAlmostEqual(float(np.linalg.norm(matrix[0])), 1.0, places=5)
+                app = App(
+                    connection=connection,
+                    searcher=Searcher(connection),
+                    encode=None,
+                    fallback_note=None,
+                    model_name=None,
+                    hosts={"127.0.0.1", "localhost"},
+                    static_dir=STATIC_DIR,
+                    library="sample",
+                )
+                payload = app.search("zephyrgrace", 5, "bm25")
+                self.assertGreaterEqual(len(payload["results"]), 1)
+                hit = payload["results"][0]
+                self.assertIn("zephyrgrace", hit["text"])
+                self.assertAlmostEqual(hit["start_s"], 12.2, places=5)
+                self.assertGreater(hit["end_s"], hit["start_s"])
+                self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid001&t=12s")
+                self.assertIsNone(hit["reader"])
+                self.assertEqual(hit["text_source"], "asr")
+                self.assertEqual(hit["sermon_title"], "On Mercy")
+
+                server = make_server(app, "127.0.0.1", 0)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                port = server.server_address[1]
+                try:
+                    status, body = self._get(port, "/api/search?q=zephyrgrace&library=sample&mode=bm25")
+                    self.assertEqual(status, 200)
+                    remote = json.loads(body)["results"][0]
+                    self.assertEqual(remote["audio_url"], hit["audio_url"])
+                    self.assertEqual(remote["text_source"], "asr")
+                    status, body = self._get(port, "/api/search?q=zephyrgrace&library=wesley&mode=bm25")
+                    self.assertEqual(status, 400)
+                    self.assertIn("library must be sample", json.loads(body)["error"])
+                finally:
+                    server.shutdown()
+                    server.server_close()
+            finally:
+                connection.close()
+
+    def test_bad_slug_exits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _out, err = self._run(
+                ["https://www.youtube.com/channel/UCexample", "--library", "Wesley"],
+                Path(tmp),
+                lister=self._boom,
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("slug", err)
+            code, _out, err = self._run(
+                ["https://www.youtube.com/channel/UCexample", "--library", "wesley"],
+                Path(tmp),
+                lister=self._boom,
+            )
+            self.assertEqual(code, 2)
+
+    def test_privacy_hook_is_identity(self) -> None:
+        words = sample_words()
+        self.assertIs(redact(words), words)
+
+    @staticmethod
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("should not be called")
+
+    @staticmethod
+    def _get(port: int, path: str) -> tuple[int, bytes]:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as response:
+                return response.status, response.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read()
+
+
+if __name__ == "__main__":
+    unittest.main()
