@@ -180,7 +180,8 @@ class EndToEndTests(Base):
         code, _out, err = self.importer(["--redo", "--privacy", str(toml)])
         self.assertEqual(code, 0, err)
         self.assertEqual(self.app().search("faithful", 5, "bm25")["results"], [])
-        self.assertEqual(self.cli(["--library", "wire", "--ack-review", ID_A])[0], 0)
+        # Approval runs under the import's privacy config (W3-PRIV-WIRE fix-up).
+        self.assertEqual(self.cli(["--library", "wire", "--ack-review", ID_A, "--privacy", str(toml)])[0], 0)
         self.assertTrue(self.app().search("faithful", 5, "bm25")["results"])
 
         # A review file edited after import cannot be approved.
@@ -300,11 +301,14 @@ class FlaggedAudioTests(Base):
         play = hit_dict(flagged, "play")
         self.assertEqual(play["audio_url"], plain["audio_url"])
         self.assertNotIn("play_from_s", play)
+        self.assertEqual((play["start_s"], play["end_s"]), (100.0, 145.0))
         none = hit_dict(flagged, "none")
         self.assertIsNone(none["audio_url"])
         self.assertTrue(none["audio_withheld"])
+        self.assertEqual((none["start_s"], none["end_s"]), (None, None))
         shifted = hit_dict(flagged, "shifted")
         self.assertEqual(shifted["play_from_s"], 112.5)
+        self.assertEqual((shifted["start_s"], shifted["end_s"]), (112.5, None))
         self.assertEqual(shifted["audio_url"], f"https://www.youtube.com/watch?v={ID_A}&t=113s")
         self.assertIsNone(hit_dict(self.hit(144.9), "shifted")["audio_url"])
 
