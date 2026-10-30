@@ -11,7 +11,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
+
+from preached.search import PREROLL_S
 
 # A YouTube video id is 11 characters. That is also the form /api/sermon/<id> accepts.
 VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -30,11 +32,10 @@ class BadChannelUrl(ValueError):
     """The channel URL is not https on a YouTube host."""
 
 
-# Matches the page player. The stored start stays the first word; only the seek is earlier.
-PREROLL_S = 0.75
-
 # yt-dlp will treat a leading dash as an option. Only these hosts, over https.
 YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
+# Watch links use the importer's hosts except youtu.be, which is not /watch?v=.
+WATCH_HOSTS = YOUTUBE_HOSTS - {"youtu.be"}
 _URL_MESSAGE = (
     "channel URL must be https on youtube.com, www.youtube.com, m.youtube.com, or youtu.be"
 )
@@ -64,6 +65,39 @@ def assert_youtube_url(url: str) -> None:
         or parsed.port not in (None, 443)
     ):
         raise BadChannelUrl(_URL_MESSAGE)
+
+
+def youtube_watch_url(url: object) -> str | None:
+    """A stored YouTube watch URL, or None when it is not one.
+
+    Same host rule as the importer (https, no credentials, port 443 or the
+    default) limited to ``WATCH_HOSTS``, path ``/watch``, and one ``v`` of
+    11 characters. The string comes back unchanged: its ``&t=`` already
+    includes the pre-roll, and nothing here adds ``#t=``.
+    """
+    if (
+        not isinstance(url, str)
+        or not url
+        or url.startswith("-")
+        or "\\" in url
+        or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)
+    ):
+        return None
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in WATCH_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+    ):
+        return None
+    if parsed.path != "/watch":
+        return None
+    ids = parse_qs(parsed.query).get("v", [])
+    if len(ids) != 1 or not VIDEO_ID.fullmatch(ids[0]):
+        return None
+    return url
 
 
 def assert_allowed(text: str) -> None:
