@@ -151,6 +151,85 @@ class PrerollTests(unittest.TestCase):
         self.assertIn("grace ]0;x  and faith", printed)
         self.assertIn("y.mp3#t=0.25", printed)
 
+    def test_play_url_youtube_archive_and_hostile(self) -> None:
+        query = self.load_query()
+        stored = "https://www.youtube.com/watch?v=abcdefghijk&t=11s"
+        self.assertEqual(query.play_url(stored, 12.2), stored)
+        self.assertNotIn("#t=", query.play_url(stored, 12.2))
+        self.assertEqual(query.play_url(stored, None), stored)
+        apex = "https://youtube.com/watch?v=abcdefghijk&t=0s"
+        self.assertEqual(query.play_url(apex, 0.4), apex)
+        mobile = "https://m.youtube.com/watch?v=abcdefghijk&t=3s"
+        self.assertEqual(query.play_url(mobile, 4), mobile)
+        mp3 = "https://archive.org/download/x/y.mp3"
+        self.assertEqual(query.play_url(mp3, 32.81), mp3 + "#t=32.06")
+        dirty = "https://www.youtube.com/watch?v=abcdefghijk&t=11s\x9b"
+        self.assertEqual(query.play_url(dirty, 1.0), stored + " ")
+        for bad in (
+            "https://www.youtube.com.evil.com/watch?v=abcdefghijk",
+            "javascript:alert(1)",
+            "javascript:https://www.youtube.com/watch?v=abcdefghijk",
+            "http://www.youtube.com/watch?v=abcdefghijk",
+            "https://evil.com@www.youtube.com/watch?v=abcdefghijk",
+            "https://www.youtube.com/watch?v=abcdefghijk&t=11s\x1b",
+        ):
+            with self.subTest(url=bad):
+                self.assertEqual(query.play_url(bad, 3.0), query.UNSAFE_URL)
+
+    def test_print_hits_youtube_and_hostile_play_lines(self) -> None:
+        import contextlib
+        import io
+        from types import SimpleNamespace
+
+        query = self.load_query()
+        youtube = SimpleNamespace(
+            sermon_title="On Mercy",
+            chunk_id="samplevid01-c0000",
+            score=0.5,
+            start_s=12.2,
+            reader=None,
+            audio_url="https://www.youtube.com/watch?v=abcdefghijk&t=11s",
+            source_url="https://www.youtube.com/watch?v=abcdefghijk",
+            text="zephyrgrace",
+        )
+        hostile = SimpleNamespace(
+            sermon_title="Title\x1b[31m",
+            chunk_id="c1",
+            score=0.2,
+            start_s=3.0,
+            reader=None,
+            audio_url="https://www.youtube.com.evil.com/watch?v=abcdefghijk",
+            source_url="https://example.com/text",
+            text="hidden",
+        )
+        script = SimpleNamespace(
+            sermon_title="Script",
+            chunk_id="c2",
+            score=0.1,
+            start_s=4.0,
+            reader=None,
+            audio_url="javascript:alert(1)",
+            source_url="https://example.com/text",
+            text="hidden",
+        )
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            query.print_hits("q", "bm25", None, [youtube, hostile, script])
+        printed = out.getvalue()
+        play_lines = [line.strip() for line in printed.splitlines() if line.strip().startswith("play:")]
+        self.assertEqual(
+            play_lines,
+            [
+                "play: https://www.youtube.com/watch?v=abcdefghijk&t=11s  (0.75 s pre-roll)",
+                "play: n/a (unsafe URL hidden)  (0.75 s pre-roll)",
+                "play: n/a (unsafe URL hidden)  (0.75 s pre-roll)",
+            ],
+        )
+        self.assertNotIn("#t=", printed)
+        self.assertNotIn("youtube.com.evil.com", printed)
+        self.assertNotIn("javascript:", printed)
+        self.assertFalse(any(ord(c) < 32 and c != "\n" or 0x7F <= ord(c) <= 0x9F for c in printed))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,7 @@ from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
+from preached.youtube.listing import youtube_watch_url  # noqa: E402
 from manifest import UnsafeRow, check_audio_url  # noqa: E402
 
 # C0 (incl. ESC, newline), DEL and C1 controls: none belong in one terminal line.
@@ -54,10 +55,19 @@ def fmt_time(value) -> str:
 
 
 def play_url(audio_url, start_s) -> str:
-    """The URL the page's player builds: the audio URL with #t=<seek>, where
-    seek = max(0, start_s - PREROLL_S). start_s itself stays exact."""
+    """Where to play this hit.
+
+    A validated YouTube watch URL is printed as stored. Its ``&t=`` already
+    includes the pre-roll, so this does not add ``#t=``. An archive.org URL
+    still gets ``#t=<seek>`` where seek is max(0, start_s - PREROLL_S).
+    Anything else is hidden. Control characters are stripped after a URL
+    passes validation.
+    """
     if not audio_url:
         return "n/a"
+    youtube = youtube_watch_url(audio_url)
+    if youtube is not None:
+        return clean(youtube)
     try:
         # Same rule as the manifest: https on archive.org, no credentials.
         check_audio_url(audio_url)
