@@ -1,6 +1,6 @@
 # W2-YT: YouTube channel import
 
-Branch `feat/w2-youtube`, based on `origin/feat/w2-web`. That branch is not in `origin/main` (`git branch -r --contains origin/feat/w2-web` lists only itself). `ingest/` from `feat/w1-ingest` is not on this base, so transcription is a thin adapter rather than a call into W1-A. Report written 2026-10-30.
+Branch `feat/w2-youtube`. The first cut was based on `origin/feat/w2-web` before PR #3 landed on `origin/main`. Review fix-ups merged `origin/main` (`feat/w2-web` at `73df6c4`, which includes PR #2 `aaee310`). `ingest/` from `feat/w1-ingest` is still not on this base, so transcription is a thin adapter rather than a call into W1-A. Report written 2026-10-30.
 
 ## What was done
 
@@ -112,8 +112,7 @@ A headless Chromium load of that `t=87s` URL got the page title "Are speeches pu
 - Channel-tab dates are approximate until each video is opened. `--since` on a dry-run can be off by weeks. The stored `published` date is the exact one.
 - The sermon rule cannot see a song that Whisper transcribes as ordinary prose with no long gap and no repeated line. Worship that runs straight into the sermon needs a `--windows` override.
 - The adapter is not W1-A. Punctuation is uneven, and there is no gap fill or loop repair. Unify them when ingest merges. The CUDA preload should move with that code.
-- `/api/sermon/<id>` only allows a lowercase slug. A YouTube id is case-sensitive, so that route 404s for this video. Search results already carry `sermon_id` and `audio_url`.
-- The page always requests `library=wesley` and plays `audio_url` in one `<audio>` element. A church library needs a library picker and a link or a `youtube-nocookie` frame. W2-A already says not to open `script-src` to do that.
+- The page always requests `library=wesley` and plays `audio_url` in one `<audio>` element. A church library needs a library picker and a link or a `youtube-nocookie` frame. W2-A already says not to open `script-src` to do that. `/api/sermon/<id>` now accepts an 11-character YouTube id; the page still does not link to it.
 - Embedding on the Sprite is the same Granite CPU load as W2-A, about 1.6 GiB RSS, plus brute-force scan of one SQLite file. Eleven vectors are nothing. A multi-year church archive is still one file and one model, which is the point of the design, until the brute-force scan itself gets slow. No second model, no vector database.
 - Permission: do not point this at a church channel until a person has the pastor's yes. The tool refuses Gaston Community Church by name. `--require-cc` is the wrong gate for a church. Before any church audio is indexed, W3-PRIV has to replace `privacy.redact`. Indexes and audio stay in `/cache`. Nothing from a church was downloaded for this task.
 
@@ -121,3 +120,15 @@ A headless Chromium load of that `t=87s` URL got the page title "Are speeches pu
 
 - `yt-dlp==2026.10.26`, required. The standard library cannot list a YouTube channel or download the audio stream. The player signature changes, which is the whole reason this package exists. It is pure Python, about 3 MB. Pinned to the current PyPI release.
 - Optional extra `transcribe`, not installed by a normal `uv sync`: `faster-whisper>=1.2.1,<1.3`, `av>=18.1,<19`, `nvidia-cublas-cu12>=12.4,<13`, `nvidia-cudnn-cu12>=9,<10`. These are the same pins as W1-A. faster-whisper 1.2.1 breaks on av 19. The box has no system cuBLAS, so the wheels have to come with the extra. The search server does not need them. The lockfile also picks up what those packages require (ctranslate2, onnxruntime, and the CUDA runtime pieces). No new embedding model.
+
+## Review fix-ups
+
+Merged `origin/main` (PR #3 is on main; head of `feat/w2-web` is `73df6c4`, which already contains PR #2 `aaee310`). Conflict resolution kept both sides: https and same-origin URL checks, CCEL and LibriVox credits, the de-dup API path and its metrics, and `--library`. `yt-dlp` stayed a runtime dependency. Pillow and torchvision stayed in the `bench` group. einops stayed out.
+
+A channel URL that is not `https` on `youtube.com`, `www.youtube.com`, `m.youtube.com`, or `youtu.be` is rejected in the CLI before `run`, and again in the fetcher before `subprocess`. That includes a URL that starts with `-` and a URL on any other host. Every yt-dlp invocation passes the URL after `--`.
+
+`/api/sermon/<id>` still accepts a lowercase Wesley slug. It also accepts an 11-character YouTube id (`[A-Za-z0-9_-]`, case-sensitive). A dot, a slash, or `Wesley-001` is still 404. The fixture library test imports `BGoD6CIpLWQ` and checks that route.
+
+Indexing a video records `embeddings:<model>` with `save_embedding_info` and the current `models.toml` fingerprint, in the same transaction as the vectors. `Searcher` can then open that library under the Granite key. A test fixture that writes vectors checks the stored fingerprint.
+
+88 tests, `unittest discover -s tests`, all passing. No YouTube download in this pass. No new dependency.
