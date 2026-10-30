@@ -31,6 +31,8 @@ def main() -> None:
     missing = []
     for question in questions:
         by_type[question["type"]] = by_type.get(question["type"], 0) + 1
+        if question.get("excluded"):
+            continue  # kept for the record; not scored
         relevant = question["relevant"]
         if question["type"] == "unanswerable" and relevant:
             missing.append(f"{question['id']} is unanswerable but has relevant passages")

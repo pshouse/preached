@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
 from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
+from preached.artifacts import ArtifactError  # noqa: E402
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
@@ -299,14 +300,19 @@ def main() -> None:
         else:
             model_name = args.model
             os.environ["CUDA_VISIBLE_DEVICES"] = ""
-            embedder = load_embedder(
-                model_name,
-                args.embed_backend,
-                variant=args.onnx_variant,
-                ort_threads=args.ort_threads,
-                device=args.device,
-                batch_size=1,
-            )
+            try:
+                embedder = load_embedder(
+                    model_name,
+                    args.embed_backend,
+                    variant=args.onnx_variant,
+                    ort_threads=args.ort_threads,
+                    device=args.device,
+                    batch_size=1,
+                )
+            except ArtifactError as exc:
+                message = " ".join(str(exc).split())
+                print(f"error: {message}", file=sys.stderr)
+                raise SystemExit(1) from exc
             try:
                 check_query_variant(connection, model_name, getattr(embedder, "variant", None))
             except EmbeddingMismatch as exc:

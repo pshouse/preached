@@ -25,7 +25,7 @@ the same pool and de-dup. Those runs write eval/results/YYYY-MM-DD-dedupe[-N]
 .json and .md, so they never overwrite or mix with raw-ranker runs.
 
 --abstain evaluates the "nothing found" rule (src/preached/abstain.py) on the
-API path, hybrid, k=10, per model: in-sample (floor fitted on all 40
+API path, hybrid, k=10, per model: in-sample (floor fitted on all the
 questions) and leave-one-out (floor refitted without the held-out question).
 An abstained answerable question counts as a miss for R@5 and MRR@10. It
 writes eval/results/YYYY-MM-DD-abstain[-tag][-N].json and .md. Add
@@ -33,6 +33,11 @@ writes eval/results/YYYY-MM-DD-abstain[-tag][-N].json and .md. Add
 and variant in search/abstain.toml (one entry per model, backend, and
 variant; other entries are left in place). Corpus vectors must already be
 embedded (run the plain bench first).
+
+Every run also reports each metric per question group (the ``group`` field
+in eval/questions.jsonl: plain, names-topic, title-keyword,
+scripture-keyword, unanswerable) next to the overall numbers. See the
+"Title leakage" section of docs/research/embeddings.md.
 """
 
 
@@ -80,8 +85,16 @@ from preached.store import (  # noqa: E402
 )
 
 MODES = ("dense", "hybrid_rrf", "hybrid_weighted")
-# sermon@5 is a looser check: any top-5 chunk from a sermon holding a grade-2 quote.
-METRICS = ("recall@5", "mrr@10", "ndcg@10", "sermon@5")
+# sermon@k is a looser check: any top-k chunk from a sermon holding a grade-2 quote.
+# Label sets (EVAL-GRADE): the plain names score the labels as they stood before
+# wider grading (every label except grade-1 ones still "proposed"); "_strict"
+# keeps grade 2 only; "_lenient" adds the proposed grade-1 labels. Proposed
+# labels are reported, never fitted or tuned on.
+LABEL_SETS = ("strict", "lenient")
+PASSAGE_METRICS = ("recall@5", "mrr@10", "ndcg@10", "hit@10")
+METRICS = (*PASSAGE_METRICS, "sermon@5", "sermon@10", "sermon@50",
+           *(f"{m}_{ls}" for ls in LABEL_SETS for m in PASSAGE_METRICS))
+SERMON_K = 50
 
 
 # ---------- environment ----------
@@ -194,37 +207,54 @@ def ensure_chunks(connection, *, force_null_timings: bool = False) -> int:
 API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
 
 
-def run_mode(searcher: Searcher, query: str, vector, mode: str, dedupe: bool = False) -> list:
+def run_mode(searcher: Searcher, query: str, vector, mode: str, dedupe: bool = False, k: int = 10) -> list:
     if dedupe:
         # The shipped path. hybrid_weighted is not an API mode; give it the same pool and de-dup.
         if mode in API_MODE:
-            return api_search(searcher, query, vector, API_MODE[mode], 10)
+            return api_search(searcher, query, vector, API_MODE[mode], k)
         if mode == "hybrid_weighted":
             pool = searcher.hybrid(query, vector, SEARCH_POOL, fusion="weighted", dense_weight=0.5)
-            return dedupe_adjacent(pool, 10)
+            return dedupe_adjacent(pool, k)
         raise RuntimeError(mode)
     if mode == "bm25":
-        return searcher.bm25(query, 10)
+        return searcher.bm25(query, k)
     if mode == "dense":
-        return searcher.dense(vector, 10)
+        return searcher.dense(vector, k)
     if mode == "hybrid_rrf":
-        return searcher.hybrid(query, vector, 10, fusion="rrf", rrf_k=60)
+        return searcher.hybrid(query, vector, k, fusion="rrf", rrf_k=60)
     if mode == "hybrid_weighted":
-        return searcher.hybrid(query, vector, 10, fusion="weighted", dense_weight=0.5)
+        return searcher.hybrid(query, vector, k, fusion="weighted", dense_weight=0.5)
     raise RuntimeError(mode)
 
 
-def score(hits: list, quotes: list[dict]) -> dict:
+def label_set(quotes: list[dict], which: str = "base") -> list[dict]:
+    """``strict``: grade 2 only. ``lenient``: every label, proposed ones too.
+    ``base``: the labels as they stood before wider grading (drops proposed grade-1)."""
+    if which == "strict":
+        return [q for q in quotes if int(q["grade"]) == 2]
+    if which == "lenient":
+        return list(quotes)
+    return [q for q in quotes if q.get("status") != "proposed" or int(q["grade"]) == 2]
+
+
+def score(hits: list, quotes: list[dict], wide: list | None = None) -> dict:
+    """Metrics on the top 10 of ``hits``; sermon@50 from ``wide`` (the top SERMON_K) when given."""
     texts = [h.text for h in hits]
     best = max(int(q["grade"]) for q in quotes)
     sermons = {q["sermon_id"] for q in quotes if int(q["grade"]) == best}
-    return {
+    out = {
         "sermon@5": float(any(h.sermon_id in sermons for h in hits[:5])),
-        "recall@5": recall_at(texts, quotes, 5),
-        "mrr@10": mrr_at(texts, quotes, 10),
-        "ndcg@10": ndcg_at(texts, quotes, 10),
-        "top10": [h.chunk_id for h in hits[:10]],
+        "sermon@10": float(any(h.sermon_id in sermons for h in hits[:10])),
     }
+    if wide is not None:
+        out["sermon@50"] = float(any(h.sermon_id in sermons for h in wide[:SERMON_K]))
+    for name, labels in (("", label_set(quotes)), *((f"_{ls}", label_set(quotes, ls)) for ls in LABEL_SETS)):
+        out[f"recall@5{name}"] = recall_at(texts, labels, 5)
+        out[f"mrr@10{name}"] = mrr_at(texts, labels, 10)
+        out[f"ndcg@10{name}"] = ndcg_at(texts, labels, 10)
+        out[f"hit@10{name}"] = float(out[f"mrr@10{name}"] > 0)  # any labelled passage in the top 10
+    out["top10"] = [h.chunk_id for h in hits[:10]]
+    return out
 
 
 def evaluate(searcher: Searcher, questions: list[dict], modes, encode=None, dedupe: bool = False) -> dict:
@@ -236,7 +266,9 @@ def evaluate(searcher: Searcher, questions: list[dict], modes, encode=None, dedu
         for mode in modes:
             hits = run_mode(searcher, q["query"], vector, mode, dedupe)
             if q["relevant"]:
-                per_query[mode][q["id"]] = score(hits, q["relevant"])
+                # A separate wider call, so the scored top 10 is the same call as before.
+                wide = run_mode(searcher, q["query"], vector, mode, dedupe, k=SERMON_K)
+                per_query[mode][q["id"]] = score(hits, q["relevant"], wide)
             else:
                 negative[mode][q["id"]] = hits[0].score if hits else None
     return {"per_query": per_query, "negative_top1": negative}
@@ -246,7 +278,32 @@ def summarize(per_query: dict[str, dict]) -> dict:
     ids = sorted(per_query)
     out = {"n": len(ids)}
     for metric in METRICS:
-        out[metric] = bootstrap_ci([per_query[i][metric] for i in ids])
+        if all(metric in per_query[i] for i in ids):
+            out[metric] = bootstrap_ci([per_query[i][metric] for i in ids])
+    return out
+
+
+def load_questions(path: Path | None = None, exclude_groups=()) -> list[dict]:
+    """The eval set without items marked ``excluded`` or in ``exclude_groups``."""
+    return [q for q in read_jsonl(path or questions_path())
+            if not q.get("excluded") and q.get("group", "ungrouped") not in exclude_groups]
+
+
+def question_groups(questions: list[dict]) -> dict[str, list[str]]:
+    """Question ids per ``group``, in first-seen order. Ungrouped items go to "ungrouped"."""
+    groups: dict[str, list[str]] = {}
+    for q in questions:
+        groups.setdefault(q.get("group", "ungrouped"), []).append(q["id"])
+    return groups
+
+
+def by_group(per_query: dict[str, dict], groups: dict[str, list[str]]) -> dict[str, dict]:
+    """``summarize`` on each group's answerable questions (groups with none are skipped)."""
+    out = {}
+    for name, ids in groups.items():
+        subset = {i: per_query[i] for i in ids if i in per_query}
+        if subset:
+            out[name] = summarize(subset)
     return out
 
 
@@ -436,6 +493,31 @@ def fmt_diff(cell: dict | None) -> str:
     return f"{cell['diff']:+.3f} [{low:+.2f}, {high:+.2f}] ({cell['wins']}/{cell['ties']}/{cell['losses']})"
 
 
+def strict_lenient_tables(report: dict, names: list[str]) -> list[str]:
+    """Per group: strict (grade 2), pre-grading, and lenient (+ proposed grade-1) scores, and sermon@k."""
+    cols = [("ndcg@10_strict", "nDCG@10 strict"), ("ndcg@10", "nDCG@10 pre-grading"),
+            ("ndcg@10_lenient", "nDCG@10 lenient"), ("hit@10_strict", "hit@10 strict"),
+            ("hit@10_lenient", "hit@10 lenient"), ("mrr@10_lenient", "MRR@10 lenient"),
+            ("sermon@5", "sermon@5"), ("sermon@10", "sermon@10"), ("sermon@50", "sermon@50")]
+    rows = [("BM25", "bm25", report["bm25"]["by_group"], report["bm25"]["summary"])] + [
+        (k, m, e["by_group"][m], e["summary"][m])
+        for k, e in report["models"].items() if e["status"] == "ok" for m in MODES]
+    lines = ["", "## Strict vs lenient, per group", "",
+             "strict = grade-2 labels only; pre-grading = the labels before EVAL-GRADE; lenient = adds the "
+             "grade-1 labels still marked \"proposed\" (not confirmed by a person). hit@10 = at least one "
+             "labelled passage in the top 10. sermon@k = a top-k chunk from a grade-2 sermon."]
+    for name in [*names, "overall"]:
+        n = report["bm25"]["summary"]["n"] if name == "overall" else report["bm25"]["by_group"][name]["n"]
+        lines += ["", f"### {name} (n={n})", "", "| model | mode | " + " | ".join(c[1] for c in cols) + " |",
+                  "| --- | --- | " + " | ".join("---" for _ in cols) + " |"]
+        for key, mode, grouped, summary in rows:
+            cell = summary if name == "overall" else grouped.get(name)
+            if cell:
+                lines.append(f"| {key} | {mode} | " + " | ".join(
+                    f"{cell[c]['mean']:.3f}" if c in cell else "" for c, _ in cols) + " |")
+    return lines
+
+
 def markdown(report: dict) -> str:
     ref = report["reference"]
     lines = [
@@ -477,6 +559,34 @@ def markdown(report: dict) -> str:
                 f"{fmt_ci(s['ndcg@10'])} | {fmt_ci(s['sermon@5'])} | {fmt_diff(vs)} | {embed.get('dtype', '')} | "
                 f"{embed.get('chunks_per_s') or ''} | {lat['p50_ms']} / {lat['p95_ms']} | {embed.get('dim', '')} |"
             )
+    groups = report.get("groups")
+    if groups:
+        names = [g for g in groups if g in report["bm25"].get("by_group", {})]
+        lines += ["", "Per question group (mean nDCG@10 / R@5 / MRR@10; n answerable in the header). "
+                  "Group definitions: eval/README.md.", "",
+                  "| model | mode | " + " | ".join(f"{g} (n={report['bm25']['by_group'][g]['n']})" for g in names)
+                  + " | overall |",
+                  "| --- | --- | " + " | ".join("---" for _ in names) + " | --- |"]
+
+        def group_cells(summary: dict, grouped: dict) -> str:
+            cells = [grouped.get(g) for g in names] + [summary]
+            return " | ".join(f"{c['ndcg@10']['mean']:.3f} / {c['recall@5']['mean']:.3f} / {c['mrr@10']['mean']:.3f}"
+                              if c else "" for c in cells)
+
+        lines.append(f"| BM25 | bm25 | {group_cells(bm, report['bm25']['by_group'])} |")
+        for key, entry in report["models"].items():
+            if entry["status"] == "ok":
+                for mode in MODES:
+                    lines.append(f"| {key} | {mode} | {group_cells(entry['summary'][mode], entry['by_group'][mode])} |")
+        lines += ["", "Paired Δ nDCG@10 against the reference, per group (95% CI, wins/ties/losses):", "",
+                  "| model | mode | " + " | ".join(names) + " |", "| --- | --- | " + " | ".join("---" for _ in names) + " |"]
+        rows = [("BM25", "bm25", report["bm25"])] + [
+            (k, m, {"vs_reference_by_group": {g: v.get(m, {}) for g, v in e.get("vs_reference_by_group", {}).items()}})
+            for k, e in report["models"].items() if e["status"] == "ok" for m in MODES]
+        for key, mode, entry in rows:
+            vs = entry.get("vs_reference_by_group", {})
+            lines.append(f"| {key} | {mode} | " + " | ".join(fmt_diff(vs.get(g, {}).get("ndcg@10")) for g in names) + " |")
+        lines += strict_lenient_tables(report, names)
     lines += ["", "Prompts as the model sees them:", ""]
     for key, entry in report["models"].items():
         p = entry.get("prompts")
@@ -524,11 +634,12 @@ def abstain_rows(spec, connection, questions, encode=None) -> tuple[list[dict], 
         for q in questions:
             vector = encode(q["query"])
             hits, conf = abstain.search_with_confidence(searcher, q["query"], vector, "hybrid", 10, None)
-            row = {"id": q["id"], "answerable": bool(q["relevant"]), **conf.as_dict()["signals"]}
+            row = {"id": q["id"], "group": q.get("group", "ungrouped"), "answerable": bool(q["relevant"]),
+                   **conf.as_dict()["signals"]}
             if q["relevant"]:
                 texts = [h.text for h in hits]
-                row["recall@5"] = recall_at(texts, q["relevant"], 5)
-                row["mrr@10"] = mrr_at(texts, q["relevant"], 10)
+                row["recall@5"] = recall_at(texts, label_set(q["relevant"]), 5)
+                row["mrr@10"] = mrr_at(texts, label_set(q["relevant"]), 10)
             rows.append(row)
         probes = []
         for text in PROBES:
@@ -577,6 +688,9 @@ def abstain_summary(rows: list[dict], levels: list[str]) -> dict:
 
 def abstain_eval(rows: list[dict]) -> dict:
     pairs = [(_signals(r), r["answerable"]) for r in rows]
+    groups: dict[str, list[int]] = {}
+    for index, row in enumerate(rows):
+        groups.setdefault(row.get("group", "ungrouped"), []).append(index)
     floor = abstain.fit_floor(pairs)
     in_sample = [abstain.decide(s, floor).level for s, _ in pairs]
     loo_levels, loo_floors = [], []
@@ -587,8 +701,13 @@ def abstain_eval(rows: list[dict]) -> dict:
     uncalibrated = [abstain.decide(s, None).level for s, _ in pairs]
     for row, a, b, c, f in zip(rows, in_sample, loo_levels, uncalibrated, loo_floors):
         row["level_in_sample"], row["level_loo"], row["level_uncalibrated"], row["loo_floor"] = a, b, c, f
+    def per_group(levels: list[str]) -> dict:
+        return {g: abstain_summary([rows[i] for i in ids], [levels[i] for i in ids]) for g, ids in groups.items()}
+
     return {
         "floor": floor,
+        "in_sample_by_group": per_group(in_sample),
+        "leave_one_out_by_group": per_group(loo_levels),
         "in_sample": abstain_summary(rows, in_sample),
         "leave_one_out": abstain_summary(rows, loo_levels),
         "uncalibrated": abstain_summary(rows, uncalibrated),
@@ -606,7 +725,7 @@ def abstain_markdown(report: dict) -> str:
         "(LLM-written labels, pending human review). Commit "
         f"`{report['environment']['git_commit']}`" + (" (dirty)" if report["environment"]["git_dirty"] else "") + ".",
         "",
-        "Headline is leave-one-out (LOO): each question is judged with a floor fitted on the other 39. "
+        "Headline is leave-one-out (LOO): each question is judged with a floor fitted on all the others. "
         "An abstained answerable question counts as a miss.",
         "",
         "| model | eval | floor | abstain precision | abstain recall | flagged (weak or none) recall | "
@@ -633,15 +752,31 @@ def abstain_markdown(report: dict) -> str:
                 f"{cell(s['flagged_recall'])} | {cell(s['false_abstain_rate'])} | {cell(s['weak_rate_answerable'])} | "
                 f"{cell(s['recall@5'])} → {cell(s['recall@5_abstain'])} | {cell(s['mrr@10'])} → {cell(s['mrr@10_abstain'])} |"
             )
+    lines += ["", "Per group, leave-one-out (in-sample in parentheses). Answerable groups: share abstained "
+              "(false abstain) and share weak. Unanswerable: share abstained and share flagged weak or none.", "",
+              "| model | group | n | abstained | weak or flagged | R@5 → with abstain |", "| --- | --- | --- | --- | --- | --- |"]
+    for key, entry in report["models"].items():
+        if entry.get("status") != "ok":
+            continue
+        ev = entry["abstain"]
+        for group, s in ev["leave_one_out_by_group"].items():
+            i = ev["in_sample_by_group"][group]
+            if s["n_answerable"]:
+                lines.append(f"| {key} | {group} | {s['n_answerable']} | {cell(s['false_abstain_rate'])} "
+                             f"({cell(i['false_abstain_rate'])}) | {cell(s['weak_rate_answerable'])} "
+                             f"({cell(i['weak_rate_answerable'])}) | {cell(s['recall@5'])} → {cell(s['recall@5_abstain'])} |")
+            else:
+                lines.append(f"| {key} | {group} | {s['n_unanswerable']} | {cell(s['abstain_recall'])} "
+                             f"({cell(i['abstain_recall'])}) | {cell(s['flagged_recall'])} ({cell(i['flagged_recall'])}) | |")
     lines += ["", "Per question (signals and levels; `agree` = a shown passage is in both BM25's and dense's top 100):", ""]
     for key, entry in report["models"].items():
         if entry.get("status") != "ok":
             continue
-        lines += [f"## {key}", "", "| id | answerable | BM25 hits | dense top | agree | R@5 | in-sample | LOO | no floor |",
-                  "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+        lines += [f"## {key}", "", "| id | group | answerable | BM25 hits | dense top | agree | R@5 | in-sample | LOO | no floor |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
         for r in sorted(entry["rows"], key=lambda r: (r["answerable"], r["dense_top"] or 0)):
             lines.append(
-                f"| {r['id']} | {'yes' if r['answerable'] else 'no'} | {r['bm25_hits']} | {r['dense_top']:.4f} | "
+                f"| {r['id']} | {r.get('group', '')} | {'yes' if r['answerable'] else 'no'} | {r['bm25_hits']} | {r['dense_top']:.4f} | "
                 f"{'yes' if r['agreement'] else 'no'} | {r.get('recall@5', '')} | {r['level_in_sample']} | "
                 f"{r['level_loo']} | {r['level_uncalibrated']} |"
             )
@@ -674,6 +809,7 @@ def run_abstain(args, connection, questions, started) -> None:
         "mode": "hybrid_rrf (API path, dedupe, k=10)",
         "n_answerable": len(answerable),
         "n_unanswerable": len(questions) - len(answerable),
+        "groups": question_groups(questions),
         "index_path": str(args.index),
         "embed_backend": args.embed_backend,
         "onnx_variant": args.onnx_variant,
@@ -782,6 +918,9 @@ def main() -> None:
                         help="write this .json and the sibling .md instead of auto-numbering")
     parser.add_argument("--force-null-timings", action="store_true",
                         help="allow the chunk file to replace stored timings, audio, and reader with nulls")
+    parser.add_argument("--questions", type=Path, default=None, help="eval set (default eval/questions.jsonl)")
+    parser.add_argument("--exclude-group", action="append", default=[],
+                        help="leave out this question group (repeatable), e.g. to rerun an older set")
     parser.add_argument("--abstain", action="store_true",
                         help="evaluate the nothing-found rule per model (in-sample and leave-one-out)")
     parser.add_argument("--write-calibration", action="store_true",
@@ -796,7 +935,7 @@ def main() -> None:
     started = dt.datetime.now().astimezone()
     connection = connect(args.index)
     n_chunks = ensure_chunks(connection, force_null_timings=args.force_null_timings)
-    questions = read_jsonl(questions_path())
+    questions = load_questions(args.questions, args.exclude_group)
     if args.abstain:
         run_abstain(args, connection, questions, started)
         return
@@ -819,6 +958,7 @@ def main() -> None:
         "chunks": n_chunks,
         "n_answerable": len(answerable),
         "n_unanswerable": len(questions) - len(answerable),
+        "groups": question_groups(questions),
         "index_path": str(args.index),
         "embed_backend": args.embed_backend,
         "onnx_variant": args.onnx_variant,
@@ -833,6 +973,7 @@ def main() -> None:
     bm = evaluate(Searcher(connection), questions, ("bm25",), dedupe=args.dedupe)
     report["bm25"] = {
         "summary": summarize(bm["per_query"]["bm25"]),
+        "by_group": by_group(bm["per_query"]["bm25"], report["groups"]),
         "per_query": bm["per_query"]["bm25"],
         "negative_top1": bm["negative_top1"]["bm25"],
     }
@@ -891,6 +1032,7 @@ def main() -> None:
             entry["per_query"] = result["per_query"]
             entry["negative_top1"] = result["negative_top1"]
             entry["summary"] = {m: summarize(result["per_query"][m]) for m in MODES}
+            entry["by_group"] = {m: by_group(result["per_query"][m], report["groups"]) for m in MODES}
             entry["cpu_latency"] = latency
             entry["embedding_bytes"] = embedding_bytes(connection, key)
             entry["status"] = "ok"
@@ -908,18 +1050,24 @@ def main() -> None:
     ref_entry = report["models"].get(REFERENCE["model"], {})
     ref_pq = ref_entry.get("per_query", {}).get(REFERENCE["mode"]) if ref_entry.get("status") == "ok" else None
 
-    def versus(per_query: dict) -> dict:
-        ids = sorted(per_query)
+    def versus(per_query: dict, only: list[str] | None = None) -> dict:
+        ids = sorted(i for i in per_query if only is None or i in only)
         return {
             metric: paired_bootstrap([per_query[i][metric] for i in ids], [ref_pq[i][metric] for i in ids])
             for metric in METRICS
         }
 
+    def versus_by_group(per_query: dict) -> dict:
+        return {g: versus(per_query, ids) for g, ids in report["groups"].items() if any(i in per_query for i in ids)}
+
     if ref_pq:
         report["bm25"]["vs_reference"] = versus(report["bm25"]["per_query"])
+        report["bm25"]["vs_reference_by_group"] = versus_by_group(report["bm25"]["per_query"])
         for entry in report["models"].values():
             if entry["status"] == "ok":
                 entry["vs_reference"] = {m: versus(entry["per_query"][m]) for m in MODES}
+                by_mode = {m: versus_by_group(entry["per_query"][m]) for m in MODES}
+                entry["vs_reference_by_group"] = {g: {m: by_mode[m][g] for m in MODES} for g in by_mode[MODES[0]]}
     for entry in report["models"].values():
         entry.setdefault("vs_reference", {})
 
