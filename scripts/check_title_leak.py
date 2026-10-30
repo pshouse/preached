@@ -11,7 +11,7 @@ rewrite, a miss lets title lookup back into the eval.
 It also checks each plain question against ``SIGNATURE``: the doctrinal term
 or scripture phrase a sermon is known by, which is not always in its title.
 
-Usage: python scripts/check_title_leak.py   (exit 1 on any leak)
+Usage: python scripts/check_title_leak.py [questions.jsonl]   (exit 1 on any leak)
 """
 
 from __future__ import annotations
@@ -115,11 +115,12 @@ def check(questions: list[dict], group: str = "plain") -> dict[str, list[str]]:
 
 
 def main() -> int:
-    questions = [json.loads(line) for line in QUESTIONS.read_text().splitlines() if line.strip()]
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else QUESTIONS
+    questions = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     groups: dict[str, int] = {}
     for q in questions:
         groups[q.get("group", "<missing>")] = groups.get(q.get("group", "<missing>"), 0) + 1
-    print(f"{QUESTIONS.name}: {len(questions)} questions; groups {json.dumps(groups, sort_keys=True)}")
+    print(f"{path.name}: {len(questions)} questions; groups {json.dumps(groups, sort_keys=True)}")
     missing = [q["id"] for q in questions if "group" not in q]
     bad = check(questions)
     plain = sum(q.get("group") == "plain" for q in questions)
