@@ -12,6 +12,7 @@ dependencies = [
     "pillow>=10",
     "sentence-transformers>=6.1.0",
     "torch>=2.5",
+    "torchvision>=0.29.2",
 ]
 
 [build-system]
