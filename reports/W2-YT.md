@@ -4,7 +4,7 @@ Branch `feat/w2-youtube`. The first cut was based on `origin/feat/w2-web` before
 
 ## What was done
 
-`uv run import/youtube.py <channel-url> --library <slug>` builds one SQLite library at `/cache/index/<slug>.sqlite`. A channel URL, a playlist URL, or a single watch URL all work. yt-dlp lists videos (`--flat-playlist`, metadata only). A live or upcoming stream is skipped. The same video id on two tabs is kept once.
+`uv run --extra youtube import/youtube.py <channel-url> --library <slug>` builds one SQLite library at `/cache/index/<slug>.sqlite`. A channel URL, a playlist URL, or a single watch URL all work. yt-dlp lists videos (`--flat-playlist`, metadata only). A live or upcoming stream is skipped. The same video id on two tabs is kept once.
 
 For each selected video the pipeline downloads audio only to `/cache/youtube/<slug>/`, transcribes words with timestamps, keeps the sermon window, calls `privacy.redact`, chunks the words, and writes the rows. One video's failure is recorded and the rest continue. The next run retries `error` rows and skips `ok` and `skipped` rows. `--redo` imports again. `--dry-run` prints `id`, `title`, `YYYY-MM-DD`, and duration in seconds, and does not download or write the index.
 
@@ -43,10 +43,10 @@ Gaston Community Church is refused before any yt-dlp call when the URL matches t
 From `/work/preached/.worktrees/feat/w2-youtube`:
 
 ```bash
-uv run import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --dry-run
-uv run import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --limit 5 --since 2024-01-01
-uv sync --extra transcribe
-uv run --extra transcribe import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library <slug> --require-cc
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --dry-run
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --limit 5 --since 2024-01-01
+uv sync --extra transcribe --extra youtube
+uv run --extra youtube --extra transcribe import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library <slug> --require-cc
 uv run app/server.py --library <slug>
 ```
 
@@ -118,7 +118,7 @@ A headless Chromium load of that `t=87s` URL got the page title "Are speeches pu
 
 ## Dependencies added and why
 
-- `yt-dlp==2026.10.26`, required. The standard library cannot list a YouTube channel or download the audio stream. The player signature changes, which is the whole reason this package exists. It is pure Python, about 3 MB. Pinned to the current PyPI release.
+- `yt-dlp==2026.10.26`, optional extra `youtube` (`uv run --extra youtube`). Not installed for the search server or the tests. The standard library cannot list a YouTube channel or download the audio stream. The player signature changes, which is the whole reason this package exists. It is pure Python, about 3 MB. Pinned to the current PyPI release.
 - Optional extra `transcribe`, not installed by a normal `uv sync`: `faster-whisper>=1.2.1,<1.3`, `av>=18.1,<19`, `nvidia-cublas-cu12>=12.4,<13`, `nvidia-cudnn-cu12>=9,<10`. These are the same pins as W1-A. faster-whisper 1.2.1 breaks on av 19. The box has no system cuBLAS, so the wheels have to come with the extra. The search server does not need them. The lockfile also picks up what those packages require (ctranslate2, onnxruntime, and the CUDA runtime pieces). No new embedding model.
 
 ## Review fix-ups

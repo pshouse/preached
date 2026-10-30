@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Import a YouTube channel into a Preached library.
 
-    uv run import/youtube.py <channel-url> --library <slug> [--limit N] [--since YYYY-MM-DD] [--dry-run]
+    uv run --extra youtube import/youtube.py <channel-url> --library <slug> [--limit N] [--since YYYY-MM-DD] [--dry-run]
 
 The index is /cache/index/<slug>.sqlite. Audio working files go under
 /cache/youtube/<slug>/ and are deleted after a successful import

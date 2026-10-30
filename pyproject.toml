@@ -11,8 +11,6 @@ dependencies = [
     "numpy>=2.1",
     "sentence-transformers>=6.1.0",
     "torch>=2.5",
-    # Channel listing and audio download. The stdlib cannot speak YouTube's player.
-    "yt-dlp==2026.10.26",
 ]
 
 [project.optional-dependencies]
@@ -26,6 +24,8 @@ transcribe = [
     "nvidia-cublas-cu12>=12.4,<13",
     "nvidia-cudnn-cu12>=9,<10",
 ]
+# Channel listing and audio download. The stdlib cannot speak YouTube's player.
+youtube = ["yt-dlp==2026.10.26"]
 
 [dependency-groups]
 # Only needed to load models we benchmark but do not ship: EmbeddingGemma 2
@@ -34,16 +34,6 @@ transcribe = [
 bench = [
     "pillow>=10",
     "torchvision>=0.29.2",
-]
-
-[project.optional-dependencies]
-# Same pins as W1-A. Not installed for the search server. CPU fallback uses
-# tiny.en; the GPU path uses the cached large-v3-turbo weights.
-transcribe = [
-    "faster-whisper>=1.2.1,<1.3",
-    "av>=18.1,<19",
-    "nvidia-cublas-cu12>=12.4,<13",
-    "nvidia-cudnn-cu12>=9,<10",
 ]
 
 [build-system]

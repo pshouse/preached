@@ -1,10 +1,11 @@
 """List a channel and download audio with yt-dlp.
 
-yt-dlp is the one new dependency. YouTube's player changes, and the standard
-library cannot list a channel or fetch the audio stream. Calls shell out to
-``python -m yt_dlp`` in this environment so the pinned package is the one
-that runs. Audio is written only under the directory the caller passes,
-which the CLI sets to ``/cache/youtube/<slug>/``.
+yt-dlp is the ``youtube`` extra (``uv run --extra youtube``), not a dependency
+of the search app. YouTube's player changes, and the standard library cannot
+list a channel or fetch the audio stream. Calls shell out to ``python -m
+yt_dlp`` in this environment so the pinned package is the one that runs.
+Audio is written only under the directory the caller passes, which the CLI
+sets to ``/cache/youtube/<slug>/``.
 """
 
 from __future__ import annotations
@@ -40,16 +41,40 @@ _SAFE_ARGS = (
 )
 
 
+# python -m yt_dlp prints this when the extra is not installed.
+_MISSING_YT_DLP = "yt-dlp is not installed. Run: uv run --extra youtube import/youtube.py"
+
+
+def _raise_if_yt_dlp_missing(result: subprocess.CompletedProcess) -> None:
+    """Turn a missing ``yt_dlp`` module into a message that names the extra."""
+    if result.returncode == 0:
+        return
+    blob = f"{result.stderr or ''}{result.stdout or ''}"
+    if "No module named yt_dlp" in blob or "No module named 'yt_dlp'" in blob:
+        raise RuntimeError(_MISSING_YT_DLP)
+
+
 def _run(args: list[str], url: str, *, capture: bool) -> subprocess.CompletedProcess:
-    """Run yt-dlp. ``--`` keeps a user-supplied URL from being read as an option."""
+    """Run yt-dlp. ``--`` keeps a user-supplied URL from being read as an option.
+
+    stderr is captured so a missing extra can be named. When the caller did
+    not ask for captured output, that stderr is written through afterward.
+    """
     assert_youtube_url(url)
     command = [sys.executable, "-m", "yt_dlp", *_SAFE_ARGS, *args, "--", url]
-    return subprocess.run(
+    result = subprocess.run(
         command,
         check=False,
-        capture_output=capture,
-        text=capture,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE,
+        text=True,
     )
+    _raise_if_yt_dlp_missing(result)
+    if not capture and result.stderr:
+        sys.stderr.write(result.stderr)
+        if not result.stderr.endswith("\n"):
+            sys.stderr.write("\n")
+    return result
 
 
 def _json_from_stdout(stdout: str) -> dict:

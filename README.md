@@ -39,9 +39,9 @@ That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesl
 Paste a channel (or one watch URL) and build a library the search server can read. Audio is downloaded only as a working file under `/cache/youtube/<slug>/` and deleted after the video is indexed. `--keep-audio` leaves the file. The index stores the transcript excerpt, the start and end seconds, and a YouTube watch URL with `t=<seconds>s`. The video stays on YouTube. `text_source` is `asr`. `reader` is left empty.
 
 ```bash
-uv run import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --dry-run
-uv run import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --limit 5 --since 2024-01-01
-uv run --extra transcribe import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library <slug> --require-cc
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --dry-run
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --limit 5 --since 2024-01-01
+uv run --extra youtube --extra transcribe import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library <slug> --require-cc
 ```
 
 `--dry-run` prints `id`, `title`, `YYYY-MM-DD`, and duration in seconds, and writes nothing. A second run skips video ids already imported. One bad video does not stop the rest. `--require-cc` skips a video unless yt-dlp's `license` field names Creative Commons. That flag is for a public test clip, not for a church that has given permission.

@@ -1,4 +1,4 @@
-"""CLI for ``uv run import/youtube.py``."""
+"""CLI for ``uv run --extra youtube import/youtube.py``."""
 
 from __future__ import annotations
 

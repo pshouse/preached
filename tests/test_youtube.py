@@ -594,6 +594,19 @@ class ImportTests(unittest.TestCase):
         ):
             assert_youtube_url(url)
 
+    def test_missing_yt_dlp_names_the_youtube_extra(self) -> None:
+        missing = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="/usr/bin/python: No module named yt_dlp\n",
+        )
+        url = "https://www.youtube.com/channel/UCexample"
+        with patch("preached.youtube.fetch.subprocess.run", return_value=missing):
+            with self.assertRaises(RuntimeError) as caught:
+                list_channel(url)
+        self.assertIn("--extra youtube", str(caught.exception))
+
     def test_yt_dlp_url_follows_double_dash(self) -> None:
         url = "https://www.youtube.com/channel/UCexample"
         listed = subprocess.CompletedProcess(args=[], returncode=0, stdout='{"entries":[]}', stderr="")
