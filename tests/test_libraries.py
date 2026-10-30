@@ -48,12 +48,15 @@ class QueryIndexTargetTests(unittest.TestCase):
         patches = [
             mock.patch.object(query, "INDEX_PATH", self.wesley),
             mock.patch.object(query, "INDEX_DIR", self.dir),
-            mock.patch.object(query, "ensure_chunks"),
+            # Main (#10) made query.py read-only with no chunk sync; nothing may sync.
+            mock.patch("preached.store.sync_chunks"),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        self.synced = query.ensure_chunks
+        import preached.store
+
+        self.synced = preached.store.sync_chunks
 
     def library_file(self, name: str) -> Path:
         path = self.dir / name
@@ -88,12 +91,13 @@ class QueryIndexTargetTests(unittest.TestCase):
             query.open_index(path, None)
         self.synced.assert_not_called()
 
-    def test_wesley_index_is_synced(self) -> None:
+    def test_wesley_index_is_never_synced(self) -> None:
         connect(self.wesley).close()
+        before = self.wesley.read_bytes()
         query.open_index(None, None).close()
         query.open_index(self.wesley, None).close()
-        self.assertEqual(self.synced.call_count, 2)
-        self.synced.assert_called_with(self.wesley)
+        self.synced.assert_not_called()
+        self.assertEqual(self.wesley.read_bytes(), before)
 
     def test_wesley_search_connection_is_read_only(self) -> None:
         connect(self.wesley).close()
@@ -162,60 +166,43 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.assertFalse((self.dir / "edwards.sqlite").exists())
 
 
-class WesleySyncReadOnlyTests(unittest.TestCase):
-    """query.py opens the Wesley index read-write only when the chunk sync would change it."""
+class WesleyNeverSyncedTests(unittest.TestCase):
+    """query.py never syncs or writes the Wesley index (main #10 removed the sync:
+    a text-only chunks.jsonl would null every timing and audio field)."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name)
         self.wesley = self.dir / "wesley.sqlite"
-        self.chunks = self.dir / "chunks.jsonl"
-        self.write_chunks("grace")
         patches = [
             mock.patch.object(query, "INDEX_PATH", self.wesley),
             mock.patch.object(query, "INDEX_DIR", self.dir),
-            mock.patch.object(query, "index_chunks_jsonl", lambda: self.chunks),
-            mock.patch.object(query, "connect", side_effect=connect),
         ]
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
 
-    def write_chunks(self, text: str) -> None:
-        row = {"chunk_id": "wesley-001-c0", "sermon_id": "wesley-001", "sermon_title": "S", "text": text}
-        self.chunks.write_text(json.dumps(row) + "\n")
+    def test_missing_index_is_refused_not_created(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            query.open_index(None, None)
+        self.assertIn("missing index", str(ctx.exception.code))
+        self.assertFalse(self.wesley.exists())
 
-    def texts(self, connection) -> list[str]:
-        return [row[0] for row in connection.execute("SELECT text FROM chunks")]
-
-    def test_sync_runs_only_when_needed(self) -> None:
-        connection = query.open_index(None, None)  # missing: created and synced, as on main
-        self.assertEqual(self.texts(connection), ["grace"])
+    def test_existing_index_is_opened_read_only_and_unchanged(self) -> None:
+        connection = connect(self.wesley)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('wesley-001-c0', 'wesley-001', 'S', 'grace')"
+        )
+        connection.commit()
         connection.close()
-        self.assertEqual(query.connect.call_count, 1)
         before = self.wesley.read_bytes()
-        connection = query.open_index(None, None)  # current: read-only only
-        self.assertEqual(self.texts(connection), ["grace"])
+        connection = query.open_index(None, None)
+        self.assertEqual([row[0] for row in connection.execute("SELECT text FROM chunks")], ["grace"])
         with self.assertRaises(sqlite3.OperationalError):
             connection.execute("DELETE FROM chunks")
         connection.close()
-        self.assertEqual(query.connect.call_count, 1)
         self.assertEqual(self.wesley.read_bytes(), before)
-        self.write_chunks("faith")  # stale: synced again
-        connection = query.open_index(None, None)
-        self.assertEqual(self.texts(connection), ["faith"])
-        connection.close()
-        self.assertEqual(query.connect.call_count, 2)
-
-    def test_missing_late_column_is_synced(self) -> None:
-        query.open_index(None, None).close()
-        raw = sqlite3.connect(self.wesley)
-        raw.execute("ALTER TABLE chunks DROP COLUMN text_source")
-        raw.commit()
-        raw.close()
-        query.open_index(None, None).close()
-        self.assertEqual(query.connect.call_count, 2)
 
 
 REFUSED = ("wesley", "talmage", "gaston", "unknown-slug", "../spurgeon", "", "SPURGEON")

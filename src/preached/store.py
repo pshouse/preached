@@ -134,6 +134,15 @@ class DuplicateChunkId(ValueError):
     """Two chunks in one file share a chunk_id (chunks.chunk_id is UNIQUE)."""
 
 
+class NullTimingRefused(RuntimeError):
+    """A chunk file would replace stored timing, audio, or reader with null."""
+
+
+# Text-only chunks.jsonl leaves these empty. An in-place sync of that file
+# onto an aligned index keeps the vectors and deletes every playable time.
+TIMING_FIELDS = ("start_s", "end_s", "audio_url", "reader")
+
+
 def check_unique_ids(chunks: list[dict], source: object = "chunk file") -> None:
     seen: set = set()
     for chunk in chunks:
@@ -203,7 +212,41 @@ def _after_replace() -> None:
     """No-op seam between the chunk replace and the hash write (tests patch it)."""
 
 
-def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
+def timings_nulled(connection: sqlite3.Connection, chunks: list[dict]) -> list[str]:
+    """Timing fields that would go from a stored value to null, by chunk_id.
+
+    A chunk that exists on only one side is ignored. Filling a null with a
+    real time is not a wipe.
+    """
+    incoming: dict = {}
+    for chunk in chunks:
+        chunk_id = chunk.get("chunk_id")
+        if chunk_id is not None:
+            incoming[chunk_id] = chunk
+    if not incoming:
+        return []
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    fields = [field for field in TIMING_FIELDS if field in columns]
+    if not fields:
+        return []
+    wiped: list[str] = []
+    rows = connection.execute(f"SELECT chunk_id, {', '.join(fields)} FROM chunks")
+    for row in rows:
+        new = incoming.get(row["chunk_id"])
+        if new is None:
+            continue
+        for field in fields:
+            if row[field] is not None and new.get(field) is None:
+                wiped.append(field)
+    return wiped
+
+
+def sync_chunks(
+    connection: sqlite3.Connection,
+    chunks_path: Path,
+    *,
+    force_null_timings: bool = False,
+) -> int:
     """Load chunks only when the chunk file's content changed.
 
     Compares the file's sha256 with the one recorded in meta. The hash is of
@@ -220,6 +263,11 @@ def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
     An index built before the hash was recorded follows the same rule, so a
     legacy index picks up new timing too (it is never adopted on text alone).
     Duplicate chunk ids are refused before anything is written.
+
+    Replacing a stored start_s, end_s, audio_url, or reader with null is
+    refused unless ``force_null_timings`` is set. The text-only chunk file
+    matches an aligned index on ids and text, and the in-place update would
+    otherwise wipe every playable time while keeping the vectors.
     """
     import hashlib
 
@@ -229,6 +277,14 @@ def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
         return chunk_count(connection)
     chunks = [json.loads(line) for line in chunks_path.read_text().splitlines() if line.strip()]
     check_unique_ids(chunks, chunks_path)
+    if not force_null_timings and chunk_count(connection) > 0:
+        wiped = timings_nulled(connection, chunks)
+        if wiped:
+            fields = ", ".join(sorted(set(wiped)))
+            raise NullTimingRefused(
+                f"refusing to replace stored {fields} with nulls from {chunks_path}. "
+                "Pass force_null_timings=True to override."
+            )
     if chunk_count(connection) > 0:
         stored = [
             tuple(r)
@@ -351,6 +407,56 @@ def save_embedding_info(connection: sqlite3.Connection, model: str, info: dict) 
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (f"embeddings:{model}", json.dumps(info))
     )
     connection.commit()
+
+
+def index_stamp(connection: sqlite3.Connection, model: str | None) -> tuple:
+    """What a long-lived searcher cached: chunk hash, and embedding records.
+
+    The embedding part is the meta row, the vector count, and the total
+    vector bytes. A rebuild that edits chunk text or deletes vectors changes
+    this tuple. Passing ``model=None`` watches chunks only.
+    """
+    try:
+        row = connection.execute(
+            "SELECT value FROM meta WHERE key = 'chunks_sha256'"
+        ).fetchone()
+        chunk_hash = row[0] if row else None
+    except sqlite3.OperationalError:
+        chunk_hash = None
+    n_chunks = int(connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
+    if not model:
+        return (chunk_hash, n_chunks, None, 0, 0)
+    info_row = connection.execute(
+        "SELECT value FROM meta WHERE key = ?",
+        (f"embeddings:{model}",),
+    ).fetchone()
+    info = info_row[0] if info_row else None
+    emb = connection.execute(
+        "SELECT count(*), coalesce(sum(length(vector)), 0) FROM embeddings WHERE model = ?",
+        (model,),
+    ).fetchone()
+    return (chunk_hash, n_chunks, info, int(emb[0]), int(emb[1]))
+
+
+def check_query_variant(connection: sqlite3.Connection, model: str, variant: str | None) -> None:
+    """Refuse document vectors that were not built by the fp32 graph.
+
+    int8 is not a runtime variant. ``ModelSpec.fingerprint`` does not include
+    the ONNX graph, so a stored ``variant`` other than ``fp32`` is refused on
+    its own. The shipped index has no ``variant`` field; those vectors are
+    the fp32 graph and a fp32 query may use them. A query variant other than
+    fp32 is refused too.
+    """
+    if variant is not None and variant != "fp32":
+        raise EmbeddingMismatch(
+            f"query variant {variant} is not fp32; int8 is not a runtime variant"
+        )
+    info = embedding_info(connection, model) or {}
+    recorded = info.get("variant")
+    if recorded is not None and recorded != "fp32":
+        raise EmbeddingMismatch(
+            f"stored vectors for {model} are variant {recorded}, not fp32"
+        )
 
 
 def check_fingerprint(connection: sqlite3.Connection, model: str, expected: str) -> None:

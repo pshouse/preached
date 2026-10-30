@@ -8,6 +8,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sqlite3
 import sys
@@ -19,20 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from preached import env  # noqa: F401, E402
 from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
-from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
-from preached.embed import encode_query, load_model, unload  # noqa: E402
+from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
+from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
+from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start, sermon_flagged, touches_flagged  # noqa: E402
-from preached.store import (  # noqa: E402
-    EmbeddingMismatch,
-    chunks_in_sync,
-    classic_file_problem,
-    connect,
-    open_readonly,
-    sync_chunks,
-)
+from preached.store import EmbeddingMismatch, check_query_variant, classic_file_problem, open_readonly  # noqa: E402
 from preached.youtube.listing import chunk_video_id, policy_watch_url, youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
@@ -73,12 +67,11 @@ def open_index(index: Path | None, library: str | None):
 
     --library takes an allow-listed public-domain slug and opens only its
     canonical /cache/index/<slug>.sqlite as built
-    (``libraries.classic_index_problem``: no symlinks, realpath equality).
-    The Wesley index (INDEX_PATH) gets main's chunk sync first, through a
-    read-write connection that is opened only when the index is out of date
-    (``ensure_chunks``); the search itself then runs read-only. Any other
-    --index path is searched as it is. --index must not be a library file:
-    the Wesley sync would replace its chunks and drop its vectors.
+    (``libraries.classic_index_problem``: no symlinks, realpath equality;
+    then ``store.classic_file_problem``: owner-only). A church slug needs a
+    privacy config. Nothing is ever synced or written (main #10): the Wesley
+    index and any other --index path are searched as they are. --index must
+    not be a library file; use --library for those.
     """
     if library is not None:
         if not is_public_domain(library):
@@ -111,8 +104,6 @@ def open_index(index: Path | None, library: str | None):
             f"error: {path} is a library index, not the Wesley index. "
             f"Search it with --library {path.stem} (it is never synced with Wesley chunks)."
         )
-    if path.resolve() == INDEX_PATH.resolve():
-        ensure_chunks(path)
     return open_target(path)
 
 
@@ -133,36 +124,6 @@ def open_target(path: Path):
         connection.close()
         raise SystemExit(f"error: {path} is not a search index (no chunks table)")
     return connection
-
-
-def ensure_chunks(path: Path) -> None:
-    """Sync the Wesley index at ``path`` with the chunk file, as on main.
-
-    Checked read-only first; ``connect`` (which may create the file, add
-    columns and write chunks) runs only when that check says the sync would
-    change something.
-    """
-    try:
-        chunks_path = index_chunks_jsonl()
-    except StaleChunks as exc:
-        raise SystemExit(f"error: {exc}") from exc
-    if not chunks_path.exists():
-        raise SystemExit(
-            f"missing {chunks_path}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
-        )
-    if path.is_file():
-        reader = open_readonly(path)
-        try:
-            current = chunks_in_sync(reader, chunks_path)
-        finally:
-            reader.close()
-        if current:
-            return
-    connection = connect(path)
-    try:
-        sync_chunks(connection, chunks_path)
-    finally:
-        connection.close()
 
 
 def fmt_time(value) -> str:
@@ -301,11 +262,19 @@ def main() -> None:
     parser.add_argument("--dense-weight", type=float, default=0.5)
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--index", type=Path, default=None,
-                        help=f"SQLite index (default {INDEX_PATH}, synced with the Wesley chunks; "
-                        "any other path is searched read-only as it is; library files are refused)")
+                        help=f"SQLite index (default {INDEX_PATH}); opened read-only and never synced; "
+                        "library files are refused")
     target.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, edwards); "
-                        "built by search/build_library.py; read-only, no Wesley chunk sync")
-    parser.add_argument("--device", default="cpu", help="device for the query embedding")
+                        "built by search/build_library.py; read-only")
+    parser.add_argument("--device", default="cpu", help="device for the torch query embedding")
+    parser.add_argument(
+        "--embed-backend",
+        choices=("onnx", "torch"),
+        default=None,
+        help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
+    )
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
+    parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
@@ -315,12 +284,15 @@ def main() -> None:
     except (ValueError, OSError) as exc:
         raise SystemExit(f"error: {exc}") from exc
 
+    # Read-only, and it does not sync (main #10: a text-only chunks.jsonl
+    # matches the aligned index on ids and text; syncing it would null every
+    # start_s, end_s, audio_url, and reader).
     connection = open_index(args.index, args.library)
     # Same gate as the server: any --library but wesley is gated unless it is an
     # allow-listed public-domain library's own file (store.public_domain_file).
     gate = {"gated": args.library not in (None, "wesley"), "library": args.library}
     model_name = None
-    loaded = None
+    embedder = None
     vector = None
     try:
         if args.mode == "bm25":
@@ -328,9 +300,22 @@ def main() -> None:
             hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
-            spec = MODELS[model_name]
-            loaded = load_model(spec, device=args.device, batch_size=1)
-            vector = encode_query(loaded, args.query)
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            embedder = load_embedder(
+                model_name,
+                args.embed_backend,
+                variant=args.onnx_variant,
+                ort_threads=args.ort_threads,
+                device=args.device,
+                batch_size=1,
+            )
+            try:
+                check_query_variant(connection, model_name, getattr(embedder, "variant", None))
+            except EmbeddingMismatch as exc:
+                message = " ".join(str(exc).split())
+                print(f"error: {message}", file=sys.stderr)
+                raise SystemExit(1) from exc
+            vector = embedder.encode_queries([args.query])[0]
             try:
                 searcher = Searcher(connection, model=model_name, **gate)
             except EmbeddingMismatch as exc:
@@ -347,10 +332,17 @@ def main() -> None:
                     dense_weight=args.dense_weight,
                 )
     finally:
-        if loaded is not None:
-            unload(loaded)
-    # Same abstain rule and per-model floor as GET /api/search (preached.abstain).
-    floor = floor_for(model_name) if vector is not None else None
+        if embedder is not None and hasattr(embedder, "close"):
+            embedder.close()
+    # Same abstain rule and per-backend floor as GET /api/search (preached.abstain).
+    # BM25 has no dense signal, so the floor stays off.
+    floor = None
+    if vector is not None:
+        floor = floor_for(
+            model_name,
+            backend=getattr(embedder, "backend", "torch"),
+            variant=getattr(embedder, "variant", None),
+        )
     confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
     mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
     if confidence.abstain and hits and args.hide_low_confidence:
