@@ -45,10 +45,15 @@
       </div>
     </div>
 
-    <section class="results-section" aria-labelledby="results-heading">
+    <section id="results-section" class="results-section" aria-labelledby="results-heading" aria-busy="false">
       <h2 id="results-heading" class="visually-hidden">Results</h2>
       <p id="note" class="note" hidden></p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
+      <p id="confidence" class="note note-weak" tabindex="-1" hidden></p>
+      <div class="state-actions">
+        <button type="button" id="reveal" class="secondary" hidden>Show the closest passages anyway</button>
+        <button type="button" id="retry" class="secondary" hidden>Try again</button>
+      </div>
       <ol id="results" class="results"></ol>
     </section>
 
