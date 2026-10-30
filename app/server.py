@@ -79,7 +79,10 @@ LIBRARY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_TARGET = 2048
 MAX_BODY = 4096
 REQUEST_TIMEOUT_S = 15
-SERMON_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+# Wesley ids are lowercase slugs (wesley-001), at most 64 characters. A
+# YouTube video id is 11 characters and case-sensitive. Dots and slashes are
+# not in either form, so a path cannot be an id.
+SERMON_ID = re.compile(r"^(?:[a-z0-9][a-z0-9-]{0,63}|[A-Za-z0-9_-]{11})$")
 
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
