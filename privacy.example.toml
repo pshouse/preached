@@ -14,6 +14,14 @@
 # The review file (<index dir>/<library>/review/<id>.review.jsonl) is read
 # once, at approval, and checked against the sha256 stored at import. Nothing
 # re-reads it afterwards: editing or deleting it later does not unpublish.
+#
+# Announcements, prayer requests and testimonies are never indexed
+# (preached.skip proposes them; see reports/W3-PRIV-SKIP.md). The review file
+# lists each one as an "exclude" line. Before approving, confirm it, widen it,
+# or add a line such as {"field": "exclude", "start_s": 1200, "end_s": 1310}.
+# Approval excludes exactly what the file lists. A proposed stretch cannot be
+# narrowed, nothing else in the file may change, and any edit after approval
+# is refused.
 
 # What a play link may do for a chunk that contains [name] or overlaps a
 # review() flag. Redaction changes text only; the recording still has the name
