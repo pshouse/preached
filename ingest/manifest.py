@@ -53,7 +53,66 @@ def librivox_book(title: str) -> dict:
     return next(b for b in data["books"] if b["title"] == title)
 
 
+# LibriVox series number -> Wesley's standard sermon number (1771 edition / CCEL).
+# s1 reads "Christian Perfection" (40) in two parts, so later tracks shift by one.
+def wesley_number(series: str, num: int) -> int | None:
+    if series == "s1":
+        return None if num == 0 else (num if num <= 40 else num - 1)
+    return {"s2": 53, "s3to5": 108}[series] + num
+
+
+CCEL_TXT_URL = "https://www.ccel.org/ccel/w/wesley/sermons/cache/sermons.txt"
+CCEL_URL = "https://www.ccel.org/ccel/wesley/sermons"
+
+# Hand-checked fixes where parsing the CCEL text fails or the text is wrong:
+# 4 has an Ezek 33:4 title-page epigraph before the real text; 52 has no body
+# heading; 64/120/128 lack quote/ref formatting; 134 is a CCEL typo (Isa 1:21).
+SCRIPTURE_OVERRIDES = {
+    4: ("Acts 4:31", "And they were all filled with the Holy Ghost."),
+    52: ("Ps. 94:16", "Who will rise up with me against the wicked?"),
+    64: ("Rev. 21:5", "Behold, I make all things new."),
+    120: ("Matt. 22:12", "How camest thou in hither not having a wedding garment?"),
+    128: ("Rom. 8:32", "He that spared not his own Son, but delivered him up for us all, "
+                       "how shall he not with him also freely give us all things?"),
+    134: ("Isa. 1:21", "How is the faithful city become an harlot!"),
+}
+
+
+def ccel_scripture() -> dict[int, tuple[str | None, str | None]]:
+    """Wesley number -> (reference, quoted text), parsed from each sermon's heading."""
+    path = META_CACHE / "ccel" / "sermons.txt"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        req = urllib.request.Request(CCEL_TXT_URL, headers={"User-Agent": "preached-ingest/0.1"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            path.write_bytes(r.read())
+    body = path.read_text().split("First Series\n     ___", 1)[1]
+    out: dict[int, tuple[str | None, str | None]] = {}
+    for part in re.split(r"\n(?=Sermon \d+(?: \[\d+\])?\n)", body):
+        m = re.match(r"Sermon (\d+)", part)
+        if not m:
+            continue
+        head = part.split("\n   1.")[0]
+        lines = [ln.strip() for ln in head.splitlines()[1:] if ln.strip()]
+        quote = ref = None
+        for i, ln in enumerate(lines[1:8], 1):
+            if ln.startswith('"'):
+                j, q = i, [ln]
+                while not q[-1].endswith('"') and j + 1 < len(lines):
+                    j += 1
+                    q.append(lines[j])
+                quote = " ".join(q).strip('"')
+                if j + 1 < len(lines) and re.match(r"[1-3]?\s?[A-Z][a-z]+\.? ?\d+[:.]", lines[j + 1]):
+                    ref = lines[j + 1].rstrip(".")
+                break
+        out[int(m.group(1))] = (ref, quote)
+    for n, v in SCRIPTURE_OVERRIDES.items():
+        out[n] = v
+    return out
+
+
 def build() -> list[dict]:
+    scripture = ccel_scripture()
     rows = []
     for ident, (series, lv_title) in SOURCES.items():
         meta = fetch_json(f"https://archive.org/metadata/{ident}", META_CACHE / f"{ident}.json")
@@ -70,15 +129,20 @@ def build() -> list[dict]:
             m = re.match(r"\s*(\d+)\s*-\s*(.+)", f["title"])
             num, title = int(m.group(1)), m.group(2).strip()
             readers = [r["display_name"] for r in sec["readers"]]
+            wn = wesley_number(series, num)
+            ref, quote = scripture.get(wn, (None, None)) if wn else (None, None)
             rows.append({
                 "id": f"wesley-{series}-{num:02d}",
                 "author": "John Wesley",
                 "work": meta["metadata"]["title"],
                 "series": series,
                 "sermon_number": num,  # number within this LibriVox series (0 = Preface)
+                "wesley_sermon_number": wn,  # standard numbering (1-141), as on CCEL
                 "kind": "preface" if title.lower() == "preface" else "sermon",
                 "title": title,
-                "scripture": None,  # not present in archive.org/LibriVox metadata
+                # Not in archive.org/LibriVox metadata; from the CCEL text heading.
+                "scripture": ref,
+                "scripture_text": quote,
                 "reader": ", ".join(readers),
                 "reader_ids": [r["reader_id"] for r in sec["readers"]],
                 "duration_s": int(sec["playtime"]),
@@ -91,7 +155,7 @@ def build() -> list[dict]:
                 "ia_url": f"https://archive.org/details/{ident}",
                 "librivox_url": book["url_librivox"],
                 "librivox_section_id": sec["id"],
-                "text_source_url": book["url_text_source"],
+                "text_source_url": CCEL_URL,
                 "license_url": meta["metadata"].get("licenseurl"),
                 "license_note": LICENSE_NOTE,
             })

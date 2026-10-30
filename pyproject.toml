@@ -3,6 +3,15 @@ name = "preached"
 version = "0.1.0"
 description = "Search a church's sermon archive and hear the answer in the preacher's own words."
 requires-python = ">=3.12,<3.14"
-dependencies = [
-    "faster-whisper>=1.2.1",
+dependencies = []
+
+[project.optional-dependencies]
+# Offline transcription on a CUDA GPU only; not needed by the search app.
+transcribe = [
+    "faster-whisper>=1.2.1,<1.3",
+    # faster-whisper 1.2.1 passes av.open(metadata_errors=...), removed in av 19.
+    "av>=18.1,<19",
+    # CTranslate2 loads CUDA 12 cuBLAS/cuDNN 9 at runtime; the box has no system CUDA.
+    "nvidia-cublas-cu12>=12.4,<13",
+    "nvidia-cudnn-cu12>=9,<10",
 ]
