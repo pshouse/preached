@@ -23,6 +23,13 @@ CHURCH_EMPTY = "Nothing from your church yet."
 CHURCH_LABEL = "Your church"
 CLASSIC_LABEL = "John Wesley"
 SAMPLE_SLUG = "sample"
+# wesley is the built-in index. spurgeon and edwards are the public-domain
+# allow-list (PR #14). None of them is "your church". A copy is recognized
+# by its file stem, so the slug check does not depend on #14 being merged.
+CLASSIC_SLUGS = frozenset({"wesley", "spurgeon", "edwards"})
+CLASSIC_CHURCH_ERROR = (
+    "is a classic library (wesley, spurgeon, edwards) and cannot be your church"
+)
 
 
 def set_meta(connection: sqlite3.Connection, key: str, value: str) -> None:
@@ -96,6 +103,25 @@ def classic_heading(connection: sqlite3.Connection | None, slug: str) -> str:
     return f"Classic library: {label}"
 
 
+def is_classic_slug(slug: str | None) -> bool:
+    """True for wesley and the public-domain allow-list (spurgeon, edwards)."""
+    return isinstance(slug, str) and slug.casefold() in CLASSIC_SLUGS
+
+
+def classic_church_refusal(slug: str | None, path: Path | None = None) -> str | None:
+    """Error text when this target cannot be the church, else None.
+
+    An explicit ``--church-library wesley`` (or spurgeon, edwards) and a
+    church index whose name or canonical path is one of those libraries are
+    both refused. The caller raises ``SystemExit`` for an explicit request
+    and leaves the side empty when the path was only auto-detected.
+    """
+    if is_classic_slug(slug) or (path is not None and is_protected_classic(path)):
+        name = slug or Path(path).name
+        return f"error: {name} {CLASSIC_CHURCH_ERROR}"
+    return None
+
+
 def church_heading(connection: sqlite3.Connection | None, slug: str | None) -> str:
     """Column title. Sample libraries keep the words "sample data"."""
     if connection is None:
@@ -132,6 +158,11 @@ def church_index_matches(index_dir: Path, *, exclude: Path | None = None) -> lis
     found: list[Path] = []
     for candidate in sorted(root.glob("*.sqlite")):
         if not candidate.is_file():
+            continue
+        # Never open a classic index just to see if it was marked. Opening
+        # it for writing migrates the schema; skipping here means the scan
+        # does not touch the file at all.
+        if is_protected_classic(candidate):
             continue
         resolved = _resolve(candidate)
         if resolved is None:
@@ -193,21 +224,64 @@ def mark_your_church_exclusive(
 ) -> None:
     """Mark ``path`` as the church and clear that mark on any sibling file.
 
-    Siblings are opened for writing only when they are already marked, so a
-    Wesley index sitting in the same directory is not migrated just to be
-    inspected.
+    Classic libraries (wesley, spurgeon, edwards, and their canonical paths)
+    are not opened. ``store.connect`` migrates the schema and sets
+    ``journal_mode=WAL``; a mistaken mark on a copy of wesley.sqlite used to
+    rewrite that file. Siblings that do get cleared are opened with a plain
+    ``sqlite3`` connection, which does not migrate and does not change the
+    journal mode. The target itself is the church file this import just
+    wrote, so it still goes through ``store.connect``.
     """
     target = Path(path).resolve()
+    if is_protected_classic(target):
+        raise ValueError(f"error: {target.name} {CLASSIC_CHURCH_ERROR}")
     for candidate in church_index_matches(index_dir, exclude=target):
-        connection = connect(candidate)
-        try:
-            clear_church_role(connection)
-            connection.commit()
-        finally:
-            connection.close()
+        if is_protected_classic(candidate):
+            continue
+        _clear_church_mark(candidate)
     connection = connect(target)
     try:
         mark_your_church(connection, label=label, sample=sample)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def is_protected_classic(path: Path) -> bool:
+    """True for a classic slug or a canonical classic index path.
+
+    The stem check covers a copy (``/tmp/wesley.sqlite``). The path check
+    covers the real index even when the name is unusual.
+    """
+    if is_classic_slug(Path(path).stem):
+        return True
+    resolved = _resolve(path)
+    if resolved is None:
+        return False
+    return resolved in _canonical_classic_paths()
+
+
+def _canonical_classic_paths() -> set[Path]:
+    from preached.paths import INDEX_DIR, INDEX_PATH
+
+    found: set[Path] = set()
+    for candidate in (INDEX_PATH, *(INDEX_DIR / f"{slug}.sqlite" for slug in CLASSIC_SLUGS)):
+        resolved = _resolve(candidate)
+        if resolved is not None:
+            found.add(resolved)
+    return found
+
+
+def _clear_church_mark(path: Path) -> None:
+    """Drop ``role=church`` without migrating the file or enabling WAL.
+
+    ``store.connect`` runs the schema script and ``PRAGMA journal_mode=WAL``.
+    A plain connection does neither. The journal mode already on the file
+    stays as it is.
+    """
+    connection = sqlite3.connect(path)
+    try:
+        clear_church_role(connection)
         connection.commit()
     finally:
         connection.close()

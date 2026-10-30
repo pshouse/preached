@@ -65,8 +65,15 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     if not SLUG.fullmatch(args.library):
         print("library must be a short slug: lowercase letters, digits, and hyphens", file=sys.stderr)
         return 2
-    if args.library == "wesley":
-        print("library wesley is the built-in text index; choose another slug", file=sys.stderr)
+    from preached.library import is_classic_slug
+
+    # wesley is the built-in index. spurgeon and edwards are classic libraries
+    # too: --your-church must not mark them. A YouTube import is not that file.
+    if args.library == "wesley" or (args.your_church and is_classic_slug(args.library)):
+        print(
+            f"library {args.library} is a classic library and cannot be your church; choose another slug",
+            file=sys.stderr,
+        )
         return 2
     if args.limit is not None and args.limit < 1:
         print("limit must be at least 1", file=sys.stderr)
@@ -103,14 +110,19 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     except (ChannelRefused, BadChannelUrl) as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    # Dry-run writes nothing, including the church mark. A partial import
-    # still marks the file: the side view can say the library is empty.
-    if args.your_church and not args.dry_run and settings.index_path.is_file():
+    # Dry-run writes nothing, including the church mark. A failed or partial
+    # import (code != 0) does not mark the file either: the mark is only for
+    # a run that imported every selected video.
+    if args.your_church and code == 0 and not args.dry_run and settings.index_path.is_file():
         from preached.library import mark_your_church_exclusive
 
-        mark_your_church_exclusive(
-            settings.index_path,
-            index_root,
-            sample=args.library == "sample",
-        )
+        try:
+            mark_your_church_exclusive(
+                settings.index_path,
+                index_root,
+                sample=args.library == "sample",
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     return code
