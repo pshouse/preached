@@ -336,4 +336,6 @@ These did not conflict, and they are byte-identical to `14eae9e`: `search/bench.
 
 Merge commit: `49fb5daacec19f7cd55c3192828654845dc0c7a0` (parents `14eae9e366010cca636cabf8cbaf5ecfb86c5f57` and `6c7c4ca5fed392cf9a8e19bf2de74d93741bf4d6`).
 
-Head: recorded in the commit that adds this section. PR #17 mergeability is recorded in the commit after that, once the branch is pushed.
+Head: `565ede0f3de4666aa300e58199a6d65985aa6840` adds this section. This sentence is the commit after it. `git log -1` on `feat/eval-deleak` is the branch head.
+
+PR #17: https://github.com/pshouse/preached/pull/17. After pushing `565ede0`, GitHub compare `main...feat/eval-deleak` reports status `ahead`, ahead 25, behind 0. Main `6c7c4ca` is an ancestor of the branch, so the PR has no conflicts with main. `git merge-tree origin/main HEAD` exits 0. The pulls API `mergeable` field was still null and `mergeable_state` was `unknown` while GitHub's merge job had not finished (checked for several minutes after the push).
