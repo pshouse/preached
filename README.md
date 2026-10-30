@@ -21,13 +21,15 @@ uv run app/server.py
 
 Then open http://127.0.0.1:8000. Search returns Wesley's published words. Hybrid mode is reciprocal rank fusion with k=60. Adjacent chunks overlap by about 25%, and the API keeps the higher-scoring one so the same words are not listed twice. So `/api/search` does not return the raw top k that `search/query.py` prints: it takes the ranker's top 100 and de-dups down to k (`api_search` in `src/preached/search.py`). `search/bench.py --dedupe` scores that path. For Granite hybrid it gives R@5 0.614, MRR@10 0.497 and nDCG@10 0.546, against 0.629, 0.506 and 0.558 for the raw top 10. Excerpts on the page hide CCEL paragraph numbers. The indexed text is unchanged. Passages with no `start_s` say that audio timing is still coming and link to the CCEL text. Details are in `reports/W2-A.md`. The timestamp hit@k in `reports/W1-CLI.md` is derived from the alignment: equal to the text metric by construction, not an independent audio-accuracy result. Audio accuracy is the W1-C spot-check (median 0.42 s, max 0.76 s against the audio, covered by the 0.75 s pre-roll).
 
-Another library is a separate SQLite file. The server still serves one file per process:
+Another library is a separate SQLite file. One process can open two: the classic library (default `wesley`) and the library marked as your church.
 
 ```bash
-uv run app/server.py --library <slug> --bm25-only
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library sample --your-church
+uv run app/server.py --bm25-only
+uv run search/query.py "what did Wesley say about worry" --mode bm25 --side
 ```
 
-That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`.
+`--your-church` sets `meta.role` to `church` on that file and clears the mark on any other file in `/cache/index`. The slug `sample` is labelled sample data. A missing church file does not stop the server. `GET /api/search?library=<slug>` searches only an open library. `GET /api/side` returns the top hits from each side. The page's Side by side view calls that. Details are in `reports/W3-SIDE.md`.
 
 ## Credits
 
