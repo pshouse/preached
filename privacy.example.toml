@@ -21,7 +21,13 @@
 # or add a line such as {"field": "exclude", "start_s": 1200, "end_s": 1310}.
 # Approval excludes exactly what the file lists. A proposed stretch cannot be
 # narrowed, nothing else in the file may change, and any edit after approval
-# is refused.
+# is refused. --redo keeps the previous file's exclude lines.
+#
+# LISTEN THROUGH THE WHOLE RECORDING BEFORE APPROVING (CTO ruling,
+# 2026-10-30). The proposed stretches are a starting point: on an LLM-written
+# synthetic test set the rules caught 87% of the words they should (word
+# recall 0.870), so they miss some. The human check is the real control; add
+# an exclude line for every stretch they missed.
 
 # What a play link may do for a chunk that contains [name] or overlaps a
 # review() flag. Redaction changes text only; the recording still has the name
