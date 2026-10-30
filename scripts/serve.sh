@@ -4,28 +4,20 @@
 #   PREACHED_HOST=127.0.0.1 PREACHED_PORT=8000 scripts/serve.sh
 #
 # A small CPU box uses one intra-op thread. There is no debug flag and no
-# write route. The index is opened mode=ro. Church and YouTube libraries
-# are refused here until the server allow-list lands on main.
+# write route. The index is opened mode=ro. The only library gate is
+# app.server.check_servable.
 
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ "$(id -u)" -eq 0 ] && [ "${PREACHED_ALLOW_ROOT:-}" != "1" ]; then
+if [ "$(id -u)" -eq 0 ]; then
   echo "refusing to serve as root" >&2
   exit 2
 fi
 
 LIBRARY=${PREACHED_LIBRARY:-wesley}
-case "$LIBRARY" in
-  wesley|spurgeon|edwards) ;;
-  *)
-    echo "refusing library ${LIBRARY}; this deploy allows only wesley, spurgeon, edwards" >&2
-    exit 2
-    ;;
-esac
-
 HOST=${PREACHED_HOST:-127.0.0.1}
 PORT=${PREACHED_PORT:-8000}
 HOSTS=${PREACHED_HOSTS:-127.0.0.1,localhost}
@@ -52,29 +44,23 @@ if [ "$THREADS" -lt 1 ]; then
   exit 2
 fi
 
+# A bundle ships index/<library>.sqlite. That tree is the cache root so
+# classic_index_problem's canonical path is the file in the bundle.
+# A worktree has no index/ and keeps PREACHED_CACHE (default /cache).
+if [ -d "$ROOT/index" ]; then
+  PREACHED_CACHE=$ROOT
+fi
+PREACHED_CACHE=${PREACHED_CACHE:-/cache}
+
 if [ -n "${PREACHED_INDEX:-}" ]; then
   INDEX=$PREACHED_INDEX
 elif [ -f "$ROOT/index/${LIBRARY}.sqlite" ]; then
   INDEX=$ROOT/index/${LIBRARY}.sqlite
 else
-  INDEX=/cache/index/${LIBRARY}.sqlite
+  INDEX=${PREACHED_CACHE}/index/${LIBRARY}.sqlite
 fi
 
-case "$INDEX" in
-  *cc-speech*|*gaston*|*youtube*|*church*)
-    echo "refusing a church or YouTube index" >&2
-    exit 2
-    ;;
-esac
-if [ -L "$INDEX" ]; then
-  echo "refusing a symlinked index" >&2
-  exit 2
-fi
-if [ "$(basename -- "$INDEX")" != "${LIBRARY}.sqlite" ]; then
-  echo "refusing index name; expected ${LIBRARY}.sqlite" >&2
-  exit 2
-fi
-if [ ! -f "$INDEX" ]; then
+if [ ! -e "$INDEX" ]; then
   echo "missing index for ${LIBRARY}" >&2
   exit 1
 fi
@@ -84,9 +70,7 @@ if [ -z "${PREACHED_ONNX_DIR:-}" ] && [ -d "$ROOT/model" ]; then
   PREACHED_ONNX_DIR=$ROOT/model
 fi
 
-if [ -n "${PREACHED_PYTHON:-}" ]; then
-  PY=$PREACHED_PYTHON
-elif [ -x "$ROOT/.venv/bin/python" ]; then
+if [ -x "$ROOT/.venv/bin/python" ]; then
   PY=$ROOT/.venv/bin/python
 elif command -v uv >/dev/null 2>&1; then
   PY=""
@@ -95,37 +79,93 @@ else
   exit 1
 fi
 
-# The file is inside the bundle only. Do not change a shared /cache index.
-case "$INDEX" in
-  "$ROOT"/*)
-    chmod a-w "$INDEX" 2>/dev/null || true
-    ;;
-esac
-
-export PREACHED_EMBED_BACKEND=onnx
-export PREACHED_ONNX_VARIANT=fp32
-export PREACHED_ORT_INTRA_OP_THREADS=$THREADS
-export PREACHED_KILL_FILE=${PREACHED_KILL_FILE:-$ROOT/KILL}
-export PREACHED_RATE_LIMIT=${PREACHED_RATE_LIMIT:-60}
-export PREACHED_RATE_WINDOW_S=${PREACHED_RATE_WINDOW_S:-60}
-export HF_HUB_OFFLINE=1
-export HF_HUB_DISABLE_TELEMETRY=1
-export TRANSFORMERS_OFFLINE=1
-export TOKENIZERS_PARALLELISM=false
-export PYTHONDONTWRITEBYTECODE=1
-export PYTHONUNBUFFERED=1
-export PYTHONNOUSERSITE=1
-export PYTHONPATH="$ROOT/src:$ROOT"
-if [ -n "${PREACHED_ONNX_DIR:-}" ]; then
-  export PREACHED_ONNX_DIR
+# Drop group and world write on the bundle root, the index directory, and
+# the index file so classic_index_problem can pass for a classics bundle.
+# A worktree index under /cache is not chmod'd.
+if [ -d "$ROOT/index" ]; then
+  chmod u=rwx,go=rx "$ROOT" "$ROOT/index"
+  chmod a-w "$INDEX"
 fi
 
-unset PYTHONDEVMODE || true
-unset PYTHONASYNCIODEBUG || true
-unset SPRITE_TOKEN || true
-unset FLY_API_TOKEN || true
-unset HF_TOKEN || true
-unset HUGGING_FACE_HUB_TOKEN || true
+if [ -n "$PY" ]; then
+  CHECK=( "$PY" )
+else
+  CHECK=(uv run --project "$ROOT" --frozen --no-sync --no-dev --no-default-groups python)
+fi
+PYTHONPATH="$ROOT/src:$ROOT" PREACHED_CACHE="$PREACHED_CACHE" \
+  "${CHECK[@]}" - "$LIBRARY" "$INDEX" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+from app.server import check_servable
+from preached.store import open_readonly
+
+library = sys.argv[1]
+index = Path(sys.argv[2])
+try:
+    connection = open_readonly(index, check_same_thread=False)
+except Exception as exc:
+    raise SystemExit(f"error: cannot open {index} ({type(exc).__name__})") from exc
+try:
+    check_servable(connection, library, index)
+except SystemExit:
+    raise
+except sqlite3.DatabaseError as exc:
+    raise SystemExit(f"error: {index} is not a SQLite index ({type(exc).__name__})") from exc
+finally:
+    connection.close()
+PY
+
+PREACHED_EMBED_BACKEND=onnx
+PREACHED_ONNX_VARIANT=fp32
+PREACHED_ORT_INTRA_OP_THREADS=$THREADS
+PREACHED_KILL_FILE=${PREACHED_KILL_FILE:-$ROOT/KILL}
+PREACHED_RATE_LIMIT=${PREACHED_RATE_LIMIT:-60}
+PREACHED_RATE_WINDOW_S=${PREACHED_RATE_WINDOW_S:-60}
+HF_HUB_OFFLINE=1
+HF_HUB_DISABLE_TELEMETRY=1
+TRANSFORMERS_OFFLINE=1
+TOKENIZERS_PARALLELISM=false
+PYTHONDONTWRITEBYTECODE=1
+PYTHONUNBUFFERED=1
+PYTHONNOUSERSITE=1
+PYTHONPATH="$ROOT/src:$ROOT"
+HOME=${HOME:-/tmp}
+LANG=${LANG:-C.UTF-8}
+LC_ALL=${LC_ALL:-$LANG}
+TMPDIR=${TMPDIR:-/tmp}
+
+# The server process sees only this list. Tokens and cloud credentials in
+# the shell are not passed through. Names, not values, are the contract.
+ENV_ARGS=("PATH=${PATH}" "HOME=${HOME}" "LANG=${LANG}" "LC_ALL=${LC_ALL}" "TMPDIR=${TMPDIR}")
+pass() {
+  local name=$1
+  if [ -n "${!name+x}" ]; then
+    ENV_ARGS+=("${name}=${!name}")
+  fi
+}
+pass PREACHED_CACHE
+pass PREACHED_EMBED_BACKEND
+pass PREACHED_ONNX_VARIANT
+pass PREACHED_ONNX_DIR
+pass PREACHED_ORT_INTRA_OP_THREADS
+pass PREACHED_KILL_FILE
+pass PREACHED_RATE_LIMIT
+pass PREACHED_RATE_WINDOW_S
+pass PREACHED_DISABLED
+pass PREACHED_HEADER_DEADLINE_S
+pass PREACHED_MAX_CONNECTIONS
+pass PREACHED_MAX_CLIENT_CONNECTIONS
+pass HF_HUB_OFFLINE
+pass HF_HUB_DISABLE_TELEMETRY
+pass TRANSFORMERS_OFFLINE
+pass TOKENIZERS_PARALLELISM
+pass PYTHONDONTWRITEBYTECODE
+pass PYTHONUNBUFFERED
+pass PYTHONNOUSERSITE
+pass PYTHONPATH
+pass TZ
 
 ARGS=(
   app/server.py
@@ -140,6 +180,6 @@ ARGS=(
 )
 
 if [ -n "$PY" ]; then
-  exec "$PY" "${ARGS[@]}"
+  exec env -i "${ENV_ARGS[@]}" "$PY" "${ARGS[@]}"
 fi
-exec uv run --frozen --no-sync --no-dev --no-default-groups python "${ARGS[@]}"
+exec env -i "${ENV_ARGS[@]}" uv run --frozen --no-sync --no-dev --no-default-groups python "${ARGS[@]}"
