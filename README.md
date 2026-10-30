@@ -30,7 +30,7 @@ Another library is a separate SQLite file. The server still serves one file per 
 uv run app/server.py --library <slug> --bm25-only
 ```
 
-That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`. Only `wesley` and the public-domain libraries in `src/preached/libraries.py` (`spurgeon`, `edwards`) are served; any other slug or `--index` file, including a church YouTube import, is refused until redaction and approval are in place.
+That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`. Without a privacy config, only `wesley` and the public-domain libraries in `src/preached/libraries.py` (`spurgeon`, `edwards`) are served. A classic is served only from its own owner-only `/cache/index/<slug>.sqlite`. A church library (a YouTube or ASR import) is served only with `$PREACHED_PRIVACY` set, and always behind the publish gate: a sermon appears only after `--ack-review`. Passages with a redacted name get no link, and such a sermon loses its untimed links (see `reports/W3-PRIV-WIRE.md`).
 
 ## Credits
 
