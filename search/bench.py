@@ -1,7 +1,10 @@
 """Benchmark BM25, each embedding model, and hybrids on the Wesley eval set.
 
 One command:  uv run --group bench search/bench.py
-(The bench group adds Pillow and torchvision, which EmbeddingGemma 2 needs to load.)
+(The bench group adds torch, sentence-transformers, Pillow, and torchvision.)
+ONNX Granite (does not touch the shipped index):
+  uv run --group bench search/bench.py --models granite-english-r2 \
+    --embed-backend onnx --index /cache/index/wesley-onnx-fp32.sqlite
 Models come from search/models.toml (one table per model, pinned revision).
 Each run writes eval/results/YYYY-MM-DD[-N].json and .md and never
 overwrites an earlier run. Document vectors are cached in the SQLite index
@@ -27,6 +30,7 @@ import datetime as dt
 import hashlib
 import json
 import math
+import os
 import platform
 import subprocess
 import sys
@@ -226,6 +230,45 @@ def summarize(per_query: dict[str, dict]) -> dict:
 
 # ---------- embedding cache ----------
 
+def _embedding_meta(connection, key: str) -> dict:
+    row = connection.execute(
+        "SELECT value FROM meta WHERE key = ?", (f"embeddings:{key}",)
+    ).fetchone()
+    if not row:
+        return {}
+    return json.loads(row[0])
+
+
+def cache_matches(connection, key: str, spec, n_chunks: int, backend: str, variant: str | None) -> bool:
+    """True when stored document vectors were built by this backend.
+
+    Rows written before the backend field existed count as torch, so the
+    shipped index still hits the cache on a torch bench run.
+    """
+    have = connection.execute(
+        "SELECT count(*) FROM embeddings WHERE model = ?", (key,)
+    ).fetchone()[0]
+    if have != n_chunks or stored_fingerprint(connection, key) != spec.fingerprint():
+        return False
+    info = _embedding_meta(connection, key)
+    if info.get("backend", "torch") != backend:
+        return False
+    if backend == "onnx" and info.get("variant") != variant:
+        return False
+    return True
+
+
+def _store_matrix(spec, rows, matrix, connection, stats: dict) -> dict:
+    write_embeddings(connection, spec.key, [int(r["rowid"]) for r in rows], matrix)
+    stats = {
+        **stats,
+        "dim": int(matrix.shape[1]),
+        "embedded_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    save_embedding_info(connection, spec.key, {"fingerprint": spec.fingerprint(), **stats})
+    return stats
+
+
 def embed_corpus(spec, rows, batch_size: int, connection) -> dict:
     import torch
 
@@ -251,6 +294,7 @@ def embed_corpus(spec, rows, batch_size: int, connection) -> dict:
         "vram_baseline_mib": watch.baseline,
         "vram_peak_mib": watch.peak,
         "vram_delta_mib": max(0, watch.peak - watch.baseline),
+        "backend": "torch",
         "dim": int(matrix.shape[1]),
         "embedded_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
     }
@@ -258,27 +302,72 @@ def embed_corpus(spec, rows, batch_size: int, connection) -> dict:
     return stats
 
 
-def cpu_eval(spec, connection, questions, dedupe: bool = False) -> tuple[dict, dict]:
-    """Metrics with CPU query vectors, then CPU latency (query embed + search)."""
-    loaded = load_model(spec, device="cpu", batch_size=1)
+def embed_corpus_onnx(spec, rows, embedder, connection) -> dict:
+    """Re-embed with an already loaded ONNX session. Does not import torch."""
+    titles = [document_title(r["sermon_title"], r["scripture"]) for r in rows]
+    texts = [r["text"] for r in rows]
+    started = time.perf_counter()
+    matrix = embedder.encode_documents(texts, titles)
+    elapsed = time.perf_counter() - started
+    return _store_matrix(
+        spec,
+        rows,
+        matrix,
+        connection,
+        {
+            "device": "cpu",
+            "dtype": embedder.variant,
+            "backend": "onnx",
+            "variant": embedder.variant,
+            "batch_size": embedder.batch_size,
+            "ort_intra_op_threads": embedder.threads,
+            "seconds": round(elapsed, 1),
+            "chunks_per_s": round(len(texts) / elapsed, 1) if elapsed else None,
+        },
+    )
+
+
+def cpu_eval(
+    spec,
+    connection,
+    questions,
+    dedupe: bool = False,
+    encode=None,
+    repeats: int = 1,
+    dtype_label: str | None = None,
+) -> tuple[dict, dict]:
+    """Metrics with CPU query vectors, then CPU latency (query embed + search).
+
+    ``encode`` overrides the sentence-transformers path (the ONNX backend).
+    """
+    loaded = None
+    if encode is None:
+        loaded = load_model(spec, device="cpu", batch_size=1)
+
+        def encode(query: str, loaded=loaded):
+            return encode_query(loaded, query)
+
+        dtype_label = loaded.dtype
     try:
         searcher = Searcher(connection, model=spec.key)
-        result = evaluate(searcher, questions, MODES, encode=lambda q: encode_query(loaded, q), dedupe=dedupe)
+        result = evaluate(searcher, questions, MODES, encode=encode, dedupe=dedupe)
         for q in questions[:2]:  # warmup
-            searcher.hybrid(q["query"], encode_query(loaded, q["query"]), 5)
+            searcher.hybrid(q["query"], encode(q["query"]), 5)
         timings: dict[str, list[float]] = {m: [] for m in MODES}
-        for q in questions:
-            for mode in MODES:
-                started = time.perf_counter()
-                run_mode(searcher, q["query"], encode_query(loaded, q["query"]), mode, dedupe)
-                timings[mode].append((time.perf_counter() - started) * 1000)
+        for _ in range(max(1, repeats)):
+            for q in questions:
+                for mode in MODES:
+                    started = time.perf_counter()
+                    run_mode(searcher, q["query"], encode(q["query"]), mode, dedupe)
+                    timings[mode].append((time.perf_counter() - started) * 1000)
         latency = {
             m: {"p50_ms": round(percentile(v, 50), 1), "p95_ms": round(percentile(v, 95), 1), "n": len(v)}
             for m, v in timings.items()
         }
-        result["cpu_dtype"] = loaded.dtype
+        result["cpu_dtype"] = dtype_label
     finally:
-        unload(loaded)
+        if loaded is not None:
+            unload(loaded)
     return result, latency
 
 
@@ -368,10 +457,21 @@ def main() -> None:
     parser.add_argument("--note", default="", help="free text stored with the run")
     parser.add_argument("--dedupe", action="store_true",
                         help="score the API path: top SEARCH_POOL, then dedupe_adjacent to 10")
+    parser.add_argument("--embed-backend", choices=("torch", "onnx"), default="torch",
+                        help="torch keeps the GPU bench; onnx is Granite English R2 only")
+    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
+    parser.add_argument("--index", type=Path, default=INDEX_PATH,
+                        help="SQLite index. ONNX re-embeds refuse the shipped wesley.sqlite")
+    parser.add_argument("--latency-repeats", type=int, default=1,
+                        help="extra passes over the 40 queries for p50/p95")
     args = parser.parse_args()
 
+    if args.embed_backend == "onnx":
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
     started = dt.datetime.now().astimezone()
-    connection = connect(INDEX_PATH)
+    connection = connect(args.index)
     n_chunks = ensure_chunks(connection)
     questions = read_jsonl(questions_path())
     answerable = [q for q in questions if q["relevant"]]
@@ -386,7 +486,10 @@ def main() -> None:
         "chunks": n_chunks,
         "n_answerable": len(answerable),
         "n_unanswerable": len(questions) - len(answerable),
-        "index_path": str(INDEX_PATH),
+        "index_path": str(args.index),
+        "embed_backend": args.embed_backend,
+        "onnx_variant": args.onnx_variant,
+        "ort_threads": args.ort_threads,
         "environment": environment(),
         "reference": REFERENCE,
         "excluded_models": EXCLUDED,
@@ -406,15 +509,48 @@ def main() -> None:
         print(f"\n== {key} ({spec.hf_id}@{spec.revision[:10]}) ==", flush=True)
         entry = {**spec.record(), "status": "pending", "prompts": describe_prompts(spec)}
         try:
-            have = connection.execute("SELECT count(*) FROM embeddings WHERE model = ?", (key,)).fetchone()[0]
-            if args.reembed or have != n_chunks or stored_fingerprint(connection, key) != spec.fingerprint():
-                entry["embed"] = embed_corpus(spec, rows, args.batch_size, connection)
+            if args.embed_backend == "onnx" and key != "granite-english-r2":
+                raise RuntimeError("onnx backend only supports granite-english-r2")
+            embedder = None
+            variant = args.onnx_variant
+            if args.embed_backend == "onnx":
+                from preached.onnx_embed import OnnxEmbedder
+
+                embedder = OnnxEmbedder.load(
+                    key,
+                    variant=args.onnx_variant,
+                    ort_threads=args.ort_threads,
+                    batch_size=args.batch_size,
+                )
+                variant = embedder.variant
+            if args.reembed or not cache_matches(connection, key, spec, n_chunks, args.embed_backend, variant):
+                if args.embed_backend == "onnx" and args.index.resolve() == INDEX_PATH.resolve():
+                    raise SystemExit(
+                        f"refusing to write ONNX embeddings into {INDEX_PATH}. "
+                        "Copy the index and pass --index."
+                    )
+                if embedder is not None:
+                    entry["embed"] = embed_corpus_onnx(spec, rows, embedder, connection)
+                else:
+                    entry["embed"] = embed_corpus(spec, rows, args.batch_size, connection)
                 print(f"embedded: {entry['embed']}", flush=True)
             else:
-                row = connection.execute("SELECT value FROM meta WHERE key = ?", (f"embeddings:{key}",)).fetchone()
-                entry["embed"] = {**json.loads(row[0]), "cached": True}
+                entry["embed"] = {**_embedding_meta(connection, key), "cached": True}
                 print("corpus vectors cached (fingerprint matches)", flush=True)
-            result, latency = cpu_eval(spec, connection, questions, args.dedupe)
+            if embedder is not None:
+                result, latency = cpu_eval(
+                    spec,
+                    connection,
+                    questions,
+                    args.dedupe,
+                    encode=lambda q, embedder=embedder: embedder.encode_queries([q])[0],
+                    repeats=args.latency_repeats,
+                    dtype_label=embedder.variant,
+                )
+            else:
+                result, latency = cpu_eval(
+                    spec, connection, questions, args.dedupe, repeats=args.latency_repeats
+                )
             entry["cpu_dtype"] = result["cpu_dtype"]
             entry["per_query"] = result["per_query"]
             entry["negative_top1"] = result["negative_top1"]

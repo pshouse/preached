@@ -8,13 +8,14 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from preached import env  # noqa: F401, E402
-from preached.embed import encode_query, load_model, unload  # noqa: E402
+from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
 from preached.search import Searcher  # noqa: E402
@@ -61,22 +62,37 @@ def main() -> None:
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--dense-weight", type=float, default=0.5)
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
-    parser.add_argument("--device", default="cpu", help="device for the query embedding")
+    parser.add_argument("--device", default="cpu", help="device for the torch query embedding")
+    parser.add_argument(
+        "--embed-backend",
+        choices=("onnx", "torch"),
+        default=None,
+        help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
+    )
+    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     args = parser.parse_args()
 
     connection = connect(args.index)
     ensure_chunks(connection)
     model_name = None
-    loaded = None
+    embedder = None
     vector = None
     try:
         if args.mode == "bm25":
             hits = Searcher(connection).bm25(args.query, args.k)
         else:
             model_name = args.model
-            spec = MODELS[model_name]
-            loaded = load_model(spec, device=args.device, batch_size=1)
-            vector = encode_query(loaded, args.query)
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            embedder = load_embedder(
+                model_name,
+                args.embed_backend,
+                variant=args.onnx_variant,
+                ort_threads=args.ort_threads,
+                device=args.device,
+                batch_size=1,
+            )
+            vector = embedder.encode_queries([args.query])[0]
             try:
                 searcher = Searcher(connection, model=model_name)
             except EmbeddingMismatch as exc:
@@ -93,8 +109,8 @@ def main() -> None:
                     dense_weight=args.dense_weight,
                 )
     finally:
-        if loaded is not None:
-            unload(loaded)
+        if embedder is not None and hasattr(embedder, "close"):
+            embedder.close()
     print_hits(args.query, args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}", model_name, hits)
 
 

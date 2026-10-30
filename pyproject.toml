@@ -9,18 +9,31 @@ authors = [
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "numpy>=2.1",
-    "sentence-transformers>=6.1.0",
-    "torch>=2.5",
+    "onnxruntime>=1.20",
+    "tokenizers>=0.21",
 ]
 
 [dependency-groups]
-# Only needed to load models we benchmark but do not ship: EmbeddingGemma 2
-# builds image/video processors even for a text-only load.
-# Use: uv run --group bench search/bench.py
+# Opt-in. The server and search/query.py do not install this group.
+# EmbeddingGemma 2 builds image/video processors even for a text-only load,
+# so Pillow and torchvision stay here. einops left with Nomic (excluded)
+# and is not re-added. Torch resolves from PyPI (CUDA build). A CPU wheel
+# is a separate venv; see reports/W3-CPU.md.
+#   uv sync
+#   uv run app/server.py
+#   uv run --group bench search/bench.py
+#   uv run --group bench python scripts/export_onnx.py
 bench = [
+    "onnx>=1.17",
+    "onnxscript>=0.3",
     "pillow>=10",
+    "sentence-transformers>=6.1.0",
+    "torch>=2.5",
     "torchvision>=0.29.2",
 ]
+
+[tool.uv]
+default-groups = []
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]

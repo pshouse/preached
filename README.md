@@ -6,8 +6,8 @@ Search a sermon archive and return the preacher's own words. This branch builds 
 uv run corpus/fetch_wesley.py
 uv run corpus/chunk_sermons.py
 uv run python eval/validate.py
-uv run search/bench.py
-uv run search/bench.py --models granite-english-r2 --dedupe
+uv run --group bench search/bench.py
+uv run --group bench search/bench.py --models granite-english-r2 --dedupe
 uv run search/query.py "what did Wesley say about worry" --mode hybrid -k 5
 ```
 

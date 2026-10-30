@@ -31,6 +31,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from preached import env  # noqa: E402, F401
+from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -204,29 +205,65 @@ def hit_dict(hit) -> dict:
     return {key: payload[key] for key in RESULT_FIELDS}
 
 
-def default_loader(connection, model_key: str):
-    """Load Granite on CPU. The GPU stays with the Whisper job."""
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    from preached.embed import encode_query, load_model, unload
+def default_loader(
+    connection,
+    model_key: str,
+    embed_backend: str | None = None,
+    ort_threads: int | None = None,
+    variant: str | None = None,
+):
+    """Load the query embedder on CPU. The GPU stays with the Whisper job.
 
-    spec = MODELS[model_key]
-    # Check the stored vectors' fingerprint before paying for the weights.
+    The stored-vector fingerprint is checked before the weights load.
+    ``embed_backend`` is ``onnx`` (the default) or ``torch``. Torch is
+    imported only when that backend is selected.
+    """
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    from preached.backends import load_embedder
+
     searcher = Searcher(connection, model=model_key)
-    loaded = load_model(spec, device="cpu", batch_size=1)
+    embedder = load_embedder(
+        model_key,
+        embed_backend,
+        variant=variant,
+        ort_threads=ort_threads,
+        device="cpu",
+        batch_size=1,
+    )
 
     def encode(query: str):
-        return encode_query(loaded, query)
+        return embedder.encode_queries([query])[0]
 
+    encode.backend = embedder.backend
+    encode.variant = getattr(embedder, "variant", None)
+    encode.threads = getattr(embedder, "threads", None)
     return searcher, encode
 
 
-def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=None):
+def load_search(
+    connection,
+    model_key: str,
+    *,
+    bm25_only: bool = False,
+    loader=None,
+    embed_backend: str | None = None,
+    ort_threads: int | None = None,
+    variant: str | None = None,
+):
     """Return (searcher, encode_or_none, fallback_note_or_none)."""
     if bm25_only:
         return Searcher(connection), None, None
-    loader = loader or default_loader
     try:
-        searcher, encode = loader(connection, model_key)
+        if loader is None:
+            searcher, encode = default_loader(
+                connection,
+                model_key,
+                embed_backend=embed_backend,
+                ort_threads=ort_threads,
+                variant=variant,
+            )
+        else:
+            searcher, encode = loader(connection, model_key)
     except EmbeddingMismatch:
         # Never pair new query vectors with old document vectors.
         logging.exception("stored vectors do not match search/models.toml; serving BM25 only")
@@ -238,12 +275,13 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
 
 
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir):
+    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, backend=None):
         self.connection = connection
         self.searcher = searcher
         self.encode = encode
         self.fallback_note = fallback_note
         self.model_name = model_name if encode is not None else None
+        self.backend = None if encode is None else (backend if backend is not None else getattr(encode, "backend", None))
         self.hosts = frozenset(host.lower() for host in hosts)
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
@@ -262,6 +300,7 @@ class App:
             "model": self.model_name,
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
+            "backend": self.backend,
         }
 
     def search(self, query: str, k: int, mode: str) -> dict:
@@ -318,12 +357,26 @@ class App:
         }
 
 
-def build_app(connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None) -> App:
+def build_app(
+    connection,
+    *,
+    model_key: str,
+    bm25_only: bool,
+    hosts,
+    static_dir,
+    loader=None,
+    embed_backend: str | None = None,
+    ort_threads: int | None = None,
+    variant: str | None = None,
+) -> App:
     searcher, encode, note = load_search(
         connection,
         model_key,
         bm25_only=bm25_only,
         loader=loader,
+        embed_backend=embed_backend,
+        ort_threads=ort_threads,
+        variant=variant,
     )
     return App(
         connection=connection,
@@ -558,6 +611,14 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the embedding model and serve keyword search",
     )
+    parser.add_argument(
+        "--embed-backend",
+        choices=("onnx", "torch"),
+        default=None,
+        help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
+    )
+    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     args = parser.parse_args(argv)
     if args.model not in MODELS:
         raise SystemExit(f"unknown model {args.model}")
@@ -575,11 +636,21 @@ def main(argv: list[str] | None = None) -> None:
         bm25_only=args.bm25_only,
         hosts=hosts,
         static_dir=STATIC_DIR,
+        embed_backend=args.embed_backend,
+        ort_threads=args.ort_threads,
+        variant=args.onnx_variant,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)
     elif app.encode is None:
         logging.info("BM25 only; the embedding model was not loaded")
+    else:
+        logging.info(
+            "embed backend=%s variant=%s threads=%s",
+            getattr(app.encode, "backend", None),
+            getattr(app.encode, "variant", None),
+            getattr(app.encode, "threads", None),
+        )
     server = make_server(app, args.host, args.port)
     try:
         serve_forever(server)
