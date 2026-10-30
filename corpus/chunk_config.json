@@ -1,0 +1,8 @@
+{
+  "target_words": 112,
+  "min_words": 75,
+  "max_words": 150,
+  "overlap": 0.25,
+  "wpm": 150,
+  "note": "150 wpm spoken English: 75 words is about 30s, 150 words is about 60s. Target is about 45s. Overlap is the fraction of the previous chunk repeated, snapped to a sentence boundary. start_s and end_s stay null for these text chunks."
+}

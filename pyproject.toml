@@ -1,0 +1,18 @@
+[project]
+name = "preached"
+version = "0.1.0"
+description = "Search a sermon archive and return the preacher's own words."
+readme = "README.md"
+authors = [
+    { name = "Patrick Shouse", email = "shouse.patrick@gmail.com" }
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "numpy>=2.1",
+    "sentence-transformers>=6.1.0",
+    "torch>=2.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
