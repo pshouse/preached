@@ -10,7 +10,9 @@ one family and share one pool (the union of both), because they share labels.
 Writes eval/pool/pool-YYYY-MM-DD.jsonl (chunk ids and ranks only; committed)
 and, for the human or agent judging it, /cache/eval-pool/YYYY-MM-DD/<family>.md
 with each pooled chunk's text, plus every chunk of the grade-2 sermon(s) for
-the "own reading" pass. Judging is done by reading; no model scores relevance.
+the "own reading" pass. The pool section is shuffled and does not name the
+ranker or the rank, so a grader cannot see which system returned a chunk.
+Judging is done by reading; no model scores relevance.
 
   uv run --group bench eval/pool.py [--k 20] [--models ...]
 """
@@ -20,6 +22,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -140,11 +143,14 @@ def _write_texts(path, record, members, pooled, chunks, by_sermon) -> None:
         for p in members[0]["relevant"]:
             lines.append(f"- grade {p['grade']} {p['sermon_id']} {p['sermon_title']} {p.get('chunk_ids')}: «{p['quote']}»")
         lines.append("")
-    lines.append(f"## Pool ({len(pooled)} chunks; rankers that returned each, as id|ranker@rank)")
-    for cid in record["pooled"]:
+    # Shuffle, and do not print ranker or rank. Sermon order and "ranker@rank"
+    # both tell a grader which system surfaced the chunk.
+    order = list(record["pooled"])
+    random.Random(record["family"]).shuffle(order)
+    lines.append(f"## Pool ({len(pooled)} chunks)")
+    for cid in order:
         row = chunks[cid]
-        lines += ["", f"### {cid} — {row['sermon_title']} (#{row['sermon_number']})",
-                  f"by: {', '.join(pooled[cid][:6])}{' …' if len(pooled[cid]) > 6 else ''}", "", row["text"]]
+        lines += ["", f"### {cid} — {row['sermon_title']} (#{row['sermon_number']})", "", row["text"]]
     for sid in record["gold_sermons"]:
         rest = [c for c in by_sermon.get(sid, []) if c not in pooled]
         lines += ["", f"## Rest of grade-2 sermon {sid} (chunks not in the pool, for the reading pass)"]
