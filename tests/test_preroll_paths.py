@@ -172,6 +172,12 @@ class PrerollTests(unittest.TestCase):
             "http://www.youtube.com/watch?v=abcdefghijk",
             "https://evil.com@www.youtube.com/watch?v=abcdefghijk",
             "https://www.youtube.com/watch?v=abcdefghijk&t=11s\x1b",
+            "https://www.youtube.com:abc/watch?v=abcdefghijk",
+            "https://www.youtube.com:99999/watch?v=abcdefghijk",
+            "https://[::1]/watch?v=abcdefghijk",
+            "https://[gggg::1]/watch?v=abcdefghijk",
+            "https://archive.org:abc/download/x/y.mp3",
+            "https://archive.org:99999/download/x/y.mp3",
         ):
             with self.subTest(url=bad):
                 self.assertEqual(query.play_url(bad, 3.0), query.UNSAFE_URL)

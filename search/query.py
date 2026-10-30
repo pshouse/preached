@@ -22,7 +22,7 @@ from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: 
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 from preached.youtube.listing import youtube_watch_url  # noqa: E402
-from manifest import UnsafeRow, check_audio_url  # noqa: E402
+from manifest import check_audio_url  # noqa: E402
 
 # C0 (incl. ESC, newline), DEL and C1 controls: none belong in one terminal line.
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
@@ -60,8 +60,8 @@ def play_url(audio_url, start_s) -> str:
     A validated YouTube watch URL is printed as stored. Its ``&t=`` already
     includes the pre-roll, so this does not add ``#t=``. An archive.org URL
     still gets ``#t=<seek>`` where seek is max(0, start_s - PREROLL_S).
-    Anything else is hidden. Control characters are stripped after a URL
-    passes validation.
+    Anything else is hidden, including a URL whose parser raises. Control
+    characters are stripped after a URL passes validation.
     """
     if not audio_url:
         return "n/a"
@@ -70,8 +70,11 @@ def play_url(audio_url, start_s) -> str:
         return clean(youtube)
     try:
         # Same rule as the manifest: https on archive.org, no credentials.
+        # UnsafeRow is a ValueError (bad port, off-host, credentials).
+        # urlsplit also raises ValueError for an invalid IPv6 netloc and
+        # some NFKC hosts, before check_audio_url can wrap it.
         check_audio_url(audio_url)
-    except UnsafeRow:
+    except ValueError:
         return UNSAFE_URL
     audio_url = clean(audio_url)
     seek = play_start(start_s)
