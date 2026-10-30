@@ -471,6 +471,7 @@ class _Pass:
         self.backrefs: list[tuple[str, int]] = []
         self.reviews: list[tuple[int, int, str]] = []
         self.reasons: list[tuple[int, int, str]] = []
+        self.span_start = 0
 
     # ------------------------------------------------------------ setup
 
@@ -557,6 +558,7 @@ class _Pass:
         self._mark_phrases()
         self._mark_candidates()
         for start, end in list(self._spans()):
+            self.span_start = start
             self._decide(start, end)
         self._coordinate()
         self._lowercase()
@@ -998,14 +1000,14 @@ class _Pass:
         for tok in span:
             tok.redact = True
             tok.by_default = by_default
+        start = self.span_start
         if by_default and len(span) >= 2:
-            self._review(span, f"redacted: {why}; add to allow if this is a public figure")
+            self.reviews.append((start, start + len(span), f"redacted: {why}; add to allow if this is a public figure"))
         else:
-            self.reasons.append((self.toks.index(span[0]), self.toks.index(span[0]) + len(span), why))
+            self.reasons.append((start, start + len(span), why))
 
     def _review(self, span: list[Tok], why: str) -> None:
-        start = self.toks.index(span[0])
-        self.reviews.append((start, start + len(span), why))
+        self.reviews.append((self.span_start, self.span_start + len(span), why))
 
     def _coordinate(self) -> None:
         """'Peter and Brenda': a kept given-name span joined to a private one."""
