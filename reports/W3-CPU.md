@@ -117,7 +117,7 @@ Document encode (batch 32, intra-op 8, this CPU): fp32 12.2 chunks/s (686 s), in
 | ONNX fp32, dedupe | hybrid RRF | 0.614 | 0.497 | 0.546 | 26.4 ms p50 |
 | ONNX int8, dedupe | hybrid RRF | 0.614 | 0.439 | 0.507 | 13.3 ms p50 |
 
-Query latency above is embed plus search, warmup excluded, 40 queries × 3 repeats (n=120), intra-op 4 on the full chip for ONNX and `OMP_NUM_THREADS=4` for torch. Files: `eval/results/2026-10-30-2.json` (torch), `-3` (fp32), `-4` (int8), `2026-10-30-dedupe-2.json` through `-4`.
+Query latency above is embed plus search, warmup excluded, 40 queries × 3 repeats (n=120), intra-op 4 on the full chip for ONNX and `OMP_NUM_THREADS=4` for torch. Files: `eval/results/2026-10-30-w3cpu-torch-cpu.json`, `2026-10-30-w3cpu-onnx-fp32.json`, `2026-10-30-w3cpu-onnx-int8.json`, and the dedupe runs `2026-10-30-dedupe-w3cpu-torch-cpu.json`, `2026-10-30-dedupe-w3cpu-onnx-fp32.json`, `2026-10-30-dedupe-w3cpu-onnx-int8.json`. The names are descriptive so they do not collide with another branch's auto-numbered `2026-10-30-2`.
 
 fp32 vs torch, raw and dedupe, dense and hybrid RRF: delta 0.000 on all three metrics, top-10 chunk ids identical on 35/35 answerable queries. Hybrid weighted matched as well (0.571 / 0.477 / 0.541, top-10 identical). There are no per-query differences to list for fp32.
 

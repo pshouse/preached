@@ -3,7 +3,9 @@
 Prints Recall@5, MRR@10, and nDCG@10 deltas, and how many questions
 kept the same top-10 chunk ids. Used for the W3 ONNX vs torch check.
 
-  python scripts/compare_eval.py eval/results/torch.json eval/results/onnx.json
+  python scripts/compare_eval.py \\
+    eval/results/2026-10-30-w3cpu-torch-cpu.json \\
+    eval/results/2026-10-30-w3cpu-onnx-fp32.json
 """
 
 from __future__ import annotations
