@@ -141,6 +141,53 @@ button:hover { background: #000; }
   background: var(--bg-raised);
 }
 
+.note-weak {
+  border-style: dashed;
+}
+
+.status.is-error {
+  padding: 0.6rem 0.75rem;
+  border: 2px solid var(--ink);
+  background: var(--bg-raised);
+  font-weight: 600;
+}
+
+.results-section.is-loading .status::after {
+  content: "";
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-left: 0.5em;
+  border: 2px solid var(--ink-soft);
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.state-actions button {
+  margin: 0 0 0.75rem;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+}
+
+button.secondary:hover { background: var(--bg-raised); }
+
+[hidden] { display: none !important; }
+
 .results {
   list-style: none;
   margin: 0;
@@ -283,6 +330,7 @@ blockquote {
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
+  .results-section.is-loading .status::after { animation: none; }
 }
 
 @media (prefers-contrast: more) {

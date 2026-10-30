@@ -38,6 +38,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 RESULT_FIELDS = (
     "chunk_id",
+    "chunk_ids",
     "sermon_id",
     "sermon_number",
     "sermon_title",

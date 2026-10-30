@@ -1,0 +1,18 @@
+{"id": "nl-stop-worrying", "query": "How do I stop worrying?", "expected_sermons": [29], "note": "CTO example; wrongly abstained before the fix-up"}
+{"id": "nl-worry", "query": "worry", "expected_sermons": [29], "note": "CTO example; one word"}
+{"id": "nl-future", "query": "I'm anxious about the future. What should I do?", "expected_sermons": [29]}
+{"id": "nl-handle-money", "query": "How should a Christian handle their money?", "expected_sermons": [50, 28], "note": "shares the title word 'money' with sermon 50"}
+{"id": "nl-rich", "query": "Is it wrong to be rich?", "expected_sermons": [50, 28]}
+{"id": "nl-forgiven", "query": "How can I be sure God has forgiven me?", "expected_sermons": [10, 11]}
+{"id": "nl-why-fast", "query": "Why should I fast?", "expected_sermons": [27]}
+{"id": "nl-how-pray", "query": "How should I pray?", "expected_sermons": [26]}
+{"id": "nl-far-from-god", "query": "I feel far from God lately.", "expected_sermons": [46]}
+{"id": "nl-still-sin", "query": "Why do I still sin after becoming a Christian?", "expected_sermons": [13]}
+{"id": "nl-mind-drifts", "query": "My mind keeps drifting when I pray.", "expected_sermons": [41]}
+{"id": "nl-gossip", "query": "How should I talk about someone who wronged me?", "expected_sermons": [49]}
+{"id": "nl-communion", "query": "Should I take communion often?", "expected_sermons": [101]}
+{"id": "nl-other-churches", "query": "How do I get along with Christians from other churches?", "expected_sermons": [39]}
+{"id": "nl-born-again", "query": "What does it mean to be born again?", "expected_sermons": [45]}
+{"id": "nl-stop-sinning", "query": "Can a Christian stop sinning completely?", "expected_sermons": [40]}
+{"id": "nl-sad", "query": "I'm going through a hard time and feel sad all the time.", "expected_sermons": [47, 46]}
+{"id": "nl-deny-myself", "query": "Do I have to give things up to follow Jesus?", "expected_sermons": [48]}

@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
+from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH  # noqa: E402
@@ -63,7 +64,7 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
     print(f"query: {query}")
     print(f"mode: {mode}" + (f"  model: {model}" if model else ""))
     if not hits:
-        print("Nothing strong found in the indexed sermons.")
+        print("Nothing found in the indexed sermons.")
         return
     for rank, hit in enumerate(hits, start=1):
         print(
@@ -94,6 +95,8 @@ def main() -> None:
     )
     parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
+    parser.add_argument("--hide-low-confidence", action="store_true",
+                        help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
 
     # Read-only, and it does not sync. A text-only chunks.jsonl matches the
@@ -108,7 +111,8 @@ def main() -> None:
     vector = None
     try:
         if args.mode == "bm25":
-            hits = Searcher(connection).bm25(args.query, args.k)
+            searcher = Searcher(connection)
+            hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
             os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -140,7 +144,24 @@ def main() -> None:
     finally:
         if embedder is not None and hasattr(embedder, "close"):
             embedder.close()
-    print_hits(args.query, args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}", model_name, hits)
+    # Same abstain rule and per-backend floor as GET /api/search (preached.abstain).
+    # BM25 has no dense signal, so the floor stays off.
+    floor = None
+    if vector is not None:
+        floor = floor_for(
+            model_name,
+            backend=getattr(embedder, "backend", "torch"),
+            variant=getattr(embedder, "variant", None),
+        )
+    confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
+    mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
+    if confidence.abstain and hits and args.hide_low_confidence:
+        print_hits(args.query, mode_label, model_name, [])
+        print(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
+        return
+    print_hits(args.query, mode_label, model_name, hits)
+    if confidence.note and hits:
+        print(f"\nnote: {confidence.note}")
 
 
 if __name__ == "__main__":

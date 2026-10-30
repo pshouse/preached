@@ -53,6 +53,7 @@ AUDIO = "https://archive.org/download/sermonsfirstseries_1307_librivox/example.m
 CCEL = "https://ccel.org/ccel/wesley/sermons/sermons.v.i.html"
 RESULT_KEYS = {
     "chunk_id",
+    "chunk_ids",
     "sermon_id",
     "sermon_number",
     "sermon_title",
@@ -341,7 +342,7 @@ class ServerTests(unittest.TestCase):
         self.assert_secure(headers)
         self.assertIn("application/json", header(headers, "Content-Type"))
         payload = json.loads(body)
-        self.assertEqual(set(payload), {"query", "mode", "took_ms", "results", "note"})
+        self.assertEqual(set(payload), {"query", "mode", "took_ms", "results", "note", "abstain", "confidence"})
         self.assertEqual(payload["query"], "zealboundary")
         self.assertEqual(payload["mode"], "bm25")
         self.assertIsNone(payload["note"])
@@ -506,7 +507,10 @@ class ServerTests(unittest.TestCase):
         page = (STATIC_DIR / "index.html").read_text()
         script = (STATIC_DIR / "app.js").read_text()
         style = (STATIC_DIR / "app.css").read_text()
-        self.assertIn("Nothing strong found", script)
+        self.assertIn("Nothing found in these sermons", script)  # zero hits only
+        self.assertNotIn("Nothing strong found", script)  # low confidence shows results, not this
+        self.assertIn("heuristic", script)
+        self.assertIn("Hide low-confidence results", page)
         self.assertIn("Audio timing coming soon", script)
         self.assertIn("LibriVox volunteer", script)
         self.assertIn("Read by ", script)
@@ -682,6 +686,90 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(third["mode"], "bm25")
             self.assertEqual(third["note"], STALE_NOTE)
             self.assertFalse(app.health()["dense"])
+
+    def test_floor_survives_reload_and_is_skipped_on_bm25_fallback(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.sqlite"
+            connection = connect(path)
+            _insert(
+                connection,
+                chunk_id="c1",
+                text="By grace are ye saved through faith.",
+                start_s=10,
+                end_s=20,
+            )
+            connection.commit()
+            rowid = int(connection.execute("SELECT rowid FROM chunks").fetchone()[0])
+            matrix = np.array([[1, 0, 0, 0]], dtype=np.float32)
+            write_embeddings(connection, spec.key, [rowid], matrix)
+            save_embedding_info(
+                connection,
+                spec.key,
+                {"fingerprint": spec.fingerprint(), "backend": "onnx", "variant": "fp32"},
+            )
+            connection.execute(
+                "INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa')"
+            )
+            connection.commit()
+
+            def encode(_query: str) -> np.ndarray:
+                return np.array([1, 0, 0, 0], dtype=np.float32)
+
+            encode.backend = "onnx"
+            encode.variant = "fp32"
+            app = App(
+                connection=connection,
+                searcher=Searcher(connection, model=spec.key),
+                encode=encode,
+                fallback_note=None,
+                model_name=spec.key,
+                hosts={"127.0.0.1"},
+                static_dir=STATIC_DIR,
+                backend="onnx",
+                floor=1.0,
+            )
+            # Dense top is 1.0, which sits on the floor, and this query has
+            # no lexical hit, so the floor marks the list low-confidence.
+            first = app.search("nosuchwordanywhere", 5, "hybrid")
+            self.assertTrue(first["abstain"])
+            self.assertEqual(first["confidence"]["level"], "none")
+            self.assertTrue(first["confidence"]["calibrated"])
+            self.assertTrue(app.health()["abstain_calibrated"])
+
+            connection.execute(
+                "UPDATE chunks SET text = ? WHERE chunk_id = 'c1'",
+                ("A prayer for the whole church.",),
+            )
+            connection.execute(
+                "UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'"
+            )
+            connection.commit()
+            second = app.search("nosuchwordanywhere", 5, "hybrid")
+            self.assertEqual(second["mode"], "hybrid")
+            self.assertTrue(second["abstain"])
+            self.assertTrue(second["confidence"]["calibrated"])
+            self.assertEqual(app.backend, "onnx")
+            self.assertTrue(app.health()["abstain_calibrated"])
+
+            connection.execute("DELETE FROM embeddings")
+            connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
+            connection.commit()
+            third = app.search("prayer", 5, "hybrid")
+            self.assertEqual(third["mode"], "bm25")
+            self.assertEqual(third["note"], STALE_NOTE)
+            self.assertFalse(third["abstain"])
+            self.assertEqual(third["confidence"]["level"], "unrated")
+            self.assertFalse(third["confidence"]["calibrated"])
+            empty = app.search("nosuchwordanywhere", 5, "hybrid")
+            self.assertEqual(empty["results"], [])
+            self.assertTrue(empty["abstain"])
+            self.assertEqual(empty["confidence"]["level"], "none")
+            self.assertFalse(empty["confidence"]["calibrated"])
+            health = app.health()
+            self.assertFalse(health["dense"])
+            self.assertFalse(health["abstain_calibrated"])
+            self.assertIsNone(health["backend"])
 
     def test_bm25_fallback_is_flagged(self) -> None:
         self.assertIsNone(self.fallback_encode)
