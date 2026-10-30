@@ -10,6 +10,7 @@ would have shown.
 
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 from dataclasses import dataclass, replace
@@ -51,7 +52,7 @@ def play_start(start_s: float | None) -> float | None:
     if start_s is None:
         return None
     value = float(start_s)
-    if value != value or value < 0:  # NaN or negative: no seek
+    if not math.isfinite(value) or value < 0:  # NaN, +/-inf or negative: no seek (JS Number.isFinite)
         return None
     return max(0.0, round(value - PREROLL_S, 2))
 

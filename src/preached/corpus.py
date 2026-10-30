@@ -450,6 +450,20 @@ def read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
+def catalog_text_sha(catalog_file: Path) -> str:
+    """The pinned sha256 of the CCEL text from corpus/catalog.json. A missing
+    file or a missing/empty value is an error, never a silently skipped check."""
+    if not catalog_file.exists():
+        raise RuntimeError(f"{catalog_file} is missing, so the CCEL text cannot be verified")
+    expected = json.loads(catalog_file.read_text()).get("sha256_text")
+    if not isinstance(expected, str) or not expected.strip():
+        raise RuntimeError(
+            f"{catalog_file} has no sha256_text, so the CCEL text cannot be verified. "
+            "Restore it, or rerun the fetch with --accept-new-text after re-validating eval quotes."
+        )
+    return expected.strip()
+
+
 def fetch_corpus(force: bool = False, accept_new_text: bool = False) -> dict:
     CORPUS_DIR.mkdir(parents=True, exist_ok=True)
     if force or not SERMONS_TEXT.exists():
@@ -457,9 +471,9 @@ def fetch_corpus(force: bool = False, accept_new_text: bool = False) -> dict:
     # The eval quotes were checked against this exact text. A changed upstream
     # file must be a deliberate decision, not a silent rebuild.
     if catalog_path().exists() and not accept_new_text:
-        expected = json.loads(catalog_path().read_text()).get("sha256_text")
+        expected = catalog_text_sha(catalog_path())
         actual = sha256(SERMONS_TEXT)
-        if expected and actual != expected:
+        if actual != expected:
             raise RuntimeError(
                 f"{SERMONS_TEXT} sha256 {actual} does not match corpus/catalog.json {expected}. "
                 "Rerun with --accept-new-text only after re-validating eval quotes."
