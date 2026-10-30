@@ -59,3 +59,7 @@ The current file `/cache/corpus/wesley/chunks.jsonl` has 8,383 chunks (median 12
 - Labels were found with keyword search, so passages that share words with the question are over-represented. That favors BM25 and hybrid modes.
 - 23 of the 35 answerable questions share a content word with the title of the sermon that answers them (for example "Christian perfection", "the means of grace", "the witness of the Spirit", "riches", "temptation"), and FTS5 indexes the title column. Absolute scores are optimistic for any lexical component.
 - 35 answerable questions is small: one question moves a mean by about 0.03. `search/bench.py` reports bootstrap 95% intervals; read differences inside them as ties.
+
+## Natural-language probes (W3-POLISH, not human-reviewed)
+
+`nl-questions-w3polish.jsonl` holds 18 short questions **written by the W3-POLISH coding agent (an LLM, Claude), not reviewed by a person**. They avoid sermon-title words where possible and include the CTO's "worry" and "How do I stop worrying?". Each lists the sermon(s) the agent expects to answer it (`expected_sermons`), checked only against sermon titles and a text grep, so treat them as probes, not labels. They are not part of `questions.jsonl`, are not used by `bench.py`, and the abstain floor is **not** fitted on them. `uv run --group bench scripts/check_nl_questions.py` prints the abstain level for each and what a refit would do. Results: `reports/W3-POLISH.md`, fix-up section.
