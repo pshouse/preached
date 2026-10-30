@@ -1125,5 +1125,32 @@ class ServeIdentityAndReloadTests(unittest.TestCase):
             writer.close()
 
 
+    def test_healthz_reports_a_refusal_the_stamp_did_not_notice(self) -> None:
+        """A swapped -wal can leave the index stamp unchanged: /healthz still says 503."""
+        captured = self.start()
+        connection = captured["connection"]
+        state = {"ok": True}
+
+        def servable(conn) -> None:
+            if not state["ok"]:
+                raise SystemExit("error: a -wal next to the index was swapped; refused")
+
+        app = server.App(
+            connection=connection, searcher=server.Searcher(connection), encode=None, fallback_note=None,
+            model_name=None, hosts={"127.0.0.1"}, static_dir=server.STATIC_DIR, servable=servable,
+        )
+        self.assertTrue(app.health()["ok"])
+        state["ok"] = False  # nothing in the file changed, so the stamp is the same
+        with self.assertRaises(server.BadRequest) as ctx:
+            app.health()
+        self.assertEqual(ctx.exception.status, 503)
+        with self.assertRaises(server.BadRequest) as ctx:
+            app.search("grace", 5, "bm25")
+        self.assertEqual(ctx.exception.status, 503)
+        state["ok"] = True
+        self.assertEqual(app.health()["chunks"], 1)
+        self.assertEqual(len(app.search("grace", 5, "bm25")["results"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

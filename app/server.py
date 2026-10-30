@@ -544,6 +544,10 @@ class App:
     def health(self) -> dict:
         with self.lock:
             self._refresh_if_stale()
+            # /healthz re-runs the serve gate itself: a swapped -wal can leave the
+            # stamp unchanged, so the reload above never looks. Refused means 503.
+            if self.refused is None and self._refuse_unless_servable():
+                self._status_failed = True
             self._check_refused()
             count = visible_count(self.connection, gated=self.gated, library=self.library)
             gated = self.gated and not public_domain_file(self.connection, self.library)
