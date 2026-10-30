@@ -668,44 +668,72 @@ def review(words: list, *, config: Config | None = None) -> ReviewList:
 def write_review_file(items: Iterable[dict], path: str | os.PathLike[str]) -> int:
     """Write review items as JSON lines to a private file; return the count.
 
-    The directory is created 0700; an existing one is tightened to 0700, and
-    refused if it is a symlink or owned by someone else. The file is written
-    to a new 0600 temp file (``O_EXCL | O_NOFOLLOW``) in that directory and
-    renamed over ``path``, so a symlink planted at ``path`` is replaced, never
-    followed. One file per sermon; delete it after approval
-    (``delete_review_file``). Prints a count and the path, never a name. Put
-    the file outside the repo (``review/`` is git-ignored as a backstop).
+    See ``write_review_file_sha256``, which also returns the file's sha256.
     """
+    return write_review_file_sha256(items, path)[0]
+
+
+def write_review_file_sha256(items: Iterable[dict], path: str | os.PathLike[str]) -> tuple[int, str]:
+    """Write review items as JSON lines to a private file; return ``(count, sha256)``.
+
+    No symlink is ever followed. ``path`` is made absolute without resolving
+    it, and every existing directory above it must not be a symlink. The
+    directory is created 0700 and then opened ``O_DIRECTORY | O_NOFOLLOW``;
+    through that descriptor it must be a directory owned by this user, and it
+    is tightened to 0700 with ``fchmod`` (never ``chmod`` on a path). The
+    file is written to a new 0600 temp file in that directory (``O_CREAT |
+    O_EXCL | O_NOFOLLOW``, ``dir_fd``) and renamed over the name within the
+    same directory descriptor, so a symlink planted at ``path`` is replaced,
+    never followed, and its target and the target's directory are untouched.
+    The sha256 is of the bytes written, not of a re-read. One file per
+    sermon; delete it after approval (``delete_review_file``). Prints a count
+    and the path, never a name. Put the file outside the repo (``review/`` is
+    git-ignored as a backstop).
+    """
+    import hashlib
     import json
     import secrets
 
-    path = Path(path)
+    path = Path(os.path.abspath(path))
     folder = path.parent
+    for ancestor in (folder, *folder.parents):
+        if os.path.islink(ancestor):
+            raise RuntimeError(f"review path {path} goes through a symlink ({ancestor})")
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    info = os.lstat(folder)
-    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-        raise RuntimeError(f"review directory {folder} is not a plain directory")
-    if info.st_uid != os.getuid():
-        raise RuntimeError(f"review directory {folder} belongs to another user")
-    if stat.S_IMODE(info.st_mode) != 0o700:
-        os.chmod(folder, 0o700)
-    temp = folder / f".{path.name}.{secrets.token_hex(8)}.tmp"
-    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    count = 0
     try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            for item in items:
-                handle.write(json.dumps(dict(item), ensure_ascii=False) + "\n")
-                count += 1
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp, path)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
+        dir_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise RuntimeError(f"review directory {folder} is not a plain directory ({exc.strerror})") from None
+    try:
+        info = os.fstat(dir_fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError(f"review directory {folder} is not a plain directory")
+        if info.st_uid != os.getuid():
+            raise RuntimeError(f"review directory {folder} belongs to another user")
+        if stat.S_IMODE(info.st_mode) != 0o700:
+            os.fchmod(dir_fd, 0o700)
+        data = b"".join((json.dumps(dict(item), ensure_ascii=False) + "\n").encode("utf-8") for item in items)
+        count = data.count(b"\n")
+        temp = f".{path.name}.{secrets.token_hex(8)}.tmp"
+        descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            os.fsync(dir_fd)
+        except BaseException:
+            try:
+                os.unlink(temp, dir_fd=dir_fd)
+            except FileNotFoundError:
+                pass
+            raise
+    finally:
+        os.close(dir_fd)
     print(f"wrote {count} review items to {path} (owner-only; delete after approval)")
-    return count
+    return count, hashlib.sha256(data).hexdigest()
 
 
 def delete_review_file(path: str | os.PathLike[str]) -> None:

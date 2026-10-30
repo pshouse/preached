@@ -9,6 +9,7 @@ video keeps the file so the next run can resume the download.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import time
@@ -20,10 +21,10 @@ import numpy as np
 
 from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
-from preached.privacy import Config, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file
+from preached.privacy import Config, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
 from preached.youtube.chunking import chunk_words
-from preached.youtube.library import approve_review, file_sha256, imported_ok, index_video, mark_video, open_library
+from preached.youtube.library import approve_review, imported_ok, index_video, mark_video, open_library
 from preached.youtube.listing import Video, creative_commons, parse_date, watch_url
 from preached.youtube.sermon import is_sung, load_windows, sermon_span, speech_runs, words_in_span
 from preached.youtube.words import Word
@@ -210,13 +211,17 @@ def metadata_review_lines(title: str | None, description: str | None, original_t
 def write_private_review(items, path: Path) -> tuple[int, str]:
     """Write one sermon's review file (owner-only) and return ``(count, sha256)``.
 
-    The items hold real names. Refuses a path inside this repository.
+    The items hold real names. Refuses a path inside this repository. Never
+    resolves ``path``: a symlink planted there, or anywhere above it, must
+    not redirect the write (``privacy.write_review_file_sha256``). The sha256
+    is of the bytes written.
     """
-    resolved = Path(path).resolve()
-    if resolved == REPO_ROOT or resolved.is_relative_to(REPO_ROOT):
-        raise RuntimeError("review files must not be written inside the repository")
-    count = write_review_file(items, resolved)
-    return count, file_sha256(resolved)
+    absolute = Path(os.path.abspath(path))
+    repo = REPO_ROOT.resolve()
+    for candidate in (absolute, Path(os.path.realpath(absolute.parent))):
+        if candidate == repo or candidate.is_relative_to(repo) or candidate.is_relative_to(REPO_ROOT):
+            raise RuntimeError("review files must not be written inside the repository")
+    return write_review_file_sha256(items, absolute)
 
 
 def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], config: Config | None = None) -> int:
