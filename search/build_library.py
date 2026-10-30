@@ -8,6 +8,10 @@ CPU and writes through the same library writer as the YouTube import. Text is AS
 'asr'); the audio_url is the plain archive.org file, as in the Wesley index. A sermon already
 imported is skipped unless --redo.
 
+Every manifest row must match its entry in ingest/manifest/<slug>.provenance.json (file name,
+size, md5, URL), and the audio in /cache/audio/<slug> that the transcript came from must match
+the recorded sha256. A sermon whose audio is missing or differs is not indexed (exit 1).
+
 Only slugs on the allow-list in src/preached/libraries.py are accepted (never wesley, never a
 church library): these files get no redaction and no review, so nothing else may be written here.
 """
@@ -15,6 +19,7 @@ church library): these files get no redaction and no review, so nothing else may
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -27,7 +32,7 @@ import numpy as np  # noqa: E402
 
 import manifest  # noqa: E402
 from preached.corpus import load_chunk_config  # noqa: E402
-from preached.libraries import PUBLIC_DOMAIN, is_public_domain  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, audio_url, is_public_domain, load_provenance  # noqa: E402
 from preached.paths import CACHE_ROOT, INDEX_DIR  # noqa: E402
 from preached.store import open_readonly  # noqa: E402
 from preached.youtube.chunking import chunk_words  # noqa: E402
@@ -63,6 +68,41 @@ def check_slug(slug: str) -> str:
     return slug
 
 
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def provenance_files(slug: str, rows: list[dict]) -> dict[str, dict]:
+    """Manifest row id -> its provenance entry; SystemExit if any row disagrees with it."""
+    prov = load_provenance(slug)
+    entries = {entry["id"]: entry for entry in prov["audio_files"]}
+    for row in rows:
+        entry = entries.get(row["id"])
+        if entry is None:
+            raise SystemExit(f"error: {row['id']} is in the manifest but not in {slug}.provenance.json")
+        for key in ("file_name", "size", "md5"):
+            if row[key] != entry[key]:
+                raise SystemExit(f"error: {row['id']} {key} {row[key]!r} != provenance {entry[key]!r}")
+        if row["audio_url"] != audio_url(prov["ia_identifier"], entry["file_name"]):
+            raise SystemExit(f"error: {row['id']} audio_url does not match provenance")
+    return entries
+
+
+def audio_problem(entry: dict, audio_dir: Path) -> str | None:
+    """Why this sermon's audio cannot be trusted, or None when its sha256 matches provenance."""
+    path = manifest.safe_child(audio_dir, entry["file_name"])
+    if not path.is_file():
+        return f"no audio at {path} to check sha256"
+    actual = sha256_file(path)
+    if actual != entry["sha256"]:
+        return f"audio sha256 {actual} != provenance {entry['sha256']}"
+    return None
+
+
 def check_target(path: Path, slug: str) -> None:
     """Refuse a file that is not this library's: another library's, or a Wesley-style index."""
     if not path.is_file():
@@ -87,7 +127,9 @@ def main() -> int:
     args = ap.parse_args()
     slug = check_slug(args.slug)
     rows = manifest.load(manifest.MANIFEST.with_name(f"{slug}.jsonl"))
+    entries = provenance_files(slug, rows)
     tdir = CACHE_ROOT / "transcripts" / slug
+    audio_dir = CACHE_ROOT / "audio" / slug
     config = load_chunk_config()
     target = INDEX_DIR / f"{slug}.sqlite"
     check_target(target, slug)
@@ -96,12 +138,17 @@ def main() -> int:
     connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('library', ?)", (slug,))
     connection.commit()
     done = set() if args.redo else imported_ok(connection)
-    n = 0
+    n = refused = 0
     for row in rows:
         path = manifest.safe_child(tdir, f"{row['id']}.json")
         if row["id"] in done or not path.exists():
             if not path.exists():
                 print(f"skip {row['id']}: no transcript yet", file=sys.stderr)
+            continue
+        problem = audio_problem(entries[row["id"]], audio_dir)
+        if problem is not None:
+            print(f"refuse {row['id']}: {problem}", file=sys.stderr)
+            refused += 1
             continue
         words = transcript_words(json.loads(path.read_text()))
         records = chunks_for(row, words, config)
@@ -118,9 +165,10 @@ def main() -> int:
         n += 1
         print(f"indexed {row['id']}: {len(records)} chunks", file=sys.stderr, flush=True)
     total = connection.execute("SELECT count(*), count(DISTINCT sermon_id) FROM chunks").fetchone()
-    print(f"{slug}: +{n} sermons; index has {total[0]} chunks in {total[1]} sermons", file=sys.stderr)
+    print(f"{slug}: +{n} sermons, {refused} refused; index has {total[0]} chunks in {total[1]} sermons",
+          file=sys.stderr)
     connection.close()
-    return 0
+    return 1 if refused else 0
 
 
 if __name__ == "__main__":

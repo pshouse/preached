@@ -366,6 +366,48 @@ class ProvenanceTests(unittest.TestCase):
             self.assertEqual(row["audio_url"], libraries.audio_url(prov["ia_identifier"], files[row["id"]]["file_name"]))
 
 
+class BuildShaTests(unittest.TestCase):
+    """build_library.py checks each audio file's sha256 against provenance before indexing it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.audio = Path(self.tmp.name)
+        self.rows = manifest.load(manifest.MANIFEST.with_name("spurgeon.jsonl"))
+
+    def test_committed_manifest_matches_provenance(self) -> None:
+        entries = build_library.provenance_files("spurgeon", self.rows)
+        self.assertEqual(set(entries), {row["id"] for row in self.rows})
+
+    def test_manifest_row_disagreeing_with_provenance_is_refused(self) -> None:
+        for key, value in (("md5", "0" * 32), ("size", 1), ("file_name", "other_64kb.mp3"),
+                           ("audio_url", "https://archive.org/download/other/x.mp3"), ("id", "spurgeon-999")):
+            with self.subTest(key=key):
+                rows = copy.deepcopy(self.rows)
+                rows[0][key] = value
+                with self.assertRaises(SystemExit):
+                    build_library.provenance_files("spurgeon", rows)
+
+    def entry(self, data: bytes) -> dict:
+        import hashlib
+
+        (self.audio / "a_64kb.mp3").write_bytes(data)
+        return {"file_name": "a_64kb.mp3", "sha256": hashlib.sha256(b"the real audio").hexdigest()}
+
+    def test_matching_sha256_passes(self) -> None:
+        self.assertIsNone(build_library.audio_problem(self.entry(b"the real audio"), self.audio))
+
+    def test_wrong_sha256_is_refused(self) -> None:
+        # Same size, different bytes: a size check alone would pass it.
+        problem = build_library.audio_problem(self.entry(b"the fake audio"), self.audio)
+        self.assertIn("sha256", problem)
+
+    def test_missing_audio_is_refused(self) -> None:
+        entry = self.entry(b"x")
+        (self.audio / entry["file_name"]).unlink()
+        self.assertIn("no audio", build_library.audio_problem(entry, self.audio))
+
+
 class Stop(Exception):
     """Raised by the patched build_app: main() got past every check."""
 
