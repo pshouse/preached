@@ -1,0 +1,8 @@
+[project]
+name = "preached"
+version = "0.1.0"
+description = "Search a church's sermon archive and hear the answer in the preacher's own words."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "faster-whisper>=1.2.1",
+]
