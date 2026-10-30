@@ -146,6 +146,19 @@ def asr_chunks(
     return records
 
 
+def refuse_non_wesley(rows: list[dict]) -> None:
+    """Exit 2 unless every row is an unflagged ``wesley-*`` chunk (the unredacted wesley path)."""
+    for row in rows:
+        sermon_id = str(row.get("sermon_id") or "")
+        if not sermon_id.startswith("wesley-"):
+            print(f"library wesley takes only wesley-* sermons, not {sermon_id[:40]!r}; "
+                  "a church sermon needs its own --library and a privacy config", file=sys.stderr)
+            raise SystemExit(2)
+        if row.get("flag_end_s") is not None or row.get("video_id") is not None:
+            print(f"{sermon_id}: flagged or gate-keyed chunk on the wesley path", file=sys.stderr)
+            raise SystemExit(2)
+
+
 def sermon_review(transcript: dict, privacy: Config, sermon_id: str | None = None):
     """The sermon's ``review()`` items (real names: keep private)."""
     sermon_id = sermon_id or transcript.get("meta", {})["id"]
@@ -252,6 +265,7 @@ def main(argv: list[str] | None = None, *, embedder=None) -> None:
             raise SystemExit("--index is for church libraries; wesley is built by search/build_index.py")
         for path in args.transcripts:
             rows.extend(asr_chunks(json.loads(path.read_text()), config, pause_s=args.pause))
+        refuse_non_wesley(rows)
         write_jsonl(args.out, rows)
         print(f"wrote {len(rows)} asr chunks from {len(args.transcripts)} transcripts to {args.out}")
         return

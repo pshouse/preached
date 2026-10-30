@@ -154,6 +154,14 @@ def _refuse_review_items(chunks: list[dict]) -> None:
     # loading them here would serve unapproved sermons.
     if any(isinstance(c, dict) and c.get("video_id") is not None for c in chunks):
         raise ValueError("church chunks (with video_id) go into a gated library file, never this index")
+    # Only Wesley's own chunks: every sermon id wesley-*, and nothing flagged
+    # (a flag means a redacted church name; this index has no audio policy).
+    for chunk in chunks:
+        if not isinstance(chunk, dict) or not str(chunk.get("sermon_id") or "").startswith("wesley-"):
+            sermon = chunk.get("sermon_id") if isinstance(chunk, dict) else None
+            raise ValueError(f"only wesley-* sermons go into this index (got {str(sermon)[:40]!r})")
+        if chunk.get("flag_end_s") is not None:
+            raise ValueError("flagged chunks (flag_end_s) go into a gated library file, never this index")
 
 
 def update_chunk_metadata(connection: sqlite3.Connection, chunks: list[dict]) -> None:

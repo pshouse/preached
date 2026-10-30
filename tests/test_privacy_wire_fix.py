@@ -505,7 +505,15 @@ class AsrGateTests(unittest.TestCase):
         self.assertTrue((self.root / "idx" / "church" / "review" / "church-1.review.jsonl").is_file())
 
     def test_wesley_output_is_unchanged(self) -> None:
+        # The wesley path takes only wesley-* sermons (should-fix): a church id is refused ...
+        code, _out, err = self.run_main(["--library", "wesley"])
+        self.assertEqual(code, 2)
+        self.assertIn("wesley-*", err)
+        self.assertFalse(self.out.exists())
+        # ... and a wesley id is chunked exactly as before, unredacted.
         sample = json.loads(self.transcript_path.read_text())
+        sample["meta"]["id"] = "wesley-001"
+        self.transcript_path.write_text(json.dumps(sample))
         plain = self.module.asr_chunks(sample, load_chunk_config())
         code, _out, err = self.run_main(["--library", "wesley"])
         self.assertEqual(code, 0, err)
