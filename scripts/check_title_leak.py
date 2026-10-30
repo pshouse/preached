@@ -23,6 +23,14 @@ no] thought" and "child of God" are the cases this was written for. A pair
 made only of very common religious words ("God", "Lord", "Jesus") does not
 count.
 
+Modern verse wording counts in that same pair check: "anxious" / "worry"
+stand in for "thought", and "tomorrow" stands in for "morrow", so "anxious
+about tomorrow" overlaps Matt 6:34 ("Take no thought for the morrow").
+A single distinctive word also counts: a content word whose stem is 8
+letters or longer, shared with a grade-2 quote or that sermon's key
+scripture ("sanctification"). "fell" stems with "fall", and "fell away" is
+a signature of the backsliders sermon.
+
 Groups checked: ``plain`` fails the lint. ``plain-blind`` questions were
 written blind to the corpus and their wording is frozen, so leaks there are
 printed as notes and do not fail.
@@ -84,7 +92,7 @@ SIGNATURE = {
     "wesley-049": ["evil-speaking", "evil speaking", "speak evil", "backbit", "tale-bear", "talebear"],
     "wesley-047": ["heaviness", "manifold"],
     "wesley-101": ["communion", "lord's supper", "sacrament", "eucharist", "remembrance of me"],
-    "wesley-086": ["backslid"],
+    "wesley-086": ["backslid", "fell away", "fallen away", "fall away"],
     "wesley-050": ["use of money", "gain all you can"],
     "wesley-005": ["justif", "ungodly"],
 }
@@ -122,6 +130,24 @@ SYNONYMS = {
 _SUFFIXES = ("ations", "ation", "ings", "ing", "ness", "ments", "ment", "ials", "ial", "ied", "ies", "ers", "er",
              "ed", "es", "ly", "s")
 
+# Irregular verbs the suffix rules miss. "fell away" ~ "fall away".
+_IRREGULAR = {"fell": "fall", "fallen": "fall"}
+
+# A modern word and the KJV word it paraphrases, for quote and scripture
+# pairs only. "anxious about tomorrow" ~ Matt 6:34 "thought for the morrow".
+MODERN = {
+    "anxious": "thought",
+    "anxiety": "thought",
+    "worry": "thought",
+    "worried": "thought",
+    "worrying": "thought",
+    "tomorrow": "morrow",
+}
+
+# A single shared word this long (after stemming) is distinctive enough to
+# be a leak on its own. "sanctification" stems to 9 letters.
+DISTINCTIVE_STEM = 8
+
 
 def stem(word: str) -> str:
     word = word.lower()
@@ -137,7 +163,7 @@ def stem(word: str) -> str:
         word = word[:-1]
     if len(word) >= 4 and word[-1] == word[-2] and word[-1] not in "aeiouls":
         word = word[:-1]  # sinning -> sinn -> sin
-    return word
+    return _IRREGULAR.get(word, word)
 
 
 def tokens(text: str) -> list[str]:
@@ -158,6 +184,18 @@ def same_word(a: str, b: str) -> bool:
     return len(short) >= 5 and long.startswith(short)
 
 
+def _forms(word: str) -> list[str]:
+    """``word`` plus its KJV paraphrase, when it has one."""
+    bare = word.lower().removesuffix("'s")
+    mapped = MODERN.get(bare)
+    return [word, mapped] if mapped else [word]
+
+
+def same_or_modern(a: str, b: str) -> bool:
+    """``same_word``, or either word is the modern wording of the other."""
+    return any(same_word(x, y) for x in _forms(a) for y in _forms(b))
+
+
 def _load_key_scripture() -> dict[str, dict]:
     return json.loads(KEY_SCRIPTURE.read_text()) if KEY_SCRIPTURE.exists() else {}
 
@@ -171,8 +209,24 @@ def shared_pairs(query: str, text: str) -> list[str]:
         if a in GENERIC and b in GENERIC:
             continue
         for x, y in t_pairs:
-            if same_word(a, x) and same_word(b, y):
+            if same_or_modern(a, x) and same_or_modern(b, y):
                 found.append(f"{a} {b}")
+                break
+    return found
+
+
+def shared_distinctive(query: str, text: str) -> list[tuple[str, str]]:
+    """Single distinctive words (stem length >= DISTINCTIVE_STEM) shared by both texts."""
+    qwords = sorted(w for w in content_words(query)
+                    if w not in GENERIC and stem(w) not in GENERIC and len(stem(w)) >= DISTINCTIVE_STEM)
+    twords = sorted(content_words(text))
+    found = []
+    for qw in qwords:
+        for tw in twords:
+            if tw in GENERIC or stem(tw) in GENERIC:
+                continue
+            if same_word(qw, tw):
+                found.append((tw, qw))
                 break
     return found
 
@@ -200,12 +254,19 @@ def leaks(question: dict, key_scripture: dict[str, dict] | None = None) -> list[
     key_scripture = _load_key_scripture() if key_scripture is None else key_scripture
     gold = [p for p in question["relevant"] if int(p.get("grade", 0)) == 2]
     for p in gold:
+        where = p.get("passage_id", p["sermon_id"])
         for pair in shared_pairs(query, p["quote"]):
-            found.append(f'quote phrase "{pair}" ({p.get("passage_id", p["sermon_id"])})')
+            found.append(f'quote phrase "{pair}" ({where})')
+        for tw, qw in shared_distinctive(query, p["quote"]):
+            found.append(f'distinctive word "{tw}" ({where}) ~ "{qw}"')
     for sermon_id in sorted({p["sermon_id"] for p in gold}):
-        text = key_scripture.get(sermon_id, {}).get("text", "")
+        entry = key_scripture.get(sermon_id, {})
+        text = entry.get("text", "")
+        ref = entry.get("scripture", "")
         for pair in shared_pairs(query, text):
-            found.append(f'scripture phrase "{pair}" ({sermon_id} {key_scripture[sermon_id]["scripture"]})')
+            found.append(f'scripture phrase "{pair}" ({sermon_id} {ref})')
+        for tw, qw in shared_distinctive(query, text):
+            found.append(f'distinctive word "{tw}" ({sermon_id} {ref}) ~ "{qw}"')
     return list(dict.fromkeys(found))
 
 

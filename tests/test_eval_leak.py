@@ -37,10 +37,18 @@ class TitleLeakTest(unittest.TestCase):
             for p in q["relevant"]:
                 if p.get("status") == "proposed":
                     self.assertTrue(p.get("reason"), p["passage_id"])
+                    self.assertEqual(p.get("found_by"), "llm-proposed:claude", p["passage_id"])
+                else:
+                    self.assertNotIn("found_by", p, p["passage_id"])
                 # Existing labels carry no status; only grading adds "proposed".
                 self.assertIn(p.get("status"), (None, "proposed"), p["passage_id"])
             if q["group"] == "plain-blind":
+                self.assertEqual(q.get("provenance"), "llm-written:grok", q["id"])
                 self.assertTrue(all(p.get("status") == "proposed" for p in q["relevant"]), q["id"])
+        candidates = [json.loads(line) for line in (ROOT / "eval" / "plain_candidates.jsonl").read_text().splitlines() if line.strip()]
+        self.assertEqual(len(candidates), 30)
+        for cand in candidates:
+            self.assertEqual(cand.get("provenance"), "llm-written:grok", cand["id"])
 
     def test_each_names_topic_question_has_a_plain_rewrite_with_the_same_labels(self):
         by_id = {q["id"]: q for q in load()}
@@ -114,6 +122,42 @@ class TitleLeakTest(unittest.TestCase):
             {"sermon_id": "wesley-042", "sermon_title": "Satan's Devices", "grade": 2, "quote": "x"}]}
         self.assertEqual(lint.check([q]), {})
         self.assertIn("p-x", lint.check([q], "plain-blind"))
+
+    def test_modern_verse_wording(self):
+        # "anxious about tomorrow" is Matt 6:34, "Take no thought for the morrow".
+        q = {"query": "I am anxious about tomorrow.", "relevant": [
+            {"passage_id": "w-p1", "sermon_id": "wesley-029", "sermon_title": "Discourse 9", "grade": 2,
+             "quote": "Take therefore no thought for the morrow"}]}
+        scripture = {"wesley-029": {"scripture": "Matt 6:34",
+                                    "text": "Take no thought for the morrow: for the morrow shall take thought for the things of itself."}}
+        hits = lint.leaks(q, scripture)
+        self.assertIn('quote phrase "anxious tomorrow" (w-p1)', hits)
+        self.assertIn('scripture phrase "anxious tomorrow" (wesley-029 Matt 6:34)', hits)
+
+    def test_single_distinctive_word(self):
+        q = {"query": "What does sanctification look like in ordinary life?", "relevant": [
+            {"passage_id": "s-p1", "sermon_id": "wesley-043", "sermon_title": "The Scripture Way of Salvation",
+             "grade": 2, "quote": "works of mercy are in some sense necessary to sanctification"}]}
+        hits = lint.leaks(q, {})
+        self.assertIn('distinctive word "sanctification" (s-p1) ~ "sanctification"', hits)
+        # A short shared word is not, on its own, a leak.
+        ordinary = {"query": "Is love enough?", "relevant": [
+            {"passage_id": "o", "sermon_id": "x", "sermon_title": "Y", "grade": 2,
+             "quote": "the love of a neighbour is a duty here"}]}
+        self.assertEqual(lint.leaks(ordinary, {}), [])
+
+    def test_fell_away(self):
+        self.assertTrue(lint.same_word("fell", "fall"))
+        self.assertTrue(lint.same_word("fallen", "fall"))
+        quoted = {"query": "I fell away after I believed.", "relevant": [
+            {"passage_id": "fa", "sermon_id": "wesley-086", "sermon_title": "A Call to Backsliders", "grade": 2,
+             "quote": "if they fall away there is still hope"}]}
+        self.assertIn('quote phrase "fell away" (fa)', lint.leaks(quoted, {}))
+        # The backsliders sermon is known by the phrase even when the quote does not say it.
+        signed = {"query": "I fell away and I want to come back.", "relevant": [
+            {"passage_id": "b", "sermon_id": "wesley-086", "sermon_title": "A Call to Backsliders", "grade": 2,
+             "quote": "hope for those backsliders who are still uneasy"}]}
+        self.assertIn('signature "fell away" (wesley-086)', lint.leaks(signed, {}))
 
     def test_stopwords_and_short_words_are_ignored(self):
         q = {"query": "What did he say upon the Mount of God?", "relevant": [
