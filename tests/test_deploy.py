@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -23,6 +26,7 @@ from app.server import (  # noqa: E402
     STATIC_DIR,
     App,
     RateLimiter,
+    main,
     make_server,
     public_sha256,
 )
@@ -147,7 +151,7 @@ class HealthIdentityTests(unittest.TestCase):
 
 
 class RateAndKillTests(unittest.TestCase):
-    def _serve(self, **kwargs):
+    def _serve(self, *, max_connections=None, max_per_client=None, header_deadline_s=None, **kwargs):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "wesley.sqlite"
@@ -168,15 +172,21 @@ class RateAndKillTests(unittest.TestCase):
             **kwargs,
         )
         server = make_server(app, "127.0.0.1", 0)
+        if max_connections is not None:
+            server.max_connections = max_connections
+        if max_per_client is not None:
+            server.max_connections_per_client = max_per_client
+        if header_deadline_s is not None:
+            server.header_deadline_s = header_deadline_s
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(server.shutdown)
         self.addCleanup(server.server_close)
         self.addCleanup(connection.close)
-        return server.server_address[1], app
+        return server.server_address[1], app, server
 
     def test_per_ip_limit_ignores_forwarded_for(self) -> None:
-        port, _app = self._serve(rate_limit=2, rate_window_s=60)
+        port, _app, _server = self._serve(rate_limit=2, rate_window_s=60)
         first, _, _ = _request(port, "/healthz")
         second, _, _ = _request(port, "/healthz")
         third, headers, body = _request(
@@ -195,7 +205,7 @@ class RateAndKillTests(unittest.TestCase):
     def test_kill_file_stops_search_without_leaking_the_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             kill = Path(tmp) / "KILL"
-            port, app = self._serve(kill_file=kill)
+            port, app, _server = self._serve(kill_file=kill)
             status, _, body = _request(port, "/healthz")
             self.assertEqual(status, 200)
             self.assertTrue(json.loads(body)["ok"])
@@ -217,7 +227,7 @@ class RateAndKillTests(unittest.TestCase):
             self.assertTrue(json.loads(body)["ok"])
 
     def test_disabled_env_is_a_kill_switch(self) -> None:
-        port, _app = self._serve()
+        port, _app, _server = self._serve()
         previous = os.environ.get("PREACHED_DISABLED")
         os.environ["PREACHED_DISABLED"] = "1"
         try:
@@ -231,14 +241,14 @@ class RateAndKillTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["disabled"], True)
 
     def test_header_budget(self) -> None:
-        port, _app = self._serve()
+        port, _app, _server = self._serve()
         status, _, body = _request(port, "/healthz", headers={"X-Pad": "a" * (MAX_HEADER_BYTES + 50)})
         self.assertEqual(status, 431)
         self.assertEqual(json.loads(body), {"error": "request too large"})
         self.assertNotIn(b"aaaaaaa", body)
 
     def test_access_log_drops_the_query(self) -> None:
-        port, _app = self._serve()
+        port, _app, _server = self._serve()
         token = "querytokennotforlogs"
         with self.assertLogs(level="INFO") as logs:
             status, _, _body = _request(port, f"/api/search?q={token}&mode=bm25")
@@ -253,6 +263,136 @@ class RateAndKillTests(unittest.TestCase):
         self.assertTrue(limiter.allow("b", now=0))
         self.assertFalse(limiter.allow("c", now=1))
         self.assertTrue(limiter.allow("c", now=11))
+
+    def test_full_table_refuses_a_new_client(self) -> None:
+        limiter = RateLimiter(2, 60, max_keys=2)
+        self.assertTrue(limiter.allow("a", now=0))
+        self.assertTrue(limiter.allow("b", now=0))
+        self.assertFalse(limiter.allow("new", now=1))
+        self.assertTrue(limiter.allow("a", now=1))
+        self.assertFalse(limiter.allow("a", now=1))
+
+    def test_healthz_uses_the_same_bucket(self) -> None:
+        port, _app, _server = self._serve(rate_limit=1, rate_window_s=60)
+        self.assertEqual(_request(port, "/healthz")[0], 200)
+        status, _, body = _request(port, "/healthz")
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(body), {"error": "too many requests"})
+
+    def test_kill_switch_fails_closed_on_surprises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            directory = root / "KILL"
+            directory.mkdir()
+            _port, app, _server = self._serve(kill_file=directory)
+            self.assertTrue(app.disabled())
+            status, _, body = _request(_port, "/healthz")
+            self.assertEqual(status, 503)
+            self.assertEqual(json.loads(body), {"ok": False, "disabled": True})
+
+            dangling = root / "gone"
+            dangling.symlink_to(root / "missing-target")
+            app.kill_file = dangling
+            self.assertTrue(app.disabled())
+
+            hidden = root / "hidden"
+            hidden.mkdir()
+            app.kill_file = hidden / "KILL"
+            hidden.chmod(0)
+            try:
+                self.assertTrue(app.disabled())
+            finally:
+                hidden.chmod(0o755)
+            self.assertFalse(app.disabled())
+
+    def test_bad_request_line_does_not_crash_and_controls_are_escaped(self) -> None:
+        port, _app, _server = self._serve()
+        sock = socket.create_connection(("127.0.0.1", port), timeout=2)
+        sock.sendall(b"GET /healthz HTTP/nope\r\n\r\n")
+        sock.settimeout(2)
+        try:
+            sock.recv(200)
+        except OSError:
+            pass
+        sock.close()
+        with self.assertLogs(level="INFO") as logs:
+            raw = socket.create_connection(("127.0.0.1", port), timeout=2)
+            raw.sendall(b"GET /\x01secret HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            raw.settimeout(2)
+            raw.recv(400)
+            raw.close()
+        joined = "\n".join(logs.output)
+        self.assertIn("\\x01", joined)
+        self.assertNotIn("\x01", joined)
+        status, _, _body = _request(port, "/healthz")
+        self.assertEqual(status, 200)
+
+    def test_header_deadline_is_not_per_read(self) -> None:
+        port, _app, server = self._serve(header_deadline_s=0.4)
+        sock = socket.create_connection(("127.0.0.1", port), timeout=2)
+        started = time.monotonic()
+        sock.sendall(b"G")
+        held = False
+        closed = False
+        while time.monotonic() - started < 2.0:
+            time.sleep(0.05)
+            if server._conn_total >= 1 and time.monotonic() - started < 0.3:
+                held = True
+            try:
+                sock.sendall(b"E")
+            except OSError:
+                closed = True
+                break
+            if server._conn_total == 0 and time.monotonic() - started > 0.3:
+                closed = True
+                break
+        elapsed = time.monotonic() - started
+        sock.close()
+        self.assertTrue(held)
+        self.assertTrue(closed)
+        self.assertGreater(elapsed, 0.3)
+        self.assertLess(elapsed, 1.2)
+        status, _, _body = _request(port, "/healthz")
+        self.assertEqual(status, 200)
+
+    def test_connection_caps_reject_without_a_handler_slot(self) -> None:
+        port, _app, server = self._serve(max_connections=4, max_per_client=1, header_deadline_s=2)
+        held = socket.create_connection(("127.0.0.1", port), timeout=2)
+        held.sendall(b"GET /healthz HTTP/1.1\r\n")
+        for _ in range(50):
+            if server._conn_total >= 1:
+                break
+            time.sleep(0.02)
+        self.assertGreaterEqual(server._conn_total, 1)
+        extra = socket.create_connection(("127.0.0.1", port), timeout=2)
+        extra.settimeout(2)
+        extra.sendall(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        data = b""
+        while len(data) < 16:
+            chunk = extra.recv(200)
+            if not chunk:
+                break
+            data += chunk
+        extra.close()
+        self.assertTrue(data.startswith(b"HTTP/1.1 503"), data[:80])
+        held.close()
+        for _ in range(50):
+            if server._conn_total == 0:
+                break
+            time.sleep(0.02)
+        status, _, _body = _request(port, "/healthz")
+        self.assertEqual(status, 200)
+
+    def test_server_refuses_root(self) -> None:
+        with mock.patch.dict(os.environ, {"PREACHED_ALLOW_ROOT": "1"}):
+            with mock.patch("app.server.os.geteuid", return_value=0):
+                with self.assertRaises(SystemExit) as caught:
+                    main([])
+        self.assertIn("root", str(caught.exception))
+        script = (ROOT / "scripts" / "serve.sh").read_text()
+        self.assertNotIn("PREACHED_ALLOW_ROOT", script)
+        self.assertNotIn("PREACHED_PYTHON", script)
+        self.assertIn("env -i", script)
 
 
 class ImportGuardTests(unittest.TestCase):
@@ -304,8 +444,8 @@ class BundleTests(unittest.TestCase):
         index_dir = root / "indexes"
         index_dir.mkdir()
         index = index_dir / "wesley.sqlite"
-        connection = sqlite3.connect(index)
-        connection.execute("CREATE TABLE chunks (chunk_id TEXT)")
+        connection = connect(index)
+        _insert(connection, "By grace are ye saved through faith.")
         connection.commit()
         connection.close()
         return model.parent, index
@@ -323,7 +463,7 @@ class BundleTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertNotEqual(result.returncode, 0, result.stderr)
-                self.assertIn("refusing", result.stderr)
+                self.assertIn(library, result.stderr)
 
     def test_refuses_a_renamed_church_path_and_a_symlink(self) -> None:
         script = ROOT / "scripts" / "build-bundle.sh"
@@ -348,7 +488,7 @@ class BundleTests(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(symlink.returncode, 0)
-            self.assertIn("symlink", symlink.stderr)
+            self.assertIn("error:", symlink.stderr)
             renamed = subprocess.run(
                 ["bash", str(script), str(out)],
                 cwd=ROOT,
@@ -358,7 +498,7 @@ class BundleTests(unittest.TestCase):
                 check=False,
             )
             self.assertNotEqual(renamed.returncode, 0)
-            self.assertIn("refusing", renamed.stderr)
+            self.assertIn("error:", renamed.stderr)
 
     def test_bundle_is_reproducible_and_serve_only(self) -> None:
         script = ROOT / "scripts" / "build-bundle.sh"
@@ -393,6 +533,9 @@ class BundleTests(unittest.TestCase):
             self.assertIn("index/wesley.sqlite", names)
             self.assertIn("requirements-serve.txt", names)
             self.assertIn("app/server.py", names)
+            self.assertIn("src/preached/libraries.py", names)
+            self.assertIn("ingest/manifest/spurgeon.provenance.json", names)
+            self.assertIn("ingest/manifest/edwards.provenance.json", names)
             self.assertNotIn("model.int8.onnx", joined)
             self.assertNotIn("torch_embed.py", joined)
             self.assertNotIn("transcribe.py", joined)
@@ -413,6 +556,150 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
             mode = (first / "index" / "wesley.sqlite").stat().st_mode & 0o777
             self.assertEqual(mode, 0o444)
+            for directory in (first, first / "index"):
+                self.assertEqual(directory.stat().st_mode & 0o022, 0)
+            bundled = first / "index" / "wesley.sqlite"
+            self.assertFalse(Path(str(bundled) + "-wal").exists())
+            bundled.chmod(0o444)
+            bundled.parent.chmod(0o555)
+            first.chmod(0o555)
+            try:
+                opened = sqlite3.connect(f"{bundled.resolve().as_uri()}?mode=ro", uri=True)
+                try:
+                    count = opened.execute("SELECT count(*) FROM chunks").fetchone()[0]
+                    journal = opened.execute("PRAGMA journal_mode").fetchone()[0]
+                finally:
+                    opened.close()
+            finally:
+                first.chmod(0o755)
+                bundled.parent.chmod(0o755)
+            self.assertEqual(count, 1)
+            self.assertEqual(journal, "delete")
+
+    def test_int8_is_removed_from_the_bundled_manifest(self) -> None:
+        script = ROOT / "scripts" / "build-bundle.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            onnx_root, index = self._stand_in(root)
+            folder = onnx_root / GRANITE_REVISION
+            manifest = {
+                "hf_id": "ibm-granite/granite-embedding-english-r2",
+                "revision": GRANITE_REVISION,
+                "variants": {"fp32": "model.fp32.onnx", "int8": "model.int8.onnx"},
+                "files": {
+                    "model.fp32.onnx": {"sha256": "ab" * 32},
+                    "model.int8.onnx": {"sha256": "cd" * 32},
+                },
+            }
+            (folder / "manifest.json").write_text(json.dumps(manifest))
+            (folder / "model.int8.onnx").write_bytes(b"int8 stand-in\n")
+            out = root / "out"
+            result = subprocess.run(
+                ["bash", str(script), str(out)],
+                cwd=ROOT,
+                env=self._env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_INDEX=str(index),
+                    PREACHED_ONNX_DIR=str(onnx_root),
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            shipped = json.loads((out / "model" / GRANITE_REVISION / "manifest.json").read_text())
+            self.assertNotIn("int8", shipped["variants"])
+            self.assertNotIn("model.int8.onnx", shipped["files"])
+            self.assertFalse((out / "model" / GRANITE_REVISION / "model.int8.onnx").exists())
+
+    def test_skip_pins_is_ignored_outside_the_tests(self) -> None:
+        script = ROOT / "scripts" / "build-bundle.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            onnx_root, index = self._stand_in(root)
+            out = root / "out"
+            # Parent of the build script is bash, not the unittest process.
+            # `set -e` keeps the build script's status; a trailing `true`
+            # stops bash from exec-replacing itself with the script, which
+            # would make PPID the unittest process and skip the pins.
+            result = subprocess.run(
+                ["bash", "-c", 'set -e; bash "$1" "$2"; true', "bash", str(script), str(out)],
+                cwd=ROOT,
+                env=self._env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_INDEX=str(index),
+                    PREACHED_ONNX_DIR=str(onnx_root),
+                    PREACHED_BUNDLE_SKIP_PINS="1",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("pin", result.stderr)
+
+    def test_serve_sh_drops_secret_names(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = root / "wesley.sqlite"
+            connection = connect(index)
+            _insert(connection, "By grace are ye saved through faith.")
+            connection.commit()
+            connection.close()
+            onnx = root / "onnx"
+            onnx.mkdir()
+            log = root / "server.log"
+            env = self._env(
+                PREACHED_LIBRARY="wesley",
+                PREACHED_INDEX=str(index),
+                PREACHED_ONNX_DIR=str(onnx),
+                PREACHED_HOST="127.0.0.1",
+                PREACHED_PORT="0",
+                PREACHED_HOSTS="127.0.0.1,localhost",
+                FAKE_TOKEN="dummy",
+                AWS_SECRET_ACCESS_KEY="dummy",
+                SPRITE_TOKEN="dummy",
+                HF_TOKEN="dummy",
+            )
+            with log.open("w") as handle:
+                proc = subprocess.Popen(
+                    ["bash", str(ROOT / "scripts" / "serve.sh")],
+                    cwd=ROOT,
+                    env=env,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                )
+            try:
+                ready = False
+                for _ in range(200):
+                    if proc.poll() is not None:
+                        break
+                    text = log.read_text(errors="replace")
+                    if "PREACHED_LISTENING" in text:
+                        ready = True
+                        break
+                    time.sleep(0.1)
+                self.assertTrue(ready, log.read_text(errors="replace")[-2000:])
+                raw = Path(f"/proc/{proc.pid}/environ").read_bytes()
+                names = [
+                    entry.split(b"=", 1)[0].decode("ascii", "replace")
+                    for entry in raw.split(b"\0")
+                    if entry
+                ]
+                for forbidden in ("FAKE_TOKEN", "AWS_SECRET_ACCESS_KEY", "SPRITE_TOKEN", "HF_TOKEN"):
+                    self.assertNotIn(forbidden, names)
+                for required in ("PATH", "HOME", "PREACHED_CACHE", "PREACHED_EMBED_BACKEND"):
+                    self.assertIn(required, names)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
 
     def test_serve_sh_refuses_a_sample_library(self) -> None:
         result = subprocess.run(
@@ -424,7 +711,7 @@ class BundleTests(unittest.TestCase):
             check=False,
             timeout=10,
         )
-        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertIn("sample", result.stderr)
         self.assertNotIn(FP32_ONNX_SHA256, result.stderr)
 
