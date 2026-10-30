@@ -46,7 +46,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from preached.asr import ASR_ID_PREFIX, PAUSE_S, asr_chunk_id, church_records, token_offsets  # noqa: E402,F401
 from preached.corpus import chunk_text, load_chunk_config, word_tokens, write_jsonl  # noqa: E402
-from preached.exclusions import base_sha256, excluded_indexes, kept_runs, review_lines, word_rows, words_file, words_file_lines  # noqa: E402
+from preached.exclusions import base_sha256, carried_stretches, excluded_indexes, kept_runs, previous_excludes, review_lines, word_rows, words_file, words_file_lines  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN  # noqa: E402
 from preached.privacy import (  # noqa: E402
     CONFIG_ENV,
@@ -147,9 +147,12 @@ def church_plan(
     sermon_title: str | None = None,
     pause_s: float = PAUSE_S,
     items: list | None = None,
+    previous: tuple[list[dict], int | None] = ([], None),
 ) -> dict:
     """A church sermon: redacted words, proposed exclusions, review items and chunk records.
 
+    ``previous``: the old review file's ``exclude`` lines and word count; on a
+    re-run they stay excluded (``exclusions.carried_stretches``).
     ``rows`` and ``items`` hold real words (names in ``items``): keep private.
     """
     meta = transcript.get("meta", {})
@@ -157,8 +160,9 @@ def church_plan(
     words = redact(transcript_words(transcript), config=privacy, source=sermon_id)
     texts = [w[2] for w in words]
     stretches = propose(texts)
-    excluded = excluded_indexes(stretches)
     rows = word_rows(texts, [w[0] for w in words], [w[1] for w in words], token_offsets(texts))
+    stretches += carried_stretches(*previous, rows, excluded_indexes(stretches))
+    excluded = excluded_indexes(stretches)
     kept = [r for r in rows if r["i"] not in excluded]
     if items is None:
         items = sermon_review(transcript, privacy, sermon_id)
@@ -223,12 +227,17 @@ def privacy_for(library: str, path: Path | None) -> Config | None:
         raise SystemExit(2) from exc
 
 
-def private_sermon(transcript: dict, chunk_config: dict, privacy: Config, review_root: Path, pause_s: float = PAUSE_S):
+def private_sermon(
+    transcript: dict, chunk_config: dict, privacy: Config, review_root: Path, pause_s: float = PAUSE_S, out: Path | None = None
+):
     """Chunks for one church sermon, plus its private review file.
 
     Returns ``(records, review_sha256, review_base_sha256)``. The review file
     holds the stored (redacted) title with the title's ``review()`` items, the
-    proposed excluded stretches, then the sermon's name items.
+    proposed excluded stretches, then the sermon's name items. An existing
+    review file's ``exclude`` lines stay excluded. ``out`` (the ``--out``
+    JSONL) is noted so approval can rewrite this sermon's rows there when the
+    reviewer excludes more.
     """
     from preached.privacy import review_metadata
     from preached.youtube.pipeline import SAFE_ID, write_private_review
@@ -237,14 +246,16 @@ def private_sermon(transcript: dict, chunk_config: dict, privacy: Config, review
     sermon_id = meta["id"]
     if not SAFE_ID.fullmatch(str(sermon_id)):
         raise SystemExit(f"sermon id {str(sermon_id)[:20]!r} is not usable as a file name")
-    plan = church_plan(transcript, chunk_config, privacy, pause_s=pause_s)
+    review_file = review_root / f"{sermon_id}.review.jsonl"
+    plan = church_plan(transcript, chunk_config, privacy, pause_s=pause_s, previous=previous_excludes(review_file))
+    if out is not None:
+        plan["meta"]["out"] = os.path.abspath(out)
     original_title = meta.get("title") or sermon_id
     header = {
         "field": "title",
         "stored": redact_metadata(original_title, config=privacy)[0],
         "review": [dict(i) for i in review_metadata(original_title, config=privacy)],
     }
-    review_file = review_root / f"{sermon_id}.review.jsonl"
     # Kept (redacted) words, so approval can rebuild when the reviewer widens or adds a stretch.
     _, words_sha = write_private_review(words_file_lines("asr", plan["meta"], plan["rows"], plan["excluded"]), words_file(review_file))
     lines = [header, *review_lines(plan["stretches"], plan["rows"], words_sha), *plan["items"]]
@@ -309,7 +320,7 @@ def main(argv: list[str] | None = None, *, embedder=None) -> None:
     review_root = (args.index.with_suffix("") if args.index else INDEX_DIR / args.library) / "review"
     sermons = []
     for path in args.transcripts:
-        records, digest, base_sha = private_sermon(json.loads(path.read_text()), config, privacy, review_root, args.pause)
+        records, digest, base_sha = private_sermon(json.loads(path.read_text()), config, privacy, review_root, args.pause, args.out)
         sermons.append((records, digest, base_sha))
         rows.extend(records)
     write_jsonl(args.out, rows)

@@ -665,12 +665,13 @@ def review(words: list, *, config: Config | None = None) -> ReviewList:
     )
 
 
-def _open_private_dir(folder: Path) -> int:
+def _open_private_dir(folder: Path, create: bool = True) -> int:
     """Open ``folder`` component by component from ``/`` with no symlink followed.
 
     Each component is opened ``O_DIRECTORY | O_NOFOLLOW`` relative to the
-    previous descriptor (created 0700 with ``mkdirat`` when missing), so there
-    is no window between checking an ancestor and using it: a component
+    previous descriptor (created 0700 with ``mkdirat`` when missing, unless
+    ``create`` is False: then a missing one raises ``FileNotFoundError``), so
+    there is no window between checking an ancestor and using it: a component
     swapped for a symlink makes the open fail, and the descriptor we hold
     keeps pointing at the directory we checked. Returns the final descriptor.
     """
@@ -682,9 +683,13 @@ def _open_private_dir(folder: Path) -> int:
                 try:
                     following = os.open(part, flags, dir_fd=current)
                 except FileNotFoundError:
+                    if not create:
+                        raise
                     os.mkdir(part, 0o700, dir_fd=current)
                     following = os.open(part, flags, dir_fd=current)
             except OSError as exc:
+                if not create and isinstance(exc, FileNotFoundError):
+                    raise
                 raise RuntimeError(
                     f"review path {folder} is not a plain directory path ({part}: {exc.strerror})"
                 ) from None
@@ -694,6 +699,110 @@ def _open_private_dir(folder: Path) -> int:
     except BaseException:
         os.close(current)
         raise
+
+
+def read_private_file(path: str | os.PathLike[str]) -> bytes:
+    """Read a review (or kept-words) file with no symlink followed anywhere on its path.
+
+    The directories are opened as ``_open_private_dir`` does (never created)
+    and the file ``O_NOFOLLOW`` through that descriptor; it must be a regular
+    file. A missing file raises ``FileNotFoundError``; a symlink, ``OSError``
+    or ``RuntimeError``.
+    """
+    path = Path(os.path.abspath(path))
+    dir_fd = _open_private_dir(path.parent, create=False)
+    try:
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise RuntimeError(f"{path} is not a regular file")
+        return handle.read()
+
+
+def wipe_private_file(path: str | os.PathLike[str]) -> None:
+    """Overwrite a private file with zeros in place, then delete it.
+
+    Best effort against the old bytes lingering in freed disk blocks (the
+    filesystem may still keep copies). No symlink is followed; a missing
+    file is not an error.
+    """
+    path = Path(os.path.abspath(path))
+    try:
+        dir_fd = _open_private_dir(path.parent, create=False)
+    except FileNotFoundError:
+        return
+    try:
+        try:
+            descriptor = os.open(path.name, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        except FileNotFoundError:
+            return
+        try:
+            _zero(descriptor, path)
+        finally:
+            os.close(descriptor)
+        os.unlink(path.name, dir_fd=dir_fd)
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def replace_private_bytes(path: str | os.PathLike[str], data: bytes) -> None:
+    """Replace a file's contents with ``data``, then zero the old contents.
+
+    No symlink is followed (``_open_private_dir``, ``O_NOFOLLOW``). The new
+    bytes go to a temp file (``O_CREAT | O_EXCL | O_NOFOLLOW``, the old file's
+    mode, 0600 if there was none) renamed over the name, so a crash leaves
+    the old or the new file, never half of one. The old file is held open
+    and zeroed through that descriptor after the rename (best effort, as in
+    ``wipe_private_file``).
+    """
+    import secrets
+
+    path = Path(os.path.abspath(path))
+    dir_fd = _open_private_dir(path.parent, create=False)
+    try:
+        try:
+            old = os.open(path.name, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        except FileNotFoundError:
+            old = None
+        try:
+            mode = stat.S_IMODE(os.fstat(old).st_mode) if old is not None else 0o600
+            temp = f".{path.name}.{secrets.token_hex(8)}.tmp"
+            descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
+            try:
+                os.fchmod(descriptor, mode)
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(data)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+                os.fsync(dir_fd)
+            except BaseException:
+                try:
+                    os.unlink(temp, dir_fd=dir_fd)
+                except FileNotFoundError:
+                    pass
+                raise
+            if old is not None:
+                _zero(old, path)
+        finally:
+            if old is not None:
+                os.close(old)
+    finally:
+        os.close(dir_fd)
+
+
+def _zero(descriptor: int, path: Path) -> None:
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"{path} is not a regular file")
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    remaining = info.st_size
+    while remaining > 0:
+        remaining -= os.write(descriptor, bytes(min(remaining, 1 << 20)))
+    os.fsync(descriptor)
 
 
 def write_review_file(items: Iterable[dict], path: str | os.PathLike[str]) -> int:

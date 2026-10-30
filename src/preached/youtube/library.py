@@ -11,11 +11,10 @@ same trigger-maintained ``chunks_fts`` table. There is no vector database.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
+import time
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 import numpy as np
 
@@ -48,6 +47,16 @@ VIDEO_EXTRA_COLUMNS = (
 
 MODEL_KEY = DEFAULT_MODEL
 
+# Seconds to wait between WAL checkpoint attempts. A reader (the server in the
+# middle of a query) keeps a TRUNCATE checkpoint from finishing; each attempt
+# also waits CHECKPOINT_BUSY_MS for it. About 8 s in all, then refused.
+CHECKPOINT_WAITS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0)
+CHECKPOINT_BUSY_MS = 200
+
+
+class CheckpointBusy(RuntimeError):
+    """The WAL could not be checkpointed: deleted words may still be in ``-wal``."""
+
 
 def ensure_library(connection: sqlite3.Connection) -> None:
     have = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
@@ -77,9 +86,55 @@ def ensure_library(connection: sqlite3.Connection) -> None:
 
 
 def open_library(path) -> sqlite3.Connection:
+    """Open a church library file for writing, with SQLite ``secure_delete`` on.
+
+    Every delete (``--redo``, a rebuild at approval) then zeroes the freed
+    content, so removed words do not survive in free pages. Raises when this
+    SQLite cannot turn it on.
+    """
     connection = connect(path)
+    if connection.execute("PRAGMA secure_delete = ON").fetchone()[0] != 1:
+        connection.close()
+        raise RuntimeError("SQLite secure_delete could not be enabled; refusing to write a church library")
     ensure_library(connection)
     return connection
+
+
+def checkpoint(connection: sqlite3.Connection) -> None:
+    """``wal_checkpoint(TRUNCATE)``, checked: retried with backoff, else ``CheckpointBusy``.
+
+    The pragma reports ``(busy, wal frames, frames checkpointed)``; it only
+    finished when busy is 0 and every frame was copied back. Until then the
+    old pages (and any words a delete removed) are still in ``-wal``.
+    """
+    previous = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    connection.execute(f"PRAGMA busy_timeout = {int(CHECKPOINT_BUSY_MS)}")
+    try:
+        for wait in (*CHECKPOINT_WAITS, None):
+            busy, frames, done = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if busy == 0 and frames == done:
+                return
+            if wait is None:
+                break
+            time.sleep(wait)
+    finally:
+        connection.execute(f"PRAGMA busy_timeout = {int(previous)}")
+    raise CheckpointBusy(
+        f"the WAL checkpoint did not finish after {len(CHECKPOINT_WAITS) + 1} tries (a reader such as the "
+        "server held it); removed words may still be in the -wal file. Stop the reader and run it again"
+    )
+
+
+def scrub(connection: sqlite3.Connection) -> None:
+    """After a delete: merge the FTS index, commit, then a checked checkpoint.
+
+    Old FTS segments keep removed words until they are merged; with
+    ``secure_delete`` the freed pages are zeroed, and the checkpoint moves
+    the zeroed pages into the main file and empties ``-wal``.
+    """
+    connection.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('optimize')")
+    connection.commit()
+    checkpoint(connection)
 
 
 def imported_ok(connection: sqlite3.Connection) -> set[str]:
@@ -162,10 +217,14 @@ def index_video(
     """Replace any earlier attempt at this video and commit chunks plus vectors.
 
     The video lands unpublished: ``review_sha256`` is stored and any earlier
-    approval is cleared, so a re-import needs a new ``approve_review``.
+    approval is cleared, so a re-import needs a new approval
+    (``preached.exclusions.approve``).
 
     One transaction so a crash does not leave chunks without embeddings.
-    The next run then sees the video is not ``ok`` and tries again.
+    The next run then sees the video is not ``ok`` and tries again. When
+    earlier rows were replaced (``--redo``, a rebuild), ``scrub`` runs after
+    the commit, so the old words leave the file and ``-wal``
+    (``CheckpointBusy`` if the checkpoint cannot finish).
     """
     if len(chunks) != len(matrix):
         raise RuntimeError("embedding rows do not match chunks")
@@ -182,7 +241,7 @@ def index_video(
             "DELETE FROM embeddings WHERE rowid IN (SELECT rowid FROM chunks WHERE video_id = ?)",
             (video_id,),
         )
-        connection.execute("DELETE FROM chunks WHERE video_id = ?", (video_id,))
+        replaced = connection.execute("DELETE FROM chunks WHERE video_id = ?", (video_id,)).rowcount
         rowids: list[int] = []
         for chunk in chunks:
             cursor = connection.execute(
@@ -255,6 +314,8 @@ def index_video(
     except Exception:
         connection.rollback()
         raise
+    if replaced:
+        scrub(connection)
     return rowids
 
 
@@ -275,42 +336,3 @@ def _stamp_fingerprint(connection: sqlite3.Connection) -> None:
                 f"but search/models.toml gives {expected}"
             )
     save_embedding_info(connection, MODEL_KEY, {"fingerprint": expected})
-
-
-def approve_review(connection: sqlite3.Connection, video_id: str, review_file, privacy_sha256: str) -> str:
-    """Record a human's approval of this sermon's review file; return its sha256.
-
-    Refuses when the file is missing, the video is not ``ok``, the file's
-    sha256 differs from the one stored at import (the list changed since), or
-    the privacy config in effect now (``privacy_sha256``) is not the one the
-    import ran under (the stored text came from other rules).
-
-    The review file is read here, once. Nothing re-reads it after approval:
-    editing or deleting it later does not unpublish the sermon.
-    """
-    row = connection.execute(
-        "SELECT status, review_sha256, privacy_sha256 FROM videos WHERE video_id = ?", (video_id,)
-    ).fetchone()
-    if row is None or row[0] != "ok":
-        raise RuntimeError(f"{video_id}: not imported")
-    if row[2] is None or row[2] != privacy_sha256:
-        raise RuntimeError(
-            f"{video_id}: privacy config changed since import (or the import predates the config hash); "
-            "re-import with --redo under the config you mean, or pass the same --privacy"
-        )
-    try:
-        digest = file_sha256(review_file)
-    except OSError as exc:
-        raise RuntimeError(f"{video_id}: review file is missing ({exc.__class__.__name__})") from exc
-    if row[1] != digest:
-        raise RuntimeError(f"{video_id}: review file changed since import; re-import before approving")
-    connection.execute(
-        "UPDATE videos SET approved_sha256 = ?, approved_at = ? WHERE video_id = ?",
-        (digest, datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), video_id),
-    )
-    connection.commit()
-    return digest
-
-
-def file_sha256(path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()

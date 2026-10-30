@@ -21,7 +21,7 @@ import numpy as np
 
 from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
-from preached.exclusions import approve, base_sha256, boundary_flags, excluded_indexes, kept_runs, merge_flag, review_lines, word_rows, words_file, words_file_lines
+from preached.exclusions import approve, base_sha256, boundary_flags, carried_stretches, excluded_indexes, kept_runs, merge_flag, previous_excludes, review_lines, word_rows, words_file, words_file_lines
 from preached.privacy import Config, ReviewList, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
 from preached.skip import propose
@@ -199,8 +199,13 @@ def _plan(
     windows: dict[str, tuple[float, float]],
     config: Config | None = None,
     policy: str = "none",
+    previous: tuple[list[dict], int | None] = ([], None),
 ) -> Plan:
-    """Redact the sermon window, drop the stretches ``preached.skip`` proposes, chunk the rest."""
+    """Redact the sermon window, drop the stretches ``preached.skip`` proposes, chunk the rest.
+
+    ``previous`` is the old review file's ``exclude`` lines and word count
+    (``exclusions.previous_excludes``): on ``--redo`` they stay excluded.
+    """
     config = default_config() if config is None else config
     override = windows.get(video.id)
     runs = speech_runs(words)
@@ -216,8 +221,9 @@ def _plan(
     if not sermon_words:
         raise RuntimeError(f"no words in the sermon window {start_s:.1f}-{end_s:.1f}")
     stretches = propose([w.text for w in sermon_words])
-    excluded = excluded_indexes(stretches)
     rows = word_rows([w.text for w in sermon_words], [w.start for w in sermon_words], [w.end for w in sermon_words])
+    stretches += carried_stretches(*previous, rows, excluded_indexes(stretches))
+    excluded = excluded_indexes(stretches)
     kept = [r for r in rows if r["i"] not in excluded]
     # Names inside an excluded stretch are not indexed, so they need no review line.
     items = [
@@ -460,13 +466,13 @@ def _import_one(
     transcribe_s = time.perf_counter() - transcribe_started
     if not words:
         raise RuntimeError("transcript was empty")
-    plan = _plan(video, words, windows, config, policy)
-    records, items = plan.records, plan.items
     if not SAFE_ID.fullmatch(video.id):
         raise RuntimeError("video id is not usable as a file name")
+    review_file = settings.review_root() / f"{video.id}.review.jsonl"
+    plan = _plan(video, words, windows, config, policy, previous_excludes(review_file))
+    records, items = plan.records, plan.items
     flagged = sum(1 for record in records if record["flag_end_s"] is not None)
     header = metadata_review_lines(video.title, description, original_title or video.title, original_description, config)
-    review_file = settings.review_root() / f"{video.id}.review.jsonl"
     # The kept words (already redacted) let approval rebuild the chunks when the
     # reviewer widens or adds an excluded stretch; excluded words are not in it.
     _, words_sha = write_private_review(words_file_lines("youtube", plan.meta, plan.rows, plan.excluded), words_file(review_file))
