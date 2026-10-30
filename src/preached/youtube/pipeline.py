@@ -21,10 +21,12 @@ import numpy as np
 
 from preached.audio_policy import resolve_flagged_audio
 from preached.corpus import load_chunk_config
-from preached.privacy import Config, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
+from preached.exclusions import approve, base_sha256, excluded_indexes, kept_runs, review_lines, word_rows, words_file, words_file_lines
+from preached.privacy import Config, ReviewList, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
+from preached.skip import propose
 from preached.youtube.chunking import chunk_words
-from preached.youtube.library import approve_review, imported_ok, index_video, mark_video, open_library
+from preached.youtube.library import imported_ok, index_video, mark_video, open_library
 from preached.youtube.listing import Video, creative_commons, parse_date, watch_url
 from preached.youtube.sermon import is_sung, load_windows, sermon_span, speech_runs, words_in_span
 from preached.youtube.words import Word
@@ -137,14 +139,61 @@ def _flag_end(piece_words: list[Word], start_s: float, end_s: float, token: str,
     return max(ends) if ends else None
 
 
-def _chunks_for(
+@dataclass
+class Plan:
+    """One sermon after redaction and exclusions. ``items`` and ``rows`` hold real words: keep private."""
+
+    records: list[dict]
+    items: list
+    stretches: list
+    rows: list[dict]  # every sermon word (redacted) as preached.exclusions.word_rows
+    excluded: set[int]
+    meta: dict  # what a rebuild at approval needs
+
+
+def youtube_records(meta: dict, runs: list[list[dict]], items, token: str, policy: str = "none") -> list[dict]:
+    """Chunk each kept run on its own; ``word_start``/``word_end`` index the sermon's words.
+
+    ``runs`` are consecutive kept words (``{"i", "s", "e", "t"}``), so a chunk
+    never spans an excluded stretch. Also used to rebuild at approval.
+    """
+    config = load_chunk_config()
+    records = []
+    for run in runs:
+        run_words = [Word(w["s"], w["e"], w["t"]) for w in run]
+        offset = run[0]["i"]
+        for piece in chunk_words(run_words, config):
+            local = run_words[piece["word_start"] : piece["word_end"]]
+            flag_end = _flag_end(local, piece["start_s"], piece["end_s"], token, items)
+            records.append(
+                {
+                    **piece,
+                    "word_start": piece["word_start"] + offset,
+                    "word_end": piece["word_end"] + offset,
+                    "chunk_id": f"{meta['video_id']}-c{len(records):04d}",
+                    "audio_url": watch_url(
+                        meta["video_id"],
+                        piece["start_s"],
+                        duration_s=meta.get("duration_s"),
+                        end_s=piece["end_s"],
+                        flag_end_s=flag_end,
+                        policy=policy,
+                    ),
+                    "flag_end_s": flag_end,
+                    "source_url": meta.get("source_url"),
+                }
+            )
+    return records
+
+
+def _plan(
     video: Video,
     words: list[Word],
     windows: dict[str, tuple[float, float]],
     config: Config | None = None,
     policy: str = "none",
-) -> tuple[list[dict], list]:
-    """Return the chunk records and the sermon's ``review()`` items (real names: keep private)."""
+) -> Plan:
+    """Redact the sermon window, drop the stretches ``preached.skip`` proposes, chunk the rest."""
     config = default_config() if config is None else config
     override = windows.get(video.id)
     runs = speech_runs(words)
@@ -159,30 +208,34 @@ def _chunks_for(
     sermon_words = privacy.redact(span, config=config, source=video.id)
     if not sermon_words:
         raise RuntimeError(f"no words in the sermon window {start_s:.1f}-{end_s:.1f}")
-    items = review(apply_drops(span, config, video.id), config=config)
-    pieces = chunk_words(sermon_words, load_chunk_config())
-    if not pieces:
-        raise RuntimeError("chunker returned no passages")
-    records = []
-    for index, piece in enumerate(pieces):
-        flag_end = _flag_end(sermon_words[piece["word_start"] : piece["word_end"]], piece["start_s"], piece["end_s"], config.token, items)
-        records.append(
-            {
-                **piece,
-                "chunk_id": f"{video.id}-c{index:04d}",
-                "audio_url": watch_url(
-                    video.id,
-                    piece["start_s"],
-                    duration_s=video.duration_s,
-                    end_s=piece["end_s"],
-                    flag_end_s=flag_end,
-                    policy=policy,
-                ),
-                "flag_end_s": flag_end,
-                "source_url": video.watch_url(),
-            }
-        )
-    return records, items
+    stretches = propose([w.text for w in sermon_words])
+    excluded = excluded_indexes(stretches)
+    rows = word_rows([w.text for w in sermon_words], [w.start for w in sermon_words], [w.end for w in sermon_words])
+    kept = [r for r in rows if r["i"] not in excluded]
+    # Names inside an excluded stretch are not indexed, so they need no review line.
+    items = [
+        item
+        for item in review(apply_drops(span, config, video.id), config=config)
+        if any(r["s"] < item["end"] and r["e"] > item["start"] for r in kept)
+    ]
+    meta = {"video_id": video.id, "duration_s": video.duration_s, "source_url": video.watch_url()}
+    kept_by_run = [[rows[i] for i in run] for run in kept_runs([r["i"] for r in kept])]
+    records = youtube_records(meta, kept_by_run, items, config.token, policy)
+    if not records:
+        raise RuntimeError("nothing left to index after the excluded stretches")
+    return Plan(records, ReviewList(items), stretches, rows, excluded, meta)
+
+
+def _chunks_for(
+    video: Video,
+    words: list[Word],
+    windows: dict[str, tuple[float, float]],
+    config: Config | None = None,
+    policy: str = "none",
+) -> tuple[list[dict], list]:
+    """Return the chunk records and the sermon's ``review()`` items (real names: keep private)."""
+    plan = _plan(video, words, windows, config, policy)
+    return plan.records, plan.items
 
 
 def metadata_review_lines(title: str | None, description: str | None, original_title: str | None, original_description: str | None, config: Config) -> list[dict]:
@@ -224,13 +277,18 @@ def write_private_review(items, path: Path) -> tuple[int, str]:
     return write_review_file_sha256(items, absolute)
 
 
-def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], config: Config | None = None) -> int:
+def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], config: Config | None = None, embedder=None) -> int:
     """Record a human's approval for each id. Returns 0 when every id was approved.
+
+    Approval excludes exactly the stretches the review file lists
+    (``preached.exclusions.approve``). ``embedder`` is used only when the
+    reviewer widened or added one and the chunks are rebuilt.
 
     ``config`` is the privacy config in effect now (``--privacy`` or
     ``PREACHED_PRIVACY``); it must hash the same as the one the import used.
     """
-    privacy_sha = config_sha256(default_config() if config is None else config)
+    config = default_config() if config is None else config
+    privacy_sha = config_sha256(config)
     connection = open_library(index_path)
     failures = 0
     try:
@@ -240,7 +298,7 @@ def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], confi
                 failures += 1
                 continue
             try:
-                approve_review(connection, video_id, review_root / f"{video_id}.review.jsonl", privacy_sha)
+                approve(connection, video_id, review_root / f"{video_id}.review.jsonl", privacy_sha, token=config.token, embedder=embedder)
             except RuntimeError as exc:
                 print(f"not approved: {exc}", file=sys.stderr)
                 failures += 1
@@ -395,12 +453,18 @@ def _import_one(
     transcribe_s = time.perf_counter() - transcribe_started
     if not words:
         raise RuntimeError("transcript was empty")
-    records, items = _chunks_for(video, words, windows, config, policy)
+    plan = _plan(video, words, windows, config, policy)
+    records, items = plan.records, plan.items
     if not SAFE_ID.fullmatch(video.id):
         raise RuntimeError("video id is not usable as a file name")
     flagged = sum(1 for record in records if record["flag_end_s"] is not None)
     header = metadata_review_lines(video.title, description, original_title or video.title, original_description, config)
-    _, review_sha = write_private_review([*header, *items], settings.review_root() / f"{video.id}.review.jsonl")
+    review_file = settings.review_root() / f"{video.id}.review.jsonl"
+    # The kept words (already redacted) let approval rebuild the chunks when the
+    # reviewer widens or adds an excluded stretch; excluded words are not in it.
+    _, words_sha = write_private_review(words_file_lines("youtube", plan.meta, plan.rows, plan.excluded), words_file(review_file))
+    lines = [*header, *review_lines(plan.stretches, plan.rows, words_sha), *items]
+    _, review_sha = write_private_review(lines, review_file)
     titles = [video.title for _ in records]
     texts = [record["text"] for record in records]
     index_started = time.perf_counter()
@@ -418,6 +482,7 @@ def _import_one(
         matrix=matrix,
         review_sha256=review_sha,
         privacy_sha256=config_sha256(config),
+        review_base_sha256=base_sha256(lines),
     )
     index_s = time.perf_counter() - index_started
     if not settings.keep_audio:
@@ -433,7 +498,8 @@ def _import_one(
     )
     print(
         f"imported {video.id} in {time.perf_counter() - started:.1f}s; UNPUBLISHED until its review file is "
-        f"acknowledged ({len(items)} review items, {flagged} flagged chunks)",
+        f"acknowledged ({len(items)} review items, {flagged} flagged chunks, "
+        f"{len(plan.stretches)} excluded stretches of {len(plan.excluded)} words)",
         file=sys.stderr,
         flush=True,
     )

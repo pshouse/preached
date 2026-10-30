@@ -41,6 +41,9 @@ VIDEO_EXTRA_COLUMNS = (
     ("approved_at", "TEXT"),
     # preached.privacy.config_sha256 of the config the import ran under.
     ("privacy_sha256", "TEXT"),
+    # sha256 of the review file without its "exclude" lines (preached.exclusions):
+    # the reviewer may widen or add exclusions, and nothing else.
+    ("review_base_sha256", "TEXT"),
 )
 
 MODEL_KEY = DEFAULT_MODEL
@@ -151,6 +154,7 @@ def index_video(
     matrix: np.ndarray,
     review_sha256: str | None = None,
     privacy_sha256: str | None = None,
+    review_base_sha256: str | None = None,
     reader: str | None = None,
     sermon_number: int | None = None,
     librivox_id: str | None = None,
@@ -238,9 +242,9 @@ def index_video(
             error=None,
         )
         connection.execute(
-            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, approved_sha256 = NULL, approved_at = NULL "
-            "WHERE video_id = ?",
-            (review_sha256, privacy_sha256, video_id),
+            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, review_base_sha256 = ?, "
+            "approved_sha256 = NULL, approved_at = NULL WHERE video_id = ?",
+            (review_sha256, privacy_sha256, review_base_sha256, video_id),
         )
         connection.execute(
             "INSERT INTO meta (key, value) VALUES ('embed_model', ?) "
