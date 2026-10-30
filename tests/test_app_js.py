@@ -60,12 +60,18 @@ s = describeResponse({ results: hits, abstain: false, confidence: { level: "weak
 eq(s.kind, "weak", "weak kind"); eq(s.confidenceNote, "Server weak note.", "server note wins"); eq(s.showResults, true, "weak shows");
 s = describeResponse({ results: hits, abstain: false, confidence: { level: "weak" } });
 eq(s.confidenceNote, MESSAGES.weak, "default weak note");
+// Low confidence (abstain): shown by default under a banner that calls the check a heuristic.
 s = describeResponse({ results: hits, abstain: true, confidence: { level: "none", note: "x" } });
-eq(s.kind, "abstain", "abstain kind"); eq(s.showResults, false, "abstain hides"); eq(s.canReveal, true, "can reveal");
-eq(s.status.indexOf("Nothing strong found in these sermons."), 0, "abstain copy");
+eq(s.kind, "low", "low kind"); eq(s.showResults, true, "low shows by default"); eq(s.canHide, true, "can hide");
+eq(s.status, "2 passages.", "low count"); eq(s.confidenceNote, MESSAGES.low, "low banner");
+eq(MESSAGES.low.indexOf("heuristic") >= 0, true, "banner says heuristic");
+s = describeResponse({ results: hits, abstain: true, confidence: { level: "none" } }, true);
+eq(s.showResults, false, "toggle hides"); eq(s.status, MESSAGES.lowHidden, "hidden copy");
+s = describeResponse({ results: hits, abstain: false, confidence: { level: "strong" } }, true);
+eq(s.showResults, true, "toggle leaves strong results"); eq(s.canHide, false, "no toggle on strong");
 s = describeResponse({ results: [], abstain: true, confidence: { level: "none" } });
-eq(s.kind, "empty", "empty kind"); eq(s.canReveal, false, "nothing to reveal");
-eq(s.status.indexOf("Nothing strong found in these sermons."), 0, "empty copy");
+eq(s.kind, "empty", "empty kind"); eq(s.canHide, false, "nothing to hide");
+eq(s.status.indexOf("Nothing found in these sermons."), 0, "empty copy");
 s = describeResponse({ results: hits, note: "Embedding model failed to load; results are BM25 only.", confidence: { level: "unrated" } });
 eq(s.kind, "results", "unrated shows"); eq(s.fallbackNote, "Embedding model failed to load; results are BM25 only.", "fallback note");
 s = describeResponse({ results: hits });
@@ -80,7 +86,7 @@ eq(failureMessage("garbled", 200, null), MESSAGES.garbled, "garbled");
 console.log("ok");
 """
 
-# A minimal DOM: enough for showResults, revealClosest, showFailure and
+# A minimal DOM: enough for showResults, toggleLowConfidence, showFailure and
 # renderCard to run for real. Nodes record textContent, hidden and classes.
 FAKE_DOM = """
 function FakeNode(tag) {
@@ -101,10 +107,10 @@ FakeNode.prototype.addEventListener = function (k, f) { this.listeners[k] = f; }
 FakeNode.prototype.focus = function () { this.focused = true; };
 Object.defineProperty(FakeNode.prototype, "innerHTML", { set: function () { throw new Error("innerHTML used"); } });
 var nodes = {};
-["results-section", "results", "note", "status", "confidence", "reveal", "retry"].forEach(function (id) {
+["results-section", "results", "note", "status", "confidence", "hide-low", "retry"].forEach(function (id) {
   nodes[id] = new FakeNode("x");
 });
-nodes.note.hidden = true; nodes.confidence.hidden = true; nodes.reveal.hidden = true; nodes.retry.hidden = true;
+nodes.note.hidden = true; nodes.confidence.hidden = true; nodes["hide-low"].hidden = true; nodes.retry.hidden = true;
 globalThis.window = { location: { origin: "http://127.0.0.1:8000" } };
 globalThis.document = {
   addEventListener() {},
@@ -126,15 +132,23 @@ setBusy(true);
 eq(nodes["results-section"].attrs["aria-busy"], "true", "busy while loading");
 showResults(abstained);
 eq(nodes["results-section"].attrs["aria-busy"], "false", "not busy after");
-eq(nodes.results.children.length, 0, "abstain hides results");
-eq(nodes.reveal.hidden, false, "reveal offered");
-eq(nodes.status.textContent.indexOf("Nothing strong found in these sermons."), 0, "abstain status");
-revealClosest();
-eq(nodes.results.children.length, 2, "revealed");
-eq(nodes.reveal.hidden, true, "reveal gone");
-eq(nodes.confidence.hidden, false, "weak note shown with revealed results");
-eq(nodes.confidence.focused, true, "focus moved to the note");
-eq(nodes.status.textContent, "Showing the 2 closest passages anyway.", "reveal status");
+eq(nodes.results.children.length, 2, "low-confidence results shown by default");
+eq(nodes.confidence.hidden, false, "low banner shown");
+eq(nodes.confidence.textContent, MESSAGES.low, "low banner text");
+eq(nodes["hide-low"].hidden, false, "toggle offered");
+eq(nodes["hide-low"].attrs["aria-pressed"], "false", "toggle off");
+eq(nodes.status.textContent, "2 passages.", "low status");
+toggleLowConfidence();
+eq(nodes.results.children.length, 0, "toggle hides");
+eq(nodes.confidence.hidden, true, "banner hidden with the results");
+eq(nodes.status.textContent, MESSAGES.lowHidden, "hidden status");
+eq(nodes["hide-low"].attrs["aria-pressed"], "true", "toggle on");
+eq(nodes["hide-low"].hidden, false, "toggle stays");
+eq(nodes["hide-low"].focused, true, "focus stays on the toggle");
+showResults(abstained);
+eq(nodes.results.children.length, 0, "choice holds for the next search");
+toggleLowConfidence();
+eq(nodes.results.children.length, 2, "toggle shows again");
 var title = nodes.results.children[0].children[0].children[1];
 eq(title.textContent, "<b>Title</b>", "title is text, not markup");
 
@@ -143,7 +157,7 @@ showResults({ results: [hit], note: "Embedding model failed to load; results are
 eq(nodes.note.hidden, false, "fallback note shown");
 eq(nodes.note.textContent, "Embedding model failed to load; results are BM25 only.", "fallback text");
 eq(nodes.confidence.hidden, true, "no weak note");
-eq(nodes.reveal.hidden, true, "no reveal");
+eq(nodes["hide-low"].hidden, true, "no toggle");
 eq(nodes.status.textContent, "1 passage.", "count");
 
 showResults({ results: [hit], abstain: false, confidence: { level: "weak", note: "Weak." } });
@@ -160,7 +174,7 @@ eq(nodes.note.hidden, true, "error clears note");
 showResults({ results: [], abstain: true, confidence: { level: "none" } });
 eq(nodes.status.classList.contains("is-error"), false, "error style cleared");
 eq(nodes.retry.hidden, true, "retry hidden again");
-eq(nodes.reveal.hidden, true, "nothing to reveal");
+eq(nodes["hide-low"].hidden, true, "nothing to hide");
 console.log("ok");
 """
 
@@ -194,7 +208,7 @@ class PageStaticTests(unittest.TestCase):
     def test_state_elements_and_no_inline_code(self) -> None:
         page = (APP_JS.parent / "index.html").read_text()
         script = APP_JS.read_text()
-        for element in ('id="results-section"', 'aria-busy="false"', 'id="confidence"', 'id="reveal"',
+        for element in ('id="results-section"', 'aria-busy="false"', 'id="confidence"', 'id="hide-low"',
                         'id="retry"', 'role="status" aria-live="polite"'):
             self.assertIn(element, page)
         self.assertNotIn("style=", page)

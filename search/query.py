@@ -75,7 +75,7 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
     print(f"query: {query}")
     print(f"mode: {mode}" + (f"  model: {model}" if model else ""))
     if not hits:
-        print("Nothing strong found in the indexed sermons.")
+        print("Nothing found in the indexed sermons.")
         return
     for rank, hit in enumerate(hits, start=1):
         print(
@@ -98,8 +98,8 @@ def main() -> None:
     parser.add_argument("--dense-weight", type=float, default=0.5)
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
-    parser.add_argument("--show-anyway", action="store_true",
-                        help="list the closest passages even when nothing strong was found")
+    parser.add_argument("--hide-low-confidence", action="store_true",
+                        help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
 
     connection = connect(args.index)
@@ -138,9 +138,9 @@ def main() -> None:
     floor = floor_for(model_name) if vector is not None else None
     confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
     mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
-    if confidence.abstain and hits and not args.show_anyway:
+    if confidence.abstain and hits and args.hide_low_confidence:
         print_hits(args.query, mode_label, model_name, [])
-        print(f"({len(hits)} closest passages hidden; --show-anyway lists them.)")
+        print(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
         return
     print_hits(args.query, mode_label, model_name, hits)
     if confidence.note and hits:

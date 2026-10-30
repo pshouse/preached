@@ -25,7 +25,7 @@ The agent's steps were:
 
 A chunk matches a quote when `normalize(quote)` is contained in `normalize(chunk)`. Overlap can put one quote in two chunks. Metrics count that quote once, at the first ranked chunk that contains it. See `src/preached/metrics.py`.
 
-Recall@5, MRR@10, and nDCG@10 are computed only on questions with a relevant passage. Unanswerable questions are reported separately as the top-1 score, so a later threshold for "nothing strong found" can be chosen from the numbers rather than invented here. That threshold now exists: `search/bench.py --abstain` fits a per-model dense floor (`search/abstain.toml`) from the unanswerable items and reports leave-one-out numbers. See `reports/W3-POLISH.md`. It inherits every caveat on this page.
+Recall@5, MRR@10, and nDCG@10 are computed only on questions with a relevant passage. Unanswerable questions are reported separately as the top-1 score, so a later threshold for "nothing strong found" can be chosen from the numbers rather than invented here. That threshold now exists as a heuristic, not a verdict: `search/bench.py --abstain` fits a per-model dense floor (`search/abstain.toml`) from the unanswerable items (in practice one of them sets it) and reports leave-one-out numbers. The page shows low-confidence results by default under a banner. See `reports/W3-POLISH.md`. It inherits every caveat on this page.
 
 ## Shared sentences
 

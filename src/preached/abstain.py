@@ -18,9 +18,17 @@ Levels:
 - ``strong``: agreement, and the top cosine is above the floor.
 - ``weak``: exactly one of the two fails. Results are shown with a note that
   they may not answer the question.
-- ``none``: both fail. The page says nothing strong was found. The closest
-  passages are still returned (``abstain`` is true) so a person can look.
+- ``none``: both fail ("low confidence"; ``abstain`` is true). The passages
+  are still returned and the page shows them by default under a
+  low-confidence banner, with a toggle to hide them.
 - ``unrated``: BM25-only search with results; there is no dense signal.
+
+The dense floor is a heuristic, not a verdict: it is fitted on five
+LLM-written unanswerable questions and in practice is set by one of them
+(``u-book-of-mormon``). It wrongly flags some answerable questions (e.g.
+"worry", "How do I stop worrying?", which Sermon 29 covers) and passes a
+bare ``"``. That is why the page and CLI show low-confidence results by
+default. See reports/W3-POLISH.md.
 
 A model with no calibration (or a stale one) never abstains; a list without
 agreement is ``weak``. BM25-only search abstains only when it found nothing.
@@ -59,7 +67,10 @@ DEFAULT_BACKEND = "torch"
 # that sat exactly on the floor still compares <= after rounding.
 FLOOR_DECIMALS = 4
 
-NONE_NOTE = "Nothing strong found in these sermons."
+NONE_NOTE = (
+    "Low confidence: these passages may not answer your question. "
+    "This is a rough automatic check (a heuristic), so read them and judge for yourself."
+)
 WEAK_NOTE = "These passages may not answer your question. They are the closest matches, not strong ones."
 
 

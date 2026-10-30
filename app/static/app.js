@@ -178,9 +178,11 @@ function renderCard(hit) {
 /* Page copy for each search state. Plain words; inserted with textContent. */
 var MESSAGES = {
   loading: "Searching the sermons.",
-  nothing: "Nothing strong found in these sermons.",
+  nothing: "Nothing found in these sermons.",
   emptyHint: "Try other words, or a Bible verse such as Romans 8:16.",
-  abstainHint: "The closest passages are weak matches. You can still look at them.",
+  low: "Low confidence: these passages may not answer your question. " +
+    "This is a rough automatic check (a heuristic), so read them and judge for yourself.",
+  lowHidden: "Low-confidence results hidden.",
   weak: "These passages may not answer your question. They are the closest matches, not strong ones.",
   network: "Could not reach the search. Check your connection and try again.",
   server: "The search had a problem on our side. Try again in a moment.",
@@ -188,13 +190,20 @@ var MESSAGES = {
   enter: "Enter a question.",
 };
 
+/* "Hide low-confidence results" toggle. Off by default: the low-confidence
+   check is a heuristic fitted on very few questions and wrongly flags some
+   good answers, so results are shown under a banner unless the person asks
+   to hide them. The choice holds for later searches on this page. */
+var hideLowConfidence = false;
+
 function countLabel(count) {
   return count === 1 ? "1 passage." : count + " passages.";
 }
 
 /* What the page shows for one search response. Pure (no DOM), so it is
-   tested in Deno. kind: results | weak | abstain | empty. */
-function describeResponse(data) {
+   tested in Deno. kind: results | weak | low | empty. ``hideLow`` is the
+   toggle; it only affects low-confidence (abstain) responses. */
+function describeResponse(data, hideLow) {
   var results = data && Array.isArray(data.results) ? data.results : [];
   var confidence = data && data.confidence && typeof data.confidence === "object" ? data.confidence : {};
   var serverNote = typeof confidence.note === "string" && confidence.note ? confidence.note : null;
@@ -205,7 +214,7 @@ function describeResponse(data) {
     confidenceNote: null,
     fallbackNote: fallback,
     showResults: true,
-    canReveal: false,
+    canHide: false,
     results: results,
   };
   if (results.length === 0) {
@@ -213,11 +222,13 @@ function describeResponse(data) {
     state.status = MESSAGES.nothing + " " + MESSAGES.emptyHint;
     state.showResults = false;
   } else if (data.abstain === true) {
-    state.kind = "abstain";
-    state.status = MESSAGES.nothing + " " + MESSAGES.abstainHint;
-    state.showResults = false;
-    state.canReveal = true;
-    state.confidenceNote = MESSAGES.weak;
+    state.kind = "low";
+    state.canHide = true;
+    state.confidenceNote = MESSAGES.low;
+    if (hideLow === true) {
+      state.status = MESSAGES.lowHidden;
+      state.showResults = false;
+    }
   } else if (confidence.level === "weak") {
     state.kind = "weak";
     state.confidenceNote = serverNote || MESSAGES.weak;
@@ -235,7 +246,7 @@ function failureMessage(kind, status, data) {
 }
 
 var lastSearch = null;
-var lastState = null;
+var lastData = null;
 
 function setText(id, text) {
   var node = document.getElementById(id);
@@ -253,7 +264,7 @@ function resetState() {
   document.getElementById("results").replaceChildren();
   setText("note", "");
   setText("confidence", "");
-  document.getElementById("reveal").hidden = true;
+  document.getElementById("hide-low").hidden = true;
   document.getElementById("retry").hidden = true;
   document.getElementById("status").classList.remove("is-error");
 }
@@ -269,34 +280,31 @@ function renderList(results) {
 function showResults(data) {
   resetState();
   setBusy(false);
-  var state = describeResponse(data);
-  lastState = state;
+  lastData = data;
+  var state = describeResponse(data, hideLowConfidence);
   setText("note", state.fallbackNote);
   document.getElementById("status").textContent = state.status;
   if (state.showResults) {
     setText("confidence", state.confidenceNote);
     renderList(state.results);
   }
-  document.getElementById("reveal").hidden = !state.canReveal;
+  var toggle = document.getElementById("hide-low");
+  toggle.hidden = !state.canHide;
+  toggle.setAttribute("aria-pressed", hideLowConfidence ? "true" : "false");
 }
 
-function revealClosest() {
-  if (!lastState || !lastState.canReveal) return;
-  var state = lastState;
-  document.getElementById("reveal").hidden = true;
-  setText("confidence", state.confidenceNote);
-  var count = state.results.length;
-  document.getElementById("status").textContent =
-    "Showing the " + (count === 1 ? "closest passage" : count + " closest passages") + " anyway.";
-  renderList(state.results);
-  /* The button that had focus is gone; move focus to the note above the list. */
-  document.getElementById("confidence").focus();
+function toggleLowConfidence() {
+  hideLowConfidence = !hideLowConfidence;
+  if (!lastData) return;
+  showResults(lastData);
+  /* Keep focus on the toggle so it can be pressed again. */
+  document.getElementById("hide-low").focus();
 }
 
 function showFailure(message) {
   resetState();
   setBusy(false);
-  lastState = null;
+  lastData = null;
   var statusEl = document.getElementById("status");
   statusEl.textContent = message;
   statusEl.classList.add("is-error");
@@ -312,7 +320,7 @@ async function runSearch(query) {
   searchAbort = new AbortController();
   var signal = searchAbort.signal;
   lastSearch = query;
-  lastState = null;
+  lastData = null;
   resetState();
   setBusy(true);
   statusEl.textContent = MESSAGES.loading;
@@ -372,7 +380,7 @@ function init() {
     runSearch(query);
   });
 
-  document.getElementById("reveal").addEventListener("click", revealClosest);
+  document.getElementById("hide-low").addEventListener("click", toggleLowConfidence);
   document.getElementById("retry").addEventListener("click", function () {
     if (lastSearch) runSearch(lastSearch);
   });

@@ -507,7 +507,10 @@ class ServerTests(unittest.TestCase):
         page = (STATIC_DIR / "index.html").read_text()
         script = (STATIC_DIR / "app.js").read_text()
         style = (STATIC_DIR / "app.css").read_text()
-        self.assertIn("Nothing strong found", script)
+        self.assertIn("Nothing found in these sermons", script)  # zero hits only
+        self.assertNotIn("Nothing strong found", script)  # low confidence shows results, not this
+        self.assertIn("heuristic", script)
+        self.assertIn("Hide low-confidence results", page)
         self.assertIn("Audio timing coming soon", script)
         self.assertIn("LibriVox volunteer", script)
         self.assertIn("Read by ", script)
