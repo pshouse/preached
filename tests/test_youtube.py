@@ -150,15 +150,29 @@ class ListingTests(unittest.TestCase):
         stored = "https://www.youtube.com/watch?v=abcdefghijk&t=11s"
         self.assertEqual(youtube_watch_url(stored), stored)
         apex = "https://youtube.com/watch?v=abcdefghijk&t=0s"
-        self.assertEqual(youtube_watch_url(apex), apex)
+        self.assertEqual(youtube_watch_url(apex), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
         mobile = "https://m.youtube.com/watch?v=abcdefghijk&t=3s"
-        self.assertEqual(youtube_watch_url(mobile), mobile)
+        self.assertEqual(youtube_watch_url(mobile), "https://www.youtube.com/watch?v=abcdefghijk&t=3s")
         mixed = "https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s"
-        self.assertEqual(youtube_watch_url(mixed), mixed)
+        self.assertEqual(youtube_watch_url(mixed), "https://www.youtube.com/watch?v=abc_def-01X&t=11s")
         explicit_port = "https://www.youtube.com:443/watch?v=abcdefghijk&t=11s"
-        self.assertEqual(youtube_watch_url(explicit_port), explicit_port)
+        self.assertEqual(youtube_watch_url(explicit_port), stored)
         kept_hash = "https://www.youtube.com/watch?v=abcdefghijk&t=11s#keep"
-        self.assertEqual(youtube_watch_url(kept_hash), kept_hash)
+        self.assertEqual(youtube_watch_url(kept_hash), stored)
+
+    def test_youtube_watch_url_rebuilds_validated_parts_only(self) -> None:
+        base = "https://www.youtube.com/watch?v=abcdefghijk"
+        hostile_t = base + "&t=javascript:alert(1)"
+        self.assertEqual(youtube_watch_url(hostile_t), base)
+        self.assertNotIn("javascript", youtube_watch_url(hostile_t) or "")
+        extra = base + "&t=11s&redirect=https://evil.example&feature=share"
+        self.assertEqual(youtube_watch_url(extra), base + "&t=11s")
+        self.assertNotIn("redirect", youtube_watch_url(extra) or "")
+        self.assertEqual(youtube_watch_url(base + "&t=011s"), base + "&t=11s")
+        self.assertEqual(youtube_watch_url(base + "&t=86400s"), base + "&t=86400s")
+        self.assertEqual(youtube_watch_url(base + "&t=86401s"), base)
+        self.assertEqual(youtube_watch_url(base + "&t=11s&t=12s"), base)
+        self.assertEqual(youtube_watch_url(base + "&t="), base)
 
     def test_youtube_watch_url_rejects_hostile_and_other_shapes(self) -> None:
         rejected = (
@@ -173,6 +187,9 @@ class ListingTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=short",
             "https://www.youtube.com/watch?v=abcdefghijkl",
             "https://www.youtube.com/watch?v=abcdefghijk&v=zzzzzzzzzzz",
+            "https://www.youtube.com/watch?v=abcdefghijk&v=",
+            "https://www.youtube.com/watch?v=&v=abcdefghijk",
+            "https://www.youtube.com/watch?v=abcdefghijk&v",
             "https://www.youtube.com:8443/watch?v=abcdefghijk",
             "https://www.youtube.com:abc/watch?v=abcdefghijk",
             "https://www.youtube.com:99999/watch?v=abcdefghijk",

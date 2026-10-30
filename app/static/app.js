@@ -70,11 +70,35 @@ function isArchiveHost(href) {
 /* Importer hosts that serve /watch?v=. youtu.be is a short link, not this form. */
 var YOUTUBE_WATCH_HOSTS = { "youtube.com": 1, "www.youtube.com": 1, "m.youtube.com": 1 };
 var YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+/* Same ceiling as listing.py MAX_T_S. A longer t= is omitted, not copied. */
+var MAX_T_S = 24 * 60 * 60;
+var T_RE = /^([0-9]+)s?$/;
 
-/* Valid https watch URL, or null. Returns the stored string so &t= stays put.
-   Does not add #t=. Host check matches the importer (no credentials, port 443
-   or default). media-src does not allow YouTube, so callers must not put
-   this URL on an <audio> element. */
+/* https://www.youtube.com/watch?v=<id> and, when seconds is a number, &t=<int>s. */
+function watchLink(videoId, seconds) {
+  var base = "https://www.youtube.com/watch?v=" + videoId;
+  if (seconds == null) return base;
+  return base + "&t=" + seconds + "s";
+}
+
+/* One whole-second t in 0..MAX_T_S, or null. A second t, blank or not, is dropped. */
+function watchSeconds(values) {
+  if (values.length !== 1) return null;
+  var match = T_RE.exec(values[0]);
+  if (!match) return null;
+  var digits = match[1].replace(/^0+/, "") || "0";
+  if (digits.length > String(MAX_T_S).length) return null;
+  var seconds = Number(digits);
+  if (!Number.isSafeInteger(seconds) || seconds > MAX_T_S) return null;
+  return seconds;
+}
+
+/* Valid https watch URL, or null. Rebuilt from the video id and an integer
+   t= only. Extra query parameters, a fragment, and a non-numeric t= are
+   dropped. A blank second v= is rejected. Does not add #t=. Host check
+   matches the importer (no credentials, port 443 or default). media-src
+   does not allow YouTube, so callers must not put this URL on an <audio>
+   element. */
 function youtubeWatchUrl(value) {
   if (typeof value !== "string" || value === "") return null;
   if (value.charAt(0) === "-" || value.indexOf("\\") !== -1) return null;
@@ -96,7 +120,7 @@ function youtubeWatchUrl(value) {
   if (url.pathname !== "/watch") return null;
   var ids = url.searchParams.getAll("v");
   if (ids.length !== 1 || !YOUTUBE_ID.test(ids[0])) return null;
-  return value;
+  return watchLink(ids[0], watchSeconds(url.searchParams.getAll("t")));
 }
 
 /* CCEL only when the host is ccel.org. A YouTube source that is the same
@@ -210,7 +234,7 @@ function renderCard(hit) {
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
     if (youtube && startLabel) {
-      /* Stored watch URL, including its &t= pre-roll. Not loaded in <audio>. */
+      /* Rebuilt watch URL, including a validated &t= pre-roll. Not loaded in <audio>. */
       var watch = el("a", "play", "Watch on YouTube at " + startLabel);
       watch.href = youtube;
       watch.target = "_blank";
