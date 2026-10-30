@@ -142,3 +142,12 @@ Rerun: `uv run python -m unittest discover -s tests` and `python3 eval/privacy/e
 9. **Nit, all-caps "JANE DOE" gives "[name] DOE": left open.** "DOE" is a lexicon word; a casing fix risks changing the frozen blind3 numbers.
 
 Still open: lowercase names without a strong cue; the silent-miss class; a human audit of blind3 labels.
+
+## Merge with main
+
+- **Merge commit:** `6fae363` (normal merge of `origin/main` at `23bc496`; no rebase).
+- **Conflicts:** `.gitignore` (kept both sides: `review/`, `*.review.jsonl` and main's audio patterns) and `src/preached/store.py`.
+- **`store.py`:** main's `replace_chunks` is kept exactly (docstring, no commit, extra `DELETE FROM meta WHERE key LIKE 'embeddings:%'`, so the rebuild stays one transaction with the hash write). The review-item check moved into a helper, `_refuse_review_items`, called first in `replace_chunks`, before any write. `update_chunk_metadata`, the only other chunk writer in `store.py` (reached from `sync_chunks`), now calls it too. Main added no temp-file/rename writer. `youtube/library.py` inserts chunks it builds itself from ASR output, never caller-supplied lists, so it is not guarded. The `corpus.write_jsonl` guard is unchanged.
+- **Tests:** 203 pass (`uv run python -m unittest discover -s tests`). `tests/test_privacy.py` still asserts `store.replace_chunks` raises `ValueError` on a `ReviewItem`. I added no test for `update_chunk_metadata`.
+- **Evaluator, blind3:** recall 224/242 = 0.926, false redaction 55/354 = 0.155, other words 14/6405. Unchanged.
+- **BRIEF.md:** Privacy bullet reworded so the two parentheticals become one clause and two sentences, same meaning.
