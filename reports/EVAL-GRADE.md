@@ -281,3 +281,35 @@ None. `uv lock --check`: `Resolved 79 packages`, exit 0.
 ## Tests
 
 `uv run python -m unittest discover -s tests`: **369 tests, OK**. That is 362 after the main merge, plus 1 in `tests/test_embed_backend.py` (ArtifactError one line) and 6 in `tests/test_eval_leak.py` (3-letter words, inflections and synonyms, quote/scripture phrases, proposed-title skip, `plain-blind` not failing, proposed labels marked).
+
+## Round 2 (CTO)
+
+CTO verdict on `fdde6ea` was CHANGES. One doc-only must-fix, three should-fixes. Search, fusion, the default model, `search/abstain.toml`, and every label's `status` are unchanged. Grading was not re-run. No question was rewritten. No new dependency.
+
+| item | commit |
+| --- | --- |
+| Proposed labels are `found_by` `llm-proposed:claude`; the 30 blind questions are `provenance` `llm-written:grok`; README, `docs/research/embeddings.md`, and the review-sheet note say so and that a human has not confirmed them | `9e911a78185450723f64d893dda96055ef2d46bd` |
+| Dense sermon@10/@50 gap: the bench counts only grade-2 sermons; the whole gap is `q-perfection-plain`. Shipped `search/abstain.toml` on main is `adb419ec` (PR #10 replaced `73d86bda`). Granite floor unchanged at 0.8129 | `82f7aca4895b28e08bab6bb8c10be683dbe87f59` |
+| `eval/pool.py` shuffles the grader's pool and drops ranker and rank | `133d932652379e3a5e145ddb4b92253d81b75722` |
+| `.gitignore` keeps `eval/review/review-*.csv` only | `8a1b20401157276c6e8cfd8b54eab811a2017e5f` |
+| Leak lint: modern verse wording, a single distinctive word, and "fell away", with tests | `7b9673d277b1c0992942004fb595ec498f9cecc5` |
+
+The 586 proposed labels (456 grade-1 on the old families, 102 grade-1 and 28 grade-2 on `plain-blind`; twins store the same label twice, 929 records) now have `found_by` `llm-proposed:claude`. Each of the 30 `plain-blind` questions in `eval/questions.jsonl` and `eval/plain_candidates.jsonl` has `provenance` `llm-written:grok`. `eval/apply_grades.py` writes those values on a later run. `eval/review/review-2026-10-30.csv` has a leading comment that the proposed passages are LLM-proposed and need human confirmation. The columns are unchanged.
+
+Lint on the current set, after the new checks, questions not rewritten:
+
+```
+$ uv run python scripts/check_title_leak.py
+questions.jsonl: 93 questions; groups {"names-topic": 23, "plain": 25, "plain-blind": 30, "scripture-keyword": 7, "title-keyword": 3, "unanswerable": 5}
+note p-003 (plain-blind, wording frozen): title word "money" (The Use of Money) ~ "money"
+plain questions checked: 25; leaking: 0
+plain-blind questions checked: 30; overlapping (note only): 1
+```
+
+The new checks add no `plain` or `plain-blind` flag. The only note is the old one, `p-003`. On `names-topic`, which the lint does not fail, they also match `q-worry` ("tomorrow" in Matt 6:24–34), `q-perfection` ("perfection" / "perfect"), `q-catholic-spirit` ("catholic"), and `q-backsliders` ("fell away", and "backsliders"). Those questions were already `names-topic` for a title word.
+
+`uv run python -m unittest discover -s tests`: **372 tests, OK** (the previous 369, plus modern verse wording, a single distinctive word, and "fell away").
+
+`uv lock --check`: `Resolved 79 packages`, exit 0.
+
+Head: recorded in the commit that adds this section.
