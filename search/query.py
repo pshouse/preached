@@ -108,7 +108,7 @@ def main() -> None:
         default=None,
         help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
     )
-    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
@@ -139,7 +139,12 @@ def main() -> None:
                 device=args.device,
                 batch_size=1,
             )
-            check_query_variant(connection, model_name, getattr(embedder, "variant", None))
+            try:
+                check_query_variant(connection, model_name, getattr(embedder, "variant", None))
+            except EmbeddingMismatch as exc:
+                message = " ".join(str(exc).split())
+                print(f"error: {message}", file=sys.stderr)
+                raise SystemExit(1) from exc
             vector = embedder.encode_queries([args.query])[0]
             try:
                 searcher = Searcher(connection, model=model_name)

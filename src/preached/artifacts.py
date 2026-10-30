@@ -1,12 +1,11 @@
 """On-disk ONNX artifacts for Granite English R2.
 
 Weights live under ``/cache/models/granite-english-r2-onnx/<revision>/``.
-The runtime checks only the files the selected variant needs: that graph,
-``tokenizer.json``, and ``pooling.json``. A directory that ships
-``model.fp32.onnx`` and not ``model.int8.onnx`` still loads. A needed file
-that is missing or mismatched is refused. The fp32 graph and the tokenizer
-are also checked against pinned sha256 constants, so a swapped file whose
-manifest was rewritten still fails. The loader does not download.
+The runtime loads one variant, fp32. int8 is not a runtime variant: it
+missed the quality bar, and a manifest must not point ``fp32`` at another
+file. The graph file name and its sha256 are pinned in this module by
+variant. ``tokenizer.json`` is pinned by its own digest. A needed file
+that is missing or mismatched is refused. The loader does not download.
 """
 
 from __future__ import annotations
@@ -24,14 +23,16 @@ GRANITE_HF_ID = "ibm-granite/granite-embedding-english-r2"
 GRANITE_REVISION = "47ea694b257b703fee9253d75c2b1f2985180498"
 GRANITE_MODEL_KEY = "granite-english-r2"
 
-# sha256 of the bytes under /cache, hashed 2026-10-30. These are not read
-# from manifest.json: a swapped file plus a rewritten manifest still fails.
+# sha256 of the bytes under /cache, hashed 2026-10-30. The graph pin is
+# keyed by variant, not by whatever file name the manifest writes. A
+# rewritten manifest cannot aim fp32 at another graph.
 FP32_ONNX_SHA256 = "3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9"
 TOKENIZER_SHA256 = "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
-PINNED_SHA256 = {
-    "model.fp32.onnx": FP32_ONNX_SHA256,
-    "tokenizer.json": TOKENIZER_SHA256,
-}
+# int8 is intentionally absent. The export may still leave model.int8.onnx
+# beside the fp32 graph; the server never opens it.
+VARIANT_FILES = {"fp32": "model.fp32.onnx"}
+VARIANT_SHA256 = {"fp32": FP32_ONNX_SHA256}
+PINNED_SHA256 = {"tokenizer.json": TOKENIZER_SHA256}
 
 # Overridable so tests can point at a fixture directory.
 ONNX_ROOT_ENV = "PREACHED_ONNX_DIR"
@@ -42,7 +43,7 @@ DEFAULT_ONNX_ROOT = Path("/cache/models/granite-english-r2-onnx")
 # One intra-op thread. A 1-vCPU Sprite with 4 threads was slower (134 ms
 # p50 vs 56 ms). Set PREACHED_ORT_INTRA_OP_THREADS=4 on a larger CPU.
 DEFAULT_ORT_THREADS = 1
-VARIANTS = ("fp32", "int8")
+VARIANTS = tuple(VARIANT_FILES)
 
 
 class ArtifactError(RuntimeError):
@@ -104,17 +105,15 @@ class VerifiedArtifacts:
     files: dict[str, bytes]
 
 
-def required_filenames(manifest: dict, variant: str) -> list[str]:
-    """Graph for ``variant``, then the tokenizer and the pooling config."""
-    variants = manifest.get("variants") or {}
-    graph = variants.get(variant)
-    if not isinstance(graph, str) or graph not in manifest.get("files", {}):
-        raise ArtifactError(f"ONNX variant {variant} is not in the manifest")
-    names: list[str] = []
-    for name in (graph, "tokenizer.json", "pooling.json"):
-        if name not in names:
-            names.append(name)
-    return names
+def required_filenames(variant: str) -> list[str]:
+    """Hard-coded graph for ``variant``, then the tokenizer and pooling config.
+
+    The manifest does not choose the graph file. ``VARIANT_FILES`` does.
+    """
+    graph = VARIANT_FILES.get(variant)
+    if graph is None:
+        raise ArtifactError(f"unknown ONNX variant {variant!r}")
+    return [graph, "tokenizer.json", "pooling.json"]
 
 
 def _read_hashed(path: Path) -> tuple[bytes, str]:
@@ -130,16 +129,18 @@ def verify_manifest(
 ) -> VerifiedArtifacts:
     """Check the files this variant needs and return their bytes.
 
-    Files for other variants are not opened. ``enforce_pins`` (the runtime
-    default) also requires ``model.fp32.onnx`` and ``tokenizer.json`` to
-    match the constants above when those files are part of this load.
-    Tests of the manifest hash itself pass ``enforce_pins=False``.
+    Files for other graphs are not opened. ``enforce_pins`` (the runtime
+    default) also requires the variant's graph and ``tokenizer.json`` to
+    match the constants above. Tests of the manifest hash itself pass
+    ``enforce_pins=False``. A manifest that points the variant at a
+    different file name is refused either way.
     """
     folder = directory or artifact_dir()
     manifest = load_manifest(folder)
     chosen = resolve_variant(manifest, variant)
     verified: dict[str, bytes] = {}
-    for name in required_filenames(manifest, chosen):
+    graph_name = VARIANT_FILES[chosen]
+    for name in required_filenames(chosen):
         if not isinstance(name, str) or "/" in name or "\\" in name or name.startswith("."):
             raise ArtifactError(f"ONNX manifest has an unsafe file name {name!r}")
         info = manifest["files"].get(name)
@@ -152,7 +153,7 @@ def verify_manifest(
         data, actual = _read_hashed(path)
         if actual != expected:
             raise ArtifactError(f"ONNX sha256 mismatch for {name}")
-        pinned = PINNED_SHA256.get(name)
+        pinned = VARIANT_SHA256[chosen] if name == graph_name else PINNED_SHA256.get(name)
         if enforce_pins and pinned is not None and actual != pinned:
             raise ArtifactError(f"ONNX sha256 for {name} is not the pinned digest")
         verified[name] = data
@@ -169,10 +170,14 @@ def resolve_variant(manifest: dict, requested: str | None = None) -> str:
     choice = requested or os.environ.get(VARIANT_ENV) or manifest.get("default_variant")
     if choice not in VARIANTS:
         raise ArtifactError(f"unknown ONNX variant {choice!r}")
-    variants = manifest.get("variants") or {}
-    filename = variants.get(choice)
-    if not isinstance(filename, str) or filename not in manifest["files"]:
-        raise ArtifactError(f"ONNX variant {choice} is not in the manifest")
+    expected = VARIANT_FILES[choice]
+    declared = (manifest.get("variants") or {}).get(choice)
+    if declared != expected:
+        raise ArtifactError(
+            f"ONNX variant {choice} is pinned to {expected}; the manifest names {declared!r}"
+        )
+    if expected not in manifest.get("files", {}):
+        raise ArtifactError(f"ONNX variant {choice} file {expected} is not in the manifest")
     return choice
 
 

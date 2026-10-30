@@ -768,7 +768,7 @@ def main() -> None:
                         help="score the API path: top SEARCH_POOL, then dedupe_adjacent to 10")
     parser.add_argument("--embed-backend", choices=("torch", "onnx"), default="torch",
                         help="torch keeps the GPU bench; onnx is Granite English R2 only")
-    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     parser.add_argument("--index", type=Path, default=INDEX_PATH,
                         help="SQLite index. ONNX re-embeds refuse the shipped wesley.sqlite")

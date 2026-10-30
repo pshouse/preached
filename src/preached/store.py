@@ -388,17 +388,23 @@ def index_stamp(connection: sqlite3.Connection, model: str | None) -> tuple:
 
 
 def check_query_variant(connection: sqlite3.Connection, model: str, variant: str | None) -> None:
-    """Refuse an int8 query against document vectors that were not int8.
+    """Refuse document vectors that were not built by the fp32 graph.
 
-    fp32 ONNX queries match the shipped fp32 document vectors. int8 does not.
+    int8 is not a runtime variant. ``ModelSpec.fingerprint`` does not include
+    the ONNX graph, so a stored ``variant`` other than ``fp32`` is refused on
+    its own. The shipped index has no ``variant`` field; those vectors are
+    the fp32 graph and a fp32 query may use them. A query variant other than
+    fp32 is refused too.
     """
-    if variant != "int8":
-        return
-    info = embedding_info(connection, model) or {}
-    if info.get("variant") != "int8":
-        recorded = info.get("variant") or info.get("backend") or "unrecorded"
+    if variant is not None and variant != "fp32":
         raise EmbeddingMismatch(
-            f"int8 query vectors cannot be paired with document vectors recorded as {recorded}"
+            f"query variant {variant} is not fp32; int8 is not a runtime variant"
+        )
+    info = embedding_info(connection, model) or {}
+    recorded = info.get("variant")
+    if recorded is not None and recorded != "fp32":
+        raise EmbeddingMismatch(
+            f"stored vectors for {model} are variant {recorded}, not fp32"
         )
 
 

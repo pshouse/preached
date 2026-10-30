@@ -57,7 +57,7 @@ def queries() -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--embed-backend", choices=("onnx", "torch"), default="onnx")
-    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
     parser.add_argument("--ort-threads", type=int, default=None)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--index", default=None)

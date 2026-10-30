@@ -88,6 +88,7 @@ SERMON_ID = re.compile(r"^(?:[a-z0-9][a-z0-9-]{0,63}|[A-Za-z0-9_-]{11})$")
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
+INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -316,6 +317,9 @@ class App:
         self.lock = threading.Lock()
         self.library = library
         self._stamp = self._capture_stamp()
+        # A failed read must not let the next success adopt a stamp without
+        # reloading. Init counts: the searcher was built before this read.
+        self._status_failed = self._stamp is None
 
     def _capture_stamp(self):
         try:
@@ -325,6 +329,35 @@ class App:
             logging.exception("could not read the index stamp")
             return None
 
+    def _serve_keyword_only(self, note: str) -> None:
+        self.searcher = Searcher(self.connection)
+        self.encode = None
+        self.model_name = None
+        self.backend = None
+        self.floor = None
+        self.fallback_note = note
+
+    def _reload_cached_index(self) -> None:
+        """Rebuild cached rows. fp32 pairing is checked again on this path."""
+        if not self._weights_ok:
+            self.searcher = Searcher(self.connection)
+            return
+        try:
+            self.searcher = Searcher(self.connection, model=self._configured_model)
+            check_query_variant(
+                self.connection,
+                self._configured_model,
+                getattr(self._encode, "variant", None),
+            )
+        except (EmbeddingMismatch, RuntimeError):
+            self._serve_keyword_only(STALE_NOTE)
+            return
+        self.encode = self._encode
+        self.model_name = self._configured_model
+        self.backend = getattr(self._encode, "backend", None)
+        self.floor = self._floor
+        self.fallback_note = None
+
     def _refresh_if_stale(self) -> None:
         """Reload cached rows and vectors when the chunk hash or embeddings changed.
 
@@ -332,32 +365,21 @@ class App:
         file would otherwise keep serving the old text and deleted vectors
         until the process restarts. Missing or mismatched vectors fall back
         to BM25. The weights stay loaded so a later rebuild can use them.
+
+        A failed status read drops this process to keyword search. The next
+        successful read reloads, even when the stamp matches the last good
+        one. It does not adopt the new stamp and keep the old rows.
         """
         stamp = self._capture_stamp()
-        if stamp == self._stamp:
+        if stamp is None:
+            self._status_failed = True
+            self._serve_keyword_only(INDEX_READ_NOTE)
             return
-        if self._stamp is None:
-            self._stamp = stamp
+        if not self._status_failed and stamp == self._stamp:
             return
+        self._status_failed = False
         self._stamp = stamp
-        if self._weights_ok:
-            try:
-                self.searcher = Searcher(self.connection, model=self._configured_model)
-            except (EmbeddingMismatch, RuntimeError):
-                self.searcher = Searcher(self.connection)
-                self.encode = None
-                self.model_name = None
-                self.backend = None
-                self.floor = None
-                self.fallback_note = STALE_NOTE
-                return
-            self.encode = self._encode
-            self.model_name = self._configured_model
-            self.backend = getattr(self._encode, "backend", None)
-            self.floor = self._floor
-            self.fallback_note = None
-            return
-        self.searcher = Searcher(self.connection)
+        self._reload_cached_index()
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
@@ -716,7 +738,7 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
     )
-    parser.add_argument("--onnx-variant", choices=("fp32", "int8"), default=None)
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     args = parser.parse_args(argv)
     if args.model not in MODELS:

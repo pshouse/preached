@@ -17,6 +17,7 @@ import numpy as np
 from app.server import (
     CSP,
     FALLBACK_NOTE,
+    INDEX_READ_NOTE,
     STALE_NOTE,
     MAX_BODY,
     MAX_TARGET,
@@ -552,6 +553,9 @@ class ServerTests(unittest.TestCase):
             "//evil.example/a.mp3",
             "https://www.youtube.com/watch?v=abcdefghijk&v=",
             "https://www.youtube.com:abc/watch?v=abcdefghijk",
+            "https://evil.com@ccel.org/file.mp3",
+            "https://user:pass@ccel.org/file.mp3",
+            "https://user:pass@archive.org/download/x/y.mp3",
         ):
             with self.subTest(url=blocked):
                 self.assertIsNone(hit_dict(hit(blocked))["audio_url"])
@@ -724,6 +728,137 @@ class ServerTests(unittest.TestCase):
             third = app.search("prayer", 5, "dense")
             self.assertEqual(third["mode"], "bm25")
             self.assertEqual(third["note"], STALE_NOTE)
+            self.assertFalse(app.health()["dense"])
+
+    def test_failed_index_read_reloads_on_the_next_success(self) -> None:
+        import app.server as server_module
+
+        spec = MODELS["granite-english-r2"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.sqlite"
+            connection = connect(path)
+            _insert(
+                connection,
+                chunk_id="c1",
+                text="By grace are ye saved through faith.",
+                start_s=10,
+                end_s=20,
+            )
+            connection.commit()
+            rowid = int(connection.execute("SELECT rowid FROM chunks").fetchone()[0])
+            write_embeddings(connection, spec.key, [rowid], np.ones((1, 4), dtype=np.float32))
+            save_embedding_info(
+                connection,
+                spec.key,
+                {"fingerprint": spec.fingerprint(), "backend": "onnx", "variant": "fp32"},
+            )
+            connection.execute("INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa')")
+            connection.commit()
+
+            def encode(_query: str) -> np.ndarray:
+                return np.ones(4, dtype=np.float32)
+
+            encode.backend = "onnx"
+            encode.variant = "fp32"
+            app = App(
+                connection=connection,
+                searcher=Searcher(connection, model=spec.key),
+                encode=encode,
+                fallback_note=None,
+                model_name=spec.key,
+                hosts={"127.0.0.1"},
+                static_dir=STATIC_DIR,
+                backend="onnx",
+            )
+            first = app.search("grace", 5, "dense")
+            self.assertEqual(first["mode"], "dense")
+            self.assertIn("grace", first["results"][0]["text"])
+
+            real = server_module.index_stamp
+            state = {"fail": True}
+
+            def flaky(connection, model):
+                if state["fail"]:
+                    raise sqlite3.OperationalError("disk I/O error")
+                return real(connection, model)
+
+            server_module.index_stamp = flaky
+            try:
+                failed = app.search("grace", 5, "dense")
+            finally:
+                server_module.index_stamp = real
+            self.assertEqual(failed["mode"], "bm25")
+            self.assertEqual(failed["note"], INDEX_READ_NOTE)
+            self.assertIn("grace", failed["results"][0]["text"])
+
+            connection.execute(
+                "UPDATE chunks SET text = ? WHERE chunk_id = 'c1'",
+                ("A prayer for the whole church.",),
+            )
+            connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
+            connection.commit()
+            state["fail"] = False
+            server_module.index_stamp = flaky
+            try:
+                second = app.search("prayer", 5, "bm25")
+                restored = app.search("prayer", 5, "dense")
+            finally:
+                server_module.index_stamp = real
+            self.assertTrue(any("prayer" in hit["text"] for hit in second["results"]))
+            self.assertFalse(any("grace" in hit["text"] for hit in second["results"]))
+            self.assertEqual(restored["mode"], "dense")
+            self.assertIsNone(restored["note"])
+            self.assertTrue(any("prayer" in hit["text"] for hit in restored["results"]))
+            self.assertTrue(app.health()["dense"])
+
+    def test_non_fp32_index_fingerprint_is_refused_on_reload(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "index.sqlite"
+            connection = connect(path)
+            _insert(
+                connection,
+                chunk_id="c1",
+                text="By grace are ye saved through faith.",
+                start_s=10,
+                end_s=20,
+            )
+            connection.commit()
+            rowid = int(connection.execute("SELECT rowid FROM chunks").fetchone()[0])
+            write_embeddings(connection, spec.key, [rowid], np.ones((1, 4), dtype=np.float32))
+            save_embedding_info(
+                connection,
+                spec.key,
+                {"fingerprint": spec.fingerprint(), "backend": "onnx", "variant": "fp32"},
+            )
+            connection.execute("INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa')")
+            connection.commit()
+
+            def encode(_query: str) -> np.ndarray:
+                return np.ones(4, dtype=np.float32)
+
+            encode.backend = "onnx"
+            encode.variant = "fp32"
+            app = App(
+                connection=connection,
+                searcher=Searcher(connection, model=spec.key),
+                encode=encode,
+                fallback_note=None,
+                model_name=spec.key,
+                hosts={"127.0.0.1"},
+                static_dir=STATIC_DIR,
+                backend="onnx",
+            )
+            first = app.search("grace", 5, "dense")
+            self.assertEqual(first["mode"], "dense")
+            save_embedding_info(
+                connection,
+                spec.key,
+                {"fingerprint": spec.fingerprint(), "backend": "onnx", "variant": "int8"},
+            )
+            second = app.search("grace", 5, "dense")
+            self.assertEqual(second["mode"], "bm25")
+            self.assertEqual(second["note"], STALE_NOTE)
             self.assertFalse(app.health()["dense"])
 
     def test_floor_survives_reload_and_is_skipped_on_bm25_fallback(self) -> None:

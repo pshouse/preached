@@ -13,6 +13,7 @@ import numpy as np
 
 from preached.artifacts import (
     GRANITE_MODEL_KEY,
+    VARIANT_FILES,
     ArtifactError,
     artifact_dir,
     resolve_threads,
@@ -66,7 +67,8 @@ class OnnxEmbedder:
         verified = verify_manifest(folder, variant=variant)
         manifest = verified.manifest
         chosen = verified.variant
-        filename = manifest["variants"][chosen]
+        # The file name is the code pin, not the manifest's variants map.
+        filename = VARIANT_FILES[chosen]
         threads = resolve_threads(ort_threads)
         max_length = int(manifest.get("max_seq_length") or MAX_SEQ_LENGTH)
         hidden_size = int(manifest.get("hidden_size") or HIDDEN_SIZE)

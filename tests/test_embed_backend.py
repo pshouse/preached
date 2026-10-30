@@ -214,14 +214,25 @@ class ManifestTests(unittest.TestCase):
             verified = verify_manifest(folder, variant="fp32", enforce_pins=False)
             self.assertEqual(verified.variant, "fp32")
 
-    def test_int8_selected_without_the_file_is_refused(self) -> None:
+    def test_int8_is_not_a_runtime_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             self._write(folder, corrupt=False, include_int8=True)
-            (folder / "model.int8.onnx").unlink()
             with self.assertRaises(ArtifactError) as ctx:
                 verify_manifest(folder, variant="int8", enforce_pins=False)
-            self.assertIn("missing", str(ctx.exception))
+            self.assertIn("int8", str(ctx.exception))
+
+    def test_fp32_cannot_be_redirected_to_another_file(self) -> None:
+        # The manifest hash of the other file matches. The name still loses.
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._write(folder, corrupt=False, include_int8=True)
+            manifest = json.loads((folder / "manifest.json").read_text())
+            manifest["variants"]["fp32"] = "model.int8.onnx"
+            (folder / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaises(ArtifactError) as ctx:
+                verify_manifest(folder, variant="fp32", enforce_pins=False)
+            self.assertIn("model.fp32.onnx", str(ctx.exception))
             self.assertIn("model.int8.onnx", str(ctx.exception))
 
     def test_pinned_digest_refuses_a_rewritten_manifest(self) -> None:
@@ -335,6 +346,62 @@ class FallbackTests(unittest.TestCase):
             self.assertIsNone(encode)
             self.assertEqual(note, FALLBACK_NOTE)
 
+    def test_redirected_fp32_serves_keyword_search(self) -> None:
+        from app.server import FALLBACK_NOTE, App, load_search
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / GRANITE_REVISION
+            folder.mkdir()
+            files = {}
+            for name in ("model.fp32.onnx", "model.int8.onnx", "tokenizer.json", "pooling.json"):
+                payload = b'{"pooling": "cls"}\n' if name == "pooling.json" else f"bytes-{name}".encode()
+                (folder / name).write_bytes(payload)
+                files[name] = {"sha256": sha256_file(folder / name), "bytes": len(payload)}
+            redirected = {
+                "hf_id": GRANITE_HF_ID,
+                "revision": GRANITE_REVISION,
+                "pooling": "cls",
+                "normalize": "l2",
+                "max_seq_length": 8192,
+                "hidden_size": 768,
+                "default_variant": "fp32",
+                "variants": {"fp32": "model.int8.onnx", "int8": "model.int8.onnx"},
+                "files": files,
+            }
+            (folder / "manifest.json").write_text(json.dumps(redirected))
+            previous = os.environ.get("PREACHED_ONNX_DIR")
+            os.environ["PREACHED_ONNX_DIR"] = tmp
+            try:
+                connection = _seed_granite(Path(tmp) / "index.sqlite")
+                connection.execute(
+                    "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES (?, ?, ?, ?)",
+                    ("c1", "wesley-001", "Salvation by Faith", "By grace are ye saved through faith."),
+                )
+                connection.commit()
+                searcher, encode, note = load_search(
+                    connection, "granite-english-r2", embed_backend="onnx", variant="fp32"
+                )
+                app = App(
+                    connection=connection,
+                    searcher=searcher,
+                    encode=encode,
+                    fallback_note=note,
+                    model_name="granite-english-r2",
+                    hosts={"127.0.0.1"},
+                    static_dir=ROOT / "app" / "static",
+                )
+                result = app.search("grace", 5, "hybrid")
+            finally:
+                if previous is None:
+                    os.environ.pop("PREACHED_ONNX_DIR", None)
+                else:
+                    os.environ["PREACHED_ONNX_DIR"] = previous
+            self.assertIsNone(encode)
+            self.assertEqual(note, FALLBACK_NOTE)
+            self.assertEqual(result["mode"], "bm25")
+            self.assertEqual(result["note"], FALLBACK_NOTE)
+            self.assertTrue(any("grace" in hit["text"] for hit in result["results"]))
+
     def test_mismatched_fp32_without_int8_falls_back(self) -> None:
         from app.server import FALLBACK_NOTE, load_search
 
@@ -365,14 +432,76 @@ class FallbackTests(unittest.TestCase):
 
 
 class VariantPairingTests(unittest.TestCase):
-    def test_int8_query_refuses_fp32_document_vectors(self) -> None:
-        from preached.store import EmbeddingMismatch, check_query_variant
+    def test_non_fp32_index_fingerprint_is_refused(self) -> None:
+        from preached.store import EmbeddingMismatch, check_query_variant, save_embedding_info
 
+        spec = MODELS["granite-english-r2"]
         with tempfile.TemporaryDirectory() as tmp:
             connection = _seed_granite(Path(tmp) / "index.sqlite")
+            # No recorded variant: the shipped fp32 index. A fp32 query may use it.
+            check_query_variant(connection, spec.key, "fp32")
+            check_query_variant(connection, spec.key, None)
+            save_embedding_info(
+                connection,
+                spec.key,
+                {"fingerprint": spec.fingerprint(), "backend": "onnx", "variant": "int8"},
+            )
+            with self.assertRaises(EmbeddingMismatch) as recorded:
+                check_query_variant(connection, spec.key, "fp32")
+            self.assertIn("not fp32", str(recorded.exception))
             with self.assertRaises(EmbeddingMismatch):
-                check_query_variant(connection, "granite-english-r2", "int8")
-            check_query_variant(connection, "granite-english-r2", "fp32")
+                check_query_variant(connection, spec.key, "int8")
+
+    def test_query_variant_mismatch_is_one_line(self) -> None:
+        import contextlib
+        import importlib.util
+        import io
+        import sys
+
+        from preached.store import connect, save_embedding_info
+
+        spec = importlib.util.spec_from_file_location("preached_query_variant", ROOT / "search" / "query.py")
+        query = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(query)
+        model = MODELS["granite-english-r2"]
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.sqlite"
+            connection = connect(index)
+            save_embedding_info(
+                connection,
+                model.key,
+                {"fingerprint": model.fingerprint(), "backend": "onnx", "variant": "int8"},
+            )
+            connection.close()
+
+            class Dummy:
+                backend = "onnx"
+                variant = "fp32"
+
+                def encode_queries(self, _queries):
+                    raise AssertionError("encode should not run")
+
+                def close(self) -> None:
+                    return None
+
+            original = query.load_embedder
+            query.load_embedder = lambda *_args, **_kwargs: Dummy()
+            argv = sys.argv
+            sys.argv = ["query.py", "grace", "--mode", "hybrid", "-k", "1", "--index", str(index)]
+            stderr = io.StringIO()
+            try:
+                with self.assertRaises(SystemExit) as ctx:
+                    with contextlib.redirect_stderr(stderr):
+                        query.main()
+            finally:
+                sys.argv = argv
+                query.load_embedder = original
+            self.assertEqual(ctx.exception.code, 1)
+            err = stderr.getvalue().strip("\n")
+            self.assertNotIn("\n", err)
+            self.assertTrue(err.startswith("error:"))
+            self.assertIn("not fp32", err)
+            self.assertNotIn("Traceback", err)
 
 
 class BenchOutputTests(unittest.TestCase):
