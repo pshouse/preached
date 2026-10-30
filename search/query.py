@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
+from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
@@ -74,7 +75,7 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
     print(f"query: {query}")
     print(f"mode: {mode}" + (f"  model: {model}" if model else ""))
     if not hits:
-        print("Nothing strong found in the indexed sermons.")
+        print("Nothing found in the indexed sermons.")
         return
     for rank, hit in enumerate(hits, start=1):
         print(
@@ -97,6 +98,8 @@ def main() -> None:
     parser.add_argument("--dense-weight", type=float, default=0.5)
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
+    parser.add_argument("--hide-low-confidence", action="store_true",
+                        help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
 
     connection = connect(args.index)
@@ -106,7 +109,8 @@ def main() -> None:
     vector = None
     try:
         if args.mode == "bm25":
-            hits = Searcher(connection).bm25(args.query, args.k)
+            searcher = Searcher(connection)
+            hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
             spec = MODELS[model_name]
@@ -130,7 +134,17 @@ def main() -> None:
     finally:
         if loaded is not None:
             unload(loaded)
-    print_hits(args.query, args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}", model_name, hits)
+    # Same abstain rule and per-model floor as GET /api/search (preached.abstain).
+    floor = floor_for(model_name) if vector is not None else None
+    confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
+    mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
+    if confidence.abstain and hits and args.hide_low_confidence:
+        print_hits(args.query, mode_label, model_name, [])
+        print(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
+        return
+    print_hits(args.query, mode_label, model_name, hits)
+    if confidence.note and hits:
+        print(f"\nnote: {confidence.note}")
 
 
 if __name__ == "__main__":

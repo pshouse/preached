@@ -53,6 +53,7 @@ AUDIO = "https://archive.org/download/sermonsfirstseries_1307_librivox/example.m
 CCEL = "https://ccel.org/ccel/wesley/sermons/sermons.v.i.html"
 RESULT_KEYS = {
     "chunk_id",
+    "chunk_ids",
     "sermon_id",
     "sermon_number",
     "sermon_title",
@@ -341,7 +342,7 @@ class ServerTests(unittest.TestCase):
         self.assert_secure(headers)
         self.assertIn("application/json", header(headers, "Content-Type"))
         payload = json.loads(body)
-        self.assertEqual(set(payload), {"query", "mode", "took_ms", "results", "note"})
+        self.assertEqual(set(payload), {"query", "mode", "took_ms", "results", "note", "abstain", "confidence"})
         self.assertEqual(payload["query"], "zealboundary")
         self.assertEqual(payload["mode"], "bm25")
         self.assertIsNone(payload["note"])
@@ -506,7 +507,10 @@ class ServerTests(unittest.TestCase):
         page = (STATIC_DIR / "index.html").read_text()
         script = (STATIC_DIR / "app.js").read_text()
         style = (STATIC_DIR / "app.css").read_text()
-        self.assertIn("Nothing strong found", script)
+        self.assertIn("Nothing found in these sermons", script)  # zero hits only
+        self.assertNotIn("Nothing strong found", script)  # low confidence shows results, not this
+        self.assertIn("heuristic", script)
+        self.assertIn("Hide low-confidence results", page)
         self.assertIn("Audio timing coming soon", script)
         self.assertIn("LibriVox volunteer", script)
         self.assertIn("Read by ", script)
