@@ -11,8 +11,12 @@ Security choices:
 - clients never receive a traceback
 - /healthz reports the index version and the model sha256, never a path
 - each client IP has a request cap; X-Forwarded-For is ignored
-- a kill file or PREACHED_DISABLED stops serving without a restart
-- access logs keep the path and drop the query string
+- /healthz shares that cap; a full client table refuses new clients
+- concurrent connections are capped globally and per client
+- the whole header block has one deadline, not a timeout per read
+- a regular kill file stops and resumes serving on the next request
+- anything unexpected at the kill path is treated as killed
+- access logs keep the path, drop the query string, and escape controls
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import logging
 import os
 import re
 import sqlite3
+import stat
 import sys
 import threading
 import time
@@ -88,6 +93,12 @@ MAX_TARGET = 2048
 MAX_BODY = 4096
 MAX_HEADER_BYTES = 8192
 REQUEST_TIMEOUT_S = 15
+# One deadline for the request line and all headers together. A per-read
+# timeout let a client drip one header line at a time and hold a thread.
+HEADER_DEADLINE_S = 15.0
+# Thread per connection. These caps are the backstop for that.
+DEFAULT_MAX_CONNECTIONS = 32
+DEFAULT_MAX_CLIENT_CONNECTIONS = 4
 # A shared test process issues well under this. serve.sh sets a tighter cap.
 DEFAULT_RATE_LIMIT = 120
 DEFAULT_RATE_WINDOW_S = 60.0
@@ -151,8 +162,78 @@ def _positive_float(raw: str | None, default: float) -> float:
     return value if value > 0 else default
 
 
+def escape_controls(value: object) -> str:
+    """ASCII, with control characters written as ``\\xHH``.
+
+    A request line must not be able to inject a second log line or a
+    terminal escape. The query string is removed by the caller first.
+    """
+    text = "" if value is None else str(value)
+    parts: list[str] = []
+    for char in text:
+        code = ord(char)
+        if code < 32 or code == 127:
+            parts.append("\\x%02x" % code)
+        elif char == "\\":
+            parts.append("\\\\")
+        else:
+            parts.append(char)
+    return "".join(parts)
+
+
+def kill_file_engaged(path: Path) -> bool:
+    """True when the kill switch is on, or the path is not a normal absence.
+
+    A missing file in a readable directory is off, so removing a regular
+    kill file resumes serving on the next request. A directory, a symlink
+    (dangling or not), an unreadable parent, or any other surprise is on.
+    The file's contents are never read.
+    """
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return _kill_parent_unexpected(path)
+    except OSError:
+        return True
+    return True
+
+
+def _kill_parent_unexpected(path: Path) -> bool:
+    """True when the missing kill file's parent is not a normal directory."""
+    current = path.parent
+    while True:
+        try:
+            listed = os.lstat(current)
+        except FileNotFoundError:
+            if current == current.parent:
+                return False
+            current = current.parent
+            continue
+        except OSError:
+            return True
+        if stat.S_ISLNK(listed.st_mode):
+            try:
+                followed = os.stat(current)
+            except OSError:
+                return True
+            if not stat.S_ISDIR(followed.st_mode):
+                return True
+            return False
+        if not stat.S_ISDIR(listed.st_mode):
+            return True
+        return False
+
+
 class RateLimiter:
-    """Fixed window per key. The table is capped so a flood of IPs cannot grow it."""
+    """Fixed window per client key.
+
+    The table holds at most ``max_keys`` keys. Keys with no hit in the
+    current window are dropped before a new key is added. When the table
+    is still full, a new key is refused and an existing key is left alone.
+    That is fail closed: an unknown client gets no service until some key
+    goes idle. ``/healthz`` uses this same window. It is not exempt and it
+    does not have its own bucket.
+    """
 
     def __init__(self, limit: int, window_s: float, max_keys: int = 4096) -> None:
         self.limit = limit
@@ -518,8 +599,16 @@ class App:
     def disabled(self) -> bool:
         """True when the operator has thrown the kill switch.
 
-        PREACHED_DISABLED is read on each call. A kill file is present or
-        absent; its contents are never read and its path is never returned.
+        Called on every request, so a regular kill file starts and stops
+        serving without a process restart. ``PREACHED_DISABLED`` is read
+        from this process's environment on each call. Another shell cannot
+        change that environment; set the variable before start. The kill
+        file is the switch that works without a restart.
+
+        A regular file at the kill path is on. A missing file in a readable
+        directory is off. A directory, a symlink, an unreadable parent, or
+        any other surprise is on (fail closed). Contents and the path are
+        never returned to the client.
         """
         flag = os.environ.get("PREACHED_DISABLED", "").strip().lower()
         if flag in {"1", "true", "yes", "on"}:
@@ -530,10 +619,7 @@ class App:
             path = Path(raw) if raw else None
         if path is None:
             return False
-        try:
-            return path.is_file()
-        except OSError:
-            return False
+        return kill_file_engaged(path)
 
     def _index_version(self) -> str | None:
         """chunks_sha256 from meta, if it is 64 hex chars. Not a path."""
@@ -693,6 +779,36 @@ def build_app(
     )
 
 
+class _HeaderDeadlineSocket:
+    """Apply one deadline to every header read.
+
+    ``socket.recv`` is read-only, so the timeout cannot be patched onto the
+    socket. ``makefile`` also buffers: one ``readline`` calls ``recv_into``
+    many times, and each of those calls gets a fresh socket timeout. A
+    client that drips one byte per read never trips a per-read timeout.
+    This wrapper sits in ``SocketIO._sock`` and re-arms the remaining budget
+    before every read.
+    """
+
+    def __init__(self, sock, deadline: float) -> None:
+        self._sock = sock
+        self._deadline = deadline
+
+    def _arm(self) -> None:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("header deadline exceeded")
+        self._sock.settimeout(remaining)
+
+    def recv(self, n, flags=0):
+        self._arm()
+        return self._sock.recv(n, flags)
+
+    def recv_into(self, buf, nbytes=0, flags=0):
+        self._arm()
+        return self._sock.recv_into(buf, nbytes, flags)
+
+
 def make_handler(app: App):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -700,17 +816,112 @@ def make_handler(app: App):
         sys_version = ""
         timeout = REQUEST_TIMEOUT_S
 
+        def _header_deadline_s(self) -> float:
+            server = getattr(self, "server", None)
+            raw = getattr(server, "header_deadline_s", HEADER_DEADLINE_S)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return HEADER_DEADLINE_S
+            return value if value > 0 else HEADER_DEADLINE_S
+
+        def _install_header_deadline(self, deadline: float):
+            """Return the SocketIO to restore, or None when there is nothing to wrap."""
+            raw = getattr(self.rfile, "raw", None)
+            sock = getattr(raw, "_sock", None) if raw is not None else None
+            if raw is None or sock is None or isinstance(sock, _HeaderDeadlineSocket):
+                try:
+                    self.connection.settimeout(self._header_deadline_s())
+                except OSError:
+                    pass
+                return None
+            raw._sock = _HeaderDeadlineSocket(sock, deadline)
+            return raw
+
+        def handle_one_request(self) -> None:
+            # Headers share one deadline. The handler then runs under the
+            # normal socket timeout, so a search is not cut off by the
+            # header budget.
+            deadline = time.monotonic() + self._header_deadline_s()
+            raw = None
+            parsed = False
+            try:
+                raw = self._install_header_deadline(deadline)
+                self.raw_requestline = self.rfile.readline(65537)
+                if len(self.raw_requestline) > 65536:
+                    self.requestline = ""
+                    self.request_version = ""
+                    self.command = ""
+                    self.send_error(414)
+                    return
+                if not self.raw_requestline:
+                    self.close_connection = True
+                    return
+                if not self.parse_request():
+                    return
+                parsed = True
+            except TimeoutError:
+                self.close_connection = True
+                logging.error("request failed: %s", "TimeoutError")
+                return
+            except Exception as exc:
+                # A bad request line must not escape the thread. The type is
+                # enough; the line itself can carry control characters.
+                logging.error("request failed: %s", type(exc).__name__)
+                self.close_connection = True
+                return
+            finally:
+                if raw is not None:
+                    wrapped = getattr(raw, "_sock", None)
+                    if isinstance(wrapped, _HeaderDeadlineSocket):
+                        raw._sock = wrapped._sock
+                try:
+                    self.connection.settimeout(REQUEST_TIMEOUT_S)
+                except OSError:
+                    pass
+            if not parsed:
+                return
+            try:
+                method_name = "do_" + str(self.command)
+                if not hasattr(self, method_name):
+                    self.send_error(501)
+                    return
+                getattr(self, method_name)()
+                self.wfile.flush()
+            except TimeoutError:
+                self.close_connection = True
+                logging.error("request failed: %s", "TimeoutError")
+            except Exception as exc:
+                logging.error("request failed: %s", type(exc).__name__)
+                self.close_connection = True
+
         def log_message(self, fmt, *args):
             # Drop anything after ? so a query is not written to the log.
-            text = fmt % args if args else str(fmt)
+            # Never raise: a broken format or a wild request line is dropped.
+            try:
+                text = fmt % args if args else str(fmt)
+            except Exception:
+                text = "unformattable log line"
             if "?" in text:
                 text = text.split("?", 1)[0]
-            logging.info("%s %s", self.client_address[0], text)
+            logging.info(
+                "%s %s",
+                escape_controls(self.client_address[0]),
+                escape_controls(text),
+            )
 
         def log_request(self, code="-", size="-"):
-            path = (self.path or "/").split("?", 1)[0] or "/"
+            raw_path = getattr(self, "path", None) or "/"
+            path = raw_path.split("?", 1)[0] or "/"
+            command = getattr(self, "command", None) or "-"
             status = getattr(code, "value", code)
-            logging.info("%s %s %s %s", self.client_address[0], self.command, path, status)
+            logging.info(
+                "%s %s %s %s",
+                escape_controls(self.client_address[0]),
+                escape_controls(command),
+                escape_controls(path),
+                status,
+            )
 
         def version_string(self):
             return "Preached"
@@ -718,9 +929,9 @@ def make_handler(app: App):
         def send_error(self, code, message=None, explain=None):
             """Fixed JSON. The request line is not echoed back to the client."""
             try:
-                self.log_error("code %s, message %s", code, message)
+                self.log_error("code %s", code)
             except Exception:
-                logging.exception("error while logging a rejected request")
+                logging.error("request failed: %s", "LogError")
             self.close_connection = True
             if code in (413, 414, 431):
                 text = "request too large"
@@ -820,7 +1031,9 @@ def make_handler(app: App):
                 else:
                     self._send_json(503, {"error": "unavailable"}, include_body)
                 return "disabled"
-            # The socket peer, never X-Forwarded-For. A proxy in front shares one bucket.
+            # The socket peer, never X-Forwarded-For. /healthz uses this same
+            # bucket. A proxy in front shares one bucket until a trusted-proxy
+            # mode exists; that is not this process.
             if not app.rate_limiter.allow(self.client_address[0]):
                 self._send_json(
                     429,
@@ -951,8 +1164,89 @@ def make_handler(app: App):
 
 
 class PreachedServer(ThreadingHTTPServer):
+    """Threaded server with a global cap and a per-client cap.
+
+    ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
+    the cap, the connection is closed on the accept thread with a short 503
+    and no handler thread is started.
+    """
+
     allow_reuse_address = True
     daemon_threads = True
+    max_connections = DEFAULT_MAX_CONNECTIONS
+    max_connections_per_client = DEFAULT_MAX_CLIENT_CONNECTIONS
+    header_deadline_s = HEADER_DEADLINE_S
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._conn_lock = threading.Lock()
+        self._conn_total = 0
+        self._conn_by_ip: dict[str, int] = {}
+        self.max_connections = _positive_int(
+            os.environ.get("PREACHED_MAX_CONNECTIONS"), DEFAULT_MAX_CONNECTIONS
+        )
+        self.max_connections_per_client = _positive_int(
+            os.environ.get("PREACHED_MAX_CLIENT_CONNECTIONS"),
+            DEFAULT_MAX_CLIENT_CONNECTIONS,
+        )
+        self.header_deadline_s = _positive_float(
+            os.environ.get("PREACHED_HEADER_DEADLINE_S"), HEADER_DEADLINE_S
+        )
+
+    def _acquire_connection(self, ip: str) -> bool:
+        with self._conn_lock:
+            if self._conn_total >= self.max_connections:
+                return False
+            held = self._conn_by_ip.get(ip, 0)
+            if held >= self.max_connections_per_client:
+                return False
+            self._conn_total += 1
+            self._conn_by_ip[ip] = held + 1
+            return True
+
+    def _release_connection(self, ip: str) -> None:
+        with self._conn_lock:
+            self._conn_total = max(0, self._conn_total - 1)
+            left = self._conn_by_ip.get(ip, 0) - 1
+            if left <= 0:
+                self._conn_by_ip.pop(ip, None)
+            else:
+                self._conn_by_ip[ip] = left
+
+    def process_request(self, request, client_address) -> None:
+        ip = client_address[0]
+        if not self._acquire_connection(ip):
+            self._reject_over_cap(request)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._release_connection(ip)
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release_connection(client_address[0])
+
+    def _reject_over_cap(self, request) -> None:
+        body = b'{"error":"unavailable"}'
+        message = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
+            b"Connection: close\r\n"
+            b"Retry-After: 1\r\n"
+            b"Cache-Control: no-store\r\n"
+            b"\r\n" + body
+        )
+        try:
+            request.settimeout(1)
+            request.sendall(message)
+        except OSError:
+            pass
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
@@ -1071,6 +1365,9 @@ def check_servable(connection, library: str, index: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # No PREACHED_ALLOW_ROOT. Root is refused here, not only in serve.sh.
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        raise SystemExit("refusing to serve as root")
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
