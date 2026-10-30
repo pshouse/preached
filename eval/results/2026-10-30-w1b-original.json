@@ -1,0 +1,4553 @@
+{
+  "superseded": true,
+  "superseded_by": "eval/results/2026-10-30.json",
+  "why": "First W1-B run (commit 7347eb7, by the Grok CLI agent). Revisions were not pinned; GPU corpus encode was fp16 (bf16 for EmbeddingGemma 2); query vectors came from the GPU load; EmbeddingGemma 2 documents carried the sermon title, which cost it about 0.23 dense Recall@5. Kept for the record. See docs/research/embeddings.md.",
+  "chunks": 8383,
+  "questions": 40,
+  "index_path": "/cache/index/wesley.sqlite",
+  "excluded_models": [
+    {
+      "hf_id": "Snowflake/snowflake-arctic-embed-l-v2.0",
+      "reason": "Arctic-Embed 2.0 large is initialized from bge-m3-retromae (BAAI, Beijing). AGENTS.md excludes BGE and its fine-tunes. Source: Arctic-Embed 2.0 paper, arXiv:2412.04506, section 2.1."
+    },
+    {
+      "hf_id": "Snowflake/snowflake-arctic-embed-m-v2.0",
+      "reason": "Arctic-Embed 2.0 medium is initialized from Alibaba gte-multilingual-mlm-base. AGENTS.md excludes GTE and its fine-tunes. Same paper, section 2.1."
+    }
+  ],
+  "models": {
+    "embeddinggemma-2": {
+      "hf_id": "google/embeddinggemma-2",
+      "license": "Apache-2.0",
+      "developer": "Google DeepMind",
+      "lineage": "Gemma 4 text backbone from Google DeepMind (released Oct 2026). Not a fine-tune of a PRC model. Text-only load is about 270M of the 740M multimodal checkpoint.",
+      "params": "270M text / 740M full",
+      "status": "ok",
+      "embed": {
+        "device": "cuda",
+        "batch_size": 4,
+        "seconds": 143.534,
+        "chunks_per_s": 58.4,
+        "vram_peak_mib": 5162,
+        "vram_baseline_mib": 4287,
+        "vram_delta_mib": 875,
+        "dim": 768,
+        "prompts": {
+          "repo_prompts": {
+            "query": "task: search result | query: ",
+            "document": "title: none | text: ",
+            "BitextMining": "task: search result | query: ",
+            "Classification": "task: classification | query: ",
+            "Clustering": "task: clustering | query: ",
+            "CodeRetrieval": "task: code retrieval | query: ",
+            "Document": "title: none | text: ",
+            "FactChecking": "task: fact checking | query: ",
+            "InstructionRetrieval": "task: code retrieval | query: ",
+            "MultilabelClassification": "task: classification | query: ",
+            "PairClassification": "task: sentence similarity | query: ",
+            "QuestionAnswering": "task: question answering | query: ",
+            "Reranking": "task: search result | query: ",
+            "Retrieval": "task: search result | query: ",
+            "Retrieval-document": "title: none | text: ",
+            "Retrieval-query": "task: search result | query: ",
+            "STS": "task: sentence similarity | query: ",
+            "SearchQuery": "task: search result | query: ",
+            "SentenceSimilarity": "task: sentence similarity | query: ",
+            "Summarization": "task: sentence similarity | query: "
+          },
+          "question_prompt_name": "QuestionAnswering",
+          "question_example": "What did Wesley say about worry?",
+          "keyword_prompt_name": "SearchQuery",
+          "keyword_example": "Christian perfection",
+          "document_prompt_name": null,
+          "document_example": "title: Salvation by Faith (Eph 2:8) | text: By grace are ye saved."
+        }
+      },
+      "metrics": {
+        "bm25": {
+          "n": 35,
+          "recall@5": 0.4857142857142857,
+          "mrr@10": 0.33316326530612245,
+          "ndcg@10": 0.40055512731630827
+        },
+        "dense": {
+          "n": 35,
+          "recall@5": 0.35714285714285715,
+          "mrr@10": 0.2730952380952381,
+          "ndcg@10": 0.3163875754332962
+        },
+        "hybrid_rrf": {
+          "n": 35,
+          "recall@5": 0.5,
+          "mrr@10": 0.3624036281179138,
+          "ndcg@10": 0.42770846352995284
+        },
+        "hybrid_weighted": {
+          "n": 35,
+          "recall@5": 0.5285714285714286,
+          "mrr@10": 0.40789115646258506,
+          "ndcg@10": 0.47459384806052457
+        }
+      },
+      "negative_top1": {
+        "bm25": {
+          "n": 5,
+          "mean": 10.688915263544537,
+          "scores": [
+            null,
+            null,
+            null,
+            null,
+            10.688915263544537
+          ]
+        },
+        "dense": {
+          "n": 5,
+          "mean": 0.7120861172676086,
+          "scores": [
+            0.7279037833213806,
+            0.6820236444473267,
+            0.6950321793556213,
+            0.7198340892791748,
+            0.7356368899345398
+          ]
+        },
+        "hybrid_rrf": {
+          "n": 5,
+          "mean": 0.01764323215625048,
+          "scores": [
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.022642390289449112
+          ]
+        },
+        "hybrid_weighted": {
+          "n": 5,
+          "mean": 0.5,
+          "scores": [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      },
+      "per_query": [
+        {
+          "id": "q-worry",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-assurance",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.2943107231069255
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-money",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "q-riches",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-prayer",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-forgiveness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-perfection",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 1.0,
+              "ndcg@10": 0.8262346571285599
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.5,
+              "mrr@10": 1.0,
+              "ndcg@10": 0.8262346571285599
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 1.0,
+              "ndcg@10": 0.8262346571285599
+            }
+          }
+        },
+        {
+          "id": "q-heaviness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            }
+          }
+        },
+        {
+          "id": "q-mourning",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-satan",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-temptation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-communion",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "q-means",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "q-salvation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            }
+          }
+        },
+        {
+          "id": "q-justification",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-faith-works",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-new-birth",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-sin-believers",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-original-sin",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            }
+          }
+        },
+        {
+          "id": "q-catholic-spirit",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-backsliders",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            }
+          }
+        },
+        {
+          "id": "q-self-denial",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            }
+          }
+        },
+        {
+          "id": "q-wandering-thoughts",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "q-wilderness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            }
+          }
+        },
+        {
+          "id": "q-evil-speaking",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-romans-8-16",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-christian-perfection",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-means-of-grace",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-witness-of-the-spirit",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "k-gain-all-you-can",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-philippians-3-12",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-1-corinthians-10-13",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-matthew-6-34",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-2-corinthians-2-11",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-luke-22-19",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "u-book-of-mormon",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.7279037833213806
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-nuclear-weapons",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.6820236444473267
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-smartphones",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.6950321793556213
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-vaccines",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.7198340892791748
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-pretrib-rapture",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": 10.688915263544537
+            },
+            "dense": {
+              "top1": 0.7356368899345398
+            },
+            "hybrid_rrf": {
+              "top1": 0.022642390289449112
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        }
+      ],
+      "embedding_bytes": 25752576,
+      "sqlite_bytes": 119549952,
+      "cpu_query_latency": {
+        "dense": {
+          "p50_ms": 142.73205700010294,
+          "p95_ms": 257.83378800406354,
+          "n": 40
+        },
+        "hybrid_rrf": {
+          "p50_ms": 146.839323999302,
+          "p95_ms": 313.3847009958117,
+          "n": 40
+        },
+        "hybrid_weighted": {
+          "p50_ms": 148.4683849994326,
+          "p95_ms": 426.556177000748,
+          "n": 40
+        }
+      }
+    },
+    "embeddinggemma-300m": {
+      "hf_id": "google/embeddinggemma-300m",
+      "license": "Gemma license (gated weights)",
+      "developer": "Google DeepMind",
+      "lineage": "EmbeddingGemma (2025), Google. Predecessor of EmbeddingGemma 2.",
+      "params": "300M",
+      "status": "skipped_gated",
+      "error": "GatedRepoError: 401 Client Error. (Request ID: Root=1-6ae49f80-3e9d80405b812b203f452157;6bd876cd-0938-4a4b-ae9b-6ebfca58c119)\n\nCannot access gated repo for url https://huggingface.co/google/embeddinggemma-300m/resolve/57c266a740f537b4dc058e1b0cda161fd15afa75/modules.json.\nAccess to model google/embeddinggemma-300m is restricted. You must have access to it and be authenticated to access it. Please log in."
+    },
+    "granite-english-r2": {
+      "hf_id": "ibm-granite/granite-embedding-english-r2",
+      "license": "Apache-2.0",
+      "developer": "IBM Granite Embedding Team",
+      "lineage": "ModernBERT architecture (Answer.AI, US, and LightOn, France), trained by IBM. No PRC base model. English R2 (Aug 2025, 149M) is still the newest English Granite embedder; the May 2026 multilingual R2 models are a different, multilingual line.",
+      "params": "149M",
+      "status": "ok",
+      "embed": {
+        "device": "cuda",
+        "batch_size": 4,
+        "seconds": 72.707,
+        "chunks_per_s": 115.3,
+        "vram_peak_mib": 4782,
+        "vram_baseline_mib": 4307,
+        "vram_delta_mib": 475,
+        "dim": 768,
+        "prompts": {
+          "repo_prompts": {
+            "query": "",
+            "document": ""
+          },
+          "question_prompt_name": null,
+          "question_example": "What did Wesley say about worry?",
+          "keyword_prompt_name": null,
+          "keyword_example": "Christian perfection",
+          "document_prompt_name": null,
+          "document_example": "By grace are ye saved."
+        }
+      },
+      "metrics": {
+        "bm25": {
+          "n": 35,
+          "recall@5": 0.4857142857142857,
+          "mrr@10": 0.33316326530612245,
+          "ndcg@10": 0.40055512731630827
+        },
+        "dense": {
+          "n": 35,
+          "recall@5": 0.5428571428571428,
+          "mrr@10": 0.4238095238095238,
+          "ndcg@10": 0.47320331211080185
+        },
+        "hybrid_rrf": {
+          "n": 35,
+          "recall@5": 0.6285714285714286,
+          "mrr@10": 0.5058730158730159,
+          "ndcg@10": 0.5575029434969385
+        },
+        "hybrid_weighted": {
+          "n": 35,
+          "recall@5": 0.5714285714285714,
+          "mrr@10": 0.47714285714285715,
+          "ndcg@10": 0.5407568271934751
+        }
+      },
+      "negative_top1": {
+        "bm25": {
+          "n": 5,
+          "mean": 10.688915263544537,
+          "scores": [
+            null,
+            null,
+            null,
+            null,
+            10.688915263544537
+          ]
+        },
+        "dense": {
+          "n": 5,
+          "mean": 0.8013993263244629,
+          "scores": [
+            0.8127646446228027,
+            0.7861846685409546,
+            0.7814559936523438,
+            0.798897385597229,
+            0.8276939392089844
+          ]
+        },
+        "hybrid_rrf": {
+          "n": 5,
+          "mean": 0.017614754098360656,
+          "scores": [
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.0225
+          ]
+        },
+        "hybrid_weighted": {
+          "n": 5,
+          "mean": 0.5,
+          "scores": [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      },
+      "per_query": [
+        {
+          "id": "q-worry",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-assurance",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-money",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-riches",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-prayer",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-forgiveness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            }
+          }
+        },
+        {
+          "id": "q-perfection",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 1.0,
+              "ndcg@10": 0.8262346571285599
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.52129602861432
+            }
+          }
+        },
+        {
+          "id": "q-heaviness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "q-mourning",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-satan",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-temptation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "q-communion",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            }
+          }
+        },
+        {
+          "id": "q-means",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-salvation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-justification",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-faith-works",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-new-birth",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            }
+          }
+        },
+        {
+          "id": "q-sin-believers",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-original-sin",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "q-catholic-spirit",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-backsliders",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-self-denial",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "q-wandering-thoughts",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-wilderness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            }
+          }
+        },
+        {
+          "id": "q-evil-speaking",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-romans-8-16",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-christian-perfection",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-means-of-grace",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-witness-of-the-spirit",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "k-gain-all-you-can",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-philippians-3-12",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-1-corinthians-10-13",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-matthew-6-34",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-2-corinthians-2-11",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-luke-22-19",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "u-book-of-mormon",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.8127646446228027
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-nuclear-weapons",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.7861846685409546
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-smartphones",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.7814559936523438
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-vaccines",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.798897385597229
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-pretrib-rapture",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": 10.688915263544537
+            },
+            "dense": {
+              "top1": 0.8276939392089844
+            },
+            "hybrid_rrf": {
+              "top1": 0.0225
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        }
+      ],
+      "embedding_bytes": 25752576,
+      "sqlite_bytes": 46010368,
+      "cpu_query_latency": {
+        "dense": {
+          "p50_ms": 116.0027839941904,
+          "p95_ms": 151.8615629975102,
+          "n": 40
+        },
+        "hybrid_rrf": {
+          "p50_ms": 114.92865699983668,
+          "p95_ms": 134.91920700471383,
+          "n": 40
+        },
+        "hybrid_weighted": {
+          "p50_ms": 117.01653499767417,
+          "p95_ms": 253.6225639996701,
+          "n": 40
+        }
+      }
+    },
+    "arctic-embed-l": {
+      "hf_id": "Snowflake/snowflake-arctic-embed-l",
+      "license": "Apache-2.0",
+      "developer": "Snowflake",
+      "lineage": "Arctic-Embed 1.0 large, initialized from Microsoft intfloat/e5-large-unsupervised (BERT-large). The newer arctic-embed-l-v2.0 and arctic-embed-m-v2.0 are excluded: v2 large starts from BAAI bge-m3-retromae and v2 medium from Alibaba gte-multilingual-mlm-base (arXiv:2412.04506, sec. 2.1).",
+      "params": "334M",
+      "status": "ok",
+      "embed": {
+        "device": "cuda",
+        "batch_size": 4,
+        "seconds": 106.035,
+        "chunks_per_s": 79.06,
+        "vram_peak_mib": 5134,
+        "vram_baseline_mib": 3394,
+        "vram_delta_mib": 1740,
+        "dim": 1024,
+        "prompts": {
+          "repo_prompts": {
+            "query": "Represent this sentence for searching relevant passages: ",
+            "document": ""
+          },
+          "question_prompt_name": "query",
+          "question_example": "What did Wesley say about worry?",
+          "keyword_prompt_name": "query",
+          "keyword_example": "Christian perfection",
+          "document_prompt_name": null,
+          "document_example": "By grace are ye saved."
+        }
+      },
+      "metrics": {
+        "bm25": {
+          "n": 35,
+          "recall@5": 0.4857142857142857,
+          "mrr@10": 0.33316326530612245,
+          "ndcg@10": 0.40055512731630827
+        },
+        "dense": {
+          "n": 35,
+          "recall@5": 0.4857142857142857,
+          "mrr@10": 0.30860544217687075,
+          "ndcg@10": 0.37001838312423363
+        },
+        "hybrid_rrf": {
+          "n": 35,
+          "recall@5": 0.6,
+          "mrr@10": 0.4264625850340136,
+          "ndcg@10": 0.49249201961117667
+        },
+        "hybrid_weighted": {
+          "n": 35,
+          "recall@5": 0.6428571428571429,
+          "mrr@10": 0.47003401360544217,
+          "ndcg@10": 0.5297836088961833
+        }
+      },
+      "negative_top1": {
+        "bm25": {
+          "n": 5,
+          "mean": 10.688915263544537,
+          "scores": [
+            null,
+            null,
+            null,
+            null,
+            10.688915263544537
+          ]
+        },
+        "dense": {
+          "n": 5,
+          "mean": 0.39589828848838804,
+          "scores": [
+            0.45865845680236816,
+            0.39248669147491455,
+            0.3369995951652527,
+            0.3738117218017578,
+            0.4175349771976471
+          ]
+        },
+        "hybrid_rrf": {
+          "n": 5,
+          "mean": 0.016588848138492433,
+          "scores": [
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.017370470200658877
+          ]
+        },
+        "hybrid_weighted": {
+          "n": 5,
+          "mean": 0.5,
+          "scores": [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      },
+      "per_query": [
+        {
+          "id": "q-worry",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-assurance",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-money",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-riches",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-prayer",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-forgiveness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-perfection",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 1.0,
+              "ndcg@10": 0.8262346571285599
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.5,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.35583989829307827
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            }
+          }
+        },
+        {
+          "id": "q-heaviness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            }
+          }
+        },
+        {
+          "id": "q-mourning",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-satan",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-temptation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-communion",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-means",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-salvation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            }
+          }
+        },
+        {
+          "id": "q-justification",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.3196311965446524
+            }
+          }
+        },
+        {
+          "id": "q-faith-works",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-new-birth",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.27541155237618664
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.5,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.3196311965446524
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.3196311965446524
+            }
+          }
+        },
+        {
+          "id": "q-sin-believers",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-original-sin",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "q-catholic-spirit",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "q-backsliders",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-self-denial",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            }
+          }
+        },
+        {
+          "id": "q-wandering-thoughts",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-wilderness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            }
+          }
+        },
+        {
+          "id": "q-evil-speaking",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-romans-8-16",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-christian-perfection",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-means-of-grace",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-witness-of-the-spirit",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "k-gain-all-you-can",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-philippians-3-12",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-1-corinthians-10-13",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "k-matthew-6-34",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-2-corinthians-2-11",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-luke-22-19",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "u-book-of-mormon",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.45865845680236816
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-nuclear-weapons",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.39248669147491455
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-smartphones",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.3369995951652527
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-vaccines",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.3738117218017578
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-pretrib-rapture",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": 10.688915263544537
+            },
+            "dense": {
+              "top1": 0.4175349771976471
+            },
+            "hybrid_rrf": {
+              "top1": 0.017370470200658877
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        }
+      ],
+      "embedding_bytes": 34336768,
+      "sqlite_bytes": 84869120,
+      "cpu_query_latency": {
+        "dense": {
+          "p50_ms": 148.30087299924344,
+          "p95_ms": 210.98393699503504,
+          "n": 40
+        },
+        "hybrid_rrf": {
+          "p50_ms": 150.41476300393697,
+          "p95_ms": 226.5555179983494,
+          "n": 40
+        },
+        "hybrid_weighted": {
+          "p50_ms": 150.24294199974975,
+          "p95_ms": 279.0383510000538,
+          "n": 40
+        }
+      }
+    },
+    "nomic-embed-text-v2-moe": {
+      "hf_id": "nomic-ai/nomic-embed-text-v2-moe",
+      "license": "Apache-2.0",
+      "developer": "Nomic AI (New York)",
+      "lineage": "Latest Nomic text embedder (Feb 2025). Model tree: FacebookAI/xlm-roberta-base (Meta) -> nomic-ai/nomic-xlm-2048 -> nomic-embed-text-v2-moe-unsupervised -> this checkpoint. nomic-ai/modernbert-embed-base is older (Dec 2024) and was not substituted. XLM-RoBERTa is not a PRC model.",
+      "params": "475M total / 305M active",
+      "status": "ok",
+      "embed": {
+        "device": "cuda",
+        "batch_size": 4,
+        "seconds": 242.847,
+        "chunks_per_s": 34.52,
+        "vram_peak_mib": 5695,
+        "vram_baseline_mib": 4605,
+        "vram_delta_mib": 1090,
+        "dim": 768,
+        "prompts": {
+          "repo_prompts": {
+            "query": "search_query: ",
+            "document": "",
+            "passage": "search_document: ",
+            "Classification": "classification: ",
+            "MultilabelClassification": "classification: ",
+            "Clustering": "clustering: ",
+            "PairClassification": "classification: ",
+            "STS": "classification: ",
+            "Summarization": "classification: ",
+            "Speed": "search_document: "
+          },
+          "question_prompt_name": "query",
+          "question_example": "What did Wesley say about worry?",
+          "keyword_prompt_name": "query",
+          "keyword_example": "Christian perfection",
+          "document_prompt_name": "passage",
+          "document_example": "By grace are ye saved."
+        }
+      },
+      "metrics": {
+        "bm25": {
+          "n": 35,
+          "recall@5": 0.4857142857142857,
+          "mrr@10": 0.33316326530612245,
+          "ndcg@10": 0.40055512731630827
+        },
+        "dense": {
+          "n": 35,
+          "recall@5": 0.42857142857142855,
+          "mrr@10": 0.2770181405895692,
+          "ndcg@10": 0.33786945878742336
+        },
+        "hybrid_rrf": {
+          "n": 35,
+          "recall@5": 0.5285714285714286,
+          "mrr@10": 0.4142403628117914,
+          "ndcg@10": 0.4739686308984412
+        },
+        "hybrid_weighted": {
+          "n": 35,
+          "recall@5": 0.5571428571428572,
+          "mrr@10": 0.4246031746031746,
+          "ndcg@10": 0.4821928477255415
+        }
+      },
+      "negative_top1": {
+        "bm25": {
+          "n": 5,
+          "mean": 10.688915263544537,
+          "scores": [
+            null,
+            null,
+            null,
+            null,
+            10.688915263544537
+          ]
+        },
+        "dense": {
+          "n": 5,
+          "mean": 0.3561601221561432,
+          "scores": [
+            0.41927671432495117,
+            0.31759387254714966,
+            0.32416778802871704,
+            0.3293297588825226,
+            0.3904324769973755
+          ]
+        },
+        "hybrid_rrf": {
+          "n": 5,
+          "mean": 0.017333634633030663,
+          "scores": [
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.01639344262295082,
+            0.02109440267335004
+          ]
+        },
+        "hybrid_weighted": {
+          "n": 5,
+          "mean": 0.5,
+          "scores": [
+            0.5,
+            0.5,
+            0.5,
+            0.5,
+            0.5
+          ]
+        }
+      },
+      "per_query": [
+        {
+          "id": "q-worry",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-assurance",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-money",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-riches",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.11861329943102608
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-prayer",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-forgiveness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-perfection",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.5,
+              "mrr@10": 1.0,
+              "ndcg@10": 0.8262346571285599
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.5,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.35583989829307827
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.5,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.41311732856427996
+            }
+          }
+        },
+        {
+          "id": "q-heaviness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-mourning",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-satan",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-temptation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            }
+          }
+        },
+        {
+          "id": "q-communion",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.3333333333333333
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            }
+          }
+        },
+        {
+          "id": "q-means",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-salvation",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            }
+          }
+        },
+        {
+          "id": "q-justification",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-faith-works",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-new-birth",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2388353776606868
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.14285714285714285,
+              "ndcg@10": 0.27541155237618664
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.26064801430716
+            }
+          }
+        },
+        {
+          "id": "q-sin-believers",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-original-sin",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "q-catholic-spirit",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "q-backsliders",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "q-self-denial",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1111111111111111,
+              "ndcg@10": 0.3010299956639812
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.16666666666666666,
+              "ndcg@10": 0.3562071871080222
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.125,
+              "ndcg@10": 0.3154648767857287
+            }
+          }
+        },
+        {
+          "id": "q-wandering-thoughts",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "q-wilderness",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.25,
+              "ndcg@10": 0.4306765580733931
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.2,
+              "ndcg@10": 0.38685280723454163
+            }
+          }
+        },
+        {
+          "id": "q-evil-speaking",
+          "type": "conceptual",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-romans-8-16",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-christian-perfection",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-means-of-grace",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-witness-of-the-spirit",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            }
+          }
+        },
+        {
+          "id": "k-gain-all-you-can",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-philippians-3-12",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            }
+          }
+        },
+        {
+          "id": "k-1-corinthians-10-13",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-matthew-6-34",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.0,
+              "ndcg@10": 0.0
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 0.5,
+              "ndcg@10": 0.6309297535714574
+            }
+          }
+        },
+        {
+          "id": "k-2-corinthians-2-11",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 1.0,
+              "mrr@10": 0.3333333333333333,
+              "ndcg@10": 0.5
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "k-luke-22-19",
+          "type": "keyword",
+          "modes": {
+            "bm25": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "dense": {
+              "recall@5": 0.0,
+              "mrr@10": 0.1,
+              "ndcg@10": 0.2890648263178878
+            },
+            "hybrid_rrf": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            },
+            "hybrid_weighted": {
+              "recall@5": 1.0,
+              "mrr@10": 1.0,
+              "ndcg@10": 1.0
+            }
+          }
+        },
+        {
+          "id": "u-book-of-mormon",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.41927671432495117
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-nuclear-weapons",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.31759387254714966
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-smartphones",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.32416778802871704
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-vaccines",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": null
+            },
+            "dense": {
+              "top1": 0.3293297588825226
+            },
+            "hybrid_rrf": {
+              "top1": 0.01639344262295082
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        },
+        {
+          "id": "u-pretrib-rapture",
+          "type": "unanswerable",
+          "modes": {
+            "bm25": {
+              "top1": 10.688915263544537
+            },
+            "dense": {
+              "top1": 0.3904324769973755
+            },
+            "hybrid_rrf": {
+              "top1": 0.02109440267335004
+            },
+            "hybrid_weighted": {
+              "top1": 0.5
+            }
+          }
+        }
+      ],
+      "embedding_bytes": 25752576,
+      "sqlite_bytes": 154312704,
+      "cpu_query_latency": {
+        "dense": {
+          "p50_ms": 142.96945399837568,
+          "p95_ms": 177.9590759979328,
+          "n": 40
+        },
+        "hybrid_rrf": {
+          "p50_ms": 143.62559100118233,
+          "p95_ms": 236.16079200292006,
+          "n": 40
+        },
+        "hybrid_weighted": {
+          "p50_ms": 146.06016399920918,
+          "p95_ms": 307.1842309946078,
+          "n": 40
+        }
+      }
+    }
+  },
+  "bm25": {
+    "n": 35,
+    "recall@5": 0.4857142857142857,
+    "mrr@10": 0.33316326530612245,
+    "ndcg@10": 0.40055512731630827
+  }
+}

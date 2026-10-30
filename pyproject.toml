@@ -1,12 +1,21 @@
 [project]
 name = "preached"
 version = "0.1.0"
-description = "Search a church's sermon archive and hear the answer in the preacher's own words."
+description = "Search a sermon archive and return the preacher's own words."
+readme = "README.md"
+authors = [
+    { name = "Patrick Shouse", email = "shouse.patrick@gmail.com" }
+]
 requires-python = ">=3.12,<3.14"
-dependencies = []
+dependencies = [
+    "numpy>=2.1",
+    "sentence-transformers>=6.1.0",
+    "torch>=2.5",
+]
 
 [project.optional-dependencies]
 # Offline transcription on a CUDA GPU only; not needed by the search app.
+# Use: uv run --extra transcribe ingest/run.py --all
 transcribe = [
     "faster-whisper>=1.2.1,<1.3",
     # faster-whisper 1.2.1 passes av.open(metadata_errors=...), removed in av 19.
@@ -15,3 +24,16 @@ transcribe = [
     "nvidia-cublas-cu12>=12.4,<13",
     "nvidia-cudnn-cu12>=9,<10",
 ]
+
+[dependency-groups]
+# Only needed to load models we benchmark but do not ship: EmbeddingGemma 2
+# builds image/video processors even for a text-only load.
+# Use: uv run --group bench search/bench.py
+bench = [
+    "pillow>=10",
+    "torchvision>=0.29.2",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"

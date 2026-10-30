@@ -1,0 +1,5136 @@
+{
+ "started_at": "2026-10-30T11:00:16-04:00",
+ "note": "Audit rerun: all models fp32, pinned revisions, EmbeddingGemma 2 with title: none documents; titled variant kept for comparison.",
+ "chunks": 8383,
+ "n_answerable": 35,
+ "n_unanswerable": 5,
+ "index_path": "/cache/index/wesley.sqlite",
+ "environment": {
+  "git_commit": "73f39d95b342f53163a75f810e02fc9968894a4b",
+  "git_dirty": false,
+  "python": "3.12.16",
+  "numpy": "2.5.4",
+  "torch": "2.15.0+cu132",
+  "transformers": "5.22.1",
+  "sentence_transformers": "6.2.0",
+  "gpu": "NVIDIA GeForce RTX 3060, 615.78.08",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "torch_threads": 16,
+  "questions_sha256": "14d9274ad6552cf9cfdda43d0d9c6f9233ce22dfece9df5abca96481b3c96874",
+  "chunks_sha256": "110dd51989a982c44bbeeb7db6025c8a07a635cfeaef9e360ecbd16dcede016f",
+  "chunk_config": {
+   "target_words": 112,
+   "min_words": 75,
+   "max_words": 150,
+   "overlap": 0.25,
+   "wpm": 150,
+   "note": "150 wpm spoken English: 75 words is about 30s, 150 words is about 60s. Target is about 45s. Overlap is the fraction of the previous chunk repeated, snapped to a sentence boundary. start_s and end_s stay null for these text chunks."
+  },
+  "models_toml_sha256": "95cee13cd4340ac2f3e4204a33066840a256a2ee641a754624c4495525c15a60"
+ },
+ "reference": {
+  "model": "granite-english-r2",
+  "mode": "hybrid_rrf"
+ },
+ "excluded_models": [
+  {
+   "hf_id": "Snowflake/snowflake-arctic-embed-l-v2.0",
+   "reason": "Initialized from BAAI bge-m3-retromae (Beijing). AGENTS.md excludes BGE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
+  },
+  {
+   "hf_id": "Snowflake/snowflake-arctic-embed-m-v2.0",
+   "reason": "Initialized from Alibaba gte-multilingual-mlm-base. AGENTS.md excludes GTE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
+  }
+ ],
+ "models": {
+  "embeddinggemma-2": {
+   "key": "embeddinggemma-2",
+   "hf_id": "google/embeddinggemma-2",
+   "revision": "f9972ac22e696a105c482202646979e33e4b5a1e",
+   "license": "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)",
+   "developer": "Google DeepMind",
+   "lineage": "Gemma 4 text backbone, Google DeepMind (Oct 2026). Not derived from a PRC model.",
+   "lineage_sources": [
+    "https://huggingface.co/google/embeddinggemma-2",
+    "https://arxiv.org/abs/2610.37364"
+   ],
+   "params": "270M text-only (740M with vision and audio towers)",
+   "dtype_gpu": "fp32",
+   "dtype_cpu": "fp32",
+   "dim": 768,
+   "question_prefix": "task: question answering | query: ",
+   "keyword_prefix": "task: search result | query: ",
+   "document_prefix": "title: none | text: ",
+   "document_template": "",
+   "drop_config": [
+    "vision_config",
+    "audio_config"
+   ],
+   "trust_remote_code": false,
+   "enabled": true,
+   "gated": false,
+   "status": "ok",
+   "prompts": {
+    "question": "task: question answering | query: What did Wesley say about worry?",
+    "keyword": "task: search result | query: Christian perfection",
+    "document": "title: none | text: By grace are ye saved."
+   },
+   "embed": {
+    "device": "cuda",
+    "dtype": "fp32",
+    "batch_size": 8,
+    "seconds": 131.1,
+    "chunks_per_s": 63.9,
+    "vram_baseline_mib": 3865,
+    "vram_peak_mib": 6048,
+    "vram_delta_mib": 2183,
+    "dim": 768,
+    "embedded_at": "2026-10-30T11:02:33-04:00"
+   },
+   "cpu_dtype": "fp32",
+   "per_query": {
+    "dense": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-riches": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.52129602861432
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-salvation": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    },
+    "hybrid_rrf": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    },
+    "hybrid_weighted": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    }
+   },
+   "negative_top1": {
+    "dense": {
+     "u-book-of-mormon": 0.7366116046905518,
+     "u-nuclear-weapons": 0.6956460475921631,
+     "u-smartphones": 0.7042921781539917,
+     "u-vaccines": 0.7412779331207275,
+     "u-pretrib-rapture": 0.7472604513168335
+    },
+    "hybrid_rrf": {
+     "u-book-of-mormon": 0.01639344262295082,
+     "u-nuclear-weapons": 0.01639344262295082,
+     "u-smartphones": 0.01639344262295082,
+     "u-vaccines": 0.01639344262295082,
+     "u-pretrib-rapture": 0.01880607315389924
+    },
+    "hybrid_weighted": {
+     "u-book-of-mormon": 0.5,
+     "u-nuclear-weapons": 0.5,
+     "u-smartphones": 0.5,
+     "u-vaccines": 0.5,
+     "u-pretrib-rapture": 0.5
+    }
+   },
+   "summary": {
+    "dense": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5857142857142857,
+      "ci95": [
+       0.42857142857142855,
+       0.7428571428571429
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.3391156462585034,
+      "ci95": [
+       0.22843537414965986,
+       0.4561904761904762
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.41984825708753865,
+      "ci95": [
+       0.3055923521720627,
+       0.5351914321060036
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.8571428571428571,
+      "ci95": [
+       0.7428571428571429,
+       0.9714285714285714
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.6428571428571429,
+      "ci95": [
+       0.4857142857142857,
+       0.8
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.45809523809523817,
+      "ci95": [
+       0.32857142857142857,
+       0.5914285714285714
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5184901419677833,
+      "ci95": [
+       0.3904204056680437,
+       0.647004059787522
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5857142857142857,
+      "ci95": [
+       0.42857142857142855,
+       0.7428571428571429
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.4509863945578231,
+      "ci95": [
+       0.3152355442176871,
+       0.5890612244897958
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5112001853441087,
+      "ci95": [
+       0.3804749036472642,
+       0.6419249923827545
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    }
+   },
+   "cpu_latency": {
+    "dense": {
+     "p50_ms": 132.1,
+     "p95_ms": 208.8,
+     "n": 40
+    },
+    "hybrid_rrf": {
+     "p50_ms": 130.3,
+     "p95_ms": 190.0,
+     "n": 40
+    },
+    "hybrid_weighted": {
+     "p50_ms": 132.9,
+     "p95_ms": 164.9,
+     "n": 40
+    }
+   },
+   "embedding_bytes": 25752576,
+   "vs_reference": {
+    "dense": {
+     "recall@5": {
+      "diff": -0.04285714285714286,
+      "ci95": [
+       -0.2,
+       0.11428571428571428
+      ],
+      "p_le_zero": 0.7429,
+      "wins": 3,
+      "ties": 27,
+      "losses": 5
+     },
+     "mrr@10": {
+      "diff": -0.16675736961451249,
+      "ci95": [
+       -0.2869858276643991,
+       -0.05018140589569162
+      ],
+      "p_le_zero": 0.9975,
+      "wins": 8,
+      "ties": 12,
+      "losses": 15
+     },
+     "ndcg@10": {
+      "diff": -0.13765468640939987,
+      "ci95": [
+       -0.24258310061911187,
+       -0.03575631550323181
+      ],
+      "p_le_zero": 0.9954,
+      "wins": 8,
+      "ties": 12,
+      "losses": 15
+     },
+     "sermon@5": {
+      "diff": -0.11428571428571428,
+      "ci95": [
+       -0.22857142857142856,
+       -0.02857142857142857
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 31,
+      "losses": 4
+     }
+    },
+    "hybrid_rrf": {
+     "recall@5": {
+      "diff": 0.014285714285714285,
+      "ci95": [
+       -0.11428571428571428,
+       0.14285714285714285
+      ],
+      "p_le_zero": 0.4612,
+      "wins": 3,
+      "ties": 29,
+      "losses": 3
+     },
+     "mrr@10": {
+      "diff": -0.04777777777777777,
+      "ci95": [
+       -0.13643055555555555,
+       0.03801587301587302
+      ],
+      "p_le_zero": 0.8567,
+      "wins": 7,
+      "ties": 19,
+      "losses": 9
+     },
+     "ndcg@10": {
+      "diff": -0.03901280152915526,
+      "ci95": [
+       -0.1179699740716417,
+       0.036827281453259
+      ],
+      "p_le_zero": 0.8374,
+      "wins": 7,
+      "ties": 19,
+      "losses": 9
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    },
+    "hybrid_weighted": {
+     "recall@5": {
+      "diff": -0.04285714285714286,
+      "ci95": [
+       -0.17142857142857143,
+       0.08571428571428572
+      ],
+      "p_le_zero": 0.7839,
+      "wins": 2,
+      "ties": 29,
+      "losses": 4
+     },
+     "mrr@10": {
+      "diff": -0.05488662131519274,
+      "ci95": [
+       -0.15331150793650794,
+       0.037222222222222226
+      ],
+      "p_le_zero": 0.8693,
+      "wins": 8,
+      "ties": 19,
+      "losses": 8
+     },
+     "ndcg@10": {
+      "diff": -0.04630275815282992,
+      "ci95": [
+       -0.133852452761109,
+       0.037001981128854895
+      ],
+      "p_le_zero": 0.8497,
+      "wins": 8,
+      "ties": 19,
+      "losses": 8
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    }
+   }
+  },
+  "embeddinggemma-2-titled": {
+   "key": "embeddinggemma-2-titled",
+   "hf_id": "google/embeddinggemma-2",
+   "revision": "f9972ac22e696a105c482202646979e33e4b5a1e",
+   "license": "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)",
+   "developer": "Google DeepMind",
+   "lineage": "Same checkpoint as embeddinggemma-2. Documents carry the sermon title and scripture.",
+   "lineage_sources": [
+    "https://huggingface.co/google/embeddinggemma-2"
+   ],
+   "params": "270M text-only",
+   "dtype_gpu": "fp32",
+   "dtype_cpu": "fp32",
+   "dim": 768,
+   "question_prefix": "task: question answering | query: ",
+   "keyword_prefix": "task: search result | query: ",
+   "document_prefix": "",
+   "document_template": "title: {title} | text: {text}",
+   "drop_config": [
+    "vision_config",
+    "audio_config"
+   ],
+   "trust_remote_code": false,
+   "enabled": false,
+   "gated": false,
+   "status": "ok",
+   "prompts": {
+    "question": "task: question answering | query: What did Wesley say about worry?",
+    "keyword": "task: search result | query: Christian perfection",
+    "document": "title: Salvation by Faith (Eph 2:8) | text: By grace are ye saved."
+   },
+   "embed": {
+    "device": "cuda",
+    "dtype": "fp32",
+    "batch_size": 8,
+    "seconds": 139.2,
+    "chunks_per_s": 60.2,
+    "vram_baseline_mib": 3746,
+    "vram_peak_mib": 6214,
+    "vram_delta_mib": 2468,
+    "dim": 768,
+    "embedded_at": "2026-10-30T11:05:24-04:00"
+   },
+   "cpu_dtype": "fp32",
+   "per_query": {
+    "dense": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.27541155237618664
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     }
+    },
+    "hybrid_rrf": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    },
+    "hybrid_weighted": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    }
+   },
+   "negative_top1": {
+    "dense": {
+     "u-book-of-mormon": 0.7268543839454651,
+     "u-nuclear-weapons": 0.6825413107872009,
+     "u-smartphones": 0.6932722330093384,
+     "u-vaccines": 0.7194496989250183,
+     "u-pretrib-rapture": 0.7345753908157349
+    },
+    "hybrid_rrf": {
+     "u-book-of-mormon": 0.01639344262295082,
+     "u-nuclear-weapons": 0.01639344262295082,
+     "u-smartphones": 0.01639344262295082,
+     "u-vaccines": 0.01639344262295082,
+     "u-pretrib-rapture": 0.022642390289449112
+    },
+    "hybrid_weighted": {
+     "u-book-of-mormon": 0.5,
+     "u-nuclear-weapons": 0.5,
+     "u-smartphones": 0.5,
+     "u-vaccines": 0.5,
+     "u-pretrib-rapture": 0.5
+    }
+   },
+   "summary": {
+    "dense": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.35714285714285715,
+      "ci95": [
+       0.2,
+       0.5142857142857142
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.27840136054421766,
+      "ci95": [
+       0.155437925170068,
+       0.4115646258503401
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.32085326371490097,
+      "ci95": [
+       0.19607400964173516,
+       0.4509652987952743
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.8857142857142857,
+      "ci95": [
+       0.7714285714285715,
+       0.9714285714285714
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.4714285714285714,
+      "ci95": [
+       0.3142857142857143,
+       0.6285714285714286
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.36162131519274376,
+      "ci95": [
+       0.23582482993197276,
+       0.49268990929705214
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.42697588573282613,
+      "ci95": [
+       0.30292036194108984,
+       0.5494259269143326
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5285714285714286,
+      "ci95": [
+       0.37142857142857144,
+       0.6857142857142857
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.407891156462585,
+      "ci95": [
+       0.2745113378684807,
+       0.5449206349206349
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.47459384806052457,
+      "ci95": [
+       0.3487009799464987,
+       0.6016535988286388
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    }
+   },
+   "cpu_latency": {
+    "dense": {
+     "p50_ms": 135.9,
+     "p95_ms": 185.3,
+     "n": 40
+    },
+    "hybrid_rrf": {
+     "p50_ms": 132.3,
+     "p95_ms": 156.1,
+     "n": 40
+    },
+    "hybrid_weighted": {
+     "p50_ms": 135.3,
+     "p95_ms": 539.8,
+     "n": 40
+    }
+   },
+   "embedding_bytes": 25752576,
+   "vs_reference": {
+    "dense": {
+     "recall@5": {
+      "diff": -0.2714285714285714,
+      "ci95": [
+       -0.45714285714285713,
+       -0.08571428571428572
+      ],
+      "p_le_zero": 0.9986,
+      "wins": 2,
+      "ties": 21,
+      "losses": 12
+     },
+     "mrr@10": {
+      "diff": -0.2274716553287982,
+      "ci95": [
+       -0.39088860544217685,
+       -0.06607199546485268
+      ],
+      "p_le_zero": 0.9977,
+      "wins": 7,
+      "ties": 12,
+      "losses": 16
+     },
+     "ndcg@10": {
+      "diff": -0.2366496797820377,
+      "ci95": [
+       -0.3889289718181566,
+       -0.08694616645907757
+      ],
+      "p_le_zero": 0.9996,
+      "wins": 7,
+      "ties": 12,
+      "losses": 16
+     },
+     "sermon@5": {
+      "diff": -0.08571428571428572,
+      "ci95": [
+       -0.2,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 32,
+      "losses": 3
+     }
+    },
+    "hybrid_rrf": {
+     "recall@5": {
+      "diff": -0.15714285714285714,
+      "ci95": [
+       -0.3,
+       -0.02857142857142857
+      ],
+      "p_le_zero": 0.9912,
+      "wins": 1,
+      "ties": 27,
+      "losses": 7
+     },
+     "mrr@10": {
+      "diff": -0.14425170068027213,
+      "ci95": [
+       -0.2692142857142858,
+       -0.022267573696145126
+      ],
+      "p_le_zero": 0.9896,
+      "wins": 6,
+      "ties": 16,
+      "losses": 13
+     },
+     "ndcg@10": {
+      "diff": -0.13052705776411241,
+      "ci95": [
+       -0.24130784647754183,
+       -0.024497253482073995
+      ],
+      "p_le_zero": 0.9935,
+      "wins": 6,
+      "ties": 16,
+      "losses": 13
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    },
+    "hybrid_weighted": {
+     "recall@5": {
+      "diff": -0.1,
+      "ci95": [
+       -0.24285714285714285,
+       0.04285714285714286
+      ],
+      "p_le_zero": 0.9251,
+      "wins": 2,
+      "ties": 27,
+      "losses": 6
+     },
+     "mrr@10": {
+      "diff": -0.09798185941043083,
+      "ci95": [
+       -0.22195691609977328,
+       0.02777834467120181
+      ],
+      "p_le_zero": 0.9382,
+      "wins": 6,
+      "ties": 16,
+      "losses": 13
+     },
+     "ndcg@10": {
+      "diff": -0.08290909543641398,
+      "ci95": [
+       -0.19180971508266323,
+       0.024889386292724875
+      ],
+      "p_le_zero": 0.9359,
+      "wins": 6,
+      "ties": 16,
+      "losses": 13
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    }
+   }
+  },
+  "granite-english-r2": {
+   "key": "granite-english-r2",
+   "hf_id": "ibm-granite/granite-embedding-english-r2",
+   "revision": "47ea694b257b703fee9253d75c2b1f2985180498",
+   "license": "Apache-2.0",
+   "developer": "IBM Granite Embedding Team",
+   "lineage": "ModernBERT architecture (Answer.AI, US; LightOn, France), pretrained and fine-tuned by IBM. No PRC base model.",
+   "lineage_sources": [
+    "https://huggingface.co/ibm-granite/granite-embedding-english-r2",
+    "https://arxiv.org/abs/2508.21085"
+   ],
+   "params": "149M",
+   "dtype_gpu": "fp32",
+   "dtype_cpu": "fp32",
+   "dim": 768,
+   "question_prefix": "",
+   "keyword_prefix": "",
+   "document_prefix": "",
+   "document_template": "",
+   "drop_config": [],
+   "trust_remote_code": false,
+   "enabled": true,
+   "gated": false,
+   "status": "ok",
+   "prompts": {
+    "question": "What did Wesley say about worry?",
+    "keyword": "Christian perfection",
+    "document": "By grace are ye saved."
+   },
+   "embed": {
+    "device": "cuda",
+    "dtype": "fp32",
+    "batch_size": 8,
+    "seconds": 85.2,
+    "chunks_per_s": 98.3,
+    "vram_baseline_mib": 4026,
+    "vram_peak_mib": 5362,
+    "vram_delta_mib": 1336,
+    "dim": 768,
+    "embedded_at": "2026-10-30T11:07:18-04:00"
+   },
+   "cpu_dtype": "fp32",
+   "per_query": {
+    "dense": {
+     "q-worry": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-salvation": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 0.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     }
+    },
+    "hybrid_rrf": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    },
+    "hybrid_weighted": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.52129602861432
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    }
+   },
+   "negative_top1": {
+    "dense": {
+     "u-book-of-mormon": 0.8128553032875061,
+     "u-nuclear-weapons": 0.7863967418670654,
+     "u-smartphones": 0.7814620137214661,
+     "u-vaccines": 0.7987045049667358,
+     "u-pretrib-rapture": 0.8278799653053284
+    },
+    "hybrid_rrf": {
+     "u-book-of-mormon": 0.01639344262295082,
+     "u-nuclear-weapons": 0.01639344262295082,
+     "u-smartphones": 0.01639344262295082,
+     "u-vaccines": 0.01639344262295082,
+     "u-pretrib-rapture": 0.0225
+    },
+    "hybrid_weighted": {
+     "u-book-of-mormon": 0.5,
+     "u-nuclear-weapons": 0.5,
+     "u-smartphones": 0.5,
+     "u-vaccines": 0.5,
+     "u-pretrib-rapture": 0.5
+    }
+   },
+   "summary": {
+    "dense": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5428571428571428,
+      "ci95": [
+       0.38571428571428573,
+       0.7
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.4238095238095238,
+      "ci95": [
+       0.2857142857142857,
+       0.5619047619047619
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.47320331211080185,
+      "ci95": [
+       0.33778038852251796,
+       0.6055507062085812
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.8,
+      "ci95": [
+       0.6571428571428571,
+       0.9142857142857143
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.6285714285714286,
+      "ci95": [
+       0.4714285714285714,
+       0.7714285714285715
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.5058730158730158,
+      "ci95": [
+       0.36158730158730157,
+       0.6453968253968254
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5575029434969386,
+      "ci95": [
+       0.4198610455102064,
+       0.6901918284214003
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9714285714285714,
+      "ci95": [
+       0.9142857142857143,
+       1.0
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5714285714285714,
+      "ci95": [
+       0.4,
+       0.7285714285714285
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.4771428571428572,
+      "ci95": [
+       0.3396825396825397,
+       0.6123888888888888
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5407568271934751,
+      "ci95": [
+       0.40983849326296645,
+       0.6666404211886594
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    }
+   },
+   "cpu_latency": {
+    "dense": {
+     "p50_ms": 114.2,
+     "p95_ms": 310.8,
+     "n": 40
+    },
+    "hybrid_rrf": {
+     "p50_ms": 115.2,
+     "p95_ms": 134.0,
+     "n": 40
+    },
+    "hybrid_weighted": {
+     "p50_ms": 116.6,
+     "p95_ms": 161.0,
+     "n": 40
+    }
+   },
+   "embedding_bytes": 25752576,
+   "vs_reference": {
+    "dense": {
+     "recall@5": {
+      "diff": -0.08571428571428572,
+      "ci95": [
+       -0.2,
+       0.02857142857142857
+      ],
+      "p_le_zero": 0.9539,
+      "wins": 1,
+      "ties": 30,
+      "losses": 4
+     },
+     "mrr@10": {
+      "diff": -0.08206349206349207,
+      "ci95": [
+       -0.20190476190476192,
+       0.043015873015873
+      ],
+      "p_le_zero": 0.9049,
+      "wins": 5,
+      "ties": 19,
+      "losses": 11
+     },
+     "ndcg@10": {
+      "diff": -0.08429963138613676,
+      "ci95": [
+       -0.18723952565928945,
+       0.02606878470410294
+      ],
+      "p_le_zero": 0.9352,
+      "wins": 5,
+      "ties": 19,
+      "losses": 11
+     },
+     "sermon@5": {
+      "diff": -0.17142857142857143,
+      "ci95": [
+       -0.3142857142857143,
+       -0.05714285714285714
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 29,
+      "losses": 6
+     }
+    },
+    "hybrid_rrf": {
+     "recall@5": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     },
+     "mrr@10": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     },
+     "ndcg@10": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     },
+     "sermon@5": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     }
+    },
+    "hybrid_weighted": {
+     "recall@5": {
+      "diff": -0.05714285714285714,
+      "ci95": [
+       -0.14285714285714285,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 33,
+      "losses": 2
+     },
+     "mrr@10": {
+      "diff": -0.02873015873015873,
+      "ci95": [
+       -0.07365476190476192,
+       0.007936507936507936
+      ],
+      "p_le_zero": 0.9243,
+      "wins": 3,
+      "ties": 27,
+      "losses": 5
+     },
+     "ndcg@10": {
+      "diff": -0.016746116303463485,
+      "ci95": [
+       -0.05315532093571743,
+       0.017421660686315222
+      ],
+      "p_le_zero": 0.8224,
+      "wins": 3,
+      "ties": 27,
+      "losses": 5
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    }
+   }
+  },
+  "arctic-embed-l": {
+   "key": "arctic-embed-l",
+   "hf_id": "Snowflake/snowflake-arctic-embed-l",
+   "revision": "d8fb21ca8d905d2832ee8b96c894d3298964346b",
+   "license": "Apache-2.0",
+   "developer": "Snowflake",
+   "lineage": "Arctic-Embed 1.0 large, initialized from Microsoft intfloat/e5-large-unsupervised (BERT-large).",
+   "lineage_sources": [
+    "https://huggingface.co/Snowflake/snowflake-arctic-embed-l",
+    "https://arxiv.org/abs/2405.05374"
+   ],
+   "params": "334M",
+   "dtype_gpu": "fp32",
+   "dtype_cpu": "fp32",
+   "dim": 1024,
+   "question_prefix": "Represent this sentence for searching relevant passages: ",
+   "keyword_prefix": "",
+   "document_prefix": "",
+   "document_template": "",
+   "drop_config": [],
+   "trust_remote_code": false,
+   "enabled": true,
+   "gated": false,
+   "status": "ok",
+   "prompts": {
+    "question": "Represent this sentence for searching relevant passages: What did Wesley say about worry?",
+    "keyword": "Represent this sentence for searching relevant passages: Christian perfection",
+    "document": "By grace are ye saved."
+   },
+   "embed": {
+    "device": "cuda",
+    "dtype": "fp32",
+    "batch_size": 8,
+    "seconds": 174.4,
+    "chunks_per_s": 48.1,
+    "vram_baseline_mib": 4698,
+    "vram_peak_mib": 6102,
+    "vram_delta_mib": 1404,
+    "dim": 1024,
+    "embedded_at": "2026-10-30T11:10:37-04:00"
+   },
+   "cpu_dtype": "fp32",
+   "per_query": {
+    "dense": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.27541155237618664
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     }
+    },
+    "hybrid_rrf": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.35583989829307827
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.3196311965446524
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    },
+    "hybrid_weighted": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.3196311965446524
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.3196311965446524
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    }
+   },
+   "negative_top1": {
+    "dense": {
+     "u-book-of-mormon": 0.4588027894496918,
+     "u-nuclear-weapons": 0.39256811141967773,
+     "u-smartphones": 0.33706003427505493,
+     "u-vaccines": 0.3738729655742645,
+     "u-pretrib-rapture": 0.417493999004364
+    },
+    "hybrid_rrf": {
+     "u-book-of-mormon": 0.01639344262295082,
+     "u-nuclear-weapons": 0.01639344262295082,
+     "u-smartphones": 0.01639344262295082,
+     "u-vaccines": 0.01639344262295082,
+     "u-pretrib-rapture": 0.017370470200658877
+    },
+    "hybrid_weighted": {
+     "u-book-of-mormon": 0.5,
+     "u-nuclear-weapons": 0.5,
+     "u-smartphones": 0.5,
+     "u-vaccines": 0.5,
+     "u-pretrib-rapture": 0.5
+    }
+   },
+   "summary": {
+    "dense": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.4857142857142857,
+      "ci95": [
+       0.32857142857142857,
+       0.6428571428571429
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.30384353741496595,
+      "ci95": [
+       0.1911862244897959,
+       0.42554846938775504
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.36627753302219207,
+      "ci95": [
+       0.25111899296749546,
+       0.48797808253961555
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.7714285714285715,
+      "ci95": [
+       0.6285714285714286,
+       0.9142857142857143
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.6,
+      "ci95": [
+       0.44285714285714284,
+       0.7571428571428571
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.4264625850340136,
+      "ci95": [
+       0.29930952380952375,
+       0.5604761904761904
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.49249201961117667,
+      "ci95": [
+       0.36530889933104393,
+       0.6195400251702833
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.6428571428571429,
+      "ci95": [
+       0.4857142857142857,
+       0.7857142857142857
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.47003401360544217,
+      "ci95": [
+       0.3372091836734693,
+       0.6053061224489795
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5297836088961833,
+      "ci95": [
+       0.39933965543717925,
+       0.6583618914779266
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9142857142857143,
+      "ci95": [
+       0.8,
+       1.0
+      ]
+     }
+    }
+   },
+   "cpu_latency": {
+    "dense": {
+     "p50_ms": 143.3,
+     "p95_ms": 175.3,
+     "n": 40
+    },
+    "hybrid_rrf": {
+     "p50_ms": 150.2,
+     "p95_ms": 238.9,
+     "n": 40
+    },
+    "hybrid_weighted": {
+     "p50_ms": 150.0,
+     "p95_ms": 195.3,
+     "n": 40
+    }
+   },
+   "embedding_bytes": 34336768,
+   "vs_reference": {
+    "dense": {
+     "recall@5": {
+      "diff": -0.14285714285714285,
+      "ci95": [
+       -0.3142857142857143,
+       0.02857142857142857
+      ],
+      "p_le_zero": 0.9613,
+      "wins": 3,
+      "ties": 24,
+      "losses": 8
+     },
+     "mrr@10": {
+      "diff": -0.20202947845804986,
+      "ci95": [
+       -0.33616524943310655,
+       -0.06459948979591842
+      ],
+      "p_le_zero": 0.9986,
+      "wins": 6,
+      "ties": 12,
+      "losses": 17
+     },
+     "ndcg@10": {
+      "diff": -0.1912254104747466,
+      "ci95": [
+       -0.31730574316306664,
+       -0.06752696516548172
+      ],
+      "p_le_zero": 0.9992,
+      "wins": 6,
+      "ties": 12,
+      "losses": 17
+     },
+     "sermon@5": {
+      "diff": -0.2,
+      "ci95": [
+       -0.34285714285714286,
+       -0.08571428571428572
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 28,
+      "losses": 7
+     }
+    },
+    "hybrid_rrf": {
+     "recall@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.14285714285714285,
+       0.05714285714285714
+      ],
+      "p_le_zero": 0.8124,
+      "wins": 1,
+      "ties": 32,
+      "losses": 2
+     },
+     "mrr@10": {
+      "diff": -0.07941043083900227,
+      "ci95": [
+       -0.16295351473922906,
+       0.0005674603174603072
+      ],
+      "p_le_zero": 0.9741,
+      "wins": 5,
+      "ties": 18,
+      "losses": 12
+     },
+     "ndcg@10": {
+      "diff": -0.06501092388576198,
+      "ci95": [
+       -0.13643090498138666,
+       0.0050116741252866776
+      ],
+      "p_le_zero": 0.9669,
+      "wins": 5,
+      "ties": 18,
+      "losses": 12
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    },
+    "hybrid_weighted": {
+     "recall@5": {
+      "diff": 0.014285714285714285,
+      "ci95": [
+       -0.07142857142857142,
+       0.1
+      ],
+      "p_le_zero": 0.4344,
+      "wins": 2,
+      "ties": 32,
+      "losses": 1
+     },
+     "mrr@10": {
+      "diff": -0.03583900226757369,
+      "ci95": [
+       -0.10627182539682539,
+       0.02991043083900225
+      ],
+      "p_le_zero": 0.848,
+      "wins": 6,
+      "ties": 20,
+      "losses": 9
+     },
+     "ndcg@10": {
+      "diff": -0.027719334600755412,
+      "ci95": [
+       -0.09225039749965962,
+       0.03462728907146728
+      ],
+      "p_le_zero": 0.8062,
+      "wins": 6,
+      "ties": 20,
+      "losses": 9
+     },
+     "sermon@5": {
+      "diff": -0.05714285714285714,
+      "ci95": [
+       -0.14285714285714285,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 33,
+      "losses": 2
+     }
+    }
+   }
+  },
+  "nomic-embed-text-v2-moe": {
+   "key": "nomic-embed-text-v2-moe",
+   "hf_id": "nomic-ai/nomic-embed-text-v2-moe",
+   "revision": "1066b6599d099fbb93dfcb64f9c37a7c9e503e85",
+   "license": "Apache-2.0",
+   "developer": "Nomic AI (New York)",
+   "lineage": "FacebookAI/xlm-roberta-base (Meta) -> nomic-ai/nomic-xlm-2048 -> nomic-embed-text-v2-moe-unsupervised -> this checkpoint.",
+   "lineage_sources": [
+    "https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe",
+    "https://arxiv.org/abs/2502.07972"
+   ],
+   "params": "475M total / 305M active (MoE)",
+   "dtype_gpu": "fp32",
+   "dtype_cpu": "fp32",
+   "dim": 768,
+   "question_prefix": "search_query: ",
+   "keyword_prefix": "",
+   "document_prefix": "search_document: ",
+   "document_template": "",
+   "drop_config": [],
+   "trust_remote_code": true,
+   "enabled": true,
+   "gated": false,
+   "status": "ok",
+   "prompts": {
+    "question": "search_query: What did Wesley say about worry?",
+    "keyword": "search_query: Christian perfection",
+    "document": "search_document: By grace are ye saved."
+   },
+   "embed": {
+    "device": "cuda",
+    "dtype": "fp32",
+    "batch_size": 8,
+    "seconds": 154.4,
+    "chunks_per_s": 54.3,
+    "vram_baseline_mib": 3994,
+    "vram_peak_mib": 6628,
+    "vram_delta_mib": 2634,
+    "dim": 768,
+    "embedded_at": "2026-10-30T11:13:47-04:00"
+   },
+   "cpu_dtype": "fp32",
+   "per_query": {
+    "dense": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 0.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.11861329943102608
+     },
+     "q-prayer": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333
+     },
+     "q-forgiveness": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2388353776606868
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-luke-22-19": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     }
+    },
+    "hybrid_rrf": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.35583989829307827
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.27541155237618664
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.16666666666666666,
+      "ndcg@10": 0.3562071871080222
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    },
+    "hybrid_weighted": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.26064801430716
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0
+     }
+    }
+   },
+   "negative_top1": {
+    "dense": {
+     "u-book-of-mormon": 0.4192548990249634,
+     "u-nuclear-weapons": 0.31756651401519775,
+     "u-smartphones": 0.32411855459213257,
+     "u-vaccines": 0.3293924331665039,
+     "u-pretrib-rapture": 0.3910488486289978
+    },
+    "hybrid_rrf": {
+     "u-book-of-mormon": 0.01639344262295082,
+     "u-nuclear-weapons": 0.01639344262295082,
+     "u-smartphones": 0.01639344262295082,
+     "u-vaccines": 0.01639344262295082,
+     "u-pretrib-rapture": 0.020970394736842105
+    },
+    "hybrid_weighted": {
+     "u-book-of-mormon": 0.5,
+     "u-nuclear-weapons": 0.5,
+     "u-smartphones": 0.5,
+     "u-vaccines": 0.5,
+     "u-pretrib-rapture": 0.5
+    }
+   },
+   "summary": {
+    "dense": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.42857142857142855,
+      "ci95": [
+       0.2714285714285714,
+       0.5857142857142857
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.27701814058956914,
+      "ci95": [
+       0.16920238095238097,
+       0.39504393424036266
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.33786945878742336,
+      "ci95": [
+       0.2251022676204149,
+       0.4535916286660825
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.8,
+      "ci95": [
+       0.6571428571428571,
+       0.9142857142857143
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5285714285714286,
+      "ci95": [
+       0.37142857142857144,
+       0.6857142857142857
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.4110657596371882,
+      "ci95": [
+       0.27343877551020407,
+       0.5512738095238094
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.46536777387947037,
+      "ci95": [
+       0.32939368035930233,
+       0.602130181090231
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5571428571428572,
+      "ci95": [
+       0.4,
+       0.7142857142857143
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.4246031746031746,
+      "ci95": [
+       0.2880912698412698,
+       0.5622281746031744
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.4821928477255414,
+      "ci95": [
+       0.34941832168478715,
+       0.6140075409534727
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    }
+   },
+   "cpu_latency": {
+    "dense": {
+     "p50_ms": 145.5,
+     "p95_ms": 375.1,
+     "n": 40
+    },
+    "hybrid_rrf": {
+     "p50_ms": 147.6,
+     "p95_ms": 248.0,
+     "n": 40
+    },
+    "hybrid_weighted": {
+     "p50_ms": 149.1,
+     "p95_ms": 587.0,
+     "n": 40
+    }
+   },
+   "embedding_bytes": 25752576,
+   "vs_reference": {
+    "dense": {
+     "recall@5": {
+      "diff": -0.2,
+      "ci95": [
+       -0.34285714285714286,
+       -0.07142857142857142
+      ],
+      "p_le_zero": 0.9996,
+      "wins": 1,
+      "ties": 26,
+      "losses": 8
+     },
+     "mrr@10": {
+      "diff": -0.22885487528344675,
+      "ci95": [
+       -0.3563613945578231,
+       -0.10219614512471661
+      ],
+      "p_le_zero": 1.0,
+      "wins": 4,
+      "ties": 12,
+      "losses": 19
+     },
+     "ndcg@10": {
+      "diff": -0.21963348470951521,
+      "ci95": [
+       -0.3283281800770832,
+       -0.11422541038893659
+      ],
+      "p_le_zero": 1.0,
+      "wins": 4,
+      "ties": 12,
+      "losses": 19
+     },
+     "sermon@5": {
+      "diff": -0.17142857142857143,
+      "ci95": [
+       -0.3142857142857143,
+       -0.05714285714285714
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 29,
+      "losses": 6
+     }
+    },
+    "hybrid_rrf": {
+     "recall@5": {
+      "diff": -0.1,
+      "ci95": [
+       -0.22857142857142856,
+       0.02857142857142857
+      ],
+      "p_le_zero": 0.9622,
+      "wins": 1,
+      "ties": 29,
+      "losses": 5
+     },
+     "mrr@10": {
+      "diff": -0.09480725623582767,
+      "ci95": [
+       -0.19061904761904766,
+       -0.005599773242630408
+      ],
+      "p_le_zero": 0.981,
+      "wins": 4,
+      "ties": 18,
+      "losses": 13
+     },
+     "ndcg@10": {
+      "diff": -0.09213516961746822,
+      "ci95": [
+       -0.1748624897834878,
+       -0.011498985541510354
+      ],
+      "p_le_zero": 0.9884,
+      "wins": 4,
+      "ties": 18,
+      "losses": 13
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    },
+    "hybrid_weighted": {
+     "recall@5": {
+      "diff": -0.07142857142857142,
+      "ci95": [
+       -0.18571428571428572,
+       0.02857142857142857
+      ],
+      "p_le_zero": 0.9193,
+      "wins": 1,
+      "ties": 30,
+      "losses": 4
+     },
+     "mrr@10": {
+      "diff": -0.08126984126984127,
+      "ci95": [
+       -0.16603174603174606,
+       0.002144841269841237
+      ],
+      "p_le_zero": 0.9725,
+      "wins": 3,
+      "ties": 21,
+      "losses": 11
+     },
+     "ndcg@10": {
+      "diff": -0.07531009577139713,
+      "ci95": [
+       -0.15064285024030363,
+       -0.001878239151524894
+      ],
+      "p_le_zero": 0.9776,
+      "wins": 3,
+      "ties": 21,
+      "losses": 11
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    }
+   }
+  }
+ },
+ "bm25": {
+  "summary": {
+   "n": 35,
+   "recall@5": {
+    "mean": 0.4857142857142857,
+    "ci95": [
+     0.3142857142857143,
+     0.6571428571428571
+    ]
+   },
+   "mrr@10": {
+    "mean": 0.33316326530612245,
+    "ci95": [
+     0.21513605442176872,
+     0.45884353741496603
+    ]
+   },
+   "ndcg@10": {
+    "mean": 0.40055512731630827,
+    "ci95": [
+     0.2800586710553805,
+     0.5254905852708142
+    ]
+   },
+   "sermon@5": {
+    "mean": 0.8857142857142857,
+    "ci95": [
+     0.7714285714285715,
+     0.9714285714285714
+    ]
+   }
+  },
+  "per_query": {
+   "q-worry": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-assurance": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-money": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-riches": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.125,
+    "ndcg@10": 0.26064801430716
+   },
+   "q-prayer": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-forgiveness": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-perfection": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-heaviness": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-mourning": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574
+   },
+   "q-satan": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-temptation": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.14285714285714285,
+    "ndcg@10": 0.3333333333333333
+   },
+   "q-communion": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.14285714285714285,
+    "ndcg@10": 0.3333333333333333
+   },
+   "q-means": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-salvation": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.3333333333333333,
+    "ndcg@10": 0.5
+   },
+   "q-justification": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-faith-works": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-new-birth": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.125,
+    "ndcg@10": 0.26064801430716
+   },
+   "q-sin-believers": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574
+   },
+   "q-original-sin": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.125,
+    "ndcg@10": 0.3154648767857287
+   },
+   "q-catholic-spirit": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.25,
+    "ndcg@10": 0.4306765580733931
+   },
+   "q-backsliders": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.3333333333333333,
+    "ndcg@10": 0.5
+   },
+   "q-self-denial": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.25,
+    "ndcg@10": 0.4306765580733931
+   },
+   "q-wandering-thoughts": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574
+   },
+   "q-wilderness": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "q-evil-speaking": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   },
+   "k-romans-8-16": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   },
+   "k-christian-perfection": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574
+   },
+   "k-means-of-grace": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   },
+   "k-witness-of-the-spirit": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0
+   },
+   "k-gain-all-you-can": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   },
+   "k-philippians-3-12": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574
+   },
+   "k-1-corinthians-10-13": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.3333333333333333,
+    "ndcg@10": 0.5
+   },
+   "k-matthew-6-34": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   },
+   "k-2-corinthians-2-11": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   },
+   "k-luke-22-19": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0
+   }
+  },
+  "negative_top1": {
+   "u-book-of-mormon": null,
+   "u-nuclear-weapons": null,
+   "u-smartphones": null,
+   "u-vaccines": null,
+   "u-pretrib-rapture": 10.688915263544537
+  },
+  "vs_reference": {
+   "recall@5": {
+    "diff": -0.14285714285714285,
+    "ci95": [
+     -0.2857142857142857,
+     -0.014285714285714285
+    ],
+    "p_le_zero": 0.989,
+    "wins": 1,
+    "ties": 27,
+    "losses": 7
+   },
+   "mrr@10": {
+    "diff": -0.17270975056689344,
+    "ci95": [
+     -0.28014058956916105,
+     -0.06810572562358277
+    ],
+    "p_le_zero": 0.9998,
+    "wins": 4,
+    "ties": 15,
+    "losses": 16
+   },
+   "ndcg@10": {
+    "diff": -0.15694781618063033,
+    "ci95": [
+     -0.2589325980994506,
+     -0.05793337232185962
+    ],
+    "p_le_zero": 0.999,
+    "wins": 4,
+    "ties": 15,
+    "losses": 16
+   },
+   "sermon@5": {
+    "diff": -0.08571428571428572,
+    "ci95": [
+     -0.2,
+     0.0
+    ],
+    "p_le_zero": 1.0,
+    "wins": 0,
+    "ties": 32,
+    "losses": 3
+   }
+  }
+ },
+ "finished_at": "2026-10-30T11:14:23-04:00"
+}
