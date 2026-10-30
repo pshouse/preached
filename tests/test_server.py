@@ -342,7 +342,7 @@ class ServerTests(unittest.TestCase):
         self.assert_secure(headers)
         self.assertIn("application/json", header(headers, "Content-Type"))
         payload = json.loads(body)
-        self.assertEqual(set(payload), {"query", "mode", "took_ms", "results", "note"})
+        self.assertEqual(set(payload), {"query", "mode", "took_ms", "results", "note", "abstain", "confidence"})
         self.assertEqual(payload["query"], "zealboundary")
         self.assertEqual(payload["mode"], "bm25")
         self.assertIsNone(payload["note"])
