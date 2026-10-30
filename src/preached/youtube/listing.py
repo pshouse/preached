@@ -39,6 +39,9 @@ class BadChannelUrl(ValueError):
 YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
 # Watch links use the importer's hosts except youtu.be, which is not /watch?v=.
 WATCH_HOSTS = YOUTUBE_HOSTS - {"youtu.be"}
+# A seek longer than a day is not a t= we will emit. 86400 is 24 h.
+MAX_T_S = 24 * 60 * 60
+_T_RE = re.compile(r"^([0-9]+)s?$")
 _URL_MESSAGE = (
     "channel URL must be https on youtube.com, www.youtube.com, m.youtube.com, or youtu.be"
 )
@@ -70,13 +73,48 @@ def assert_youtube_url(url: str) -> None:
         raise BadChannelUrl(_URL_MESSAGE)
 
 
+def _watch_link(video_id: str, seconds: int | None) -> str:
+    """The only place a watch link's string is built.
+
+    ``https://www.youtube.com/watch?v=<11-char id>`` and, when ``seconds`` is
+    not None, ``&t=<int>s``. No other parameter, port, or fragment.
+    """
+    base = f"https://www.youtube.com/watch?v={video_id}"
+    if seconds is None:
+        return base
+    return f"{base}&t={seconds}s"
+
+
+def _t_seconds(values: list[str]) -> int | None:
+    """One whole-second ``t`` in ``0..MAX_T_S``, or None.
+
+    A second ``t`` (blank or not), a sign, a fraction, or a non-numeric value
+    is not a seek. The caller then omits ``t=`` rather than copying it.
+    """
+    if len(values) != 1:
+        return None
+    match = _T_RE.fullmatch(values[0])
+    if not match:
+        return None
+    digits = match.group(1).lstrip("0") or "0"
+    if len(digits) > len(str(MAX_T_S)):
+        return None
+    seconds = int(digits)
+    if seconds > MAX_T_S:
+        return None
+    return seconds
+
+
 def youtube_watch_url(url: object) -> str | None:
-    """A stored YouTube watch URL, or None when it is not one.
+    """A canonical YouTube watch URL, or None when ``url`` is not one.
 
     Same host rule as the importer (https, no credentials, port 443 or the
     default) limited to ``WATCH_HOSTS``, path ``/watch``, and one ``v`` of
-    11 characters. The string comes back unchanged: its ``&t=`` already
-    includes the pre-roll, and nothing here adds ``#t=``.
+    11 characters. A blank ``v`` counts, so ``v=<id>&v=`` is rejected. The
+    result is rebuilt: ``https://www.youtube.com/watch?v=<id>`` plus
+    ``&t=<int>s`` when ``t`` is one non-negative whole number of seconds up
+    to 24 h (a trailing ``s`` is accepted). Every other query parameter and
+    any fragment is dropped. Nothing here adds ``#t=``.
 
     Never raises. ``urlsplit`` raises ``ValueError`` for an invalid IPv6
     netloc, and ``.port`` raises ``ValueError`` for a non-numeric or
@@ -110,8 +148,55 @@ def youtube_watch_url(url: object) -> str | None:
         return None
     if parsed.path != "/watch":
         return None
-    ids = parse_qs(parsed.query).get("v", [])
+    # keep_blank_values so a second empty v= is counted. parse_qs drops it
+    # otherwise, and the page's URLSearchParams.getAll("v") does not.
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    ids = params.get("v", [])
     if len(ids) != 1 or not VIDEO_ID.fullmatch(ids[0]):
+        return None
+    return _watch_link(ids[0], _t_seconds(params.get("t", [])))
+
+
+def _same_origin_path(url: str) -> bool:
+    """A path the page's safeUrl treats as this origin. Not protocol-relative."""
+    if not url.startswith("/") or url.startswith("//") or "\\" in url:
+        return False
+    path = url.split("?", 1)[0].split("#", 1)[0]
+    return ".." not in path.split("/")
+
+
+def public_audio_url(url: object) -> str | None:
+    """The ``audio_url`` the page may receive. Same allow-list as the client.
+
+    A YouTube watch URL is rebuilt from the video id and an integer ``t=``.
+    A watch host that fails those rules is dropped, so ``t=javascript:`` and
+    extra parameters are not forwarded raw. Any other ``https`` URL is kept,
+    matching ``safeUrl``, as is a same-origin path. ``javascript:``, ``data:``,
+    and ``http:`` are dropped. Never raises.
+    """
+    rebuilt = youtube_watch_url(url)
+    if rebuilt is not None:
+        return rebuilt
+    if (
+        not isinstance(url, str)
+        or not url
+        or url.startswith("-")
+        or "\\" in url
+        or any(ord(ch) <= 32 or ord(ch) == 127 for ch in url)
+    ):
+        return None
+    if _same_origin_path(url):
+        return url
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        # .port raises ValueError for a non-numeric or out-of-range port.
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or not hostname:
+        return None
+    if hostname in WATCH_HOSTS and parsed.path == "/watch":
         return None
     return url
 
@@ -132,13 +217,32 @@ class Video:
     url: str
 
     def watch_url(self) -> str:
-        return f"https://www.youtube.com/watch?v={self.id}"
+        return _watch_link(self.id, None)
+
+
+def _seek_cap(duration_s: float | None) -> int:
+    """Whole seconds the seek may reach: the sermon length, and never past 24 h.
+
+    A missing, non-positive, or non-finite duration leaves the 24 h ceiling.
+    """
+    if (
+        duration_s is None
+        or isinstance(duration_s, bool)
+        or not isinstance(duration_s, (int, float))
+        or not math.isfinite(duration_s)
+        or duration_s <= 0
+    ):
+        return MAX_T_S
+    if duration_s >= MAX_T_S:
+        return MAX_T_S
+    return int(duration_s)
 
 
 def watch_url(
     video_id: str,
     start_s: float | None = None,
     *,
+    duration_s: float | None = None,
     end_s: float | None = None,
     flag_end_s: float | None = None,
     policy: str = "none",
@@ -146,37 +250,57 @@ def watch_url(
     """YouTube watch URL. ``t=`` is the play position, not the stored onset.
 
     ``start_s`` is the first word. The player starts ``PREROLL_S`` earlier.
-    YouTube's ``t=`` parameter is a whole number of seconds.
+    YouTube's ``t=`` parameter is a whole number of seconds. A non-finite or
+    negative ``start_s`` is omitted (no ``t=``), which is also what ``inf``
+    and ``1e300`` used to do badly: ``int(inf)`` raises ``OverflowError`` and
+    ``int(1e300)`` is a huge ``t=``. The seek is capped at ``duration_s`` when
+    that is a positive finite sermon length, and always at 24 h.
 
     ``flag_end_s`` (end of the last redacted or review-flagged word in the
     chunk) applies the flagged-audio policy: ``none`` returns None, ``shifted``
     seeks just after that word (rounded up), ``play`` is the normal link.
-    Without ``flag_end_s`` nothing changes.
+    Without ``flag_end_s`` nothing changes. A shifted seek that is not finite
+    or that the cap would pull back onto the name returns None (no link).
 
-    Built only from validated parts: an 11-character ``video_id`` and an
-    integer ``t``. Anything else returns None (no link).
+    This is the only function that turns a start time into a watch link, and
+    the string itself comes from ``_watch_link``: an 11-character
+    ``video_id`` and an integer ``t``. Any other id returns None.
     """
     if not isinstance(video_id, str) or not VIDEO_ID.fullmatch(video_id):
         return None
-    base = f"https://www.youtube.com/watch?v={video_id}"
     allowed, play_from = flagged_play(start_s, end_s, flag_end_s, policy)
     if not allowed:
         return None
+    cap = _seek_cap(duration_s)
     if play_from is not None:
-        return f"{base}&t={int(math.ceil(play_from))}s"
+        if not math.isfinite(play_from) or play_from < 0:
+            return None
+        seconds = math.ceil(play_from)
+        if seconds > cap:
+            return None
+        return _watch_link(video_id, int(seconds))
     if start_s is None:
-        return base
-    value = float(start_s)
-    if not math.isfinite(value):
-        return base
-    return f"{base}&t={int(max(0.0, value - PREROLL_S))}s"
+        return _watch_link(video_id, None)
+    if isinstance(start_s, bool) or not isinstance(start_s, (int, float)):
+        return _watch_link(video_id, None)
+    if not math.isfinite(start_s) or start_s < 0:
+        return _watch_link(video_id, None)
+    # Cap in float before int(). int(1e300) succeeds and is enormous;
+    # int(inf) raises OverflowError.
+    seconds = start_s - PREROLL_S
+    if seconds < 0:
+        seconds = 0.0
+    if seconds > cap:
+        seconds = float(cap)
+    return _watch_link(video_id, int(seconds))
 
 
 def watch_video_id(url: object) -> str | None:
-    """The ``v`` of a validated YouTube watch URL, else None."""
-    if youtube_watch_url(url) is None:
+    """The ``v`` of a validated YouTube watch URL (``youtube_watch_url``), else None."""
+    rebuilt = youtube_watch_url(url)
+    if rebuilt is None:
         return None
-    return parse_qs(urlsplit(url).query)["v"][0]
+    return parse_qs(urlsplit(rebuilt).query)["v"][0]
 
 
 def chunk_video_id(video_id: object, audio_url: object, source_url: object) -> str | None:
@@ -207,7 +331,8 @@ def policy_watch_url(
 
     The stored ``audio_url`` was built at import time, possibly under another
     policy, so its ``t=`` may sit on the name; callers must use this instead.
-    None when there is no id or the policy withholds audio.
+    It goes through ``watch_url``, so the id and ``t`` are validated the same
+    way. None when there is no id or the policy withholds audio.
     """
     if vid is None:
         return None

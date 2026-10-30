@@ -70,11 +70,35 @@ function isArchiveHost(href) {
 /* Importer hosts that serve /watch?v=. youtu.be is a short link, not this form. */
 var YOUTUBE_WATCH_HOSTS = { "youtube.com": 1, "www.youtube.com": 1, "m.youtube.com": 1 };
 var YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+/* Same ceiling as listing.py MAX_T_S. A longer t= is omitted, not copied. */
+var MAX_T_S = 24 * 60 * 60;
+var T_RE = /^([0-9]+)s?$/;
 
-/* Valid https watch URL, or null. Returns the stored string so &t= stays put.
-   Does not add #t=. Host check matches the importer (no credentials, port 443
-   or default). media-src does not allow YouTube, so callers must not put
-   this URL on an <audio> element. */
+/* https://www.youtube.com/watch?v=<id> and, when seconds is a number, &t=<int>s. */
+function watchLink(videoId, seconds) {
+  var base = "https://www.youtube.com/watch?v=" + videoId;
+  if (seconds == null) return base;
+  return base + "&t=" + seconds + "s";
+}
+
+/* One whole-second t in 0..MAX_T_S, or null. A second t, blank or not, is dropped. */
+function watchSeconds(values) {
+  if (values.length !== 1) return null;
+  var match = T_RE.exec(values[0]);
+  if (!match) return null;
+  var digits = match[1].replace(/^0+/, "") || "0";
+  if (digits.length > String(MAX_T_S).length) return null;
+  var seconds = Number(digits);
+  if (!Number.isSafeInteger(seconds) || seconds > MAX_T_S) return null;
+  return seconds;
+}
+
+/* Valid https watch URL, or null. Rebuilt from the video id and an integer
+   t= only. Extra query parameters, a fragment, and a non-numeric t= are
+   dropped. A blank second v= is rejected. Does not add #t=. Host check
+   matches the importer (no credentials, port 443 or default). media-src
+   does not allow YouTube, so callers must not put this URL on an <audio>
+   element. */
 function youtubeWatchUrl(value) {
   if (typeof value !== "string" || value === "") return null;
   if (value.charAt(0) === "-" || value.indexOf("\\") !== -1) return null;
@@ -96,7 +120,40 @@ function youtubeWatchUrl(value) {
   if (url.pathname !== "/watch") return null;
   var ids = url.searchParams.getAll("v");
   if (ids.length !== 1 || !YOUTUBE_ID.test(ids[0])) return null;
-  return value;
+  return watchLink(ids[0], watchSeconds(url.searchParams.getAll("t")));
+}
+
+/* CCEL only when the host is ccel.org. A YouTube source that is the same
+   video as the watch link is not shown again. Anything else keeps a plain
+   label. safeUrl still runs first; this does not accept a new scheme. */
+function sourceLinkFor(sourceUrl, watchHref) {
+  var source = safeUrl(sourceUrl);
+  if (!source) return null;
+  var host;
+  try {
+    host = new URL(source).hostname.toLowerCase();
+  } catch (err) {
+    return null;
+  }
+  if (host === "ccel.org" || host.endsWith(".ccel.org")) {
+    return { href: source, text: "Read this sermon on CCEL" };
+  }
+  var youtube = youtubeWatchUrl(sourceUrl);
+  if (youtube) {
+    if (watchHref && sameYoutubeVideo(youtube, watchHref)) return null;
+    return { href: youtube, text: "Watch the source on YouTube" };
+  }
+  /* A watch host that failed the watch rules is not forwarded as a link. */
+  if (YOUTUBE_WATCH_HOSTS[host]) return null;
+  return { href: source, text: "Source" };
+}
+
+function sameYoutubeVideo(a, b) {
+  try {
+    return new URL(a).searchParams.get("v") === new URL(b).searchParams.get("v");
+  } catch (err) {
+    return false;
+  }
 }
 
 function readerLabel(hit, href) {
@@ -166,10 +223,10 @@ function renderCard(hit) {
     card.appendChild(el("p", "asr", "Wording follows the recording."));
   }
 
-  var source = safeUrl(hit.source_url);
   var audioHref = safeUrl(hit.audio_url);
   var youtube = youtubeWatchUrl(hit.audio_url);
   var spoken = readerLabel(hit, audioHref);
+  var watchHref = null;
 
   if (hit.audio_withheld) {
     /* A passage holding a redacted name: the server sends no times and no link. */
@@ -187,7 +244,8 @@ function renderCard(hit) {
     card.appendChild(el("p", "timing", range));
     var playLabel = shifted != null ? formatTime(shifted) : startLabel;
     if (youtube && playLabel) {
-      /* Watch URL from the server, including its &t= pre-roll (or, for a
+      watchHref = youtube;
+      /* Rebuilt watch URL, including a validated &t= pre-roll (or, for a
          shifted passage, its t= past the redacted name). Not loaded in <audio>. */
       var watch = el("a", "play", "Watch on YouTube at " + playLabel);
       watch.href = youtube;
@@ -214,9 +272,10 @@ function renderCard(hit) {
 
   if (spoken) card.appendChild(el("p", "reader", spoken));
 
-  if (source) {
-    var link = el("a", null, "Read this sermon on CCEL");
-    link.href = source;
+  var described = sourceLinkFor(hit.source_url, watchHref);
+  if (described) {
+    var link = el("a", null, described.text);
+    link.href = described.href;
     link.rel = "noreferrer";
     var line = el("p", "text-link");
     line.appendChild(link);

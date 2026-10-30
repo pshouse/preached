@@ -45,7 +45,7 @@ from preached.search import (  # noqa: E402
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
 from preached.privacy import default_config  # noqa: E402
 from preached.store import EmbeddingMismatch, open_readonly, pending_review_count, visible_count, visible_sql  # noqa: E402
-from preached.youtube.listing import chunk_video_id, policy_watch_url  # noqa: E402
+from preached.youtube.listing import chunk_video_id, policy_watch_url, public_audio_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -219,7 +219,7 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False) -> dict:
         "text": display_excerpt(hit.text),
         "start_s": hit.start_s,
         "end_s": hit.end_s,
-        "audio_url": hit.audio_url,
+        "audio_url": public_audio_url(hit.audio_url),
         "reader": hit.reader,
         "text_source": hit.text_source,
         "source_url": hit.source_url,

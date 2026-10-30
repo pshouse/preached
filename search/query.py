@@ -63,11 +63,13 @@ WITHHELD = "n/a (audio withheld: this passage has a redacted name)"
 def play_url(audio_url, start_s) -> str:
     """Where to play this hit.
 
-    A validated YouTube watch URL is printed as stored. Its ``&t=`` already
-    includes the pre-roll, so this does not add ``#t=``. An archive.org URL
-    still gets ``#t=<seek>`` where seek is max(0, start_s - PREROLL_S).
-    Anything else is hidden, including a URL whose parser raises. Control
-    characters are stripped after a URL passes validation.
+    A validated YouTube watch URL is rebuilt as
+    ``https://www.youtube.com/watch?v=<id>`` plus ``&t=<int>s`` when that
+    seek is one whole number of seconds. Extra parameters are not printed.
+    Nothing here adds ``#t=``. An archive.org URL still gets ``#t=<seek>``
+    where seek is max(0, start_s - PREROLL_S). Anything else is hidden,
+    including a URL whose parser raises. Control characters are stripped
+    after a URL passes validation.
     """
     if not audio_url:
         return "n/a"

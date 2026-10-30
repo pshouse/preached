@@ -173,6 +173,7 @@ def _chunks_for(
                 "audio_url": watch_url(
                     video.id,
                     piece["start_s"],
+                    duration_s=video.duration_s,
                     end_s=piece["end_s"],
                     flag_end_s=flag_end,
                     policy=policy,

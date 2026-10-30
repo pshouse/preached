@@ -141,6 +141,21 @@ class ListingTests(unittest.TestCase):
     def test_watch_url_preroll_clamps_at_zero(self) -> None:
         self.assertEqual(watch_url("abcdefghijk", 0.5), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
 
+    def test_watch_url_drops_non_finite_and_negative_and_caps(self) -> None:
+        base = "https://www.youtube.com/watch?v=abcdefghijk"
+        for bad in (float("inf"), float("-inf"), float("nan"), -1, -0.01):
+            with self.subTest(start=bad):
+                self.assertEqual(watch_url("abcdefghijk", bad), base)
+        # int(1e300) is a huge integer. The seek stops at 24 h, or the sermon.
+        self.assertEqual(watch_url("abcdefghijk", 1e300), base + "&t=86400s")
+        self.assertEqual(watch_url("abcdefghijk", 1e300, duration_s=40), base + "&t=40s")
+        self.assertEqual(watch_url("abcdefghijk", 100, duration_s=40), base + "&t=40s")
+        self.assertEqual(watch_url("abcdefghijk", 12.2, duration_s=40), base + "&t=11s")
+        self.assertEqual(watch_url("abcdefghijk", 1e300, duration_s=100_000), base + "&t=86400s")
+        self.assertEqual(watch_url("abcdefghijk", 12.2, duration_s=float("inf")), base + "&t=11s")
+        self.assertEqual(watch_url("abcdefghijk", 12.2, duration_s=float("nan")), base + "&t=11s")
+        self.assertEqual(watch_url("abcdefghijk", 0), base + "&t=0s")
+
     def test_preroll_is_the_search_constant(self) -> None:
         self.assertIs(PREROLL_S, SEARCH_PREROLL_S)
         self.assertEqual(PREROLL_S, 0.75)
@@ -150,15 +165,29 @@ class ListingTests(unittest.TestCase):
         stored = "https://www.youtube.com/watch?v=abcdefghijk&t=11s"
         self.assertEqual(youtube_watch_url(stored), stored)
         apex = "https://youtube.com/watch?v=abcdefghijk&t=0s"
-        self.assertEqual(youtube_watch_url(apex), apex)
+        self.assertEqual(youtube_watch_url(apex), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
         mobile = "https://m.youtube.com/watch?v=abcdefghijk&t=3s"
-        self.assertEqual(youtube_watch_url(mobile), mobile)
+        self.assertEqual(youtube_watch_url(mobile), "https://www.youtube.com/watch?v=abcdefghijk&t=3s")
         mixed = "https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s"
-        self.assertEqual(youtube_watch_url(mixed), mixed)
+        self.assertEqual(youtube_watch_url(mixed), "https://www.youtube.com/watch?v=abc_def-01X&t=11s")
         explicit_port = "https://www.youtube.com:443/watch?v=abcdefghijk&t=11s"
-        self.assertEqual(youtube_watch_url(explicit_port), explicit_port)
+        self.assertEqual(youtube_watch_url(explicit_port), stored)
         kept_hash = "https://www.youtube.com/watch?v=abcdefghijk&t=11s#keep"
-        self.assertEqual(youtube_watch_url(kept_hash), kept_hash)
+        self.assertEqual(youtube_watch_url(kept_hash), stored)
+
+    def test_youtube_watch_url_rebuilds_validated_parts_only(self) -> None:
+        base = "https://www.youtube.com/watch?v=abcdefghijk"
+        hostile_t = base + "&t=javascript:alert(1)"
+        self.assertEqual(youtube_watch_url(hostile_t), base)
+        self.assertNotIn("javascript", youtube_watch_url(hostile_t) or "")
+        extra = base + "&t=11s&redirect=https://evil.example&feature=share"
+        self.assertEqual(youtube_watch_url(extra), base + "&t=11s")
+        self.assertNotIn("redirect", youtube_watch_url(extra) or "")
+        self.assertEqual(youtube_watch_url(base + "&t=011s"), base + "&t=11s")
+        self.assertEqual(youtube_watch_url(base + "&t=86400s"), base + "&t=86400s")
+        self.assertEqual(youtube_watch_url(base + "&t=86401s"), base)
+        self.assertEqual(youtube_watch_url(base + "&t=11s&t=12s"), base)
+        self.assertEqual(youtube_watch_url(base + "&t="), base)
 
     def test_youtube_watch_url_rejects_hostile_and_other_shapes(self) -> None:
         rejected = (
@@ -173,6 +202,9 @@ class ListingTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=short",
             "https://www.youtube.com/watch?v=abcdefghijkl",
             "https://www.youtube.com/watch?v=abcdefghijk&v=zzzzzzzzzzz",
+            "https://www.youtube.com/watch?v=abcdefghijk&v=",
+            "https://www.youtube.com/watch?v=&v=abcdefghijk",
+            "https://www.youtube.com/watch?v=abcdefghijk&v",
             "https://www.youtube.com:8443/watch?v=abcdefghijk",
             "https://www.youtube.com:abc/watch?v=abcdefghijk",
             "https://www.youtube.com:99999/watch?v=abcdefghijk",
@@ -208,6 +240,12 @@ class ListingTests(unittest.TestCase):
         self.assertEqual(
             records[0]["audio_url"],
             "https://www.youtube.com/watch?v=samplevid01&t=11s",
+        )
+        late, _ = _chunks_for(video, sample_words(100), {})
+        self.assertAlmostEqual(late[0]["start_s"], 100)
+        self.assertEqual(
+            late[0]["audio_url"],
+            "https://www.youtube.com/watch?v=samplevid01&t=40s",
         )
 
     def test_blocked_channel_name_is_refused(self) -> None:

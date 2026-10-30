@@ -158,13 +158,19 @@ class PrerollTests(unittest.TestCase):
         self.assertNotIn("#t=", query.play_url(stored, 12.2))
         self.assertEqual(query.play_url(stored, None), stored)
         apex = "https://youtube.com/watch?v=abcdefghijk&t=0s"
-        self.assertEqual(query.play_url(apex, 0.4), apex)
+        self.assertEqual(query.play_url(apex, 0.4), "https://www.youtube.com/watch?v=abcdefghijk&t=0s")
         mobile = "https://m.youtube.com/watch?v=abcdefghijk&t=3s"
-        self.assertEqual(query.play_url(mobile, 4), mobile)
+        self.assertEqual(query.play_url(mobile, 4), "https://www.youtube.com/watch?v=abcdefghijk&t=3s")
         mp3 = "https://archive.org/download/x/y.mp3"
         self.assertEqual(query.play_url(mp3, 32.81), mp3 + "#t=32.06")
+        # A C1 control in t= is not a whole number of seconds, so t= is omitted
+        # and the control character is not printed.
         dirty = "https://www.youtube.com/watch?v=abcdefghijk&t=11s\x9b"
-        self.assertEqual(query.play_url(dirty, 1.0), stored + " ")
+        self.assertEqual(query.play_url(dirty, 1.0), "https://www.youtube.com/watch?v=abcdefghijk")
+        hostile = "https://www.youtube.com/watch?v=abcdefghijk&t=javascript:alert(1)&redirect=https://evil.example"
+        self.assertEqual(query.play_url(hostile, 1.0), "https://www.youtube.com/watch?v=abcdefghijk")
+        self.assertNotIn("javascript", query.play_url(hostile, 1.0))
+        self.assertNotIn("redirect", query.play_url(hostile, 1.0))
         for bad in (
             "https://www.youtube.com.evil.com/watch?v=abcdefghijk",
             "javascript:alert(1)",
