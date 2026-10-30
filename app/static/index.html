@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Search John Wesley's sermons and play the passage. Results are his published words.">
+  <title>Preached</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#q">Skip to search</a>
+  <div class="wrap">
+    <header class="mast">
+      <p class="mark">Preached</p>
+      <h1>John Wesley, in his own words</h1>
+      <p class="lede">Search <cite>Sermons on Several Occasions</cite>. Each result is a passage he published, with the LibriVox reading queued to that moment when the timing is known.</p>
+    </header>
+
+    <form id="search-form" class="search-form" role="search">
+      <div class="field">
+        <label for="q">Your question</label>
+        <input id="q" name="q" type="search" maxlength="300" required autocomplete="off" enterkeyhint="search" placeholder="A question or a verse">
+      </div>
+      <div class="field">
+        <label for="mode">How to search</label>
+        <select id="mode" name="mode">
+          <option value="hybrid">Words and meaning</option>
+          <option value="bm25">Exact words</option>
+          <option value="dense">Closest in meaning</option>
+        </select>
+      </div>
+      <button type="submit">Search</button>
+    </form>
+
+    <div class="examples">
+      <p id="examples-label">Try one</p>
+      <div class="chips" role="group" aria-labelledby="examples-label">
+        <button type="button" data-query="What did Wesley say about worry?">Worry</button>
+        <button type="button" data-query="How can I know that I am a child of God?">Assurance</button>
+        <button type="button" data-query="What did Wesley say about money?">Money</button>
+        <button type="button" data-query="Romans 8:16">Romans 8:16</button>
+      </div>
+    </div>
+
+    <section class="results-section" aria-labelledby="results-heading">
+      <h2 id="results-heading" class="visually-hidden">Results</h2>
+      <p id="note" class="note" hidden></p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <ol id="results" class="results"></ol>
+    </section>
+
+    <footer class="colophon">
+      <p>Results are Wesley's own published words; audio is read by LibriVox volunteers. Preached finds passages; it never writes or paraphrases.</p>
+    </footer>
+  </div>
+
+  <div class="player" id="player-bar">
+    <div class="player-inner">
+      <p id="now-playing">Choose Play on a passage.</p>
+      <audio id="player" controls preload="none"></audio>
+    </div>
+  </div>
+</body>
+</html>
