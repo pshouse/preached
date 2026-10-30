@@ -1,6 +1,6 @@
 # W3-LIB: more classic preachers in the built-in library
 
-Branch `feat/w3-lib`, from `origin/main` (9c3e303), with `origin/main` (e2ddbc7) merged in for the fix-up. Written 2026-10-30. The CTO review fix-up is in section 9.
+Branch `feat/w3-lib`, from `origin/main` (9c3e303), with `origin/main` (e2ddbc7) merged in for the fix-up. Written 2026-10-30. The CTO review fix-ups are in sections 9 (round 1) and 10 (round 2).
 
 ## 1. What was done
 
@@ -13,7 +13,7 @@ Two hand-picked public-domain archive.org items were added, each as its own libr
 
 **Edwards finished in full: 39/39 tracks, 19.53 h.**
 
-**Talmage was dropped by Patrick's decision.** A third library, T. De Witt Talmage's 1898 *Sermon on the Mount* disc (`SermonOnTheMountByT.DeWittTalmage1898`), was built in the first pass. It is not in this PR: archive.org gives no licence for it, the clip is 58 s, and the transcript is rough. Its manifest, provenance, source entry, smoke questions and tests were removed, and it is not on the public-domain allow-list. The index file built in the first pass is still at `/cache/index/talmage.sqlite` (cache only, never committed). Delete it if it should not be served by accident.
+**Talmage was dropped by Patrick's decision.** A third library, T. De Witt Talmage's 1898 *Sermon on the Mount* disc (`SermonOnTheMountByT.DeWittTalmage1898`), was built in the first pass. It is not in this PR: archive.org gives no licence for it, the clip is 58 s, and the transcript is rough. Its manifest, provenance, source entry, smoke questions and tests were removed, and it is not on the public-domain allow-list. The index file built in the first pass, `/cache/index/talmage.sqlite`, has been deleted with Patrick's OK. Its audio (1.2 MB) and transcript (12 KB) are still under `/cache/{audio,transcripts}/talmage`; the server refuses the slug either way (section 10).
 
 Code changes:
 - `src/preached/libraries.py` (new, fix-up): the committed allow-list of public-domain libraries, exactly `spurgeon` and `edwards`. The API is `is_public_domain(slug)` and `provenance_path(slug)`. A slug counts only if it is on the list and its `ingest/manifest/<slug>.provenance.json` is committed. PR #12 can use it to exempt only these slugs from redaction and the approval gate.
@@ -23,7 +23,7 @@ Code changes:
 - `src/preached/youtube/library.py`: `index_video` takes optional `reader`, `sermon_number` and `librivox_id`. The defaults keep the YouTube behaviour.
 - `search/query.py`: new `--library <slug>`, which cannot be combined with `--index`. Only the Wesley index file gets the Wesley chunk sync. `--index` refuses library files.
 - `ingest/manifest.py`: `check_audio_url` now refuses control characters and spaces, and it wraps `urlsplit` errors.
-- The server already serves one library per process: `uv run app/server.py --library spurgeon` (see README). No server change was needed.
+- `app/server.py` serves one library per process: `uv run app/server.py --library spurgeon` (see README). Since round 2 it serves only `wesley` and the allow-listed libraries (section 10).
 - `eval/classics_smoke.jsonl` and `scripts/classics_smoke.py` form a **smoke test only** (section 5). Tests are in `tests/test_classics.py` and `tests/test_libraries.py`.
 
 ## 2. Sources, licences and text editions (provenance in `ingest/manifest/<slug>.provenance.json`)
@@ -104,7 +104,7 @@ Audio, transcripts and indexes are under `/cache/{audio,transcripts,index}/<slug
 ## 8. Open issues
 
 - The web page still sends `library=wesley`, and one process serves one library. A library switcher or a side-by-side view needs a server change (W3 follow-up).
-- `search/query.py --library` and `app/server.py --library` open any `/cache/index/<slug>.sqlite`, including church libraries and the leftover `talmage.sqlite`. The allow-list gates ingest and build, not search.
+- ~~`search/query.py --library` and `app/server.py --library` open any `/cache/index/<slug>.sqlite`.~~ Fixed in round 2 (section 10): both take only allow-listed slugs, and query.py opens non-Wesley targets read-only.
 - Calvin (`mostcelebratedsermonsjohncalvin_2104_librivox`) and the other names in BRIEF were out of scope.
 - No dependencies were added.
 
@@ -123,3 +123,26 @@ First, `origin/main` (e2ddbc7) was merged in with a merge commit: `e97fa65`, no 
 | Should-fix: audio URL check | `check_audio_url` refuses any C0, space, DEL or C1 character. Before, `urlsplit` silently dropped a trailing `\n`, so such a URL passed. `urlsplit`'s own `ValueError` (invalid IPv6 netloc, NFKC-changed host) is now wrapped as `UnsafeRow`. | `763e9e0` | `AudioUrlTests` (4): trailing/embedded newline, CR, tab, NUL, ESC, DEL, NEL, space; IPv6, NFKC and bad-port URLs; all committed manifests still load; `query.play_url` hides these URLs |
 
 Test count: 271, all pass (247 after the merge, minus the 4 original classics tests, plus 6 + 22). `uv lock --check` is clean. No new dependencies, no LLM.
+
+## 10. Fix-up round 2: CTO review of PR #14 (head 18825ef)
+
+First, `origin/main` (4129646, PR #15) was merged in with a merge commit: `67efb03`, no conflicts. No rebase, no force-push. The review file `reports/preached-pr14-review.md` was not in the repo and `gh` is not installed here, so the must-fix list in the task brief was the spec.
+
+| Item | Change | Commit | Tests (`tests/test_libraries.py`) |
+|---|---|---|---|
+| Must-fix 1: `app/server.py` served any library | `--library` must be `wesley` or pass `is_public_domain`. Then the opened file is checked (`check_servable`). A library file (`videos` table or meta `library`) must carry a `library` marker that names an allow-listed slug equal to `--library`. A YouTube import has no marker, so it is refused. Any other file must look like the Wesley index (has chunks, every `sermon_id` is `wesley-*`) and is served only as `wesley`. Anything else exits 1 with a message: plain SQLite, empty index, other content, not a database, missing. **Church libraries cannot be served until PR #12's redaction/approval gate lands (fail closed).** Checked by hand on `/cache/index`: `wesley`, `spurgeon`, `edwards` and `--index wesley-onnx-fp32.sqlite` serve. `--library cc-speech`, `--library talmage`, `--index cc-speech.sqlite`, `--index spurgeon.sqlite` (without `--library spurgeon`), `--library edwards --index spurgeon.sqlite` and a text file all exit 1. | `85a62e5` | `ServerGateTests` (5): wesley/spurgeon/edwards served (by slug and by `--index`); church (`cc-speech`), `talmage` and unknown slugs refused; `--index` with a church or talmage library file refused; slug/file mismatch refused; plain, empty, non-Wesley, non-SQLite and missing files refused, and the missing file is not created |
+| Must-fix 2: `query.py` opened `--library` / non-Wesley `--index` read-write | Every target except the real Wesley index (`INDEX_PATH`) now goes through `open_readonly` (`mode=ro` + `query_only`), as in PR #10's query.py. A missing path is refused, not created, and a file without a `chunks` table is refused. The Wesley index keeps main's `connect` + chunk sync, so the PR #10 merge only has to drop that branch. `--library` now requires `is_public_domain`. The `--index`/`--library` mutual exclusion and the library-file refusal on `--index` are kept. CTO repro by hand: a plain SQLite file keeps the same sha256 and gets no `-wal`; a nonexistent path exits 1 and is not created. `spurgeon.sqlite`, `edwards.sqlite` and `wesley-onnx-int8.sqlite` have the same sha256 after a search. | `085d5d9` | `test_plain_sqlite_index_is_opened_read_only` (bytes unchanged, no `-wal`/`-shm`/`-journal`); `test_nonexistent_index_is_refused_and_not_created` (neither file nor parent dir); `test_library_flag_is_read_only_and_allow_listed` (writes fail, bytes unchanged, church/wesley/talmage refused, an unbuilt allow-listed file is not created) |
+| Should-fix: provenance only checked for presence | `load_provenance(slug)` checks that the file parses, `slug` matches, `licenseurl` and `license_note` are present, `text_edition.note` is present, `ia_identifier` is safe and `ia_url` matches it, and `audio_files` is non-empty. Each entry needs a safe `id`/`file_name`, a size > 0, md5, sha256, and must build a valid https archive.org URL (no backslash or control characters). `is_public_domain` is true only when this passes (`BadProvenance` otherwise). | `1351888` | `ProvenanceTests` (8): committed files pass; `{}`, `[]`, empty, bad JSON and `null` refused; slug mismatch or missing; licence missing or blank; text edition missing or blank; empty audio list and bad entries (path names, backslash, size 0/str/bool, bad md5/sha256); bad identifier or ia_url; the committed manifest URLs equal the derived ones |
+| Should-fix: backslash host bypass | `check_audio_url` refuses any `\`. `https://evil.com\.archive.org/a.mp3` used to pass (urlsplit host `evil.com\.archive.org`). Control characters are still refused. The server's `public_audio_url` already refused backslashes. | `072abb2` | `test_backslash_host_is_refused`: that exact URL, plus `archive.org\@evil.com` and a backslash in the path; `query.play_url` hides it |
+| Should-fix: `build_library.py` checked no sha256 | Each manifest row must match its provenance entry (file name, size, md5, audio URL), or the run stops. Before a sermon is indexed, its audio in `/cache/audio/<slug>` must hash to the recorded sha256. A sermon with missing or different audio is skipped as refused, and the run exits 1. On the real cache, all 6 Spurgeon and 39 Edwards files match. `build_library.py spurgeon` gives "+0 sermons, 0 refused", exit 0. | `d8cddad` | `BuildShaTests` (5): committed manifest matches provenance; md5/size/file_name/URL/id disagreement refused; matching sha passes; same-size different bytes refused; missing audio refused |
+| Should-fix: BRIEF Talmage | BRIEF "Demo data" marks Talmage dropped (Patrick's decision, Oct 30). | `3ac27fa` | n/a |
+
+**Wesley output is byte-identical to `origin/main` (4129646).** `origin/main` was exported to `/tmp` and both trees were run on the real `/cache/index/wesley.sqlite`. `search/query.py` output was byte-identical for 3 queries x bm25/hybrid ("what did Wesley say about worry", "Romans 8:16", "assurance of salvation"). The `/api/search` JSON from `app/server.py` (default library) was identical for the same 3 queries x bm25/hybrid/dense, apart from `took_ms`, which is wall-clock timing. In bm25 even `took_ms` matched.
+
+**Tests: 296, all pass** (`uv run python -m unittest discover -s tests`). That is 274 after the merge plus 22 new. **`uv lock --check` is clean** (75 packages). No new dependencies, no LLM.
+
+Notes:
+- `README.md` and the W2-YT reports said `app/server.py --library cc-speech` serves a YouTube import. That now exits 1 on purpose. README is updated. The older W2 reports are left as the record of that time.
+- A read-only reader of a file that is already in WAL mode (e.g. a built library) may create an empty `-wal` and the `-shm` index. That is SQLite behaviour, and the database bytes do not change. A non-WAL file gets neither (tested).
+- The server's Wesley check is about content (every `sermon_id` is `wesley-*`), so the bench variants such as `wesley-onnx-fp32.sqlite` can still be served with `--index`.
+
