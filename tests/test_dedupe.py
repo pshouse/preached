@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import random
 import unittest
 
-from preached.search import Hit, boundary_overlap, dedupe_adjacent
+from preached.search import MERGE_MAX_WORDS, Hit, boundary_overlap, dedupe_adjacent, merge_overlapping, repeats_kept
 
 
 def hit(**kwargs) -> Hit:
@@ -115,6 +116,173 @@ class DedupeTests(unittest.TestCase):
         ]
         ids = [item.chunk_id for item in dedupe_adjacent(hits, limit=1)]
         self.assertEqual(ids, ["a"])
+
+
+def words(prefix: str, start: int, end: int) -> str:
+    """Text of sermon words start..end-1, so overlapping chunks share a boundary."""
+    return " ".join(f"{prefix}{i}" for i in range(start, end))
+
+
+class MergeTests(unittest.TestCase):
+    """A neighbour inside the top ``limit`` is merged, not dropped."""
+
+    def test_neighbour_inside_limit_is_merged(self) -> None:
+        best = hit(chunk_id="c1", score=3, word_start=100, word_end=200, text=words("w", 100, 200),
+                   start_s=50.0, end_s=95.0, audio_url="https://archive.org/a.mp3")
+        before = hit(chunk_id="c0", score=2, word_start=20, word_end=125, text=words("w", 20, 125),
+                     start_s=10.0, end_s=60.0, audio_url="https://archive.org/a.mp3")
+        kept = dedupe_adjacent([best, before], limit=10)
+        self.assertEqual(len(kept), 1)
+        merged = kept[0]
+        self.assertEqual(merged.chunk_id, "c1")
+        self.assertEqual(merged.score, 3)
+        self.assertEqual(merged.chunk_ids, ["c0", "c1"])
+        self.assertEqual(merged.text, words("w", 20, 200))
+        self.assertEqual((merged.word_start, merged.word_end), (20, 200))
+        # Playback starts at the merged passage's first word.
+        self.assertEqual((merged.start_s, merged.end_s), (10.0, 95.0))
+
+    def test_neighbour_after_the_kept_passage(self) -> None:
+        best = hit(chunk_id="c0", score=3, word_start=0, word_end=100, text=words("w", 0, 100),
+                   start_s=0.0, end_s=40.0)
+        after = hit(chunk_id="c1", score=2, word_start=75, word_end=180, text=words("w", 75, 180),
+                    start_s=30.0, end_s=70.0)
+        merged = dedupe_adjacent([best, after], limit=2)[0]
+        self.assertEqual(merged.chunk_ids, ["c0", "c1"])
+        self.assertEqual(merged.text, words("w", 0, 180))
+        self.assertEqual((merged.start_s, merged.end_s), (0.0, 70.0))
+
+    def test_neighbour_below_limit_is_dropped(self) -> None:
+        best = hit(chunk_id="c0", score=3, word_start=0, word_end=100, text=words("w", 0, 100))
+        other = hit(chunk_id="x", score=2.5, sermon_id="wesley-002", word_start=0, word_end=100,
+                    text=words("x", 0, 100))
+        after = hit(chunk_id="c1", score=2, word_start=75, word_end=180, text=words("w", 75, 180))
+        later = hit(chunk_id="c9", score=1, word_start=900, word_end=1000, text=words("w", 900, 1000))
+        kept = dedupe_adjacent([best, other, after, later], limit=2)
+        self.assertEqual([item.chunk_ids for item in kept], [["c0"], ["x"]])
+        self.assertEqual(kept[0].text, words("w", 0, 100))
+
+    def test_bridge_folds_two_kept_passages(self) -> None:
+        left = hit(chunk_id="a", score=3, word_start=0, word_end=100, text=words("w", 0, 100))
+        right = hit(chunk_id="c", score=2, word_start=150, word_end=250, text=words("w", 150, 250))
+        bridge = hit(chunk_id="b", score=1, word_start=75, word_end=175, text=words("w", 75, 175))
+        kept = dedupe_adjacent([left, right, bridge], limit=10)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].chunk_ids, ["a", "b", "c"])
+        self.assertEqual(kept[0].text, words("w", 0, 250))
+        self.assertEqual(kept[0].score, 3)
+
+    def test_no_word_is_lost_from_the_plain_top_k(self) -> None:
+        pool = [
+            hit(chunk_id=f"c{i}", score=10 - i, word_start=i * 75, word_end=i * 75 + 100,
+                text=words("w", i * 75, i * 75 + 100))
+            for i in (3, 1, 4, 0, 2)
+        ]
+        plain = sorted(pool, key=lambda item: -item.score)[:3]
+        shown = " ".join(item.text for item in dedupe_adjacent(pool, limit=3)).split()
+        for item in plain:
+            for word in item.text.split():
+                self.assertIn(word, shown)
+        self.assertEqual(len(shown), len(set(shown)))  # and nothing twice
+
+    def test_merge_stops_at_the_word_cap(self) -> None:
+        best = hit(chunk_id="a", score=2, word_start=0, word_end=200, text=words("w", 0, 200))
+        neighbour = hit(chunk_id="b", score=1, word_start=150, word_end=350, text=words("w", 150, 350))
+        self.assertIsNone(merge_overlapping(best, neighbour, max_words=300))
+        kept = dedupe_adjacent([best, neighbour], limit=10)
+        self.assertEqual([item.chunk_ids for item in kept], [["a"]])  # dropped, as before merging
+        self.assertEqual(len(merge_overlapping(best, neighbour, max_words=350).text.split()), 350)
+
+    def test_no_merge_without_a_shared_boundary(self) -> None:
+        best = hit(chunk_id="a", score=2, word_start=0, word_end=100, text="alpha " * 20)
+        neighbour = hit(chunk_id="b", score=1, word_start=80, word_end=160, text="beta " * 20)
+        self.assertIsNone(merge_overlapping(best, neighbour))
+        kept = dedupe_adjacent([best, neighbour], limit=10)
+        self.assertEqual([item.chunk_ids for item in kept], [["a"]])
+
+    def test_no_merge_across_audio_files(self) -> None:
+        best = hit(chunk_id="a", score=2, word_start=0, word_end=100, text=words("w", 0, 100),
+                   audio_url="https://archive.org/one.mp3")
+        neighbour = hit(chunk_id="b", score=1, word_start=75, word_end=175, text=words("w", 75, 175),
+                        audio_url="https://archive.org/two.mp3")
+        self.assertIsNone(merge_overlapping(best, neighbour))
+
+    def test_no_merge_without_word_offsets(self) -> None:
+        best = hit(chunk_id="a", score=2, word_start=None, word_end=None, start_s=0, end_s=30)
+        neighbour = hit(chunk_id="b", score=1, word_start=None, word_end=None, start_s=20, end_s=50)
+        self.assertIsNone(merge_overlapping(best, neighbour))
+
+    def test_failed_second_join_drops_the_bridge(self) -> None:
+        # CTO review of PR #11: the bridge joins the first card, then the
+        # second join passes the word cap. Both cards used to keep the
+        # bridge's words (225..259 shown twice). Now the bridge is dropped.
+        left = hit(chunk_id="a", score=3, word_start=0, word_end=150, text=words("w", 0, 150))
+        right = hit(chunk_id="c", score=2, word_start=225, word_end=375, text=words("w", 225, 375))
+        bridge = hit(chunk_id="b", score=1, word_start=110, word_end=260, text=words("w", 110, 260))
+        kept = dedupe_adjacent([left, right, bridge], limit=10)
+        self.assertEqual([item.chunk_ids for item in kept], [["a"], ["c"]])
+        self.assertEqual(kept[0].text, words("w", 0, 150))
+        self.assertEqual(kept[1].text, words("w", 225, 375))
+
+
+def random_pool(rng: random.Random) -> list[Hit]:
+    """Chunks the shape the chunker makes: windows of 60-150 words over 1-3
+    sermons, each overlapping the next by about 25%, with random scores.
+    Some neighbours sit in another audio file, so their joins fail."""
+    pool = []
+    rowid = 0
+    for sermon in range(rng.randint(1, 3)):
+        start = 0
+        for index in range(rng.randint(1, 12)):
+            size = rng.randint(60, 150)
+            end = start + size
+            rowid += 1
+            pool.append(hit(
+                rowid=rowid,
+                score=rng.choice([rng.random(), round(rng.random(), 1)]),  # some ties
+                chunk_id=f"s{sermon}-c{index:04d}",
+                sermon_id=f"wesley-{sermon:03d}",
+                text=words(f"s{sermon}w", start, end),
+                word_start=start,
+                word_end=end,
+                audio_url=rng.choice(["https://archive.org/a.mp3"] * 5 + ["https://archive.org/b.mp3"]),
+            ))
+            start = end - max(1, size // 4)
+    rng.shuffle(pool)
+    return rng.sample(pool, rng.randint(1, len(pool)))
+
+
+class DedupePropertyTests(unittest.TestCase):
+    """Seeded random lists (stdlib only). CTO fuzz on the first version found
+    repeated words in 1,406 of 20k lists and 1,362 non-idempotent results."""
+
+    RUNS = 20000
+
+    def test_random_lists(self) -> None:
+        rng = random.Random(20261030)
+        for run in range(self.RUNS):
+            pool = random_pool(rng)
+            limit = rng.randint(1, 10)
+            kept = dedupe_adjacent(pool, limit)
+            with self.subTest(run=run, limit=limit, pool=[(h.chunk_id, h.score) for h in pool]):
+                self.assertLessEqual(len(kept), limit)
+                for i, first in enumerate(kept):
+                    for second in kept[i + 1:]:
+                        if first.sermon_id == second.sermon_id:
+                            # Same-sermon cards never overlap in word range.
+                            self.assertLessEqual(
+                                min(first.word_end, second.word_end) - max(first.word_start, second.word_start), 0
+                            )
+                        self.assertFalse(repeats_kept(second, first))
+                # No word is shown twice.
+                shown = " ".join(item.text for item in kept).split()
+                self.assertEqual(len(shown), len(set(shown)))
+                # A merge never passes the cap (input chunks are <= 150 words).
+                for item in kept:
+                    self.assertLessEqual(len(item.text.split()), MERGE_MAX_WORDS)
+                    self.assertEqual(len(item.text.split()), item.word_end - item.word_start)
+                # Idempotent.
+                self.assertEqual(dedupe_adjacent(kept, limit), kept)
 
 
 if __name__ == "__main__":

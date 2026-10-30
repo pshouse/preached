@@ -16,12 +16,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
+from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
-from manifest import UnsafeRow, check_audio_url  # noqa: E402
+from preached.youtube.listing import youtube_watch_url  # noqa: E402
+from manifest import check_audio_url  # noqa: E402
 
 # C0 (incl. ESC, newline), DEL and C1 controls: none belong in one terminal line.
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
@@ -54,14 +56,26 @@ def fmt_time(value) -> str:
 
 
 def play_url(audio_url, start_s) -> str:
-    """The URL the page's player builds: the audio URL with #t=<seek>, where
-    seek = max(0, start_s - PREROLL_S). start_s itself stays exact."""
+    """Where to play this hit.
+
+    A validated YouTube watch URL is printed as stored. Its ``&t=`` already
+    includes the pre-roll, so this does not add ``#t=``. An archive.org URL
+    still gets ``#t=<seek>`` where seek is max(0, start_s - PREROLL_S).
+    Anything else is hidden, including a URL whose parser raises. Control
+    characters are stripped after a URL passes validation.
+    """
     if not audio_url:
         return "n/a"
+    youtube = youtube_watch_url(audio_url)
+    if youtube is not None:
+        return clean(youtube)
     try:
         # Same rule as the manifest: https on archive.org, no credentials.
+        # UnsafeRow is a ValueError (bad port, off-host, credentials).
+        # urlsplit also raises ValueError for an invalid IPv6 netloc and
+        # some NFKC hosts, before check_audio_url can wrap it.
         check_audio_url(audio_url)
-    except UnsafeRow:
+    except ValueError:
         return UNSAFE_URL
     audio_url = clean(audio_url)
     seek = play_start(start_s)
@@ -74,7 +88,7 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
     print(f"query: {query}")
     print(f"mode: {mode}" + (f"  model: {model}" if model else ""))
     if not hits:
-        print("Nothing strong found in the indexed sermons.")
+        print("Nothing found in the indexed sermons.")
         return
     for rank, hit in enumerate(hits, start=1):
         print(
@@ -99,6 +113,8 @@ def main() -> None:
     parser.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, talmage, edwards); "
                         "built by search/build_library.py, so no Wesley chunk sync")
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
+    parser.add_argument("--hide-low-confidence", action="store_true",
+                        help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
 
     if args.library:
@@ -113,7 +129,8 @@ def main() -> None:
     vector = None
     try:
         if args.mode == "bm25":
-            hits = Searcher(connection).bm25(args.query, args.k)
+            searcher = Searcher(connection)
+            hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
             spec = MODELS[model_name]
@@ -137,7 +154,17 @@ def main() -> None:
     finally:
         if loaded is not None:
             unload(loaded)
-    print_hits(args.query, args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}", model_name, hits)
+    # Same abstain rule and per-model floor as GET /api/search (preached.abstain).
+    floor = floor_for(model_name) if vector is not None else None
+    confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
+    mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
+    if confidence.abstain and hits and args.hide_low_confidence:
+        print_hits(args.query, mode_label, model_name, [])
+        print(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
+        return
+    print_hits(args.query, mode_label, model_name, hits)
+    if confidence.note and hits:
+        print(f"\nnote: {confidence.note}")
 
 
 if __name__ == "__main__":

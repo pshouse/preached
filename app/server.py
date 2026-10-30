@@ -31,12 +31,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from preached import env  # noqa: E402, F401
+from preached.abstain import floor_for, search_with_confidence  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
-    SEARCH_POOL,
     Searcher,
-    api_search,
     display_excerpt,
     row_value,
     _optional_int,
@@ -90,6 +89,7 @@ STALE_NOTE = "Stored passage vectors do not match the configured model; results 
 
 RESULT_FIELDS = (
     "chunk_id",
+    "chunk_ids",
     "sermon_id",
     "sermon_number",
     "sermon_title",
@@ -194,6 +194,7 @@ def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, 
 def hit_dict(hit) -> dict:
     payload = {
         "chunk_id": hit.chunk_id,
+        "chunk_ids": hit.chunk_ids,
         "sermon_id": hit.sermon_id,
         "sermon_number": hit.sermon_number,
         "sermon_title": hit.sermon_title,
@@ -244,12 +245,15 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
 
 
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, library: str = LIBRARY):
+    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, floor=None, library: str = LIBRARY):
         self.connection = connection
         self.searcher = searcher
         self.encode = encode
         self.fallback_note = fallback_note
         self.model_name = model_name if encode is not None else None
+        # Abstain floor for this model (search/abstain.toml). None: never abstain
+        # on dense evidence; see preached.abstain.
+        self.floor = floor if encode is not None else None
         self.hosts = frozenset(host.lower() for host in hosts)
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
@@ -268,6 +272,7 @@ class App:
             "model": self.model_name,
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
+            "abstain_calibrated": self.floor is not None,
         }
 
     def search(self, query: str, k: int, mode: str) -> dict:
@@ -282,13 +287,17 @@ class App:
                     note = BM25_ONLY_NOTE
                 effective = "bm25"
             vector = None if effective == "bm25" else self.encode(query)
-            kept = api_search(self.searcher, query, vector, effective, k, pool=SEARCH_POOL)
+            kept, confidence = search_with_confidence(self.searcher, query, vector, effective, k, self.floor)
         return {
             "query": query,
             "mode": effective,
             "took_ms": int(round((time.perf_counter() - started) * 1000)),
             "results": [hit_dict(hit) for hit in kept],
             "note": note,
+            # True when the page should say nothing strong was found. The
+            # closest passages stay in results so a person can still look.
+            "abstain": confidence.abstain,
+            "confidence": confidence.as_dict(),
         }
 
     def sermon(self, sermon_id: str) -> dict | None:
@@ -324,14 +333,32 @@ class App:
         }
 
 
-def build_app(connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, library: str = LIBRARY) -> App:
+def build_app(
+    connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, floor=None, library: str = LIBRARY
+) -> App:
+    """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
         connection,
         model_key,
         bm25_only=bm25_only,
         loader=loader,
     )
+    if floor is None and encode is not None:
+        try:
+            # Keyed on the query embedder too: a floor fitted on torch fp32
+            # does not apply to another backend or variant.
+            floor = floor_for(
+                model_key,
+                backend=getattr(encode, "backend", "torch"),
+                variant=getattr(encode, "variant", None),
+            )
+        except Exception:
+            # floor_for already treats a bad file as no floor; this guard
+            # keeps any other surprise from stopping the server.
+            logging.exception("abstain calibration unusable; abstain floor disabled")
+            floor = None
     return App(
+        floor=floor,
         connection=connection,
         searcher=searcher,
         encode=encode,
