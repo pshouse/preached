@@ -34,8 +34,8 @@ if str(SRC) not in sys.path:
 
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
-from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
+from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -55,7 +55,6 @@ from preached.store import (  # noqa: E402
     check_query_variant,
     index_stamp,
     open_readonly,
-    owner_only_problem,
     pending_review_count,
     public_domain_file,
     visible_count,
@@ -107,6 +106,7 @@ FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
+REFUSED_ERROR = "index unavailable"
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -388,8 +388,15 @@ class App:
         floor=None,
         backend=None,
         library: str = LIBRARY,
+        servable=None,
     ):
+        """``servable(connection)`` raises SystemExit when the file may not be
+        served (main passes ``check_servable``). It runs again before every
+        searcher a reload builds; None skips it (tests)."""
         self.connection = connection
+        self._servable = servable
+        # Why the index is refused, or None. While set, nothing is served.
+        self.refused = None
         self.searcher = searcher
         self._encode = encode
         self.encode = encode
@@ -443,6 +450,29 @@ class App:
         ``PRAGMA data_version``; a reload only swaps the cached rows/vectors.
         """
         return Searcher(self.connection, model=model, gated=self.gated, library=self.library)
+    def _refuse_unless_servable(self) -> bool:
+        """Re-run the serve gate on the open file. On failure drop every
+        cached row and serve nothing (fail closed); True when refused."""
+        if self._servable is None:
+            self.refused = None
+            return False
+        try:
+            self._servable(self.connection)
+        except SystemExit as exc:
+            problem = str(exc.code)
+        except Exception as exc:
+            problem = f"the index could not be checked ({exc})"
+        else:
+            self.refused = None
+            return False
+        logging.error("refusing to serve after reload: %s", problem)
+        self.refused = problem
+        self.searcher = None
+        self.encode = None
+        self.model_name = None
+        self.backend = None
+        self.floor = None
+        return True
 
     def _serve_keyword_only(self, note: str) -> None:
         self.searcher = self._searcher()
@@ -484,17 +514,29 @@ class App:
         A failed status read drops this process to keyword search. The next
         successful read reloads, even when the stamp matches the last good
         one. It does not adopt the new stamp and keep the old rows.
+
+        Every searcher built here is built only after ``servable`` passes on
+        the open file. A refusal keeps ``_status_failed`` set, so the gate
+        runs again on the next request.
         """
         stamp = self._capture_stamp()
         if stamp is None:
             self._status_failed = True
-            self._serve_keyword_only(INDEX_READ_NOTE)
+            if not self._refuse_unless_servable():
+                self._serve_keyword_only(INDEX_READ_NOTE)
             return
         if not self._status_failed and stamp == self._stamp:
             return
-        self._status_failed = False
         self._stamp = stamp
+        if self._refuse_unless_servable():
+            self._status_failed = True
+            return
+        self._status_failed = False
         self._reload_cached_index()
+
+    def _check_refused(self) -> None:
+        if self.refused is not None:
+            raise BadRequest(REFUSED_ERROR, 503)
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
@@ -502,6 +544,11 @@ class App:
     def health(self) -> dict:
         with self.lock:
             self._refresh_if_stale()
+            # /healthz re-runs the serve gate itself: a swapped -wal can leave the
+            # stamp unchanged, so the reload above never looks. Refused means 503.
+            if self.refused is None and self._refuse_unless_servable():
+                self._status_failed = True
+            self._check_refused()
             count = visible_count(self.connection, gated=self.gated, library=self.library)
             gated = self.gated and not public_domain_file(self.connection, self.library)
             pending = pending_review_count(self.connection) if gated else None
@@ -526,6 +573,7 @@ class App:
         effective = mode
         with self.lock:
             self._refresh_if_stale()
+            self._check_refused()
             if self.encode is None:
                 if self.fallback_note:
                     note = self.fallback_note
@@ -554,6 +602,8 @@ class App:
         if not SERMON_ID.fullmatch(sermon_id):
             return None
         with self.lock:
+            self._refresh_if_stale()
+            self._check_refused()
             where = visible_sql(self.connection, "chunks", gated=self.gated, library=self.library)
             sql = "SELECT * FROM chunks WHERE sermon_id = ?" + (f" AND {where}" if where else "") + " ORDER BY rowid"
             rows = list(self.connection.execute(sql, (sermon_id,)))
@@ -641,6 +691,7 @@ def build_app(
     ort_threads: int | None = None,
     variant: str | None = None,
     library: str = LIBRARY,
+    servable=None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -676,6 +727,7 @@ def build_app(
         hosts=hosts,
         static_dir=static_dir,
         library=library,
+        servable=servable,
     )
 
 
@@ -882,10 +934,55 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
-# Columns a YouTube/church import (or PR #12's review gate) adds. The real
-# Wesley index has none of them, so a file with any is never served as Wesley.
-CHURCH_COLUMNS = frozenset({"video_id", "title", "published", "flag_end_s"})
-REVIEW_COLUMN = re.compile(r"approv|review", re.IGNORECASE)
+# The Wesley index schema (store.connect), lower-cased: every table and view
+# it may have, and every column each may have. Anything else (a church
+# import's video_id, a review column, a side table) means it is not Wesley.
+# Older indexes may lack the late columns, so a subset is fine.
+WESLEY_SCHEMA = {
+    "chunks": frozenset({
+        "rowid", "chunk_id", "sermon_id", "sermon_title", "text", "start_s", "end_s", "sermon_number",
+        "scripture", "source_url", "word_count", "word_start", "word_end", "librivox_id", "audio_url",
+        "reader", "text_source",
+    }),
+    "chunks_fts": frozenset({"text", "sermon_title", "scripture"}),
+    "chunks_fts_config": frozenset({"k", "v"}),
+    "chunks_fts_data": frozenset({"id", "block"}),
+    "chunks_fts_docsize": frozenset({"id", "sz"}),
+    "chunks_fts_idx": frozenset({"segid", "term", "pgno"}),
+    "embeddings": frozenset({"rowid", "model", "dim", "vector"}),
+    "meta": frozenset({"key", "value"}),
+}
+
+
+def foreign_schema(connection) -> list[str]:
+    """Tables, views and columns the Wesley index does not have, compared case-insensitively.
+
+    SQLite's own ``sqlite_*`` tables (e.g. sqlite_stat1) are ignored.
+    """
+    foreign = []
+    names = connection.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
+    for (name,) in list(names):
+        key = name.lower()
+        if key.startswith("sqlite_"):
+            continue
+        allowed = WESLEY_SCHEMA.get(key)
+        if allowed is None:
+            foreign.append(name)
+            continue
+        quoted = name.replace('"', '""')
+        for row in connection.execute(f'PRAGMA table_info("{quoted}")'):
+            if row[1].lower() not in allowed:
+                foreign.append(f"{name}.{row[1]}")
+    return foreign
+
+
+def file_identity(path: Path) -> tuple[int, int] | None:
+    """(st_dev, st_ino) of ``path``, following symlinks; None when it cannot be read."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino
 
 
 def check_servable(connection, library: str, index: Path, *, church_gate: bool = False) -> None:
@@ -899,16 +996,17 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
 
     A classic (``--library spurgeon``/``edwards``) is served only from its
     canonical INDEX_DIR/<slug>.sqlite (``libraries.classic_index_problem``:
-    realpath equality, no symlinks), owned by this user in a directory nobody
-    else can write (``store.owner_only_problem``), and that file must carry the
-    matching ``library`` marker. A marker anywhere else is not trusted.
+    realpath equality, no symlinks, owner and mode, one link, and the same
+    checks on any -wal, -shm or -journal file next to it), and that file
+    must carry the matching ``library`` marker. A marker anywhere else is
+    not trusted.
 
     Wesley must look like the Wesley index: chunks, every sermon id
-    ``wesley-*``, no ``videos`` table, no ``library`` marker, and no chunk
-    column that a church import or the review gate adds (CHURCH_COLUMNS, or
-    any approval/review column).
+    ``wesley-*``, no ``videos`` table, no ``library`` marker, and only the
+    tables and columns in WESLEY_SCHEMA (case-insensitive), so no column a
+    church import or the review gate adds, in chunks or a side table.
     """
-    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    tables = {row[0].lower() for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     marker = None
     if "meta" in tables:
         row = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
@@ -923,8 +1021,6 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
         return
     if library != LIBRARY:
         problem = classic_index_problem(library, index, INDEX_DIR)
-        for path in (INDEX_DIR, os.path.realpath(INDEX_DIR), os.path.realpath(index)):
-            problem = problem or owner_only_problem(path)
         if problem is not None:
             raise SystemExit(f"error: {problem}")
         if marker != library:
@@ -937,15 +1033,15 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
             f"error: {index} is not a public-domain library ({allowed}). Church libraries are not "
             "served until redaction and approval are in place."
         )
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")} if "chunks" in tables else set()
-    foreign = sorted(c for c in columns if c in CHURCH_COLUMNS or REVIEW_COLUMN.search(c))
+    foreign = foreign_schema(connection)
     if foreign:
         raise SystemExit(
-            f"error: {index} has church-import columns ({', '.join(foreign)}); it is not the Wesley index. "
+            f"error: {index} has church-import columns or tables ({', '.join(foreign)}); "
+            "it is not the Wesley index. "
             "Church libraries are not served until redaction and approval are in place."
         )
     wesley = "chunks" in tables and connection.execute(
-        "SELECT count(*) > 0 AND count(*) = sum(sermon_id LIKE 'wesley-%') FROM chunks"
+        "SELECT count(*) > 0 AND count(*) = sum(sermon_id GLOB 'wesley-*') FROM chunks"
     ).fetchone()[0]
     if not wesley:
         raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
@@ -990,10 +1086,9 @@ def main(argv: list[str] | None = None) -> None:
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
-    # Every library but wesley is gated (App.gated). A church library is
-    # served only with that gate on and a privacy config loaded.
-    gated = library != LIBRARY
-    church = gated and not is_public_domain(library)
+    # Every library but wesley is gated (App.gated, no switch turns it off).
+    # A church library is served only with a privacy config loaded.
+    church = library != LIBRARY and not is_public_domain(library)
     church_gate = False
     if church:
         try:
@@ -1005,16 +1100,25 @@ def main(argv: list[str] | None = None) -> None:
             ) from exc
         except (ValueError, OSError) as exc:
             raise SystemExit(f"error: privacy config: {exc}") from exc
-        church_gate = gated
+        church_gate = True
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    # The file checked must be the file opened: same (st_dev, st_ino) before
+    # the open and after the checks, and again before every reload.
+    identity = file_identity(index)
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc
+
+    def servable(conn) -> None:
+        check_servable(conn, library, index, church_gate=church_gate)
+        if identity is None or file_identity(index) != identity:
+            raise SystemExit(f"error: {index} was replaced while it was being opened or served; refused")
+
     try:
-        check_servable(connection, library, index, church_gate=church_gate)
+        servable(connection)
     except sqlite3.DatabaseError as exc:
         connection.close()
         raise SystemExit(f"error: {index} is not a SQLite index ({exc})") from exc
@@ -1035,10 +1139,8 @@ def main(argv: list[str] | None = None) -> None:
         ort_threads=args.ort_threads,
         variant=args.onnx_variant,
         library=library,
+        servable=servable,
     )
-    if church and not app.gated:
-        connection.close()
-        raise SystemExit("error: refusing to serve a church library with the publish gate off")
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)
     elif app.encode is None:

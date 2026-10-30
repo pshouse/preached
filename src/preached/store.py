@@ -7,9 +7,7 @@ Search is brute force in numpy. There is no vector database.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
-import stat
 from pathlib import Path
 
 import numpy as np
@@ -304,30 +302,6 @@ def sync_chunks(
     return len(chunks)
 
 
-SCHEMA_OBJECTS = frozenset({"chunks", "chunks_fts", "embeddings", "meta", "chunks_ai", "chunks_ad", "chunks_au"})
-
-
-def chunks_in_sync(connection: sqlite3.Connection, chunks_path: Path) -> bool:
-    """True when ``connect`` plus ``sync_chunks(chunks_path)`` would change nothing.
-
-    Read-only: every schema object and late column exists, the file is in WAL
-    mode, and meta ``chunks_sha256`` equals the chunk file's sha256. Lets a
-    reader skip the read-write open when the index is already current.
-    """
-    import hashlib
-
-    names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master")}
-    if not SCHEMA_OBJECTS <= names:
-        return False
-    have = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
-    if not set(LATE_COLUMNS) <= have:
-        return False
-    if str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
-        return False
-    row = connection.execute("SELECT value FROM meta WHERE key = 'chunks_sha256'").fetchone()
-    return row is not None and row[0] == hashlib.sha256(chunks_path.read_bytes()).hexdigest()
-
-
 def chunk_count(connection: sqlite3.Connection) -> int:
     return int(connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
 
@@ -517,49 +491,22 @@ def database_path(connection: sqlite3.Connection) -> str | None:
     return None
 
 
-def owner_only_problem(path: str | os.PathLike[str]) -> str | None:
-    """Why ``path`` is not safe from other users, or None.
-
-    It must be owned by this process's user and not writable by group or
-    others. Checked with ``lstat``, so a symlink is never followed.
-    """
-    try:
-        info = os.lstat(path)
-    except OSError as exc:
-        return f"cannot stat {path} ({exc.strerror})"
-    if stat.S_ISLNK(info.st_mode):
-        return f"{path} is a symlink"
-    if info.st_uid != os.geteuid():
-        return f"{path} is owned by uid {info.st_uid}, not {os.geteuid()}"
-    if info.st_mode & 0o022:
-        return f"{path} is writable by group or others (mode {stat.S_IMODE(info.st_mode):o})"
-    return None
-
-
 def classic_file_problem(connection: sqlite3.Connection, library: object, index_dir: Path | None = None) -> str | None:
     """Why the file behind ``connection`` may not be served as the classic ``library``, or None.
 
     The file the connection actually opened (``PRAGMA database_list``, not a
     path the caller claims) must pass ``libraries.classic_index_problem``
     (allow-listed slug, canonical INDEX_DIR/<slug>.sqlite, no symlinks,
-    realpath equality); then that file and INDEX_DIR itself must be owned by
-    this user and not group/other-writable (``owner_only_problem``). So a
-    library marker in a file anyone else could have written is not trusted.
-    ``index_dir`` defaults to ``preached.paths.INDEX_DIR`` read at call time.
+    realpath equality, owner and mode, one link, sidecar files), the one
+    owner/mode gate. So a library marker in a file anyone else could have
+    written is not trusted. ``index_dir`` defaults to
+    ``preached.paths.INDEX_DIR`` read at call time.
     """
     index_dir = paths.INDEX_DIR if index_dir is None else Path(index_dir)
     path = database_path(connection)
     if path is None:
         return "not a file on disk"
-    problem = classic_index_problem(library, Path(path), index_dir)
-    if problem is not None:
-        return problem
-    # INDEX_DIR as named (not a symlink) and as resolved, then the file itself.
-    for checked in (index_dir, os.path.realpath(index_dir), os.path.realpath(path)):
-        problem = owner_only_problem(checked)
-        if problem is not None:
-            return problem
-    return None
+    return classic_index_problem(library, Path(path), index_dir)
 
 
 def public_domain_file(connection: sqlite3.Connection, library: str | None) -> bool:
@@ -568,8 +515,8 @@ def public_domain_file(connection: sqlite3.Connection, library: str | None) -> b
     Keyed on the slug and the file, never on a missing column. All must hold:
     the slug is on the public-domain allow-list (``preached.libraries``:
     spurgeon, edwards); the file is that library's canonical
-    INDEX_DIR/<slug>.sqlite, owned by this user in a directory nobody else
-    can write (``classic_file_problem``); and it is that library's own build:
+    INDEX_DIR/<slug>.sqlite, owned by root or this server's euid in a
+    directory nobody else can write, sidecars included (``classic_file_problem``); and it is that library's own build:
     meta ``library`` equals the slug (``search/build_library.py`` writes it),
     no sermon carries a review hash and no chunk is flagged. So a forged
     marker in any other file (``--index /tmp/x.sqlite``), a church file served

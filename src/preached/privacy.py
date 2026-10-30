@@ -665,6 +665,37 @@ def review(words: list, *, config: Config | None = None) -> ReviewList:
     )
 
 
+def _open_private_dir(folder: Path) -> int:
+    """Open ``folder`` component by component from ``/`` with no symlink followed.
+
+    Each component is opened ``O_DIRECTORY | O_NOFOLLOW`` relative to the
+    previous descriptor (created 0700 with ``mkdirat`` when missing), so there
+    is no window between checking an ancestor and using it: a component
+    swapped for a symlink makes the open fail, and the descriptor we hold
+    keeps pointing at the directory we checked. Returns the final descriptor.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    current = os.open("/", flags)
+    try:
+        for part in folder.parts[1:]:
+            try:
+                try:
+                    following = os.open(part, flags, dir_fd=current)
+                except FileNotFoundError:
+                    os.mkdir(part, 0o700, dir_fd=current)
+                    following = os.open(part, flags, dir_fd=current)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"review path {folder} is not a plain directory path ({part}: {exc.strerror})"
+                ) from None
+            os.close(current)
+            current = following
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
 def write_review_file(items: Iterable[dict], path: str | os.PathLike[str]) -> int:
     """Write review items as JSON lines to a private file; return the count.
 
@@ -696,19 +727,12 @@ def write_review_file_sha256(items: Iterable[dict], path: str | os.PathLike[str]
 
     path = Path(os.path.abspath(path))
     folder = path.parent
-    for ancestor in (folder, *folder.parents):
-        if os.path.islink(ancestor):
-            raise RuntimeError(f"review path {path} goes through a symlink ({ancestor})")
-    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        dir_fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    except OSError as exc:
-        raise RuntimeError(f"review directory {folder} is not a plain directory ({exc.strerror})") from None
+    dir_fd = _open_private_dir(folder)
     try:
         info = os.fstat(dir_fd)
         if not stat.S_ISDIR(info.st_mode):
             raise RuntimeError(f"review directory {folder} is not a plain directory")
-        if info.st_uid != os.getuid():
+        if info.st_uid != os.geteuid():
             raise RuntimeError(f"review directory {folder} belongs to another user")
         if stat.S_IMODE(info.st_mode) != 0o700:
             os.fchmod(dir_fd, 0o700)

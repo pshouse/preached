@@ -1,5 +1,5 @@
-"""W3-LIB fix-up: which index gets the Wesley sync, and which slugs may be
-ingested or indexed as public-domain libraries."""
+"""W3-LIB fix-up: which index query.py opens (read-only, never synced), and
+which slugs may be ingested, indexed or served as public-domain libraries."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ import contextlib
 import copy
 import io
 import json
+import os
+import shutil
 import sqlite3
+import stat
 import sys
 import tempfile
 import unittest
@@ -28,6 +31,33 @@ from preached.store import connect  # noqa: E402
 from preached.youtube.library import open_library  # noqa: E402
 
 
+def setUpModule() -> None:
+    # The classics gate refuses group/world-writable files and directories.
+    global _umask
+    _umask = os.umask(0o022)
+
+
+def tearDownModule() -> None:
+    os.umask(_umask)
+
+
+def private_index_dir(tmp: str) -> Path:
+    """<tmp>/index, mode 0755 under a 0700 temp dir, both owned by this uid."""
+    path = Path(tmp) / "index"
+    path.mkdir(mode=0o755)
+    path.chmod(0o755)
+    return path
+
+
+def restore_sidecars(index: Path) -> None:
+    """SQLite gives a -wal/-shm it creates the database file's mode at that moment;
+    after a test chmods the file back, give its sidecars the same mode again."""
+    for suffix in libraries.SIDECAR_SUFFIXES:
+        sidecar = Path(f"{index}{suffix}")
+        if sidecar.exists():
+            sidecar.chmod(stat.S_IMODE(index.stat().st_mode))
+
+
 def run_main(argv: list[str]) -> tuple[int | str | None, str]:
     """Run query.main with argv; return (exit code or message, stderr)."""
     err = io.StringIO()
@@ -43,7 +73,9 @@ class QueryIndexTargetTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.dir = Path(self.tmp.name)
+        # INDEX_DIR one level down: classic_index_problem checks its parent too,
+        # and a shared /tmp (root, mode 1777) would not pass.
+        self.dir = private_index_dir(self.tmp.name)
         self.wesley = self.dir / "wesley.sqlite"
         patches = [
             mock.patch.object(query, "INDEX_PATH", self.wesley),
@@ -68,7 +100,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         code, err = run_main(["q", "--mode", "bm25", "--index", str(self.wesley), "--library", "spurgeon"])
         self.assertEqual(code, 2)
         self.assertIn("not allowed with argument", err)
-        self.synced.assert_not_called()
 
     def test_library_style_index_is_refused_unchanged(self) -> None:
         # The CTO repro: a classics file passed as --index became Wesley chunks.
@@ -77,7 +108,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         code, _ = run_main(["q", "--mode", "bm25", "--index", str(path)])
         self.assertIn("is a library index", str(code))
         self.assertIn("--library spurgeon", str(code))
-        self.synced.assert_not_called()
         self.assertEqual(path.read_bytes(), before)
 
     def test_library_marker_in_meta_is_refused(self) -> None:
@@ -101,22 +131,23 @@ class QueryIndexTargetTests(unittest.TestCase):
 
     def test_wesley_search_connection_is_read_only(self) -> None:
         connect(self.wesley).close()
-        connection = query.open_index(None, None)
-        with self.assertRaises(sqlite3.OperationalError):
-            connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
-        connection.close()
+        before = self.wesley.read_bytes()
+        for index in (None, self.wesley):
+            connection = query.open_index(index, None)
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute("INSERT INTO meta (key, value) VALUES ('x', 'y')")
+            connection.close()
+        self.assertEqual(self.wesley.read_bytes(), before)
 
-    def test_other_index_path_is_not_synced(self) -> None:
+    def test_other_index_path_is_opened(self) -> None:
         other = self.dir / "wesley-onnx-int8.sqlite"
         connect(other).close()
         self.assertFalse(query.is_library_file(other))
         query.open_index(other, None).close()
-        self.synced.assert_not_called()
 
-    def test_library_flag_never_syncs(self) -> None:
+    def test_library_flag_is_allow_listed_by_slug(self) -> None:
         self.library_file("edwards.sqlite")
         query.open_index(None, "edwards").close()
-        self.synced.assert_not_called()
         with self.assertRaises(SystemExit):
             query.open_index(None, "../edwards")
 
@@ -134,7 +165,6 @@ class QueryIndexTargetTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
         for suffix in ("-wal", "-shm", "-journal"):
             self.assertFalse(Path(f"{path}{suffix}").exists(), suffix)
-        self.synced.assert_not_called()
 
     def test_nonexistent_index_is_refused_and_not_created(self) -> None:
         path = self.dir / "nope" / "missing.sqlite"
@@ -515,7 +545,9 @@ class ServerGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.dir = Path(self.tmp.name)
+        # INDEX_DIR one level down: classic_index_problem checks its parent too,
+        # and a shared /tmp (root, mode 1777) would not pass.
+        self.dir = private_index_dir(self.tmp.name)
         self.wesley = self.dir / "wesley.sqlite"
         connection = connect(self.wesley)
         connection.execute(
@@ -695,6 +727,429 @@ class ServerGateTests(unittest.TestCase):
         self.assertIn("not a SQLite index", self.refused("--index", str(not_db)))
         self.assertIn("missing index", self.refused("--index", str(self.dir / "missing.sqlite")))
         self.assertFalse((self.dir / "missing.sqlite").exists())
+
+
+class ClassicIndexBase(unittest.TestCase):
+    """A private INDEX_DIR holding a built edwards.sqlite, and ways to check it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = private_index_dir(self.tmp.name)
+        self.canonical = self.dir / "edwards.sqlite"
+        connection = open_library(self.canonical)
+        connection.execute("INSERT INTO meta (key, value) VALUES ('library', 'edwards')")
+        connection.commit()
+        connection.close()
+
+    def problem(self, index_dir: Path | None = None) -> str | None:
+        index_dir = self.dir if index_dir is None else index_dir
+        return libraries.classic_index_problem("edwards", index_dir / "edwards.sqlite", index_dir)
+
+    def refused_by_server(self, index_dir: Path) -> str:
+        with mock.patch.object(server, "INDEX_DIR", index_dir), \
+                mock.patch.object(server, "build_app", side_effect=Stop), \
+                self.assertRaises(SystemExit) as ctx:
+            server.main(["--bm25-only", "--library", "edwards"])
+        return str(ctx.exception.code)
+
+
+class ClassicOwnerModeTests(ClassicIndexBase):
+    """classic_index_problem: owner, mode, symlink and link-count checks (CTO round 4)."""
+
+    def test_private_layout_passes(self) -> None:
+        self.assertIsNone(self.problem())
+        with mock.patch.object(server, "INDEX_DIR", self.dir), mock.patch.object(server, "build_app", side_effect=Stop):
+            with self.assertRaises(Stop):
+                server.main(["--bm25-only", "--library", "edwards"])
+
+    def test_world_or_group_writable_is_refused(self) -> None:
+        for target, label in ((self.dir.parent, "parent"), (self.dir, "index directory"), (self.canonical, "index")):
+            original = target.stat().st_mode & 0o777
+            for bits in (0o002, 0o020):
+                with self.subTest(target=label, bits=oct(bits)):
+                    target.chmod(original | bits)
+                    try:
+                        message = self.problem()
+                        self.assertIn("writable", message or "")
+                        self.assertIn(str(target), message)
+                        self.assertIn("writable", self.refused_by_server(self.dir))
+                        with mock.patch.object(query, "INDEX_DIR", self.dir):
+                            code, _ = run_main(["q", "--mode", "bm25", "--library", "edwards"])
+                        self.assertIn("writable", str(code))
+                    finally:
+                        target.chmod(original)
+                        restore_sidecars(self.canonical)
+        self.assertIsNone(self.problem())
+
+    def test_symlinked_index_dir_is_refused(self) -> None:
+        link = Path(self.tmp.name) / "linked-index"
+        link.symlink_to(self.dir, target_is_directory=True)
+        self.assertIn("symlink", self.problem(link))
+        self.assertIn("symlink", self.refused_by_server(link))
+
+    def test_hardlinked_file_is_refused(self) -> None:
+        other = Path(self.tmp.name) / "elsewhere.sqlite"
+        os.link(self.canonical, other)
+        self.assertIn("hard links", self.problem())
+        self.assertIn("hard links", self.refused_by_server(self.dir))
+        other.unlink()
+        self.assertIsNone(self.problem())
+
+    def test_wrong_owner_is_refused(self) -> None:
+        real_stat, real_lstat = os.stat, os.lstat
+
+        def foreign(real, target):
+            def fake(path, *args, **kwargs):
+                st = real(path, *args, **kwargs)
+                if os.path.abspath(path) != os.path.abspath(target):
+                    return st
+                fields = list(st[:10])
+                fields[4] = st.st_uid + 1  # st_uid
+                return os.stat_result(fields)
+            return fake
+
+        for target in (self.dir.parent, self.dir, self.canonical):
+            with self.subTest(target=target.name), \
+                    mock.patch.object(libraries.os, "stat", foreign(real_stat, target)), \
+                    mock.patch.object(libraries.os, "lstat", foreign(real_lstat, target)):
+                message = self.problem()
+                self.assertIn("owned by uid", message or "")
+                self.assertIn(str(target), message)
+        with mock.patch.object(libraries.os, "geteuid", return_value=os.geteuid() + 1):
+            self.assertIn("owned by uid", self.problem())
+            self.assertIn("owned by uid", self.refused_by_server(self.dir))
+
+
+def fake_owner(real, target: Path, uid: int):
+    """``real`` (os.stat / os.lstat) reporting ``uid`` as the owner of ``target`` only."""
+    def fake(path, *args, **kwargs):
+        st = real(path, *args, **kwargs)
+        if os.path.abspath(path) != os.path.abspath(target):
+            return st
+        fields = list(st[:10])
+        fields[4] = uid  # st_uid
+        return os.stat_result(fields)
+    return fake
+
+
+class ClassicRootOwnerTests(ClassicIndexBase):
+    """CTO ruling S2 (#14 final gate): root may own the index, its directory and
+    their parent, as well as the server's euid; still no group or world write."""
+
+    def test_root_owned_layout_passes(self) -> None:
+        real_stat, real_lstat = os.stat, os.lstat
+        for target in (self.dir.parent, self.dir, self.canonical):
+            with self.subTest(target=target.name), \
+                    mock.patch.object(libraries.os, "stat", fake_owner(real_stat, target, 0)), \
+                    mock.patch.object(libraries.os, "lstat", fake_owner(real_lstat, target, 0)):
+                self.assertIsNone(self.problem())
+                with mock.patch.object(server, "INDEX_DIR", self.dir), \
+                        mock.patch.object(server, "build_app", side_effect=Stop), self.assertRaises(Stop):
+                    server.main(["--bm25-only", "--library", "edwards"])
+
+    def test_root_owned_but_writable_is_refused(self) -> None:
+        real_stat, real_lstat = os.stat, os.lstat
+        for target in (self.dir, self.canonical):
+            original = stat.S_IMODE(target.stat().st_mode)
+            with self.subTest(target=target.name), \
+                    mock.patch.object(libraries.os, "stat", fake_owner(real_stat, target, 0)), \
+                    mock.patch.object(libraries.os, "lstat", fake_owner(real_lstat, target, 0)):
+                target.chmod(original | 0o002)
+                try:
+                    self.assertIn("writable", self.problem() or "")
+                finally:
+                    target.chmod(original)
+
+    def test_other_users_are_still_refused(self) -> None:
+        real_lstat = os.lstat
+        other = os.geteuid() + 1
+        with mock.patch.object(libraries.os, "lstat", fake_owner(real_lstat, self.canonical, other)):
+            self.assertIn(f"owned by uid {other}", self.problem() or "")
+
+
+class ClassicSidecarTests(ClassicIndexBase):
+    """CTO ruling S1 (#14 final gate): a -wal, -shm or -journal next to a classic
+    index gets the owner, mode, symlink and link-count checks of the index."""
+
+    TEXT = "church member secret story"
+    # Non-empty: SQLite resets an empty sidecar to the database file's mode when
+    # it opens it (and an empty one holds nothing to replay).
+    JUNK = b"\0" * 32
+
+    def plant_wal(self) -> Path:
+        """CTO repro (/workspace/pr14r5/wal.py): a WAL written elsewhere, copied next
+        to the real classic file, is replayed into what the read-only reader sees."""
+        scratch = Path(self.tmp.name) / "scratch.sqlite"
+        shutil.copy(self.canonical, scratch)
+        writer = sqlite3.connect(scratch)
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('edwards-x-c0', 'edwards-x', 'S', ?)",
+            (self.TEXT,),
+        )
+        writer.commit()
+        wal = Path(f"{self.canonical}-wal")
+        shutil.copy(f"{scratch}-wal", wal)
+        writer.close()
+        return wal
+
+    def served_texts(self) -> list[str]:
+        connection = server.open_readonly(self.canonical)
+        try:
+            return [row[0] for row in connection.execute("SELECT text FROM chunks")]
+        finally:
+            connection.close()
+
+    def test_world_writable_wal_is_refused(self) -> None:
+        wal = self.plant_wal()
+        wal.chmod(0o666)
+        # The repro is real: without the sidecar check this file serves the planted text.
+        with mock.patch.object(libraries, "SIDECAR_SUFFIXES", ()):
+            self.assertIsNone(self.problem())
+        self.assertIn(self.TEXT, self.served_texts())
+        message = self.problem()
+        self.assertIn("writable", message or "")
+        self.assertIn(str(wal), message)
+        self.assertIn("writable", self.refused_by_server(self.dir))
+        with mock.patch.object(query, "INDEX_DIR", self.dir):
+            code, _ = run_main(["q", "--mode", "bm25", "--library", "edwards"])
+        self.assertIn("writable", str(code))
+
+    def test_every_sidecar_is_checked(self) -> None:
+        for suffix in ("-wal", "-shm", "-journal"):
+            sidecar = Path(f"{self.canonical}{suffix}")
+            for label, make in (
+                ("group-writable", lambda p: (p.write_bytes(self.JUNK), p.chmod(0o664))),
+                ("symlink", lambda p: p.symlink_to(Path(self.tmp.name) / "elsewhere")),
+                ("hardlink", lambda p: (p.write_bytes(self.JUNK), p.chmod(0o644),
+                                        os.link(p, Path(self.tmp.name) / "linked"))),
+                ("directory", lambda p: p.mkdir(mode=0o755)),
+            ):
+                with self.subTest(suffix=suffix, case=label):
+                    make(sidecar)
+                    try:
+                        self.assertIsNotNone(self.problem())
+                        self.assertIn(str(sidecar), self.problem())
+                        self.refused_by_server(self.dir)
+                    finally:
+                        if sidecar.is_dir() and not sidecar.is_symlink():
+                            sidecar.rmdir()
+                        else:
+                            sidecar.unlink()
+                        (Path(self.tmp.name) / "linked").unlink(missing_ok=True)
+            with self.subTest(suffix=suffix, case="other owner"):
+                sidecar.write_bytes(b"")
+                sidecar.chmod(0o644)
+                other = os.geteuid() + 1
+                try:
+                    with mock.patch.object(libraries.os, "lstat", fake_owner(os.lstat, sidecar, other)):
+                        self.assertIn(f"owned by uid {other}", self.problem() or "")
+                    with mock.patch.object(libraries.os, "lstat", fake_owner(os.lstat, sidecar, 0)):
+                        self.assertIsNone(self.problem())
+                finally:
+                    sidecar.unlink()
+        self.assertIsNone(self.problem())
+
+    def test_private_sidecars_pass(self) -> None:
+        wal = self.plant_wal()
+        wal.chmod(0o644)
+        self.assertIsNone(self.problem())
+
+
+class WesleyAllowListTests(unittest.TestCase):
+    """The Wesley schema is an allow-list, compared case-insensitively (CTO round 4)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = private_index_dir(self.tmp.name)
+
+    def wesley(self, name: str, *sql: str) -> Path:
+        path = self.dir / f"{name}.sqlite"
+        connection = connect(path)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('wesley-001-c0', 'wesley-001', 'S', 'grace')"
+        )
+        for statement in sql:
+            connection.execute(statement)
+        connection.commit()
+        connection.close()
+        return path
+
+    def check(self, path: Path) -> None:
+        connection = server.open_readonly(path)
+        try:
+            server.check_servable(connection, "wesley", path)
+        finally:
+            connection.close()
+
+    def test_store_schema_is_exactly_the_allow_list(self) -> None:
+        path = self.wesley("plain")
+        connection = server.open_readonly(path)
+        try:
+            self.assertEqual(server.foreign_schema(connection), [])
+            names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        finally:
+            connection.close()
+        self.assertEqual(names, set(server.WESLEY_SCHEMA))
+        self.check(path)
+
+    def test_mixed_case_church_columns_are_refused(self) -> None:
+        for column in ("Video_ID", "VIDEO_ID", "Title", "Approved_SHA256", "flag_END_s"):
+            with self.subTest(column=column):
+                path = self.wesley(f"col-{column}", f"ALTER TABLE chunks ADD COLUMN {column} TEXT")
+                with self.assertRaises(SystemExit) as ctx:
+                    self.check(path)
+                self.assertIn(column, str(ctx.exception.code))
+
+    def test_side_tables_and_views_are_refused(self) -> None:
+        cases = {
+            "side": "CREATE TABLE side (Video_ID TEXT)",
+            "videos-upper": "CREATE TABLE VIDEOS (video_id TEXT)",
+            "meta-col": "ALTER TABLE meta ADD COLUMN video_id TEXT",
+            "emb-col": "ALTER TABLE embeddings ADD COLUMN reviewed_by TEXT",
+            "view": "CREATE VIEW v AS SELECT chunk_id AS video_id FROM chunks",
+        }
+        for name, sql in cases.items():
+            with self.subTest(case=name):
+                path = self.wesley(name, sql)
+                with self.assertRaises(SystemExit):
+                    self.check(path)
+
+    def test_upper_case_sermon_ids_are_not_wesley(self) -> None:
+        path = self.wesley("upper", "UPDATE chunks SET sermon_id = 'WESLEY-001'")
+        with self.assertRaises(SystemExit) as ctx:
+            self.check(path)
+        self.assertIn("not the Wesley index", str(ctx.exception.code))
+
+
+class ServeIdentityAndReloadTests(unittest.TestCase):
+    """The opened file is the checked file, and every reload re-runs the gate (CTO round 4)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = private_index_dir(self.tmp.name)
+        self.path = self.dir / "wesley.sqlite"
+        self.write(self.path, "grace")
+        patches = [
+            mock.patch.object(server, "INDEX_PATH", self.path),
+            mock.patch.object(server, "INDEX_DIR", self.dir),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def write(self, path: Path, text: str) -> None:
+        connection = connect(path)
+        connection.execute(
+            "INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text) VALUES ('wesley-001-c0', 'wesley-001', 'S', ?)",
+            (text,),
+        )
+        connection.execute("INSERT INTO meta (key, value) VALUES ('chunks_sha256', ?)", (text,))
+        connection.commit()
+        connection.close()
+
+    def start(self, *argv: str) -> dict:
+        """Run main up to build_app; return its keyword arguments."""
+        captured = {}
+
+        def fake_build_app(connection, **kwargs):
+            captured.update(kwargs, connection=connection)
+            raise Stop
+
+        with mock.patch.object(server, "build_app", side_effect=fake_build_app), self.assertRaises(Stop):
+            server.main(["--bm25-only", *argv])
+        self.addCleanup(captured["connection"].close)
+        return captured
+
+    def test_inode_change_across_the_open_is_refused(self) -> None:
+        identities = iter([(1, 1), (1, 2)])
+        with mock.patch.object(server, "file_identity", side_effect=lambda _path: next(identities)), \
+                mock.patch.object(server, "build_app", side_effect=Stop), \
+                self.assertRaises(SystemExit) as ctx:
+            server.main(["--bm25-only"])
+        self.assertIn("was replaced", str(ctx.exception.code))
+
+    def test_replaced_file_is_refused_on_reload(self) -> None:
+        servable = self.start()["servable"]
+        connection = server.open_readonly(self.path)
+        try:
+            servable(connection)  # same file: passes
+            replacement = self.dir / "new.sqlite"
+            self.write(replacement, "faith")
+            os.replace(replacement, self.path)
+            with self.assertRaises(SystemExit) as ctx:
+                servable(connection)
+            self.assertIn("was replaced", str(ctx.exception.code))
+        finally:
+            connection.close()
+
+    def test_reload_runs_check_servable_before_any_searcher(self) -> None:
+        captured = self.start()
+        connection = captured["connection"]
+        app = server.App(
+            connection=connection,
+            searcher=server.Searcher(connection),
+            encode=None,
+            fallback_note=None,
+            model_name=None,
+            hosts={"127.0.0.1"},
+            static_dir=server.STATIC_DIR,
+            servable=captured["servable"],
+        )
+        self.assertEqual(len(app.search("grace", 5, "bm25")["results"]), 1)
+        writer = connect(self.path)
+        try:
+            # In-place edit: a church column (any case) and a new chunk hash.
+            writer.execute("ALTER TABLE chunks ADD COLUMN Video_ID TEXT")
+            writer.execute("UPDATE meta SET value = 'church' WHERE key = 'chunks_sha256'")
+            writer.commit()
+            built = []
+            real_searcher = server.Searcher
+            with mock.patch.object(server, "Searcher", side_effect=lambda *a, **k: built.append(1) or real_searcher(*a, **k)):
+                for call in (lambda: app.search("grace", 5, "bm25"), app.health, lambda: app.sermon("wesley-001")):
+                    with self.assertRaises(server.BadRequest) as ctx:
+                        call()
+                    self.assertEqual(ctx.exception.status, 503)
+            self.assertEqual(built, [])
+            self.assertIsNone(app.searcher)
+            self.assertIn("Video_ID", app.refused)
+            # Put right in place: the gate passes again and a searcher is rebuilt.
+            writer.execute("ALTER TABLE chunks DROP COLUMN Video_ID")
+            writer.commit()
+            self.assertEqual(len(app.search("grace", 5, "bm25")["results"]), 1)
+            self.assertIsNone(app.refused)
+        finally:
+            writer.close()
+
+
+    def test_healthz_reports_a_refusal_the_stamp_did_not_notice(self) -> None:
+        """A swapped -wal can leave the index stamp unchanged: /healthz still says 503."""
+        captured = self.start()
+        connection = captured["connection"]
+        state = {"ok": True}
+
+        def servable(conn) -> None:
+            if not state["ok"]:
+                raise SystemExit("error: a -wal next to the index was swapped; refused")
+
+        app = server.App(
+            connection=connection, searcher=server.Searcher(connection), encode=None, fallback_note=None,
+            model_name=None, hosts={"127.0.0.1"}, static_dir=server.STATIC_DIR, servable=servable,
+        )
+        self.assertTrue(app.health()["ok"])
+        state["ok"] = False  # nothing in the file changed, so the stamp is the same
+        with self.assertRaises(server.BadRequest) as ctx:
+            app.health()
+        self.assertEqual(ctx.exception.status, 503)
+        with self.assertRaises(server.BadRequest) as ctx:
+            app.search("grace", 5, "bm25")
+        self.assertEqual(ctx.exception.status, 503)
+        state["ok"] = True
+        self.assertEqual(app.health()["chunks"], 1)
+        self.assertEqual(len(app.search("grace", 5, "bm25")["results"]), 1)
 
 
 if __name__ == "__main__":

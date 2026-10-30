@@ -67,11 +67,13 @@ def open_index(index: Path | None, library: str | None):
 
     --library takes an allow-listed public-domain slug and opens only its
     canonical /cache/index/<slug>.sqlite as built
-    (``libraries.classic_index_problem``: no symlinks, realpath equality;
-    then ``store.classic_file_problem``: owner-only). A church slug needs a
-    privacy config. Nothing is ever synced or written (main #10): the Wesley
-    index and any other --index path are searched as they are. --index must
-    not be a library file; use --library for those.
+    (``libraries.classic_index_problem``: no symlinks, realpath equality,
+    owner and mode checks, sidecar files too; checked again on the file
+    actually opened by ``store.classic_file_problem``). A church slug needs a
+    privacy config. Nothing is ever synced or written: the Wesley index and
+    any other --index path are searched as they are, so a text-only
+    chunks.jsonl never nulls the aligned timestamps and audio. --index must
+    not be a library file: search those with --library.
     """
     if library is not None:
         if not is_public_domain(library):
@@ -102,7 +104,7 @@ def open_index(index: Path | None, library: str | None):
     if is_library_file(path):
         raise SystemExit(
             f"error: {path} is a library index, not the Wesley index. "
-            f"Search it with --library {path.stem} (it is never synced with Wesley chunks)."
+            f"Search it with --library {path.stem}."
         )
     return open_target(path)
 
@@ -262,8 +264,8 @@ def main() -> None:
     parser.add_argument("--dense-weight", type=float, default=0.5)
     target = parser.add_mutually_exclusive_group()
     target.add_argument("--index", type=Path, default=None,
-                        help=f"SQLite index (default {INDEX_PATH}); opened read-only and never synced; "
-                        "library files are refused")
+                        help=f"SQLite index (default {INDEX_PATH}); searched read-only as it is, "
+                        "never synced; library files are refused")
     target.add_argument("--library", help="search /cache/index/<slug>.sqlite (e.g. spurgeon, edwards); "
                         "built by search/build_library.py; read-only")
     parser.add_argument("--device", default="cpu", help="device for the torch query embedding")

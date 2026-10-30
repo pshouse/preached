@@ -97,6 +97,27 @@ class WritePrivateReviewTests(unittest.TestCase):
                 self.write(self.root / "index" / "church" / name)
         self.victim.untouched(self)
 
+    def test_ancestor_swapped_for_a_symlink_during_the_write_is_refused(self) -> None:
+        """No check-then-use window: swap a component just before it is opened."""
+        import preached.privacy as privacy
+
+        (self.root / "index").mkdir()
+        (self.root / "index" / "church").mkdir()
+        real_open = os.open
+        swapped = []
+
+        def racing_open(path, flags, *args, **kwargs):
+            if path == "church" and not swapped:
+                swapped.append(1)
+                (self.root / "index" / "church").rmdir()
+                (self.root / "index" / "church").symlink_to(self.victim.dir)
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch.object(privacy.os, "open", racing_open), self.assertRaises(RuntimeError):
+            self.write(self.root / "index" / "church" / "review" / "s1.review.jsonl")
+        self.assertEqual(swapped, [1])
+        self.victim.untouched(self)
+
     def test_relative_path_through_a_symlink_is_refused(self) -> None:
         (self.root / "link").symlink_to(self.victim.dir)
         cwd = os.getcwd()
@@ -116,7 +137,7 @@ class WritePrivateReviewTests(unittest.TestCase):
     def test_directory_owned_by_another_user_is_refused(self) -> None:
         review = self.root / "review"
         review.mkdir(mode=0o700)
-        with patch("preached.privacy.os.getuid", return_value=os.getuid() + 1), self.assertRaises(RuntimeError):
+        with patch("preached.privacy.os.geteuid", return_value=os.geteuid() + 1), self.assertRaises(RuntimeError):
             self.write(review / "s1.review.jsonl")
         self.assertEqual(list(review.iterdir()), [])
 

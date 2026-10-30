@@ -251,11 +251,16 @@ class ForgedMarkerTests(ClassicsBase):
                         self.assert_gated(self.connection())
                     finally:
                         target.chmod(before)
+                        # SQLite gave any -wal/-shm it made the file's mode at the time.
+                        for suffix in ("-wal", "-shm"):
+                            sidecar = Path(f"{self.index}{suffix}")
+                            if sidecar.exists():
+                                sidecar.chmod(stat.S_IMODE(self.index.stat().st_mode))
         self.assertTrue(public_domain_file(self.connection(), "spurgeon"))
 
     def test_another_owner_is_not_exempt(self) -> None:
         real = os.geteuid()
-        with patch("preached.store.os.geteuid", return_value=real + 1):
+        with patch("preached.libraries.os.geteuid", return_value=real + 1):
             self.assert_gated(self.connection())
 
     def test_in_memory_or_unknown_file_is_not_exempt(self) -> None:

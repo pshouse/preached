@@ -513,15 +513,44 @@ def sermon_flagged(connection: sqlite3.Connection, sermon_id: object) -> bool:
     ).fetchone() is not None
 
 
-def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
-    """Whether a card's span touches any flagged chunk of its sermon.
+# A link may land this much before its seek (keyframes, player rounding), and
+# ASR word ends run late against the audio, so a flagged word that ends up to
+# this long before the seek still counts. Measured (large-v3-turbo vs forced
+# alignment, clean studio audio): word ends p95 0.12 s late, p99 0.48 s, max
+# 3.58 s. 1.5 = p99 + 0.5 s. Never rounded: seek_time floors toward the name.
+SEEK_SLACK_S = 1.5
 
-    True when the card itself is flagged, or when any chunk of the same
-    sermon with ``flag_end_s`` set overlaps the card's word span (its time
-    span when word offsets are missing). An unflagged chunk next to a
-    flagged one holds no flagged word, but a play link keeps playing into
-    the neighbour, so under the ``none`` policy such a card gets no link
-    either. An index without ``flag_end_s`` (Wesley) never touches one.
+
+def seek_time(start_s: float | None) -> float | None:
+    """The earliest second any link for a passage starting at ``start_s`` seeks to.
+
+    The audio player seeks to ``play_start`` (``#t=``, 0.01 s); a YouTube
+    link to the whole second below it (``listing.watch_url``: ``int(start_s
+    - PREROLL_S)``). The smaller of the two, or None when there is no seek.
+    """
+    seek = play_start(start_s)
+    if seek is None:
+        return None
+    return min(seek, float(math.floor(max(0.0, float(start_s) - PREROLL_S))))
+
+
+def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
+    """Whether a card's play link could reach a flagged chunk of its sermon.
+
+    The one check for this, used by the API cards, /api/sermon and
+    ``search/query.py``. True when the card itself is flagged, or when any
+    chunk of the same sermon with ``flag_end_s`` set:
+
+    - ends its flagged words after the card's seek minus SEEK_SLACK_S
+      (``seek_time``) and starts before the card's end (no end: anywhere
+      after). Back-to-back chunks share no words, so a word-span test alone
+      let the next chunk keep a link whose pre-roll starts inside or just
+      before the name (CTO round 4: ``&t=379s`` with the name at
+      378.86-379.22 s). A flagged chunk with no start counts.
+    - or overlaps the card's word span (its time span when it has no word span).
+
+    A card with no seek and no span touches any flagged chunk of its sermon.
+    An index without ``flag_end_s`` (Wesley) never touches one.
     """
     if hit.flag_end_s is not None:
         return True
@@ -529,6 +558,15 @@ def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
     if "flag_end_s" not in columns:
         return False
     base = "SELECT 1 FROM chunks WHERE sermon_id = ? AND flag_end_s IS NOT NULL"
+    seek = seek_time(hit.start_s)
+    if seek is not None and "start_s" in columns:
+        sql = base + " AND flag_end_s > ?"
+        args = [hit.sermon_id, seek - SEEK_SLACK_S]
+        if _finite(hit.end_s):
+            sql += " AND (start_s IS NULL OR start_s < ?)"
+            args.append(float(hit.end_s))
+        if connection.execute(sql + " LIMIT 1", args).fetchone() is not None:
+            return True
     if hit.word_start is not None and hit.word_end is not None and {"word_start", "word_end"} <= columns:
         sql = base + " AND word_start < ? AND word_end > ? LIMIT 1"
         args = (hit.sermon_id, hit.word_end, hit.word_start)
@@ -540,6 +578,10 @@ def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
         sql = base + " LIMIT 1"
         args = (hit.sermon_id,)
     return connection.execute(sql, args).fetchone() is not None
+
+
+def _finite(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 # CCEL keeps Wesley's paragraph numbers inline: "...to myself justice!" 8. Nearly
