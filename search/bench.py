@@ -85,8 +85,16 @@ from preached.store import (  # noqa: E402
 )
 
 MODES = ("dense", "hybrid_rrf", "hybrid_weighted")
-# sermon@5 is a looser check: any top-5 chunk from a sermon holding a grade-2 quote.
-METRICS = ("recall@5", "mrr@10", "ndcg@10", "sermon@5")
+# sermon@k is a looser check: any top-k chunk from a sermon holding a grade-2 quote.
+# Label sets (EVAL-GRADE): the plain names score the labels as they stood before
+# wider grading (every label except grade-1 ones still "proposed"); "_strict"
+# keeps grade 2 only; "_lenient" adds the proposed grade-1 labels. Proposed
+# labels are reported, never fitted or tuned on.
+LABEL_SETS = ("strict", "lenient")
+PASSAGE_METRICS = ("recall@5", "mrr@10", "ndcg@10", "hit@10")
+METRICS = (*PASSAGE_METRICS, "sermon@5", "sermon@10", "sermon@50",
+           *(f"{m}_{ls}" for ls in LABEL_SETS for m in PASSAGE_METRICS))
+SERMON_K = 50
 
 
 # ---------- environment ----------
@@ -199,37 +207,54 @@ def ensure_chunks(connection, *, force_null_timings: bool = False) -> int:
 API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
 
 
-def run_mode(searcher: Searcher, query: str, vector, mode: str, dedupe: bool = False) -> list:
+def run_mode(searcher: Searcher, query: str, vector, mode: str, dedupe: bool = False, k: int = 10) -> list:
     if dedupe:
         # The shipped path. hybrid_weighted is not an API mode; give it the same pool and de-dup.
         if mode in API_MODE:
-            return api_search(searcher, query, vector, API_MODE[mode], 10)
+            return api_search(searcher, query, vector, API_MODE[mode], k)
         if mode == "hybrid_weighted":
             pool = searcher.hybrid(query, vector, SEARCH_POOL, fusion="weighted", dense_weight=0.5)
-            return dedupe_adjacent(pool, 10)
+            return dedupe_adjacent(pool, k)
         raise RuntimeError(mode)
     if mode == "bm25":
-        return searcher.bm25(query, 10)
+        return searcher.bm25(query, k)
     if mode == "dense":
-        return searcher.dense(vector, 10)
+        return searcher.dense(vector, k)
     if mode == "hybrid_rrf":
-        return searcher.hybrid(query, vector, 10, fusion="rrf", rrf_k=60)
+        return searcher.hybrid(query, vector, k, fusion="rrf", rrf_k=60)
     if mode == "hybrid_weighted":
-        return searcher.hybrid(query, vector, 10, fusion="weighted", dense_weight=0.5)
+        return searcher.hybrid(query, vector, k, fusion="weighted", dense_weight=0.5)
     raise RuntimeError(mode)
 
 
-def score(hits: list, quotes: list[dict]) -> dict:
+def label_set(quotes: list[dict], which: str = "base") -> list[dict]:
+    """``strict``: grade 2 only. ``lenient``: every label, proposed ones too.
+    ``base``: the labels as they stood before wider grading (drops proposed grade-1)."""
+    if which == "strict":
+        return [q for q in quotes if int(q["grade"]) == 2]
+    if which == "lenient":
+        return list(quotes)
+    return [q for q in quotes if q.get("status") != "proposed" or int(q["grade"]) == 2]
+
+
+def score(hits: list, quotes: list[dict], wide: list | None = None) -> dict:
+    """Metrics on the top 10 of ``hits``; sermon@50 from ``wide`` (the top SERMON_K) when given."""
     texts = [h.text for h in hits]
     best = max(int(q["grade"]) for q in quotes)
     sermons = {q["sermon_id"] for q in quotes if int(q["grade"]) == best}
-    return {
+    out = {
         "sermon@5": float(any(h.sermon_id in sermons for h in hits[:5])),
-        "recall@5": recall_at(texts, quotes, 5),
-        "mrr@10": mrr_at(texts, quotes, 10),
-        "ndcg@10": ndcg_at(texts, quotes, 10),
-        "top10": [h.chunk_id for h in hits[:10]],
+        "sermon@10": float(any(h.sermon_id in sermons for h in hits[:10])),
     }
+    if wide is not None:
+        out["sermon@50"] = float(any(h.sermon_id in sermons for h in wide[:SERMON_K]))
+    for name, labels in (("", label_set(quotes)), *((f"_{ls}", label_set(quotes, ls)) for ls in LABEL_SETS)):
+        out[f"recall@5{name}"] = recall_at(texts, labels, 5)
+        out[f"mrr@10{name}"] = mrr_at(texts, labels, 10)
+        out[f"ndcg@10{name}"] = ndcg_at(texts, labels, 10)
+        out[f"hit@10{name}"] = float(out[f"mrr@10{name}"] > 0)  # any labelled passage in the top 10
+    out["top10"] = [h.chunk_id for h in hits[:10]]
+    return out
 
 
 def evaluate(searcher: Searcher, questions: list[dict], modes, encode=None, dedupe: bool = False) -> dict:
@@ -241,7 +266,9 @@ def evaluate(searcher: Searcher, questions: list[dict], modes, encode=None, dedu
         for mode in modes:
             hits = run_mode(searcher, q["query"], vector, mode, dedupe)
             if q["relevant"]:
-                per_query[mode][q["id"]] = score(hits, q["relevant"])
+                # A separate wider call, so the scored top 10 is the same call as before.
+                wide = run_mode(searcher, q["query"], vector, mode, dedupe, k=SERMON_K)
+                per_query[mode][q["id"]] = score(hits, q["relevant"], wide)
             else:
                 negative[mode][q["id"]] = hits[0].score if hits else None
     return {"per_query": per_query, "negative_top1": negative}
@@ -251,8 +278,15 @@ def summarize(per_query: dict[str, dict]) -> dict:
     ids = sorted(per_query)
     out = {"n": len(ids)}
     for metric in METRICS:
-        out[metric] = bootstrap_ci([per_query[i][metric] for i in ids])
+        if all(metric in per_query[i] for i in ids):
+            out[metric] = bootstrap_ci([per_query[i][metric] for i in ids])
     return out
+
+
+def load_questions(path: Path | None = None, exclude_groups=()) -> list[dict]:
+    """The eval set without items marked ``excluded`` or in ``exclude_groups``."""
+    return [q for q in read_jsonl(path or questions_path())
+            if not q.get("excluded") and q.get("group", "ungrouped") not in exclude_groups]
 
 
 def question_groups(questions: list[dict]) -> dict[str, list[str]]:
@@ -459,6 +493,31 @@ def fmt_diff(cell: dict | None) -> str:
     return f"{cell['diff']:+.3f} [{low:+.2f}, {high:+.2f}] ({cell['wins']}/{cell['ties']}/{cell['losses']})"
 
 
+def strict_lenient_tables(report: dict, names: list[str]) -> list[str]:
+    """Per group: strict (grade 2), pre-grading, and lenient (+ proposed grade-1) scores, and sermon@k."""
+    cols = [("ndcg@10_strict", "nDCG@10 strict"), ("ndcg@10", "nDCG@10 pre-grading"),
+            ("ndcg@10_lenient", "nDCG@10 lenient"), ("hit@10_strict", "hit@10 strict"),
+            ("hit@10_lenient", "hit@10 lenient"), ("mrr@10_lenient", "MRR@10 lenient"),
+            ("sermon@5", "sermon@5"), ("sermon@10", "sermon@10"), ("sermon@50", "sermon@50")]
+    rows = [("BM25", "bm25", report["bm25"]["by_group"], report["bm25"]["summary"])] + [
+        (k, m, e["by_group"][m], e["summary"][m])
+        for k, e in report["models"].items() if e["status"] == "ok" for m in MODES]
+    lines = ["", "## Strict vs lenient, per group", "",
+             "strict = grade-2 labels only; pre-grading = the labels before EVAL-GRADE; lenient = adds the "
+             "grade-1 labels still marked \"proposed\" (not confirmed by a person). hit@10 = at least one "
+             "labelled passage in the top 10. sermon@k = a top-k chunk from a grade-2 sermon."]
+    for name in [*names, "overall"]:
+        n = report["bm25"]["summary"]["n"] if name == "overall" else report["bm25"]["by_group"][name]["n"]
+        lines += ["", f"### {name} (n={n})", "", "| model | mode | " + " | ".join(c[1] for c in cols) + " |",
+                  "| --- | --- | " + " | ".join("---" for _ in cols) + " |"]
+        for key, mode, grouped, summary in rows:
+            cell = summary if name == "overall" else grouped.get(name)
+            if cell:
+                lines.append(f"| {key} | {mode} | " + " | ".join(
+                    f"{cell[c]['mean']:.3f}" if c in cell else "" for c, _ in cols) + " |")
+    return lines
+
+
 def markdown(report: dict) -> str:
     ref = report["reference"]
     lines = [
@@ -527,6 +586,7 @@ def markdown(report: dict) -> str:
         for key, mode, entry in rows:
             vs = entry.get("vs_reference_by_group", {})
             lines.append(f"| {key} | {mode} | " + " | ".join(fmt_diff(vs.get(g, {}).get("ndcg@10")) for g in names) + " |")
+        lines += strict_lenient_tables(report, names)
     lines += ["", "Prompts as the model sees them:", ""]
     for key, entry in report["models"].items():
         p = entry.get("prompts")
@@ -578,8 +638,8 @@ def abstain_rows(spec, connection, questions, encode=None) -> tuple[list[dict], 
                    **conf.as_dict()["signals"]}
             if q["relevant"]:
                 texts = [h.text for h in hits]
-                row["recall@5"] = recall_at(texts, q["relevant"], 5)
-                row["mrr@10"] = mrr_at(texts, q["relevant"], 10)
+                row["recall@5"] = recall_at(texts, label_set(q["relevant"]), 5)
+                row["mrr@10"] = mrr_at(texts, label_set(q["relevant"]), 10)
             rows.append(row)
         probes = []
         for text in PROBES:
@@ -858,6 +918,9 @@ def main() -> None:
                         help="write this .json and the sibling .md instead of auto-numbering")
     parser.add_argument("--force-null-timings", action="store_true",
                         help="allow the chunk file to replace stored timings, audio, and reader with nulls")
+    parser.add_argument("--questions", type=Path, default=None, help="eval set (default eval/questions.jsonl)")
+    parser.add_argument("--exclude-group", action="append", default=[],
+                        help="leave out this question group (repeatable), e.g. to rerun an older set")
     parser.add_argument("--abstain", action="store_true",
                         help="evaluate the nothing-found rule per model (in-sample and leave-one-out)")
     parser.add_argument("--write-calibration", action="store_true",
@@ -872,7 +935,7 @@ def main() -> None:
     started = dt.datetime.now().astimezone()
     connection = connect(args.index)
     n_chunks = ensure_chunks(connection, force_null_timings=args.force_null_timings)
-    questions = read_jsonl(questions_path())
+    questions = load_questions(args.questions, args.exclude_group)
     if args.abstain:
         run_abstain(args, connection, questions, started)
         return
