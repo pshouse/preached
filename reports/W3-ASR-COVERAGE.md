@@ -61,3 +61,19 @@ None added (numpy and ffmpeg are already needed).
 - Energy marks any loud non-speech as sound; expect false positives on music and applause.
 - Quiet speech more than 30 dB below the file's loud end counts as silence and is never checked.
 - The gate is only as good as the `--windows` discipline for clearing.
+
+## Main merge
+
+Merged `origin/main` (e465ad0, after #19 W3-PRIV-SKIP) into this branch with a merge commit (no rebase). Conflicted files:
+
+- `align/asr_chunks.py`: kept both. Each sermon tuple is now `(records, review_sha, base_sha, gaps)`; `index_video` gets `coverage_gaps` and `review_base_sha256`; `main` keeps #19's `private_sermon(..., args.out)` call and #20's `sermon_gaps`.
+- `src/preached/youtube/library.py`: kept both schema columns (`review_base_sha256` and `coverage_gaps`) and both `index_video` parameters, written in one UPDATE. `approve_review` no longer exists on main (#19 moved approval to `preached.exclusions.approve`), so it is dropped here.
+- `src/preached/youtube/pipeline.py`: kept both imports; the import step runs the coverage check, adds `coverage` review lines to the header, then writes #19's kept-words file and review lines; both columns are stored; the summary line reports excluded stretches and coverage gaps.
+
+Not a textual conflict, but needed: the coverage refusal now lives in `exclusions.approve` (reads `coverage_gaps`, refuses when NULL or non-empty, before any rebuild), so it runs alongside every #19 rule (privacy-config hash, review-file hash, exclude-line-only edits, no narrowing). The reviewer-widening rebuild passes the stored `coverage_gaps` through, so it does not reset to NULL. `youtube/coverage.py` docstring updated.
+
+Tests: #19's tests that import fake audio (`test_priv_skip.py`, `test_priv_skip_fixup.py`, `test_priv_skip_links.py`) now inject `coverage=lambda *_a, **_k: []`. New `test_skip_stretch_and_open_coverage_span_both_gate_approval`: a sermon with skip stretches and an open coverage span is refused (also after a reviewer widens a stretch), and approved after `--redo` with the gap resolved, with skipped markers still absent from the index. The combination is reachable.
+
+- Tests: 540 pass.
+- `uv lock --check`: passes (`Resolved 79 packages`).
+- Head SHA: stated in the final message (a report cannot contain its own commit's SHA).
