@@ -695,6 +695,8 @@ class ImportTests(unittest.TestCase):
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
+            code, _out, err = self._run(["--library", "sample", "--ack-review", video_id], root)
+            self.assertEqual(code, 0, err)
             connection = open_readonly(root / "sample.sqlite", check_same_thread=False)
             try:
                 app = App(

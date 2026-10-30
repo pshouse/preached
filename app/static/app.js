@@ -88,10 +88,11 @@ function seekWhenReady(audio) {
   }
 }
 
-function playClip(url, start, button, caption) {
+function playClip(url, start, button, caption, exact) {
   var audio = document.getElementById("player");
   var token = ++playToken;
   var seconds = playStart(start);
+  if (exact) seconds = Number(start);
   audio.dataset.token = String(token);
   audio.dataset.seek = seconds == null ? "" : String(seconds);
   if (audio.dataset.srcUrl !== url) {
@@ -141,21 +142,29 @@ function renderCard(hit) {
     card.appendChild(el("p", "timing", "Audio timing coming soon"));
   } else {
     var startLabel = formatTime(hit.start_s);
+    /* A chunk holding a redacted name may start later (play_from_s, exact, no
+       pre-roll) or have no audio at all (audio_withheld). */
+    var shifted = hit.play_from_s != null ? Number(hit.play_from_s) : null;
+    if (shifted != null && !Number.isFinite(shifted)) shifted = null;
     var endLabel = formatTime(hit.end_s);
     var range = endLabel ? startLabel + "–" + endLabel : startLabel;
     card.appendChild(el("p", "timing", range));
-    if (audioHref && startLabel) {
-      var button = el("button", "play", "Play from " + startLabel);
+    var playLabel = shifted != null ? formatTime(shifted) : startLabel;
+    if (audioHref && playLabel) {
+      var button = el("button", "play", "Play from " + playLabel);
       button.type = "button";
       var sermonName = hit.sermon_number != null ? "sermon " + hit.sermon_number : (hit.sermon_title || "this sermon");
-      button.setAttribute("aria-label", "Play " + sermonName + " from " + startLabel);
+      button.setAttribute("aria-label", "Play " + sermonName + " from " + playLabel);
       var caption = (hit.sermon_title || "Sermon");
-      if (startLabel) caption += " · " + startLabel;
+      if (playLabel) caption += " · " + playLabel;
       if (spoken) caption += " · " + spoken;
       button.addEventListener("click", function () {
-        playClip(audioHref, hit.start_s, button, caption);
+        if (shifted != null) playClip(audioHref, shifted, button, caption, true);
+        else playClip(audioHref, hit.start_s, button, caption);
       });
       card.appendChild(button);
+    } else if (hit.audio_withheld) {
+      card.appendChild(el("p", "timing", "Text only: audio is withheld for this passage."));
     } else {
       card.appendChild(el("p", "timing", "No recording is linked for this passage yet."));
     }

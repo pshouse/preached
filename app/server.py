@@ -42,7 +42,10 @@ from preached.search import (  # noqa: E402
     _optional_int,
     _text_or_none,
 )
-from preached.store import EmbeddingMismatch, open_readonly  # noqa: E402
+from preached.audio_policy import flagged_play, resolve_flagged_audio  # noqa: E402
+from preached.privacy import default_config  # noqa: E402
+from preached.store import EmbeddingMismatch, hidden_rowids, open_readonly  # noqa: E402
+from preached.youtube.listing import watch_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -191,7 +194,10 @@ def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, 
     return query, k, mode
 
 
-def hit_dict(hit) -> dict:
+def hit_dict(hit, flagged_audio: str = "none") -> dict:
+    """The JSON for one result. A chunk with ``[name]`` or a review flag follows
+    the flagged-audio policy: ``none`` drops the play link, ``shifted`` starts
+    after the flagged words (``play_from_s``), ``play`` is the normal link."""
     payload = {
         "chunk_id": hit.chunk_id,
         "sermon_id": hit.sermon_id,
@@ -207,7 +213,21 @@ def hit_dict(hit) -> dict:
         "source_url": hit.source_url,
         "score": float(hit.score),
     }
-    return {key: payload[key] for key in RESULT_FIELDS}
+    result = {key: payload[key] for key in RESULT_FIELDS}
+    if getattr(hit, "flag_end_s", None) is None:
+        return result
+    allowed, play_from = flagged_play(hit.start_s, hit.end_s, hit.flag_end_s, flagged_audio)
+    if not allowed:
+        result["audio_url"] = None
+        result["audio_withheld"] = True
+        return result
+    if hit.video_id:
+        result["audio_url"] = watch_url(
+            hit.video_id, hit.start_s, end_s=hit.end_s, flag_end_s=hit.flag_end_s, policy=flagged_audio
+        )
+    if play_from is not None:
+        result["play_from_s"] = play_from
+    return result
 
 
 def default_loader(connection, model_key: str):
@@ -244,7 +264,7 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
 
 
 class App:
-    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, library: str = LIBRARY):
+    def __init__(self, connection, searcher, encode, fallback_note, model_name, hosts, static_dir, library: str = LIBRARY, flagged_audio: str | None = None):
         self.connection = connection
         self.searcher = searcher
         self.encode = encode
@@ -254,13 +274,16 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
+        # Unapproved church sermons are never served; see preached.store.hidden_rowids.
+        self.hidden = hidden_rowids(connection)
+        self.flagged_audio = resolve_flagged_audio(flagged_audio, default_config().flagged_audio)
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
 
     def health(self) -> dict:
         with self.lock:
-            count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
+            count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0]) - len(self.hidden)
         return {
             "ok": True,
             "library": self.library,
@@ -287,7 +310,7 @@ class App:
             "query": query,
             "mode": effective,
             "took_ms": int(round((time.perf_counter() - started) * 1000)),
-            "results": [hit_dict(hit) for hit in kept],
+            "results": [hit_dict(hit, self.flagged_audio) for hit in kept],
             "note": note,
         }
 
@@ -297,17 +320,19 @@ class App:
         with self.lock:
             rows = list(
                 self.connection.execute(
-                    "SELECT * FROM chunks WHERE sermon_id = ? ORDER BY rowid",
+                    "SELECT rowid AS _rowid, * FROM chunks WHERE sermon_id = ? ORDER BY rowid",
                     (sermon_id,),
                 )
             )
+        rows = [row for row in rows if row["_rowid"] not in self.hidden]
         if not rows:
             return None
         first = rows[0]
         audio_url = None
         reader = None
         for row in rows:
-            if audio_url is None:
+            flagged = row_value(row, "flag_end_s") is not None
+            if audio_url is None and not (flagged and self.flagged_audio != "play"):
                 audio_url = _text_or_none(row_value(row, "audio_url"))
             if reader is None:
                 reader = _text_or_none(row_value(row, "reader"))
@@ -324,7 +349,7 @@ class App:
         }
 
 
-def build_app(connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, library: str = LIBRARY) -> App:
+def build_app(connection, *, model_key: str, bm25_only: bool, hosts, static_dir, loader=None, library: str = LIBRARY, flagged_audio: str | None = None) -> App:
     searcher, encode, note = load_search(
         connection,
         model_key,
@@ -340,6 +365,7 @@ def build_app(connection, *, model_key: str, bm25_only: bool, hosts, static_dir,
         hosts=hosts,
         static_dir=static_dir,
         library=library,
+        flagged_audio=flagged_audio,
     )
 
 
@@ -566,7 +592,16 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Skip the embedding model and serve keyword search",
     )
+    parser.add_argument(
+        "--flagged-audio",
+        default=None,
+        help="Play links for chunks with [name] or a review flag: play, shifted or none (default none). Also $PREACHED_FLAGGED_AUDIO or the privacy TOML key.",
+    )
     args = parser.parse_args(argv)
+    try:
+        resolve_flagged_audio(args.flagged_audio, default_config().flagged_audio)
+    except (ValueError, OSError) as exc:
+        raise SystemExit(f"flagged audio policy: {exc}") from exc
     if args.model not in MODELS:
         raise SystemExit(f"unknown model {args.model}")
     library = args.library.strip()
@@ -590,6 +625,7 @@ def main(argv: list[str] | None = None) -> None:
         hosts=hosts,
         static_dir=STATIC_DIR,
         library=library,
+        flagged_audio=args.flagged_audio,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)

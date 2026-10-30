@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
+from preached.audio_policy import flagged_play, resolve_flagged_audio  # noqa: E402
+from preached.privacy import default_config  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
@@ -70,7 +72,17 @@ def play_url(audio_url, start_s) -> str:
     return f"{audio_url.split('#')[0]}#t={seek:g}"
 
 
-def print_hits(query: str, mode: str, model: str | None, hits) -> None:
+def hit_play(hit, policy: str) -> str:
+    """The play line for a hit. A chunk with ``[name]`` or a review flag follows the flagged-audio policy."""
+    allowed, play_from = flagged_play(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
+    if not allowed:
+        return "n/a (audio withheld: this passage has a redacted name)"
+    if play_from is not None:
+        return f"{play_url(hit.audio_url, play_from + PREROLL_S)}  (starts after the redacted name)"
+    return f"{play_url(hit.audio_url, hit.start_s)}  ({PREROLL_S:g} s pre-roll)"
+
+
+def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "none") -> None:
     print(f"query: {query}")
     print(f"mode: {mode}" + (f"  model: {model}" if model else ""))
     if not hits:
@@ -80,7 +92,7 @@ def print_hits(query: str, mode: str, model: str | None, hits) -> None:
         print(
             f"\n[{rank}] {clean(hit.sermon_title)}  (score {hit.score:.4f}, {clean(hit.chunk_id)})\n"
             f"    at {fmt_time(hit.start_s)} (start_s={hit.start_s})  read by {clean(hit.reader or 'n/a')}\n"
-            f"    play: {play_url(hit.audio_url, hit.start_s)}  ({PREROLL_S:g} s pre-roll)\n"
+            f"    play: {hit_play(hit, policy)}\n"
             f"    text: {clean(hit.source_url or '')}\n"
             f"    \"{clean(hit.text)}\""
         )
@@ -97,7 +109,16 @@ def main() -> None:
     parser.add_argument("--dense-weight", type=float, default=0.5)
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
     parser.add_argument("--device", default="cpu", help="device for the query embedding")
+    parser.add_argument(
+        "--flagged-audio",
+        default=None,
+        help="Play links for passages with [name] or a review flag: play, shifted or none (default none).",
+    )
     args = parser.parse_args()
+    try:
+        policy = resolve_flagged_audio(args.flagged_audio, default_config().flagged_audio)
+    except (ValueError, OSError) as exc:
+        raise SystemExit(f"error: {exc}") from exc
 
     connection = connect(args.index)
     ensure_chunks(connection)
@@ -130,7 +151,7 @@ def main() -> None:
     finally:
         if loaded is not None:
             unload(loaded)
-    print_hits(args.query, args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}", model_name, hits)
+    print_hits(args.query, args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}", model_name, hits, policy)
 
 
 if __name__ == "__main__":
