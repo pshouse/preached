@@ -9,11 +9,11 @@ dense_floor = 0.7413
 fingerprint = "affcd14fa7a7bfee"
 query_fingerprint = "66cfc353bfc19649"
 fitted_on = "eval/questions.jsonl sha256 14d9274ad6552cf9, 35 answerable + 5 unanswerable"
-results = "eval/results/2026-10-30-abstain.json"
+results = "eval/results/2026-10-30-abstain-2.json"
 
 [models.granite-english-r2]
 dense_floor = 0.8129
 fingerprint = "13e0ed78bb32d86b"
 query_fingerprint = "ab84c60ae72e3806"
 fitted_on = "eval/questions.jsonl sha256 14d9274ad6552cf9, 35 answerable + 5 unanswerable"
-results = "eval/results/2026-10-30-abstain.json"
+results = "eval/results/2026-10-30-abstain-2.json"
