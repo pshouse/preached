@@ -117,11 +117,16 @@ def scripture_match(query: str) -> str | None:
     aliases = BOOKS.get(key) or BOOKS.get(book)
     if not aliases:
         return None
-    book_or = " OR ".join(_quote(alias) for alias in aliases)
     chapter = _quote(match.group("chap"))
     verse = _quote(match.group("verse"))
-    # "Rom. 8:16" tokenizes as rom, 8, 16 within a few tokens of each other.
-    return f"({book_or}) NEAR/4 {chapter} NEAR/4 {verse}"
+    # This SQLite build accepts NEAR(a b c, N) and rejects the infix NEAR/N
+    # form. "Rom. 8:16" and "Matt. 6:24-34" keep the book, chapter, and verse
+    # within a handful of tokens. OR the aliases; a parenthesized OR cannot
+    # sit inside NEAR().
+    parts = [
+        f"NEAR({_quote(alias)} {chapter} {verse}, 8)" for alias in aliases
+    ]
+    return " OR ".join(parts)
 
 
 def content_terms(query: str) -> list[str]:

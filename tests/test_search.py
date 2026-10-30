@@ -16,6 +16,9 @@ class FtsTests(unittest.TestCase):
         self.assertIn('"rom"', match)
         self.assertIn('"8"', match)
         self.assertIn('"16"', match)
+        # SQLite 3.53 here rejects the infix "NEAR/4" form.
+        self.assertIn("NEAR(", match)
+        self.assertNotIn("NEAR/", match)
 
     def test_long_question_is_or(self) -> None:
         query = to_fts_query(
