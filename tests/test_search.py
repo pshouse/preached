@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import unittest
 
+import torch
+
+from preached.embed import LoadedModel, extended_encoder_mask, format_documents, format_query
+from preached.models import MODELS
 from preached.fts import scripture_match, to_fts_query
 from preached.metrics import mrr_at, ndcg_at, recall_at
 from preached.rank import reciprocal_rank_fusion, weighted_fusion
@@ -66,6 +70,34 @@ class MetricTests(unittest.TestCase):
             "directly answers the question here in Wesley's words",
         ]
         self.assertGreater(ndcg_at(good, quotes, 10), ndcg_at(bad, quotes, 10))
+
+
+class MaskShimTests(unittest.TestCase):
+    def test_encoder_mask_is_additive(self) -> None:
+        mask = torch.tensor([[1, 1, 0]], dtype=torch.int64)
+        extended = extended_encoder_mask(mask, mask.shape, torch.float32)
+        self.assertEqual(tuple(extended.shape), (1, 1, 1, 3))
+        self.assertEqual(float(extended[0, 0, 0, 0]), 0.0)
+        self.assertEqual(float(extended[0, 0, 0, 1]), 0.0)
+        self.assertEqual(float(extended[0, 0, 0, 2]), torch.finfo(torch.float32).min)
+        # MoE code squeezes this back to a (batch, seq) keep-mask.
+        keep = torch.where(extended.squeeze() == 0, 1, 0)
+        self.assertEqual(keep.tolist(), [1, 1, 0])
+
+    def test_empty_document_prompt_is_not_used(self) -> None:
+        loaded = LoadedModel(
+            spec=MODELS["nomic-embed-text-v2-moe"],
+            model=None,
+            device="cpu",
+            batch_size=1,
+            prompts={"document": "", "passage": "search_document: ", "query": "search_query: "},
+        )
+        docs, name = format_documents(loaded, ["Salvation by Faith"], ["By grace are ye saved."])
+        self.assertEqual(name, "passage")
+        self.assertEqual(docs, ["By grace are ye saved."])
+        text, query_name = format_query(loaded, "What did Wesley say about worry?")
+        self.assertEqual(query_name, "query")
+        self.assertEqual(text, "What did Wesley say about worry?")
 
 
 class FusionTests(unittest.TestCase):

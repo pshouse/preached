@@ -47,9 +47,53 @@ def _dtype(spec: ModelSpec, device: str):
     return torch.float32
 
 
+def extended_encoder_mask(attention_mask, input_shape, dtype, device=None):
+    """Rebuild the transformers 4 encoder padding mask.
+
+    Nomic's remote Bert calls PreTrainedModel.get_extended_attention_mask,
+    which transformers 5 removed. The encoder form is additive: 0 on tokens
+    to keep and the dtype's minimum on padding, shaped (batch, 1, 1, seq)
+    so a later squeeze() is (batch, seq).
+    """
+    torch = _torch()
+    if attention_mask is None:
+        batch, seqlen = int(input_shape[0]), int(input_shape[1])
+        attention_mask = torch.ones((batch, seqlen), device=device or "cpu")
+    if attention_mask.dim() == 3:
+        extended = attention_mask[:, None, :, :]
+    elif attention_mask.dim() == 2:
+        extended = attention_mask[:, None, None, :]
+    else:
+        raise ValueError(f"attention mask rank {attention_mask.dim()} is not 2 or 3")
+    extended = extended.to(dtype=dtype)
+    return (1.0 - extended) * torch.finfo(dtype).min
+
+
+def _install_nomic_mask_shim() -> None:
+    from transformers import PreTrainedModel
+
+    if getattr(PreTrainedModel, "get_extended_attention_mask", None) is not None:
+        return
+
+    def get_extended_attention_mask(self, attention_mask, input_shape, device=None, dtype=None):
+        torch = _torch()
+        if dtype is None:
+            dtype = getattr(self, "dtype", torch.float32)
+        if device is None:
+            device = getattr(self, "device", None)
+        return extended_encoder_mask(attention_mask, input_shape, dtype, device)
+
+    PreTrainedModel.get_extended_attention_mask = get_extended_attention_mask
+
+
 def load_model(spec: ModelSpec, device: str, batch_size: int) -> LoadedModel:
     import torch
     from sentence_transformers import SentenceTransformer
+
+    if spec.trust_remote_code:
+        # Nomic's modeling file still calls the removed helper. Other models
+        # do not. Installing it on the base class is a no-op for them.
+        _install_nomic_mask_shim()
 
     kwargs = {
         "device": device,
@@ -91,6 +135,11 @@ def _prompt_matches(loaded: LoadedModel, name: str | None, expected: str) -> boo
     if not expected:
         return True
     actual = str(loaded.prompts[name]).strip()
+    # An empty built-in prompt must not count. Nomic ships a "document" key
+    # whose value is "" beside the real "passage" prefix "search_document: ".
+    # "".startswith is false, but every string startswith "".
+    if not actual:
+        return False
     wanted = expected.strip()
     return actual.startswith(wanted[:32]) or wanted.startswith(actual[:32])
 

@@ -10,4 +10,4 @@ uv run search/bench.py
 uv run search/query.py "what did Wesley say about worry" --mode hybrid -k 5
 ```
 
-Corpus text and the SQLite index stay under `/cache`. Weights use `HF_HOME=/cache/huggingface`. How the benchmark was run, and which model to ship, is in `reports/W1-B.md` after `search/bench.py` finishes. Labeling notes are in `eval/README.md`.
+Corpus text and the SQLite index stay under `/cache`. Weights use `HF_HOME=/cache/huggingface`. The default embedder is IBM Granite English R2, hybrid RRF. How that was chosen is in `reports/W1-B.md`. Labeling notes are in `eval/README.md`.

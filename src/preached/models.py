@@ -123,7 +123,9 @@ MODELS: dict[str, ModelSpec] = {
         ),
         query_prompt="query",
         keyword_prompt="query",
-        document_prompt="document",
+        # The repo's "document" prompt is an empty string. "passage" is
+        # "search_document: ", which is the prefix the model card requires.
+        document_prompt="passage",
         query_prefix="search_query: ",
         document_prefix="search_document: ",
         trust_remote_code=True,
@@ -151,8 +153,9 @@ EXCLUDED = [
     },
 ]
 
-# Default until the benchmark picks a winner. bench/query can override.
-DEFAULT_MODEL = "embeddinggemma-2"
+# Granite English R2 with hybrid RRF won the W1-B benchmark on quality,
+# CPU latency, size, and a clean Apache-2.0 lineage. See reports/W1-B.md.
+DEFAULT_MODEL = "granite-english-r2"
 
 QUESTION_START = (
     "what", "how", "why", "when", "where", "who", "whom", "whose",
