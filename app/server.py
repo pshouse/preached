@@ -37,6 +37,7 @@ from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
     Searcher,
     display_excerpt,
+    touches_flagged,
     row_value,
     _optional_int,
     _text_or_none,
@@ -199,14 +200,15 @@ def _youtube_like(url) -> bool:
     return isinstance(url, str) and ("youtube" in url.lower() or "youtu.be" in url.lower())
 
 
-def hit_dict(hit, flagged_audio: str = "none") -> dict:
+def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False) -> dict:
     """The JSON for one result. A chunk with ``[name]`` or a review flag follows
     the flagged-audio policy: ``none`` drops the play link and both times,
     ``shifted`` starts after the flagged words (``start_s`` = ``play_from_s``,
     no ``end_s``), ``play`` is the normal link. See ``audio_policy.public_times``.
-    A YouTube link on a flagged
-    card is rebuilt from validated parts, and under ``none`` no YouTube link
-    (audio or source) is sent."""
+    ``near_flag`` (``search.touches_flagged``) withholds audio under ``none``
+    for a card whose span touches a flagged chunk. A YouTube link on a flagged
+    card is rebuilt from validated parts, and under ``none`` or ``shifted`` its
+    YouTube source link (a watch link from 0:00) is dropped."""
     payload = {
         "chunk_id": hit.chunk_id,
         "chunk_ids": hit.chunk_ids,
@@ -226,17 +228,23 @@ def hit_dict(hit, flagged_audio: str = "none") -> dict:
     result = {key: payload[key] for key in RESULT_FIELDS}
     flag_end_s = getattr(hit, "flag_end_s", None)
     if flag_end_s is None:
-        return result
-    start_s, end_s, play_from, allowed = public_times(hit.start_s, hit.end_s, flag_end_s, flagged_audio)
+        if not (near_flag and flagged_audio == "none"):
+            return result
+        # Unflagged, but its span touches a flagged chunk (search.touches_flagged):
+        # under none a play link would run on into the name, so withhold it too.
+        start_s, end_s, play_from, allowed = None, None, None, False
+    else:
+        start_s, end_s, play_from, allowed = public_times(hit.start_s, hit.end_s, flag_end_s, flagged_audio)
     result["start_s"] = start_s
     result["end_s"] = end_s
     youtube = _youtube_like(hit.audio_url) or _youtube_like(hit.source_url)
+    if youtube and flagged_audio != "play":
+        # A YouTube source link is a watch link from 0:00, which would play
+        # the name; under none or shifted only the rebuilt link may remain.
+        result["source_url"] = None
     if not allowed:
         result["audio_url"] = None
         result["audio_withheld"] = True
-        if youtube:
-            # The source link is a YouTube watch link too; none means no link.
-            result["source_url"] = None
         return result
     vid = chunk_video_id(hit.video_id, hit.audio_url, hit.source_url)
     if vid is not None or youtube:
@@ -343,11 +351,12 @@ class App:
                 effective = "bm25"
             vector = None if effective == "bm25" else self.encode(query)
             kept, confidence = search_with_confidence(self.searcher, query, vector, effective, k, self.floor)
+            nears = [self.flagged_audio == "none" and touches_flagged(self.connection, hit) for hit in kept]
         return {
             "query": query,
             "mode": effective,
             "took_ms": int(round((time.perf_counter() - started) * 1000)),
-            "results": [hit_dict(hit, self.flagged_audio) for hit in kept],
+            "results": [hit_dict(hit, self.flagged_audio, near) for hit, near in zip(kept, nears)],
             "note": note,
             # True when the page should say nothing strong was found. The
             # closest passages stay in results so a person can still look.

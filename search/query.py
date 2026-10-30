@@ -22,7 +22,7 @@ from preached.privacy import default_config  # noqa: E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
-from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
+from preached.search import PREROLL_S, Searcher, play_start, touches_flagged  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 from preached.youtube.listing import chunk_video_id, policy_watch_url, youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
@@ -89,7 +89,7 @@ def play_url(audio_url, start_s) -> str:
     return f"{audio_url.split('#')[0]}#t={seek:g}"
 
 
-def hit_play(hit, policy: str) -> str:
+def hit_play(hit, policy: str, near_flag: bool = False) -> str:
     """The play line for a hit. A chunk with ``[name]`` or a review flag follows the flagged-audio policy.
 
     A flagged YouTube chunk gets a link rebuilt from validated parts (the
@@ -98,6 +98,8 @@ def hit_play(hit, policy: str) -> str:
     (``search.touches_flagged``) withholds audio under ``none``, as the API does.
     """
     flag_end_s = getattr(hit, "flag_end_s", None)
+    if near_flag and policy == "none":
+        return WITHHELD
     _, _, play_from, allowed = public_times(hit.start_s, getattr(hit, "end_s", None), flag_end_s, policy)
     if not allowed:
         return WITHHELD
@@ -120,15 +122,18 @@ def youtube_like(url) -> bool:
     return isinstance(url, str) and ("youtube" in url.lower() or "youtu.be" in url.lower())
 
 
-def hit_text_link(hit, policy: str) -> str:
-    """The text line. A withheld passage's YouTube source link is a watch link, so it is hidden."""
+def hit_text_link(hit, policy: str, near_flag: bool = False) -> str:
+    """The text line. A flagged passage's YouTube source link is a watch link, so it is hidden unless the policy is play."""
     source_url = getattr(hit, "source_url", None)
-    if hit_play(hit, policy) == WITHHELD and youtube_like(source_url):
+    flagged = near_flag or getattr(hit, "flag_end_s", None) is not None
+    if youtube_like(source_url) and flagged and policy != "play":
+        # A watch link from 0:00 would play the name (same rule as the API).
         return "n/a"
     return clean(source_url or "")
 
 
-def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "none") -> None:
+def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "none", connection=None) -> None:
+    """``connection`` (the index) lets a card that touches a flagged chunk be withheld under ``none``."""
     print(f"query: {query}")
     print(f"mode: {mode}" + (f"  model: {model}" if model else ""))
     if not hits:
@@ -137,11 +142,14 @@ def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "no
     for rank, hit in enumerate(hits, start=1):
         # A flagged chunk under none/shifted shows no exact chunk start (see audio_policy.public_times).
         start_s, _, _, _ = public_times(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
+        near = connection is not None and policy == "none" and touches_flagged(connection, hit)
+        if near:
+            start_s = None
         print(
             f"\n[{rank}] {clean(hit.sermon_title)}  (score {hit.score:.4f}, {clean(hit.chunk_id)})\n"
             f"    at {fmt_time(start_s)} (start_s={start_s})  read by {clean(hit.reader or 'n/a')}\n"
-            f"    play: {hit_play(hit, policy)}\n"
-            f"    text: {hit_text_link(hit, policy)}\n"
+            f"    play: {hit_play(hit, policy, near)}\n"
+            f"    text: {hit_text_link(hit, policy, near)}\n"
             f"    \"{clean(hit.text)}\""
         )
 
@@ -210,7 +218,7 @@ def main() -> None:
         print_hits(args.query, mode_label, model_name, [], policy)
         print(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
         return
-    print_hits(args.query, mode_label, model_name, hits, policy)
+    print_hits(args.query, mode_label, model_name, hits, policy, connection)
     if confidence.note and hits:
         print(f"\nnote: {confidence.note}")
 

@@ -363,8 +363,16 @@ def merge_overlapping(kept: Hit, neighbour: Hit, max_words: int = MERGE_MAX_WORD
     texts share a boundary run (the chunker's sentence overlap) are merged.
     Anything else, or a merge longer than ``max_words``, returns None and
     the caller drops the neighbour as before.
+
+    Privacy: chunks are never merged when either side is flagged
+    (``flag_end_s`` set: a ``[name]`` or review item, see
+    ``preached.audio_policy``), or when their ``video_id``s differ. A merged
+    card keeps only ``kept``'s flag fields, so merging a flagged neighbour
+    into an unflagged card would give it a normal play link over the name.
     """
-    if kept.sermon_id != neighbour.sermon_id:
+    if kept.sermon_id != neighbour.sermon_id or kept.video_id != neighbour.video_id:
+        return None
+    if kept.flag_end_s is not None or neighbour.flag_end_s is not None:
         return None
     if None in (kept.word_start, kept.word_end, neighbour.word_start, neighbour.word_end):
         return None
@@ -481,6 +489,35 @@ def api_search(
     benchmark measures the list a user sees.
     """
     return dedupe_adjacent(ranked(searcher, query, vector, mode, max(pool, k)), k)
+
+
+def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
+    """Whether a card's span touches any flagged chunk of its sermon.
+
+    True when the card itself is flagged, or when any chunk of the same
+    sermon with ``flag_end_s`` set overlaps the card's word span (its time
+    span when word offsets are missing). An unflagged chunk next to a
+    flagged one holds no flagged word, but a play link keeps playing into
+    the neighbour, so under the ``none`` policy such a card gets no link
+    either. An index without ``flag_end_s`` (Wesley) never touches one.
+    """
+    if hit.flag_end_s is not None:
+        return True
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    if "flag_end_s" not in columns:
+        return False
+    base = "SELECT 1 FROM chunks WHERE sermon_id = ? AND flag_end_s IS NOT NULL"
+    if hit.word_start is not None and hit.word_end is not None and {"word_start", "word_end"} <= columns:
+        sql = base + " AND word_start < ? AND word_end > ? LIMIT 1"
+        args = (hit.sermon_id, hit.word_end, hit.word_start)
+    elif hit.start_s is not None and hit.end_s is not None:
+        sql = base + " AND start_s < ? AND end_s > ? LIMIT 1"
+        args = (hit.sermon_id, hit.end_s, hit.start_s)
+    else:
+        # No span to compare: any flagged chunk in the sermon counts.
+        sql = base + " LIMIT 1"
+        args = (hit.sermon_id,)
+    return connection.execute(sql, args).fetchone() is not None
 
 
 # CCEL keeps Wesley's paragraph numbers inline: "...to myself justice!" 8. Nearly
