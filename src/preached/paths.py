@@ -15,6 +15,14 @@ INDEX_PATH = INDEX_DIR / "wesley.sqlite"
 SERMONS_TEXT = CORPUS_DIR / "sermons.txt"
 SERMONS_JSONL = CORPUS_DIR / "sermons.jsonl"
 CHUNKS_JSONL = CORPUS_DIR / "chunks.jsonl"
+# What the index loads. W1-C's chunks carry real timestamps and audio; the
+# text-only file is the fallback. corpus/chunk_sermons.py still writes
+# CHUNKS_JSONL only, so re-chunking never overwrites the aligned file.
+ALIGNED_CHUNKS_JSONL = CORPUS_DIR / "chunks_aligned.jsonl"
+INDEX_CHUNKS_JSONL = Path(
+    os.environ.get("PREACHED_CHUNKS")
+    or (ALIGNED_CHUNKS_JSONL if ALIGNED_CHUNKS_JSONL.exists() else CHUNKS_JSONL)
+)
 NUMBER_INDEX_HTML = CORPUS_DIR / "ccel_number_index.html"
 
 CCEL_TEXT_URL = "https://www.ccel.org/ccel/w/wesley/sermons/cache/sermons.txt"

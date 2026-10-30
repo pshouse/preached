@@ -16,17 +16,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from preached import env  # noqa: F401, E402
 from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
+from preached.paths import INDEX_CHUNKS_JSONL, INDEX_PATH  # noqa: E402
 from preached.search import Searcher  # noqa: E402
 from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 
 
 def ensure_chunks(connection) -> None:
-    if not CHUNKS_JSONL.exists():
+    if not INDEX_CHUNKS_JSONL.exists():
         raise SystemExit(
-            f"missing {CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
+            f"missing {INDEX_CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
         )
-    sync_chunks(connection, CHUNKS_JSONL)
+    sync_chunks(connection, INDEX_CHUNKS_JSONL)
 
 
 def fmt_time(value) -> str:

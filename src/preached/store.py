@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS chunks (
     word_count INTEGER,
     word_start INTEGER,
     word_end INTEGER,
-    librivox_id TEXT
+    librivox_id TEXT,
+    audio_url TEXT,
+    reader TEXT,
+    text_source TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -81,6 +84,10 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.executescript(SCHEMA)
+    have = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    for column in LATE_COLUMNS:
+        if column not in have:
+            connection.execute(f"ALTER TABLE chunks ADD COLUMN {column} TEXT")
     connection.executescript(TRIGGERS)
     return connection
 
@@ -107,8 +114,10 @@ def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -
 CHUNK_COLUMNS = (
     "chunk_id", "sermon_id", "sermon_title", "text", "start_s", "end_s",
     "sermon_number", "scripture", "source_url", "word_count", "word_start",
-    "word_end", "librivox_id",
+    "word_end", "librivox_id", "audio_url", "reader", "text_source",
 )
+# Added by W1-C; an index created before them gets them by ALTER TABLE.
+LATE_COLUMNS = ("audio_url", "reader", "text_source")
 
 
 def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
@@ -117,7 +126,8 @@ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
     connection.executemany(
         f"INSERT INTO chunks ({', '.join(CHUNK_COLUMNS)}) "
         f"VALUES ({', '.join(':' + c for c in CHUNK_COLUMNS)})",
-        chunks,
+        # Text-only chunk files have no audio fields; missing keys are NULL.
+        [{column: chunk.get(column) for column in CHUNK_COLUMNS} for chunk in chunks],
     )
     connection.commit()
 
