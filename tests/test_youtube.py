@@ -695,16 +695,16 @@ class ImportTests(unittest.TestCase):
     def test_server_reloads_youtube_library_and_falls_back(self) -> None:
         """A YouTube library is served, then reloaded, then served as BM25 when vectors go away."""
         video = Video(
-            "samplevid001",
+            "samplevid02",
             "On Mercy",
             40,
             date(2024, 6, 2),
-            "https://www.youtube.com/watch?v=samplevid001",
+            "https://www.youtube.com/watch?v=samplevid02",
         )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             code, _out, err = self._run(
-                ["https://www.youtube.com/watch?v=samplevid001", "--library", "sample"],
+                ["https://www.youtube.com/watch?v=samplevid02", "--library", "sample"],
                 root,
                 lister=lambda _url: [video],
                 metadata=lambda _video: {
@@ -714,7 +714,7 @@ class ImportTests(unittest.TestCase):
                     "uploader": "A Speaker",
                     "duration": 40,
                 },
-                downloader=lambda _video, dest: dest / "samplevid001.m4a",
+                downloader=lambda _video, dest: dest / "samplevid02.m4a",
                 transcriber=lambda _path: sample_words(12.2),
                 embedder=embedder,
             )
@@ -741,9 +741,9 @@ class ImportTests(unittest.TestCase):
                     status, body = self._get(port, "/api/search?q=zephyrgrace&library=sample&mode=bm25")
                     self.assertEqual(status, 200)
                     hit = json.loads(body)["results"][0]
-                    self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid001&t=11s")
+                    self.assertEqual(hit["audio_url"], "https://www.youtube.com/watch?v=samplevid02&t=11s")
                     self.assertEqual(hit["text_source"], "asr")
-                    self.assertEqual(hit["sermon_id"], "samplevid001")
+                    self.assertEqual(hit["sermon_id"], "samplevid02")
                     self.assertIsNone(hit["reader"])
                     status, health_body = self._get(port, "/healthz")
                     self.assertEqual(status, 200)
@@ -785,7 +785,7 @@ class ImportTests(unittest.TestCase):
                 self.assertEqual(first["note"], None)
                 self.assertEqual(
                     first["results"][0]["audio_url"],
-                    "https://www.youtube.com/watch?v=samplevid001&t=11s",
+                    "https://www.youtube.com/watch?v=samplevid02&t=11s",
                 )
                 self.assertEqual(first["results"][0]["text_source"], "asr")
                 self.assertEqual(app.health()["backend"], "onnx")
@@ -794,7 +794,7 @@ class ImportTests(unittest.TestCase):
 
                 connection.execute(
                     "UPDATE chunks SET text = ? WHERE sermon_id = ?",
-                    ("A prayer for the whole church gathers here.", "samplevid001"),
+                    ("A prayer for the whole church gathers here.", "samplevid02"),
                 )
                 connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
                 connection.commit()
@@ -802,7 +802,7 @@ class ImportTests(unittest.TestCase):
                 self.assertTrue(any("prayer" in hit["text"] for hit in second["results"]))
                 self.assertEqual(
                     second["results"][0]["audio_url"],
-                    "https://www.youtube.com/watch?v=samplevid001&t=11s",
+                    "https://www.youtube.com/watch?v=samplevid02&t=11s",
                 )
                 self.assertEqual(app.health()["backend"], "onnx")
 
@@ -815,7 +815,7 @@ class ImportTests(unittest.TestCase):
                 self.assertTrue(any("prayer" in hit["text"] for hit in third["results"]))
                 self.assertEqual(
                     third["results"][0]["audio_url"],
-                    "https://www.youtube.com/watch?v=samplevid001&t=11s",
+                    "https://www.youtube.com/watch?v=samplevid02&t=11s",
                 )
                 health = app.health()
                 self.assertFalse(health["dense"])
