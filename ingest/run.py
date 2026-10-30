@@ -79,6 +79,7 @@ def write_transcript(row: dict, segments: list[dict], info: dict, tr: transcribe
             "voice_note": f"Read by LibriVox volunteer {row['reader']}; not John Wesley's voice.",
             "duration_s": info["duration_s"],
             "language": info["language"],
+            "intro_cut_s": info["intro_cut_s"],  # main pass starts here (see transcribe.py)
             "model": tr.model_name,
             "runtime": tr.runtime_info(),
             "created": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
@@ -140,7 +141,7 @@ def main() -> int:
             try:
                 t0 = time.time()
                 prompt = f"{row['work']}, by {row['author']}."
-                segments, info = tr.transcribe(path, prompt)
+                segments, info = tr.transcribe(path, prompt, title_hint=row["work"])
                 write_transcript(row, segments, info, tr)
                 wall = time.time() - t0
                 done_audio += info["duration_s"]

@@ -17,7 +17,7 @@ import manifest  # noqa: E402
 import transcribe  # noqa: E402
 
 GAP_S = 20.0  # silence/untranscribed stretch inside the searchable window worth a look
-LOOP_N = 8  # an 8-gram repeated 3+ times suggests a decoding loop
+LOOP_MAX_N = 8  # an n-gram (n <= 8) repeated 3x back-to-back suggests a decoding loop
 
 
 def main() -> None:
@@ -42,8 +42,13 @@ def main() -> None:
         if gaps:
             notes.append(f"gaps(at,len)={gaps}")
         toks = [re.sub(r"\W", "", w[2].lower()) for w in words]
-        grams = Counter(tuple(toks[i : i + LOOP_N]) for i in range(len(toks) - LOOP_N))
-        loops = [" ".join(g) for g, c in grams.items() if c >= 3]
+        # Back-to-back only: Wesley legitimately repeats his text across a sermon.
+        loops = sorted({
+            " ".join(toks[i : i + n])
+            for n in range(2, LOOP_MAX_N + 1)
+            for i in range(len(toks) - 3 * n)
+            if toks[i : i + n] == toks[i + n : i + 2 * n] == toks[i + 2 * n : i + 3 * n]
+        })
         if loops:
             notes.append(f"repeats={loops[:2]}")
         text = " ".join(s["text"] for s in t["segments"]).lower()
