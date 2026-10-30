@@ -6,8 +6,11 @@ import unittest
 
 import torch
 
-from preached.embed import LoadedModel, extended_encoder_mask, format_documents, format_query
-from preached.models import MODELS
+import dataclasses
+
+from preached.embed import extended_encoder_mask, format_documents, format_query
+from preached.models import DEFAULT_MODEL, MODELS, REFERENCE
+from preached.stats import bootstrap_ci, paired_bootstrap
 from preached.fts import scripture_match, to_fts_query
 from preached.metrics import mrr_at, ndcg_at, recall_at
 from preached.rank import reciprocal_rank_fusion, weighted_fusion
@@ -84,20 +87,59 @@ class MaskShimTests(unittest.TestCase):
         keep = torch.where(extended.squeeze() == 0, 1, 0)
         self.assertEqual(keep.tolist(), [1, 1, 0])
 
-    def test_empty_document_prompt_is_not_used(self) -> None:
-        loaded = LoadedModel(
-            spec=MODELS["nomic-embed-text-v2-moe"],
-            model=None,
-            device="cpu",
-            batch_size=1,
-            prompts={"document": "", "passage": "search_document: ", "query": "search_query: "},
-        )
-        docs, name = format_documents(loaded, ["Salvation by Faith"], ["By grace are ye saved."])
-        self.assertEqual(name, "passage")
-        self.assertEqual(docs, ["By grace are ye saved."])
-        text, query_name = format_query(loaded, "What did Wesley say about worry?")
-        self.assertEqual(query_name, "query")
-        self.assertEqual(text, "What did Wesley say about worry?")
+
+class ModelConfigTests(unittest.TestCase):
+    def test_every_model_is_pinned(self) -> None:
+        for spec in MODELS.values():
+            self.assertRegex(spec.revision, r"^[0-9a-f]{40}$", spec.key)
+        self.assertIn(DEFAULT_MODEL, MODELS)
+        self.assertIn(REFERENCE["model"], MODELS)
+
+    def test_embeddinggemma_never_fp16(self) -> None:
+        # The EmbeddingGemma cards say fp16 returns NaN or silently worse vectors.
+        for spec in MODELS.values():
+            if "embeddinggemma" in spec.hf_id:
+                self.assertNotIn("fp16", (spec.dtype_gpu, spec.dtype_cpu))
+
+    def test_gemma_prompts_match_card(self) -> None:
+        spec = MODELS["embeddinggemma-2"]
+        docs, prompt = format_documents(spec, ["Salvation by Faith (Eph 2:8)"], ["By grace are ye saved."])
+        self.assertEqual(prompt, "")
+        self.assertEqual(docs, ["title: Salvation by Faith (Eph 2:8) | text: By grace are ye saved."])
+        _, question = format_query(spec, "What did Wesley say about worry?")
+        self.assertEqual(question, "task: question answering | query: ")
+        _, keyword = format_query(spec, "Christian perfection")
+        self.assertEqual(keyword, "task: search result | query: ")
+
+    def test_nomic_uses_search_document_prefix(self) -> None:
+        spec = MODELS["nomic-embed-text-v2-moe"]
+        docs, prompt = format_documents(spec, ["t"], ["By grace are ye saved."])
+        self.assertEqual((docs, prompt), (["By grace are ye saved."], "search_document: "))
+        self.assertEqual(format_query(spec, "Christian perfection")[1], "search_query: ")
+
+    def test_granite_has_no_prefix(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        self.assertEqual(format_documents(spec, ["t"], ["x"]), (["x"], ""))
+        self.assertEqual(format_query(spec, "why pray?"), ("why pray?", ""))
+
+    def test_fingerprint_tracks_document_side_only(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        self.assertNotEqual(spec.fingerprint(), dataclasses.replace(spec, revision="0" * 40).fingerprint())
+        self.assertNotEqual(spec.fingerprint(), dataclasses.replace(spec, dtype_gpu="fp16").fingerprint())
+        self.assertEqual(spec.fingerprint(), dataclasses.replace(spec, question_prefix="q: ").fingerprint())
+
+
+class StatsTests(unittest.TestCase):
+    def test_ci_brackets_mean(self) -> None:
+        ci = bootstrap_ci([0.0, 1.0] * 20)
+        self.assertAlmostEqual(ci["mean"], 0.5)
+        self.assertLess(ci["ci95"][0], 0.5)
+        self.assertGreater(ci["ci95"][1], 0.5)
+
+    def test_paired_counts(self) -> None:
+        result = paired_bootstrap([1.0, 1.0, 0.0, 0.5], [0.0, 1.0, 0.0, 1.0])
+        self.assertEqual((result["wins"], result["ties"], result["losses"]), (1, 2, 1))
+        self.assertAlmostEqual(result["diff"], 0.125)
 
 
 class FusionTests(unittest.TestCase):

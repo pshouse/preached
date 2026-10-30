@@ -1,161 +1,105 @@
-"""Embedding models allowed for this benchmark, and the ones that are not.
+"""Embedding model specs, read from search/models.toml.
 
 AGENTS.md bars models developed in the PRC and fine-tunes or distillations
 of those models. When a base model is unclear, the model is excluded.
-
-Document strings below are the prefixes the model card tells us to use.
-Query prompts that SentenceTransformers already ships are preferred at load
-time when they match the card, so we do not double-prefix.
+Adding a model is one table in search/models.toml; nothing here changes.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+import json
+import tomllib
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+from preached.paths import repo_root
+
+DTYPES = ("fp32", "bf16", "fp16")
 
 
 @dataclass(frozen=True)
 class ModelSpec:
     key: str
     hf_id: str
-    license: str
-    developer: str
-    lineage: str
-    # SentenceTransformers prompt name for a natural-language question.
-    query_prompt: str | None = None
-    # Prompt name for a short keyword query. Falls back to query_prompt.
-    keyword_prompt: str | None = None
-    # Used when the repo has no prompt of that name.
-    query_prefix: str = ""
+    revision: str
+    license: str = ""
+    developer: str = ""
+    lineage: str = ""
+    lineage_sources: tuple[str, ...] = ()
+    params: str = ""
+    dtype_gpu: str = "fp32"
+    dtype_cpu: str = "fp32"
+    dim: int | None = None
+    question_prefix: str = ""
     keyword_prefix: str = ""
     document_prefix: str = ""
-    # When set, documents are formatted here and encoded with no extra prompt.
-    # EmbeddingGemma's "Document" prompt forces "title: none", so titles are
-    # applied by hand. Other models leave this empty and use document_prompt.
     document_template: str = ""
-    document_prompt: str | None = None
+    drop_config: tuple[str, ...] = ()
     trust_remote_code: bool = False
-    # "bf16" (EmbeddingGemma 2 card: fp16 overflows), "fp16", or "fp32".
-    gpu_dtype: str = "fp16"
-    config_kwargs: dict = field(default_factory=dict)
-    params: str = ""
+    enabled: bool = True
     gated: bool = False
 
+    def query_prefix(self, keyword: bool) -> str:
+        if keyword and self.keyword_prefix:
+            return self.keyword_prefix
+        return self.question_prefix
 
-# Order is the benchmark order.
-MODELS: dict[str, ModelSpec] = {
-    "embeddinggemma-2": ModelSpec(
-        key="embeddinggemma-2",
-        hf_id="google/embeddinggemma-2",
-        license="Apache-2.0",
-        developer="Google DeepMind",
-        lineage=(
-            "Gemma 4 text backbone from Google DeepMind (released Oct 2026). "
-            "Not a fine-tune of a PRC model. Text-only load is about 270M "
-            "of the 740M multimodal checkpoint."
-        ),
-        query_prompt="QuestionAnswering",
-        keyword_prompt="SearchQuery",
-        query_prefix="task: question answering | query: ",
-        keyword_prefix="task: search result | query: ",
-        document_template="title: {title} | text: {text}",
-        gpu_dtype="bf16",
-        config_kwargs={"vision_config": None, "audio_config": None},
-        params="270M text / 740M full",
-    ),
-    "embeddinggemma-300m": ModelSpec(
-        key="embeddinggemma-300m",
-        hf_id="google/embeddinggemma-300m",
-        license="Gemma license (gated weights)",
-        developer="Google DeepMind",
-        lineage="EmbeddingGemma (2025), Google. Predecessor of EmbeddingGemma 2.",
-        query_prompt="query",
-        keyword_prompt="query",
-        query_prefix="task: search result | query: ",
-        document_prefix="title: none | text: ",
-        document_template="title: {title} | text: {text}",
-        gpu_dtype="bf16",
-        params="300M",
-        gated=True,
-    ),
-    "granite-english-r2": ModelSpec(
-        key="granite-english-r2",
-        hf_id="ibm-granite/granite-embedding-english-r2",
-        license="Apache-2.0",
-        developer="IBM Granite Embedding Team",
-        lineage=(
-            "ModernBERT architecture (Answer.AI, US, and LightOn, France), "
-            "trained by IBM. No PRC base model. English R2 (Aug 2025, 149M) "
-            "is still the newest English Granite embedder; the May 2026 "
-            "multilingual R2 models are a different, multilingual line."
-        ),
-        gpu_dtype="fp16",
-        params="149M",
-    ),
-    "arctic-embed-l": ModelSpec(
-        key="arctic-embed-l",
-        hf_id="Snowflake/snowflake-arctic-embed-l",
-        license="Apache-2.0",
-        developer="Snowflake",
-        lineage=(
-            "Arctic-Embed 1.0 large, initialized from Microsoft "
-            "intfloat/e5-large-unsupervised (BERT-large). The newer "
-            "arctic-embed-l-v2.0 and arctic-embed-m-v2.0 are excluded: "
-            "v2 large starts from BAAI bge-m3-retromae and v2 medium from "
-            "Alibaba gte-multilingual-mlm-base (arXiv:2412.04506, sec. 2.1)."
-        ),
-        query_prompt="query",
-        keyword_prompt="query",
-        query_prefix="Represent this sentence for searching relevant passages: ",
-        gpu_dtype="fp16",
-        params="334M",
-    ),
-    "nomic-embed-text-v2-moe": ModelSpec(
-        key="nomic-embed-text-v2-moe",
-        hf_id="nomic-ai/nomic-embed-text-v2-moe",
-        license="Apache-2.0",
-        developer="Nomic AI (New York)",
-        lineage=(
-            "Latest Nomic text embedder (Feb 2025). Model tree: "
-            "FacebookAI/xlm-roberta-base (Meta) -> nomic-ai/nomic-xlm-2048 -> "
-            "nomic-embed-text-v2-moe-unsupervised -> this checkpoint. "
-            "nomic-ai/modernbert-embed-base is older (Dec 2024) and was not "
-            "substituted. XLM-RoBERTa is not a PRC model."
-        ),
-        query_prompt="query",
-        keyword_prompt="query",
-        # The repo's "document" prompt is an empty string. "passage" is
-        # "search_document: ", which is the prefix the model card requires.
-        document_prompt="passage",
-        query_prefix="search_query: ",
-        document_prefix="search_document: ",
-        trust_remote_code=True,
-        gpu_dtype="fp16",
-        params="475M total / 305M active",
-    ),
-}
+    def fingerprint(self) -> str:
+        """Everything that changes a stored document vector. CPU dtype and
+        query prefixes are excluded: they only affect query vectors."""
+        parts = {
+            "hf_id": self.hf_id,
+            "revision": self.revision,
+            "dtype_gpu": self.dtype_gpu,
+            "dim": self.dim,
+            "document_prefix": self.document_prefix,
+            "document_template": self.document_template,
+            "drop_config": list(self.drop_config),
+        }
+        return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
-EXCLUDED = [
-    {
-        "hf_id": "Snowflake/snowflake-arctic-embed-l-v2.0",
-        "reason": (
-            "Arctic-Embed 2.0 large is initialized from bge-m3-retromae "
-            "(BAAI, Beijing). AGENTS.md excludes BGE and its fine-tunes. "
-            "Source: Arctic-Embed 2.0 paper, arXiv:2412.04506, section 2.1."
-        ),
-    },
-    {
-        "hf_id": "Snowflake/snowflake-arctic-embed-m-v2.0",
-        "reason": (
-            "Arctic-Embed 2.0 medium is initialized from Alibaba "
-            "gte-multilingual-mlm-base. AGENTS.md excludes GTE and its "
-            "fine-tunes. Same paper, section 2.1."
-        ),
-    },
-]
+    def record(self) -> dict:
+        data = asdict(self)
+        data["lineage_sources"] = list(self.lineage_sources)
+        data["drop_config"] = list(self.drop_config)
+        return data
 
-# Granite English R2 with hybrid RRF won the W1-B benchmark on quality,
-# CPU latency, size, and a clean Apache-2.0 lineage. See reports/W1-B.md.
-DEFAULT_MODEL = "granite-english-r2"
+
+def config_path() -> Path:
+    return repo_root() / "search" / "models.toml"
+
+
+def load_config(path: Path | None = None) -> dict:
+    raw = tomllib.loads((path or config_path()).read_text())
+    models: dict[str, ModelSpec] = {}
+    for key, entry in raw.get("models", {}).items():
+        entry = dict(entry)
+        for name in ("lineage_sources", "drop_config"):
+            entry[name] = tuple(entry.get(name, ()))
+        spec = ModelSpec(key=key, **entry)
+        for dtype in (spec.dtype_gpu, spec.dtype_cpu):
+            if dtype not in DTYPES:
+                raise ValueError(f"{key}: dtype {dtype!r} is not one of {DTYPES}")
+        if not spec.revision:
+            raise ValueError(f"{key}: pin a revision (commit hash) in models.toml")
+        models[key] = spec
+    default = raw.get("default")
+    if default not in models:
+        raise ValueError(f"default model {default!r} is not in models.toml")
+    return {
+        "models": models,
+        "default": default,
+        "reference": raw.get("reference", {"model": default, "mode": "hybrid_rrf"}),
+        "excluded": list(raw.get("excluded", [])),
+    }
+
+
+_CONFIG = load_config()
+MODELS: dict[str, ModelSpec] = _CONFIG["models"]
+DEFAULT_MODEL: str = _CONFIG["default"]
+REFERENCE: dict = _CONFIG["reference"]
+EXCLUDED: list[dict] = _CONFIG["excluded"]
 
 QUESTION_START = (
     "what", "how", "why", "when", "where", "who", "whom", "whose",

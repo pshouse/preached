@@ -1,0 +1,109 @@
+# Embedding models for the Wesley retrieval benchmark (search/bench.py) and
+# for search/query.py. Adding a model is one [models.<key>] table.
+# How to choose values and what each field means: docs/research/embeddings.md.
+#
+# Fields
+#   hf_id, revision      Hugging Face repo and the commit hash we tested. Pin it;
+#                        a model repo can change under the same name.
+#   dtype_gpu, dtype_cpu "fp32", "bf16", or "fp16". Check the model card. Some
+#                        models (EmbeddingGemma) break silently in fp16.
+#   dim                  Output size. Below the native size means Matryoshka
+#                        truncation, then re-normalization (only if the card allows it).
+#   question_prefix      Prepended to natural-language questions.
+#   keyword_prefix       Prepended to short keyword queries (falls back to question_prefix).
+#   document_prefix      Prepended to every chunk.
+#   document_template    Optional. Formats each chunk with its sermon title,
+#                        e.g. "title: {title} | text: {text}". Used instead of document_prefix.
+#   drop_config          Sub-configs set to None at load (e.g. unused vision/audio towers).
+#   trust_remote_code    Only when the repo needs its own modeling code.
+#   enabled = false      Keep the entry for the record but skip it by default.
+#   gated = true         Weights need an accepted license and HF_TOKEN.
+
+# The model search/query.py uses unless --model is given.
+default = "granite-english-r2"
+# The (model, mode) every other row is compared against in the paired bootstrap.
+reference = { model = "granite-english-r2", mode = "hybrid_rrf" }
+
+[models.embeddinggemma-2]
+hf_id = "google/embeddinggemma-2"
+revision = "f9972ac22e696a105c482202646979e33e4b5a1e"
+license = "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)"
+developer = "Google DeepMind"
+lineage = "Gemma 4 text backbone, Google DeepMind (Oct 2026). Not derived from a PRC model."
+lineage_sources = ["https://huggingface.co/google/embeddinggemma-2", "https://arxiv.org/abs/2610.37364"]
+params = "270M text-only (740M with vision and audio towers)"
+dtype_gpu = "fp32"   # card: bf16 or fp32, never fp16
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "task: question answering | query: "
+keyword_prefix = "task: search result | query: "
+document_template = "title: {title} | text: {text}"
+drop_config = ["vision_config", "audio_config"]
+
+[models.embeddinggemma-300m]
+hf_id = "google/embeddinggemma-300m"
+revision = "57c266a740f537b4dc058e1b0cda161fd15afa75"
+license = "Gemma license (gated weights)"
+developer = "Google DeepMind"
+lineage = "EmbeddingGemma 1 (2025), Gemma 3 backbone. Predecessor of EmbeddingGemma 2."
+lineage_sources = ["https://huggingface.co/google/embeddinggemma-300m"]
+params = "308M"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "task: question answering | query: "
+keyword_prefix = "task: search result | query: "
+document_template = "title: {title} | text: {text}"
+gated = true
+enabled = false   # needs HF_TOKEN with the Gemma license accepted
+
+[models.granite-english-r2]
+hf_id = "ibm-granite/granite-embedding-english-r2"
+revision = "47ea694b257b703fee9253d75c2b1f2985180498"
+license = "Apache-2.0"
+developer = "IBM Granite Embedding Team"
+lineage = "ModernBERT architecture (Answer.AI, US; LightOn, France), pretrained and fine-tuned by IBM. No PRC base model."
+lineage_sources = ["https://huggingface.co/ibm-granite/granite-embedding-english-r2", "https://arxiv.org/abs/2508.21085"]
+params = "149M"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+# Card: no query or document prefix. CLS pooling (from the repo's 1_Pooling).
+
+[models.arctic-embed-l]
+hf_id = "Snowflake/snowflake-arctic-embed-l"
+revision = "d8fb21ca8d905d2832ee8b96c894d3298964346b"
+license = "Apache-2.0"
+developer = "Snowflake"
+lineage = "Arctic-Embed 1.0 large, initialized from Microsoft intfloat/e5-large-unsupervised (BERT-large)."
+lineage_sources = ["https://huggingface.co/Snowflake/snowflake-arctic-embed-l", "https://arxiv.org/abs/2405.05374"]
+params = "334M"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 1024
+question_prefix = "Represent this sentence for searching relevant passages: "
+
+[models.nomic-embed-text-v2-moe]
+hf_id = "nomic-ai/nomic-embed-text-v2-moe"
+revision = "1066b6599d099fbb93dfcb64f9c37a7c9e503e85"
+# Remote modeling code comes from nomic-ai/nomic-bert-2048 at 7710840340a098cfb869c4f65e87cf2b1b70caca.
+license = "Apache-2.0"
+developer = "Nomic AI (New York)"
+lineage = "FacebookAI/xlm-roberta-base (Meta) -> nomic-ai/nomic-xlm-2048 -> nomic-embed-text-v2-moe-unsupervised -> this checkpoint."
+lineage_sources = ["https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe", "https://arxiv.org/abs/2502.07972"]
+params = "475M total / 305M active (MoE)"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "search_query: "
+document_prefix = "search_document: "
+trust_remote_code = true
+
+# Considered and not run. Reasons and sources are in docs/research/embeddings.md.
+[[excluded]]
+hf_id = "Snowflake/snowflake-arctic-embed-l-v2.0"
+reason = "Initialized from BAAI bge-m3-retromae (Beijing). AGENTS.md excludes BGE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
+
+[[excluded]]
+hf_id = "Snowflake/snowflake-arctic-embed-m-v2.0"
+reason = "Initialized from Alibaba gte-multilingual-mlm-base. AGENTS.md excludes GTE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
