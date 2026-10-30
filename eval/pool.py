@@ -34,7 +34,7 @@ from preached.corpus import read_jsonl  # noqa: E402
 from preached.models import MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, questions_path  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import connect  # noqa: E402
+from preached.store import open_readonly  # noqa: E402
 
 POOL_K = 20
 CANDIDATES = ROOT / "eval" / "plain_candidates.jsonl"
@@ -68,7 +68,7 @@ def main() -> None:
     out = args.out or ROOT / "eval" / "pool" / f"pool-{today}.jsonl"
     texts_dir = args.texts or Path("/cache/eval-pool") / today
 
-    connection = connect(args.index)
+    connection = open_readonly(args.index)
     items = load_items()
     rankers: dict[str, dict[str, list[str]]] = {i["id"]: {} for i in items}
     lexical = Searcher(connection)

@@ -107,7 +107,7 @@ SYNONYMS = {
     "wesley-040": ["perfect", "sinless", "flawless"],
     "wesley-076": ["perfect", "sinless", "flawless"],
     "wesley-135": ["grief", "grieve", "bereaved", "bereavement"],
-    "wesley-042": ["devil", "demon", "tempter", "wiles", "schemes"],
+    "wesley-042": ["devil", "demon", "tempter", "wiles", "schemes", "enemy", "trick"],
     "wesley-082": ["tempted", "enticed", "enticement"],
     "wesley-016": ["sacrament", "ordinance"],
     "wesley-101": ["eucharist", "sacrament", "supper", "mass"],

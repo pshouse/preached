@@ -19,7 +19,7 @@ hit@10 means at least one labelled passage is in the top 10. Strict counts grade
 - **On `plain`, the 0.028 is mostly narrow labels.** Counting every passage a reader judged acceptable, the default puts one in the top 10 for 18 of 25 `plain` questions (0.72 [0.52, 0.88]). Strict, it does so for 2. Lenient nDCG@10 is 0.132, still low, because these questions now have 3 to 22 acceptable passages each, which raises the ideal.
 - **On questions written blind to the corpus, retrieval really is failing.** The default finds an acceptable passage in the top 10 for 3 of 28 answerable `plain-blind` questions (0.11 [0.00, 0.21]), and the right sermon in the top 10 for 10 of 28. sermon@50 is 0.82, so the material is reachable but ranked too low. These labels were picked from the same rankers' top 20 plus the grader's own corpus search, so this is not a pooling artefact.
 - **BM25 is what drags the default down on blind questions.** Granite dense alone has lenient hit@10 0.39 vs 0.11 for the default on `plain-blind`: +0.29 [+0.14, +0.46], with 8 wins and 0 losses. On `plain` the two are tied (−0.04 [−0.20, +0.12]). On `names-topic` dense alone is worse on lenient nDCG (−0.064 [−0.12, −0.01]). **I did not change anything.** Patrick decides, after confirming labels.
-- **The 0.8129 abstain floor holds on the old set but not with `plain-blind`.** The shipped `search/abstain.toml` on main is commit `adb419ec`. PR #10 replaced the earlier file at `73d86bda`. The Granite floor is unchanged at 0.8129. This PR does not edit `search/abstain.toml`.
+- **The 0.8129 abstain floor holds on the old set but not with `plain-blind`.** The shipped `search/abstain.toml` on main had file (blob) hash `adb419ec`, not a commit; PR #10 replaced the earlier file, blob `73d86bda`. (Neither hash resolves in the current clone; the blob on main now is `38e5d4bc`, from `git rev-parse HEAD:search/abstain.toml`.) The Granite floor is unchanged at 0.8129. This PR does not edit `search/abstain.toml`.
   - Refit on the 63 questions without `plain-blind`: 0.8129, unchanged.
   - Refit on all 93: 0.7753, with abstain recall 0 on the unanswerable questions.
   - With the shipped floor, 2 answerable blind questions would show "nothing found" (`p-016` "help i messed up bad", `p-017` "why wont he answer"). The 2 blind unanswerable questions score above the floor.
@@ -215,7 +215,7 @@ Lenient nDCG is *lower* than strict on the keyword groups and `names-topic`. Tha
 | share of default top-10 slots that look relevant but are unlabelled | 28% (12 questions) | 16% hold a proposed label (40 of 250 slots, all 25) |
 | lenient hit@10, default | — | 19/25 |
 
-The hybrid counts match. Dense is one question lower on each. The bench counts only grade-2 sermons; the whole gap is q-perfection-plain. The CTO's 28% was an eyeball estimate. Ours is stricter: the bar asks for an answer to the question, not just relevance to it.
+The hybrid counts match. Dense is one question lower on each. The bench counts only grade-2 sermons; the CTO's 17/24 counted any labelled sermon. The whole gap is q-perfection-plain. The CTO's 28% was an eyeball estimate. Ours is stricter: the bar asks for an answer to the question, not just relevance to it.
 
 ### Lint
 
@@ -339,3 +339,11 @@ Merge commit: `49fb5daacec19f7cd55c3192828654845dc0c7a0` (parents `14eae9e366010
 Head: `565ede0f3de4666aa300e58199a6d65985aa6840` adds this section. This sentence is the commit after it. `git log -1` on `feat/eval-deleak` is the branch head.
 
 PR #17: https://github.com/pshouse/preached/pull/17. After pushing `565ede0`, GitHub compare `main...feat/eval-deleak` reports status `ahead`, ahead 25, behind 0. Main `6c7c4ca` is an ancestor of the branch, so the PR has no conflicts with main. `git merge-tree origin/main HEAD` exits 0. The pulls API `mergeable` field was still null and `mergeable_state` was `unknown` while GitHub's merge job had not finished (checked for several minutes after the push).
+
+## EVAL-NITS (CTO should-fixes from PR #17 round 3)
+
+Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/check_title_leak.py` (with a test); its docstring now says 3+ letter content words, matching `tokens()`; `eval/pool.py` opens the index with `open_readonly`; the abstain.toml hashes above are labelled file (blob) hashes; the 17/24 note is added to the CTO cross-check. No label status, question, search, fusion, or dependency changed. No LLM, no re-grading.
+
+**Open problem.** The new `trick` synonym flags `q-satan-plain` ("How do I keep from being tricked?") as a leak against "Satan's Devices". `test_plain_questions_do_not_share_title_words` fails because of it (the only failing test). The brief says not to change questions, so I left the wording alone. It needs a decision: rewrite that question, or exempt it.
+
+**Tests.** `uv run python -m unittest discover -s tests`: 529 tests, 1 failure (above). `uv lock --check`: `Resolved 79 packages`, exit 0.
