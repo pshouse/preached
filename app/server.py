@@ -34,8 +34,10 @@ from preached import env  # noqa: E402, F401
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
+    SEARCH_POOL,
     Searcher,
-    dedupe_adjacent,
+    api_search,
+    display_excerpt,
     row_value,
     _optional_int,
     _text_or_none,
@@ -71,7 +73,6 @@ CSP = "; ".join(
 
 MODES = {"hybrid", "bm25", "dense"}
 LIBRARY = "wesley"
-SEARCH_POOL = 100
 MAX_TARGET = 2048
 MAX_BODY = 4096
 REQUEST_TIMEOUT_S = 15
@@ -190,7 +191,7 @@ def hit_dict(hit) -> dict:
         "sermon_number": hit.sermon_number,
         "sermon_title": hit.sermon_title,
         "scripture": hit.scripture,
-        "text": hit.text,
+        "text": display_excerpt(hit.text),
         "start_s": hit.start_s,
         "end_s": hit.end_s,
         "audio_url": hit.audio_url,
@@ -272,22 +273,8 @@ class App:
                 elif mode != "bm25":
                     note = BM25_ONLY_NOTE
                 effective = "bm25"
-                hits = self.searcher.bm25(query, SEARCH_POOL)
-            elif mode == "bm25":
-                hits = self.searcher.bm25(query, SEARCH_POOL)
-            else:
-                vector = self.encode(query)
-                if mode == "dense":
-                    hits = self.searcher.dense(vector, SEARCH_POOL)
-                else:
-                    hits = self.searcher.hybrid(
-                        query,
-                        vector,
-                        SEARCH_POOL,
-                        fusion="rrf",
-                        rrf_k=60,
-                    )
-        kept = dedupe_adjacent(hits, k)
+            vector = None if effective == "bm25" else self.encode(query)
+            kept = api_search(self.searcher, query, vector, effective, k, pool=SEARCH_POOL)
         return {
             "query": query,
             "mode": effective,

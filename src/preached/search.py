@@ -7,6 +7,7 @@ kept from the same sermon, so a result list does not show those words twice.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 
@@ -16,6 +17,9 @@ from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weig
 from preached.store import bm25_search, load_embeddings
 
 CANDIDATES = 100
+# GET /api/search asks the ranker for this many hits, then de-dups down to k.
+SEARCH_POOL = 100
+API_MODES = ("hybrid", "bm25", "dense")
 
 # Adjacent text chunks share a sentence boundary. Eight words is enough to
 # call that a repeat, and short enough to catch the 25% overlap on a short
@@ -243,3 +247,62 @@ def dedupe_adjacent(hits: list[Hit], limit: int) -> list[Hit]:
         if len(kept) >= limit:
             break
     return kept
+
+
+def ranked(searcher: Searcher, query: str, vector, mode: str, limit: int) -> list[Hit]:
+    """One ranker's top ``limit`` for an API mode, before de-dup.
+
+    ``hybrid`` is reciprocal rank fusion with k=60 over the top 100 of BM25
+    and dense. ``vector`` may be None for ``bm25``.
+    """
+    if mode == "bm25":
+        return searcher.bm25(query, limit)
+    if mode == "dense":
+        return searcher.dense(vector, limit)
+    if mode == "hybrid":
+        return searcher.hybrid(query, vector, limit, fusion="rrf", rrf_k=60)
+    raise ValueError(f"unknown mode {mode}")
+
+
+def api_search(
+    searcher: Searcher,
+    query: str,
+    vector,
+    mode: str,
+    k: int,
+    pool: int = SEARCH_POOL,
+) -> list[Hit]:
+    """Exactly what GET /api/search ranks: top ``pool``, then ``dedupe_adjacent`` to ``k``.
+
+    The server and ``search/bench.py --dedupe`` both call this, so the
+    benchmark measures the list a user sees.
+    """
+    return dedupe_adjacent(ranked(searcher, query, vector, mode, max(pool, k)), k)
+
+
+# CCEL keeps Wesley's paragraph numbers inline: "...to myself justice!" 8. Nearly
+# related ...". A number (optionally after a Roman section number, "IV. 1.")
+# is a paragraph number when it starts the excerpt or follows the end of a
+# sentence, and a capital letter or an opening quote follows it. "Eph. 2:8.",
+# "is, 1. That ..." (an inline list) and "p. 5." are left alone.
+PARAGRAPH_NUMBER = re.compile(
+    r"(^|[.!?][\"'\u201d\u2019)\]]*\s+)(?:[IVXL]{1,5}\.\s+)?\d{1,3}\.\s+(?=[\"'\u201c\u2018(\[]?[A-Z])"
+)
+_ABBREVIATION = re.compile(r"(?i)(?:^|\s)(?:p|pp|ver|chap|vol|no|sect|art)\.\s+$")
+
+
+def display_excerpt(text: str) -> str:
+    """Excerpt for the page: the indexed text minus CCEL paragraph numbers.
+
+    Display only. The index, BM25, embeddings, and the eval are unchanged.
+    """
+    if not text:
+        return text
+
+    def drop(match: re.Match[str]) -> str:
+        lead = match.group(1)
+        if lead and _ABBREVIATION.search(text[: match.start() + len(lead)]):
+            return match.group(0)
+        return lead.lstrip() if match.start() == 0 else lead
+
+    return PARAGRAPH_NUMBER.sub(drop, text)

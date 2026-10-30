@@ -5,6 +5,10 @@ chunks/s plus the extra VRAM this process used. CPU: embed each eval query
 and search, p50/p95. Metrics are Recall@5, MRR@10, nDCG@10 on questions that
 have a relevant passage. Unanswerable questions are scored separately so we
 can see whether "nothing strong" is distinguishable.
+
+--dedupe scores the list GET /api/search returns instead of the raw ranker:
+the top 100 (SEARCH_POOL), then dedupe_adjacent down to 10. Results go to
+reports/bench_results_dedupe.json unless --out is set.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from preached.embed import (  # noqa: E402
 from preached.metrics import mrr_at, ndcg_at, recall_at, summarize  # noqa: E402
 from preached.models import EXCLUDED, MODELS  # noqa: E402
 from preached.paths import CHUNKS_JSONL, INDEX_PATH, questions_path, repo_root  # noqa: E402
-from preached.search import Searcher  # noqa: E402
+from preached.search import SEARCH_POOL, Searcher, api_search, dedupe_adjacent  # noqa: E402
 from preached.store import (  # noqa: E402
     chunk_count,
     connect,
@@ -118,7 +122,18 @@ def score_mode(hits_text: list[str], question: dict) -> dict | None:
     }
 
 
-def run_mode(searcher: Searcher, query: str, vector, mode: str) -> list:
+API_MODE = {"bm25": "bm25", "dense": "dense", "hybrid_rrf": "hybrid"}
+
+
+def run_mode(searcher: Searcher, query: str, vector, mode: str, dedupe: bool = False) -> list:
+    if dedupe:
+        # The shipped path. hybrid_weighted is not an API mode; give it the same pool and de-dup.
+        if mode in API_MODE:
+            return api_search(searcher, query, vector, API_MODE[mode], 10)
+        if mode == "hybrid_weighted":
+            pool = searcher.hybrid(query, vector, SEARCH_POOL, fusion="weighted", dense_weight=0.5)
+            return dedupe_adjacent(pool, 10)
+        raise RuntimeError(mode)
     if mode == "bm25":
         return searcher.bm25(query, 10)
     if mode == "dense":
@@ -169,7 +184,7 @@ def _cuda() -> bool:
     return bool(torch.cuda.is_available())
 
 
-def measure_cpu_latency(spec, connection, questions: list[dict]) -> dict:
+def measure_cpu_latency(spec, connection, questions: list[dict], dedupe: bool = False) -> dict:
     loaded = load_model(spec, device="cpu", batch_size=1)
     searcher = Searcher(connection, model=spec.key)
     warmup = questions[:2] or questions
@@ -181,7 +196,7 @@ def measure_cpu_latency(spec, connection, questions: list[dict]) -> dict:
         for mode in timings:
             started = time.perf_counter()
             vector = encode_query(loaded, question["query"])
-            run_mode(searcher, question["query"], vector, mode)
+            run_mode(searcher, question["query"], vector, mode, dedupe)
             timings[mode].append((time.perf_counter() - started) * 1000)
     unload(loaded)
     return {
@@ -190,7 +205,7 @@ def measure_cpu_latency(spec, connection, questions: list[dict]) -> dict:
     }
 
 
-def evaluate_with(searcher: Searcher, questions: list[dict], encode) -> dict:
+def evaluate_with(searcher: Searcher, questions: list[dict], encode, dedupe: bool = False) -> dict:
     per_mode: dict[str, list] = {
         "bm25": [],
         "dense": [],
@@ -205,13 +220,14 @@ def evaluate_with(searcher: Searcher, questions: list[dict], encode) -> dict:
         for mode in per_mode:
             if mode != "bm25" and vector is None:
                 continue
-            hits = run_mode(searcher, question["query"], vector, mode)
+            hits = run_mode(searcher, question["query"], vector, mode, dedupe)
             texts = [hit.text for hit in hits]
             top = hits[0].score if hits else None
             if question["relevant"]:
                 metrics = score_mode(texts, question)
                 per_mode[mode].append(metrics)
                 record["modes"][mode] = metrics
+                record["modes"][mode]["top10"] = [hit.chunk_id for hit in hits[:10]]
             else:
                 negative[mode].append(top)
                 record["modes"][mode] = {"top1": top}
@@ -226,8 +242,16 @@ def main() -> None:
     parser.add_argument("--reembed", action="store_true")
     parser.add_argument("--skip-latency", action="store_true")
     parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--out", type=Path, default=repo_root() / "reports" / "bench_results.json")
+    parser.add_argument(
+        "--dedupe",
+        action="store_true",
+        help="score the API path: top SEARCH_POOL, then dedupe_adjacent to 10",
+    )
+    parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if args.out is None:
+        name = "bench_results_dedupe.json" if args.dedupe else "bench_results.json"
+        args.out = repo_root() / "reports" / name
 
     connection = connect(INDEX_PATH)
     n_chunks = ensure_chunks(connection)
@@ -240,6 +264,7 @@ def main() -> None:
         report["questions"] = len(questions)
         report["index_path"] = str(INDEX_PATH)
         report["excluded_models"] = EXCLUDED
+        report["dedupe"] = args.dedupe
         report.setdefault("models", {})
     else:
         report = {
@@ -247,9 +272,10 @@ def main() -> None:
             "questions": len(questions),
             "index_path": str(INDEX_PATH),
             "excluded_models": EXCLUDED,
+            "dedupe": args.dedupe,
             "models": {},
         }
-    print(f"chunks={n_chunks} questions={len(questions)}", flush=True)
+    print(f"chunks={n_chunks} questions={len(questions)} dedupe={args.dedupe}", flush=True)
 
     # BM25 does not depend on a model. Computed once inside the first model
     # that successfully loads, and copied onto the report.
@@ -288,7 +314,7 @@ def main() -> None:
                 def encode(query: str, _loaded=loaded) -> object:
                     return encode_query(_loaded, query)
 
-                metrics = evaluate_with(searcher, questions, encode)
+                metrics = evaluate_with(searcher, questions, encode, args.dedupe)
                 unload(loaded)
                 loaded = None
             else:
@@ -301,7 +327,7 @@ def main() -> None:
                 def encode(query: str, _loaded=loaded) -> object:
                     return encode_query(_loaded, query)
 
-                metrics = evaluate_with(searcher, questions, encode)
+                metrics = evaluate_with(searcher, questions, encode, args.dedupe)
                 unload(loaded)
                 loaded = None
             entry["metrics"] = metrics["summary"]
@@ -318,7 +344,7 @@ def main() -> None:
             entry["sqlite_bytes"] = file_bytes()
             if not args.skip_latency:
                 print("measuring CPU query latency", flush=True)
-                entry["cpu_query_latency"] = measure_cpu_latency(spec, connection, questions)
+                entry["cpu_query_latency"] = measure_cpu_latency(spec, connection, questions, args.dedupe)
                 latency = entry["cpu_query_latency"]["hybrid_rrf"]
                 print(f"hybrid cpu p50={latency['p50_ms']:.0f} ms p95={latency['p95_ms']:.0f} ms", flush=True)
             entry["status"] = "ok"
