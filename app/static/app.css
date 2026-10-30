@@ -220,6 +220,15 @@ blockquote {
 
 .colophon p { margin: 0; }
 
+.credits { margin-top: 1rem; }
+.credits h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.credits p + p { margin-top: 0.25rem; }
+.credits a { color: inherit; }
+
 .player {
   position: fixed;
   left: 0;

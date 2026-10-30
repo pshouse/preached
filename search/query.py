@@ -18,20 +18,15 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import chunk_count, connect, replace_chunks  # noqa: E402
+from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
 
 
 def ensure_chunks(connection) -> None:
-    from preached.corpus import read_jsonl
-
     if not CHUNKS_JSONL.exists():
         raise SystemExit(
             f"missing {CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
         )
-    have = chunk_count(connection)
-    chunks = read_jsonl(CHUNKS_JSONL)
-    if have != len(chunks):
-        replace_chunks(connection, chunks)
+    sync_chunks(connection, CHUNKS_JSONL)
 
 
 def fmt_time(value) -> str:
@@ -82,7 +77,10 @@ def main() -> None:
             spec = MODELS[model_name]
             loaded = load_model(spec, device=args.device, batch_size=1)
             vector = encode_query(loaded, args.query)
-            searcher = Searcher(connection, model=model_name)
+            try:
+                searcher = Searcher(connection, model=model_name)
+            except EmbeddingMismatch as exc:
+                raise SystemExit(f"error: {exc}\nOr search without vectors: --mode bm25") from exc
             if args.mode == "dense":
                 hits = searcher.dense(vector, args.k)
             else:

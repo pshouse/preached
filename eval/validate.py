@@ -1,6 +1,6 @@
 """Check that every graded quote is a real span of the chunked corpus.
 
-No model is involved. A quote matches when its normalized text is contained
+No model is involved in this check. A quote matches when its normalized text is contained
 in a chunk. Grade-2 and grade-1 quotes must match at least one chunk.
 Unanswerable items must have an empty relevant list.
 """

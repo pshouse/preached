@@ -16,6 +16,7 @@ import numpy as np
 
 from app.server import (
     FALLBACK_NOTE,
+    STALE_NOTE,
     MAX_BODY,
     MAX_TARGET,
     REQUEST_TIMEOUT_S,
@@ -23,10 +24,14 @@ from app.server import (
     App,
     Searcher,
     build_app,
+    hit_dict,
     load_search,
     make_server,
 )
-from preached.store import connect, write_embeddings
+from preached.models import MODELS
+from preached.store import connect, save_embedding_info, write_embeddings
+
+FIXTURE_FP = "fixture-fingerprint"
 
 COLUMNS = (
     "chunk_id",
@@ -177,6 +182,10 @@ def build_rich_index(path: Path) -> None:
     for index, _row in enumerate(rows):
         matrix[index, index % 4] = 1.0
     write_embeddings(connection, "fixture", [int(row[0]) for row in rows], matrix)
+    save_embedding_info(connection, "fixture", {"fingerprint": FIXTURE_FP})
+    # Granite vectors from an older revision: the fingerprint no longer matches models.toml.
+    write_embeddings(connection, "granite-english-r2", [int(row[0]) for row in rows], matrix)
+    save_embedding_info(connection, "granite-english-r2", {"fingerprint": "older-revision"})
     connection.close()
 
 
@@ -254,7 +263,7 @@ class ServerTests(unittest.TestCase):
         rich = reopen(cls.rich_path)
         cls.rich_app = App(
             connection=rich,
-            searcher=Searcher(rich, model="fixture"),
+            searcher=Searcher(rich, model="fixture", fingerprint=FIXTURE_FP),
             encode=encode_fixture,
             fallback_note=None,
             model_name="fixture",
@@ -513,6 +522,25 @@ class ServerTests(unittest.TestCase):
             self.assertNotIn("fonts.googleapis", text.lower())
             self.assertNotIn("unsafe-inline", text)
 
+    def test_credits_on_the_page(self) -> None:
+        page = (STATIC_DIR / "index.html").read_text()
+        self.assertIn('id="credits-heading"', page)
+        self.assertIn("Sermons on Several Occasions</cite> (public domain)", page)
+        self.assertIn('href="https://ccel.org/ccel/wesley/sermons"', page)
+        self.assertIn('href="https://librivox.org/"', page)
+        self.assertIn("(public domain)", page.split("LibriVox</a>", 1)[1])
+
+    def test_excerpt_hides_paragraph_numbers(self) -> None:
+        from preached.search import Hit
+
+        raw = 'to myself justice!" 8. Nearly related'
+        hit = Hit(
+            rowid=1, score=1.0, chunk_id="c", sermon_id="wesley-001", sermon_title="T",
+            text=raw, start_s=None, end_s=None, source_url=None, scripture=None,
+        )
+        self.assertEqual(hit_dict(hit)["text"], 'to myself justice!" Nearly related')
+        self.assertEqual(hit.text, raw)
+
     def test_methods_host_and_body_limits(self) -> None:
         status, headers, body = self.rich.request("POST", "/api/search?q=zealboundary")
         self.assertEqual(status, 405)
@@ -566,6 +594,38 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["error"], "internal error")
         self.assertNotIn(b"SECRET_TRACEBACK_TOKEN", body)
         self.assertNotIn(b"Traceback", body)
+
+    def test_real_fts_failure_is_a_clean_500_and_releases_the_lock(self) -> None:
+        # PR #2 makes an FTS5 error raise instead of returning "nothing found".
+        # Force a real SQLite MATCH syntax error through the shipped path.
+        import preached.store as store
+
+        original = store.to_fts_query
+        store.to_fts_query = lambda _query: '"UNTERMINATED_MATCH_TOKEN'
+        try:
+            for mode in ("bm25", "hybrid"):
+                status, headers, body = self.rich.request("GET", f"/api/search?q=zealboundary&k=3&mode={mode}")
+                self.assertEqual(status, 500, mode)
+                self.assert_secure(headers)
+                self.assertEqual(json.loads(body), {"error": "internal error"})
+                self.assertNotIn(b"UNTERMINATED_MATCH_TOKEN", body)
+                self.assertNotIn(b"Traceback", body)
+        finally:
+            store.to_fts_query = original
+        status, _headers, _body = self.rich.request("GET", "/api/search?q=zealboundary&k=3&mode=bm25")
+        self.assertEqual(status, 200)
+
+    def test_stale_vectors_fall_back_to_bm25_before_loading_weights(self) -> None:
+        connection = reopen(self.rich_path)
+        try:
+            self.assertNotEqual(MODELS["granite-english-r2"].fingerprint(), "older-revision")
+            # The real loader: the fingerprint check refuses before load_model runs.
+            searcher, encode, note = load_search(connection, "granite-english-r2")
+            self.assertIsNone(encode)
+            self.assertEqual(note, STALE_NOTE)
+            self.assertIsNone(searcher.model)
+        finally:
+            connection.close()
 
     def test_bm25_fallback_is_flagged(self) -> None:
         self.assertIsNone(self.fallback_encode)

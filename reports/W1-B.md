@@ -1,5 +1,20 @@
 # W1-B: Wesley eval set and retrieval benchmark
 
+## Audit and rerun, 2026-10-30 (read this first)
+
+The results below this section are the **first run, now superseded**. The full method, audit, and current numbers are in [`docs/research/embeddings.md`](../docs/research/embeddings.md). The current table is [`eval/results/2026-10-30.md`](../eval/results/2026-10-30.md).
+
+- **EmbeddingGemma 2 was misconfigured.** Every chunk was encoded as `title: <sermon title> (<scripture>) | text: ...`, while the other models saw the bare chunk. With the card's `title: none | text: ...`, dense Recall@5 went from 0.357 to 0.586 and hybrid RRF from 0.500 to 0.643 (nDCG@10 0.428 to 0.518). dtype, prompts, pooling, normalization, length, and dimension were all correct. bf16 and fp32 vectors agree to cosine ≥ 0.9995.
+- **Rerun:** every model in fp32 at pinned revisions, with query vectors on CPU. Granite reproduces exactly (hybrid RRF R@5 0.629, MRR@10 0.506, nDCG@10 0.558).
+- **The recommendation stands, with a smaller margin.** Granite English R2 + BM25 hybrid RRF stays the default. Gemma 2 hybrid RRF vs Granite: nDCG@10 −0.039, 95% CI [−0.12, +0.04], which is a tie. Granite wins on cost: 149M parameters and 115 ms vs 130 ms CPU p50. Hybrid beats BM25 reliably (nDCG@10 +0.157 [+0.06, +0.26]).
+- **Lineage (CTO review):** Nomic v2-MoE is now **excluded** (hard negatives filtered with BAAI BGE-M3, per arXiv:2502.07972 §4.4; that is the basis. Weaker notes: English pairs inherit Nomic v1's gte-base consistency filtering, arXiv:2402.01613, and the §7.3 ablation's best teacher was Stella 1.5B/Qwen2, final teacher not stated. CTO corrected its first review, which had called gte-base the v2 negative miner and Stella the production teacher). Arctic-embed-L v1 is **flagged lineage unclear, pending Patrick**. Granite R2: IBM trained its own encoder from scratch with the ModernBERT recipe (no ModernBERT weights), with an IBM-tuned Mistral teacher and no MS-MARCO.
+- **Label provenance is corrected.** The Grok CLI agent (an LLM) wrote the questions and chose every passage and grade. Quotes are verbatim and machine-checked. Human review by Patrick is pending (`eval/README.md`). The sentence below that called the labels "human readings" was wrong.
+- **Rerun command:** `uv run --group bench search/bench.py`. Models live in `search/models.toml`, and results go to `eval/results/YYYY-MM-DD[-N].{json,md}` without overwriting. `reports/bench_results.json` moved to `eval/results/2026-10-30-w1b-original.json` and is marked superseded.
+- **Dependencies:** Pillow and torchvision moved to the `bench` group (only Gemma 2 needs them). einops was dropped (only Nomic needed it).
+
+---
+
+
 ## What was done
 
 Built a public-domain text stand-in for the LibriVox sermons, a 40-question graded eval, and a single-SQLite retrieval CLI. Transcripts from `feat/w1-ingest` are not in this branch. Text chunks use the same record a transcript chunk will use, with `start_s` and `end_s` null.
@@ -20,7 +35,7 @@ The preface is not indexed. There is no `wesley-000`.
 
 141 sermons, 652,145 words, 8,383 chunks. Chunk params are frozen in `corpus/chunk_config.json`: target 112 words (~45 s at 150 wpm), minimum 75, maximum 150, overlap 0.25. Median 122 words, max 180. Ten chunks are 151–180 because a short heading was merged onto the next sentence with 30 words of slack. 190 chunks are under 75 words. 473 of 8,242 adjacent pairs do not overlap, because a sentence longer than 150 words is hard-split with no overlap. Do not retune unless a graded quote stops fitting in one chunk.
 
-Eval: `eval/questions.jsonl`, 25 conceptual, 10 keyword, 5 unanswerable (`relevant: []`). Labels are human readings of the CCEL text. No model judged relevance or wrote quotes. Method is in `eval/README.md`. `uv run python eval/validate.py --write` confirmed every graded quote is contained in at least one chunk.
+Eval: `eval/questions.jsonl`, 25 conceptual, 10 keyword, 5 unanswerable (`relevant: []`). ~~Labels are human readings of the CCEL text. No model judged relevance or wrote quotes.~~ Correction: the Grok CLI agent (an LLM) wrote the questions and chose every passage and grade. Quotes are verbatim CCEL text and are machine-checked. Human review is pending. Method is in `eval/README.md`. `uv run python eval/validate.py --write` confirmed every graded quote is contained in at least one chunk.
 
 Retrieval: one SQLite file, `/cache/index/wesley.sqlite`. Table `chunks`, FTS5 `chunks_fts` (porter, unicode61) on text, sermon title, and scripture, and `embeddings` as float32 L2-normalized BLOBs. Cosine is a numpy dot product. BM25 uses SQLite `bm25()` negated so higher is better. This SQLite (3.53.1) rejects infix `NEAR/N`, so scripture queries use `NEAR("rom" "8" "16", 8)`. Hybrid is reciprocal rank fusion with k=60 over the top 100 of each list. Weighted fusion min-max normalizes each list and mixes them at `dense_weight=0.5`. That weight was not swept.
 
@@ -80,7 +95,7 @@ Ship `ibm-granite/granite-embedding-english-r2` with hybrid RRF, k=60. `search/q
 
 It has the best MRR@10 (0.506) and nDCG@10 (0.558), and the best Recall@5 among RRF runs (0.629). Arctic weighted reaches 0.643 Recall@5, with worse MRR and nDCG, a larger vector (1024-d), a slower CPU query (~150 ms vs ~115 ms), and a 1,740 MiB GPU delta. The weighted mix was not tuned on a held-out set, so the higher Arctic recall is not a reason to switch. Granite is also the smallest extra VRAM (475 MiB), the fastest GPU embed (115 chunks/s), and the fastest CPU query (p50 115 ms, p95 135 ms), which is what one Sprite has to do per question.
 
-License is Apache-2.0. The base is ModernBERT (Answer.AI, US, and LightOn, France), trained by IBM. It is not a fine-tune of a PRC model. The card uses no query or document prefix. English R2 (149M, Aug 2025, arXiv:2508.21085) is still the newest English Granite embedder. `granite-embedding-small-english-r2` is the same release, smaller, not newer. The May 2026 multilingual R2 line was not selected for this English corpus.
+License is Apache-2.0. ~~The base is ModernBERT (Answer.AI, US, and LightOn, France), trained by IBM.~~ Correction: IBM trained its own encoder from scratch with the ModernBERT architecture recipe and no ModernBERT weights (arXiv:2508.21085). The teacher is an IBM-tuned Mistral, and there is no MS-MARCO. It is not derived from a PRC model. The card uses no query or document prefix. English R2 (149M, Aug 2025, arXiv:2508.21085) is still the newest English Granite embedder. `granite-embedding-small-english-r2` is the same release, smaller, not newer. The May 2026 multilingual R2 line was not selected for this English corpus.
 
 Nomic finished and does not change the pick. Its best mode is weighted hybrid (Recall@5 0.557, MRR@10 0.425, nDCG@10 0.482), behind Granite RRF on every metric. Nomic RRF is 0.529 / 0.414 / 0.474. Dense Nomic is below BM25 on MRR and nDCG. CPU hybrid RRF is 144 ms p50 and 236 ms p95, slower than Granite, and the GPU embed is 34.5 chunks/s against Granite's 115. The pure-PyTorch expert loop (megablocks not installed) is the likely cause. Quote-complete RRF is 18/35.
 
@@ -90,9 +105,9 @@ Nomic finished and does not change the pick. Its best mode is weighted hybrid (R
 | --- | --- | --- | --- |
 | embeddinggemma-2 | `google/embeddinggemma-2` | Apache-2.0, and the card points at the [Gemma 4 license](https://ai.google.dev/gemma/docs/gemma_4_license) plus the Gemma prohibited-use policy | Text-only (`vision_config` and `audio_config` null). bf16 on GPU, fp32 on CPU. Questions use `QuestionAnswering` (`task: question answering \| query: `). Keyword queries use `SearchQuery` (`task: search result \| query: `). Documents are formatted by hand as `title: {title} ({scripture}) \| text: {text}` because `prompt_name="Document"` forces `title: none`. |
 | embeddinggemma-300m | `google/embeddinggemma-300m` | Gemma license, gated weights | Skipped. Download returned 401 `GatedRepoError` with no `HF_TOKEN`. Request `Root=1-6ae49f80-3e9d80405b812b203f452157;6bd876cd-0938-4a4b-ae9b-6ebfca58c119`. |
-| granite-english-r2 | `ibm-granite/granite-embedding-english-r2` | Apache-2.0 | No prefix. fp16 on GPU. Mean pooling, 768-d, 8192 context. |
+| granite-english-r2 | `ibm-granite/granite-embedding-english-r2` | Apache-2.0 | No prefix. fp16 on GPU. CLS pooling (from the repo; "mean" was a doc error), 768-d, 8192 context. |
 | arctic-embed-l | `Snowflake/snowflake-arctic-embed-l` | Apache-2.0 | v1 large, from Microsoft `intfloat/e5-large-unsupervised`. Query prefix only, via the repo prompt `query`: `Represent this sentence for searching relevant passages: `. Documents have no prefix. fp16. |
-| nomic-embed-text-v2-moe | `nomic-ai/nomic-embed-text-v2-moe` | Apache-2.0 | Latest Nomic text embedder (Feb 2025, arXiv:2502.07972). Tree: `FacebookAI/xlm-roberta-base` → `nomic-ai/nomic-xlm-2048` → `nomic-embed-text-v2-moe-unsupervised` → this checkpoint. Allowed. Queries use prompt `query` = `search_query: `. Documents use prompt `passage` = `search_document: `. The repo also has a `document` prompt whose value is an empty string; that key is not used. fp16. `trust_remote_code`. 512-token ST window. Mean pooling. |
+| nomic-embed-text-v2-moe | `nomic-ai/nomic-embed-text-v2-moe` | Apache-2.0 | Latest Nomic text embedder (Feb 2025, arXiv:2502.07972). Tree: `FacebookAI/xlm-roberta-base` → `nomic-ai/nomic-xlm-2048` → `nomic-embed-text-v2-moe-unsupervised` → this checkpoint. ~~Allowed.~~ **Excluded after this run** (BGE-M3 filtering, arXiv:2502.07972 §4.4; see the top of this report). Queries use prompt `query` = `search_query: `. Documents use prompt `passage` = `search_document: `. The repo also has a `document` prompt whose value is an empty string; that key is not used. fp16. `trust_remote_code`. 512-token ST window. Mean pooling. |
 
 Excluded:
 

@@ -1,8 +1,10 @@
 """Load one embedding model and encode queries and passages.
 
-GPU inference stays in fp16, except EmbeddingGemma 2, whose card says fp16
-overflows and bf16 is required. Query latency is measured with a separate
-CPU load (float32). Batch size drops on CUDA OOM.
+Everything model-specific (revision, dtype, prefixes, output size) comes from
+search/models.toml through ModelSpec. Prefixes are passed to
+SentenceTransformer.encode(prompt=...) so the library handles them the same
+way as a named prompt. A document_template that needs the sermon title is
+formatted into the text itself. Batch size drops on CUDA OOM.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import numpy as np
 from preached import env  # noqa: F401  (sets HF_HOME before the heavy imports)
 from preached.models import ModelSpec, is_question
 
-# Imported lazily by load_model so BM25-only commands do not import torch.
+# torch and sentence_transformers are imported lazily so BM25-only commands stay light.
 
 
 @dataclass
@@ -24,7 +26,7 @@ class LoadedModel:
     model: object
     device: str
     batch_size: int
-    prompts: dict
+    dtype: str
 
 
 def _torch():
@@ -33,86 +35,39 @@ def _torch():
     return torch
 
 
-def _dtype(spec: ModelSpec, device: str):
-    torch = _torch()
-    if device == "cpu":
-        # The EmbeddingGemma 2 card says to use float32 on CPU, not bf16/fp16.
-        return torch.float32
-    if spec.gpu_dtype == "bf16":
-        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
-            return torch.bfloat16
-        return torch.float32
-    if spec.gpu_dtype == "fp16":
-        return torch.float16
-    return torch.float32
-
-
-def extended_encoder_mask(attention_mask, input_shape, dtype, device=None):
-    """Rebuild the transformers 4 encoder padding mask.
-
-    Nomic's remote Bert calls PreTrainedModel.get_extended_attention_mask,
-    which transformers 5 removed. The encoder form is additive: 0 on tokens
-    to keep and the dtype's minimum on padding, shaped (batch, 1, 1, seq)
-    so a later squeeze() is (batch, seq).
-    """
-    torch = _torch()
-    if attention_mask is None:
-        batch, seqlen = int(input_shape[0]), int(input_shape[1])
-        attention_mask = torch.ones((batch, seqlen), device=device or "cpu")
-    if attention_mask.dim() == 3:
-        extended = attention_mask[:, None, :, :]
-    elif attention_mask.dim() == 2:
-        extended = attention_mask[:, None, None, :]
-    else:
-        raise ValueError(f"attention mask rank {attention_mask.dim()} is not 2 or 3")
-    extended = extended.to(dtype=dtype)
-    return (1.0 - extended) * torch.finfo(dtype).min
-
-
-def _install_nomic_mask_shim() -> None:
-    from transformers import PreTrainedModel
-
-    if getattr(PreTrainedModel, "get_extended_attention_mask", None) is not None:
-        return
-
-    def get_extended_attention_mask(self, attention_mask, input_shape, device=None, dtype=None):
+def resolve_dtype(spec: ModelSpec, device: str) -> str:
+    """The dtype actually used. bf16 falls back to fp32 when the GPU lacks it."""
+    wanted = spec.dtype_cpu if device == "cpu" else spec.dtype_gpu
+    if wanted == "bf16" and device != "cpu":
         torch = _torch()
-        if dtype is None:
-            dtype = getattr(self, "dtype", torch.float32)
-        if device is None:
-            device = getattr(self, "device", None)
-        return extended_encoder_mask(attention_mask, input_shape, dtype, device)
+        if not (torch.cuda.is_available() and torch.cuda.is_bf16_supported()):
+            return "fp32"
+    return wanted
 
-    PreTrainedModel.get_extended_attention_mask = get_extended_attention_mask
+
+def _torch_dtype(name: str):
+    torch = _torch()
+    return {"fp32": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[name]
 
 
 def load_model(spec: ModelSpec, device: str, batch_size: int) -> LoadedModel:
     import torch
     from sentence_transformers import SentenceTransformer
 
-    if spec.trust_remote_code:
-        # Nomic's modeling file still calls the removed helper. Other models
-        # do not. Installing it on the base class is a no-op for them.
-        _install_nomic_mask_shim()
-
+    dtype = resolve_dtype(spec, device)
     kwargs = {
         "device": device,
-        "model_kwargs": {"torch_dtype": _dtype(spec, device)},
+        "revision": spec.revision,
+        "model_kwargs": {"torch_dtype": _torch_dtype(dtype)},
         "trust_remote_code": spec.trust_remote_code,
     }
-    if spec.config_kwargs:
-        kwargs["config_kwargs"] = dict(spec.config_kwargs)
-    try:
-        model = SentenceTransformer(spec.hf_id, **kwargs)
-    except TypeError:
-        # Older SentenceTransformer builds reject config_kwargs.
-        kwargs.pop("config_kwargs", None)
-        model = SentenceTransformer(spec.hf_id, **kwargs)
+    if spec.drop_config:
+        kwargs["config_kwargs"] = {name: None for name in spec.drop_config}
+    model = SentenceTransformer(spec.hf_id, **kwargs)
     model.eval()
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()
-    prompts = dict(getattr(model, "prompts", {}) or {})
-    return LoadedModel(spec=spec, model=model, device=device, batch_size=batch_size, prompts=prompts)
+    return LoadedModel(spec=spec, model=model, device=device, batch_size=batch_size, dtype=dtype)
 
 
 def unload(loaded: LoadedModel) -> None:
@@ -124,99 +79,53 @@ def unload(loaded: LoadedModel) -> None:
         torch.cuda.empty_cache()
 
 
-def _has_prompt(loaded: LoadedModel, name: str | None) -> bool:
-    return bool(name) and name in loaded.prompts
-
-
-def _prompt_matches(loaded: LoadedModel, name: str | None, expected: str) -> bool:
-    """Use a built-in prompt only when it is the prefix the model card specifies."""
-    if not _has_prompt(loaded, name):
-        return False
-    if not expected:
-        return True
-    actual = str(loaded.prompts[name]).strip()
-    # An empty built-in prompt must not count. Nomic ships a "document" key
-    # whose value is "" beside the real "passage" prefix "search_document: ".
-    # "".startswith is false, but every string startswith "".
-    if not actual:
-        return False
-    wanted = expected.strip()
-    return actual.startswith(wanted[:32]) or wanted.startswith(actual[:32])
-
-
-def format_documents(loaded: LoadedModel, titles: list[str], texts: list[str]) -> tuple[list[str], str | None]:
-    spec = loaded.spec
+def format_documents(spec: ModelSpec, titles: list[str], texts: list[str]) -> tuple[list[str], str]:
+    """Return (texts, prompt). A template wins over a plain prefix."""
     if spec.document_template:
-        formatted = [
-            spec.document_template.format(title=title, text=text)
-            for title, text in zip(titles, texts)
-        ]
-        return formatted, None
-    if _prompt_matches(loaded, spec.document_prompt, spec.document_prefix):
-        return list(texts), spec.document_prompt
-    if spec.document_prefix:
-        return [spec.document_prefix + text for text in texts], None
-    return list(texts), None
+        return [spec.document_template.format(title=t, text=x) for t, x in zip(titles, texts)], ""
+    return list(texts), spec.document_prefix
 
 
-def format_query(loaded: LoadedModel, query: str) -> tuple[str, str | None]:
-    spec = loaded.spec
-    keyword = not is_question(query)
-    prompt_name = spec.keyword_prompt if keyword else spec.query_prompt
-    prefix = spec.keyword_prefix if keyword and spec.keyword_prefix else spec.query_prefix
-    if _prompt_matches(loaded, prompt_name, prefix):
-        return query, prompt_name
-    if prefix:
-        return prefix + query, None
-    return query, None
+def format_query(spec: ModelSpec, query: str) -> tuple[str, str]:
+    return query, spec.query_prefix(keyword=not is_question(query))
 
 
-def describe_prompts(loaded: LoadedModel) -> dict:
-    question, question_prompt = format_query(loaded, "What did Wesley say about worry?")
-    keyword, keyword_prompt = format_query(loaded, "Christian perfection")
-    documents, document_prompt = format_documents(loaded, ["Salvation by Faith (Eph 2:8)"], ["By grace are ye saved."])
-    return {
-        "repo_prompts": {key: value for key, value in loaded.prompts.items()},
-        "question_prompt_name": question_prompt,
-        "question_example": question[:180],
-        "keyword_prompt_name": keyword_prompt,
-        "keyword_example": keyword[:180],
-        "document_prompt_name": document_prompt,
-        "document_example": documents[0][:220],
-    }
+def describe_prompts(spec: ModelSpec) -> dict:
+    """Literal strings the model sees, for the results file."""
+    q, qp = format_query(spec, "What did Wesley say about worry?")
+    k, kp = format_query(spec, "Christian perfection")
+    d, dp = format_documents(spec, ["Salvation by Faith (Eph 2:8)"], ["By grace are ye saved."])
+    return {"question": qp + q, "keyword": kp + k, "document": dp + d[0]}
 
 
-def _normalize(matrix: np.ndarray) -> np.ndarray:
+def _normalize(matrix: np.ndarray, dim: int | None) -> np.ndarray:
     matrix = np.asarray(matrix, dtype=np.float32)
+    if dim is not None and matrix.shape[1] > dim:
+        # Matryoshka truncation: keep leading dims, then re-normalize.
+        matrix = matrix[:, :dim]
     if not np.isfinite(matrix).all():
         raise RuntimeError("embeddings contain NaN or inf; refusing to index them")
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    norms = np.maximum(norms, 1e-12)
+    norms = np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-12)
     return (matrix / norms).astype(np.float32)
 
 
-def _encode(loaded: LoadedModel, texts: list[str], prompt_name: str | None, batch_size: int) -> np.ndarray:
-    kwargs = {
-        "batch_size": batch_size,
-        "normalize_embeddings": True,
-        "show_progress_bar": False,
-        "convert_to_numpy": True,
-    }
-    if prompt_name:
-        kwargs["prompt_name"] = prompt_name
+def _encode(loaded: LoadedModel, texts: list[str], prompt: str, batch_size: int) -> np.ndarray:
+    kwargs = {"batch_size": batch_size, "show_progress_bar": False, "convert_to_numpy": True}
+    if prompt:
+        kwargs["prompt"] = prompt
     matrix = loaded.model.encode(texts, **kwargs)
-    return _normalize(matrix)
+    return _normalize(matrix, loaded.spec.dim)
 
 
 def encode_documents(loaded: LoadedModel, titles: list[str], texts: list[str]) -> np.ndarray:
-    formatted, prompt_name = format_documents(loaded, titles, texts)
+    formatted, prompt = format_documents(loaded.spec, titles, texts)
     batch = loaded.batch_size
     while True:
         try:
-            return _encode(loaded, formatted, prompt_name, batch)
+            return _encode(loaded, formatted, prompt, batch)
         except RuntimeError as exc:
             message = str(exc).lower()
-            oom = "out of memory" in message or "cuda" in message and "memory" in message
+            oom = "out of memory" in message or ("cuda" in message and "memory" in message)
             if not oom or batch == 1:
                 raise
             _torch().cuda.empty_cache()
@@ -225,9 +134,8 @@ def encode_documents(loaded: LoadedModel, titles: list[str], texts: list[str]) -
 
 
 def encode_query(loaded: LoadedModel, query: str) -> np.ndarray:
-    text, prompt_name = format_query(loaded, query)
-    matrix = _encode(loaded, [text], prompt_name, batch_size=1)
-    return matrix[0]
+    text, prompt = format_query(loaded.spec, query)
+    return _encode(loaded, [text], prompt, batch_size=1)[0]
 
 
 def document_title(sermon_title: str, scripture: str | None) -> str:

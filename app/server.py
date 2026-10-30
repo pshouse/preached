@@ -34,13 +34,15 @@ from preached import env  # noqa: E402, F401
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
+    SEARCH_POOL,
     Searcher,
-    dedupe_adjacent,
+    api_search,
+    display_excerpt,
     row_value,
     _optional_int,
     _text_or_none,
 )
-from preached.store import open_readonly  # noqa: E402
+from preached.store import EmbeddingMismatch, open_readonly  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -74,7 +76,6 @@ LIBRARY = "wesley"
 # One process serves one library file. The slug is the file name under
 # /cache/index. The default stays wesley so the existing page keeps working.
 LIBRARY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-SEARCH_POOL = 100
 MAX_TARGET = 2048
 MAX_BODY = 4096
 REQUEST_TIMEOUT_S = 15
@@ -82,6 +83,7 @@ SERMON_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
+STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -193,7 +195,7 @@ def hit_dict(hit) -> dict:
         "sermon_number": hit.sermon_number,
         "sermon_title": hit.sermon_title,
         "scripture": hit.scripture,
-        "text": hit.text,
+        "text": display_excerpt(hit.text),
         "start_s": hit.start_s,
         "end_s": hit.end_s,
         "audio_url": hit.audio_url,
@@ -211,12 +213,9 @@ def default_loader(connection, model_key: str):
     from preached.embed import encode_query, load_model, unload
 
     spec = MODELS[model_key]
+    # Check the stored vectors' fingerprint before paying for the weights.
+    searcher = Searcher(connection, model=model_key)
     loaded = load_model(spec, device="cpu", batch_size=1)
-    try:
-        searcher = Searcher(connection, model=model_key)
-    except Exception:
-        unload(loaded)
-        raise
 
     def encode(query: str):
         return encode_query(loaded, query)
@@ -231,6 +230,10 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
     loader = loader or default_loader
     try:
         searcher, encode = loader(connection, model_key)
+    except EmbeddingMismatch:
+        # Never pair new query vectors with old document vectors.
+        logging.exception("stored vectors do not match search/models.toml; serving BM25 only")
+        return Searcher(connection), None, STALE_NOTE
     except Exception:
         logging.exception("embedding model unavailable; serving BM25 only")
         return Searcher(connection), None, FALLBACK_NOTE
@@ -275,22 +278,8 @@ class App:
                 elif mode != "bm25":
                     note = BM25_ONLY_NOTE
                 effective = "bm25"
-                hits = self.searcher.bm25(query, SEARCH_POOL)
-            elif mode == "bm25":
-                hits = self.searcher.bm25(query, SEARCH_POOL)
-            else:
-                vector = self.encode(query)
-                if mode == "dense":
-                    hits = self.searcher.dense(vector, SEARCH_POOL)
-                else:
-                    hits = self.searcher.hybrid(
-                        query,
-                        vector,
-                        SEARCH_POOL,
-                        fusion="rrf",
-                        rrf_k=60,
-                    )
-        kept = dedupe_adjacent(hits, k)
+            vector = None if effective == "bm25" else self.encode(query)
+            kept = api_search(self.searcher, query, vector, effective, k, pool=SEARCH_POOL)
         return {
             "query": query,
             "mode": effective,

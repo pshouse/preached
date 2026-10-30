@@ -1,4 +1,7 @@
 {
+  "superseded": true,
+  "superseded_by": "eval/results/2026-10-30.json",
+  "why": "First W1-B run (commit 7347eb7, by the Grok CLI agent). Revisions were not pinned; GPU corpus encode was fp16 (bf16 for EmbeddingGemma 2); query vectors came from the GPU load; EmbeddingGemma 2 documents carried the sermon title, which cost it about 0.23 dense Recall@5. Kept for the record. See docs/research/embeddings.md.",
   "chunks": 8383,
   "questions": 40,
   "index_path": "/cache/index/wesley.sqlite",

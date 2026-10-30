@@ -1,0 +1,2991 @@
+{
+ "started_at": "2026-10-30T11:54:29-04:00",
+ "note": "PR #3 API path (--dedupe) after merging PR #2 aaee310; index copy at /cache/rr/pc",
+ "dedupe": true,
+ "chunks": 8383,
+ "n_answerable": 35,
+ "n_unanswerable": 5,
+ "index_path": "/cache/rr/pc/index/wesley.sqlite",
+ "environment": {
+  "git_commit": "921b928ccb2887fe83430f6d1b43c68d7a7489a6",
+  "git_dirty": false,
+  "python": "3.12.16",
+  "numpy": "2.5.4",
+  "torch": "2.15.0+cu132",
+  "transformers": "5.22.1",
+  "sentence_transformers": "6.2.0",
+  "gpu": "NVIDIA GeForce RTX 3060, 615.78.08",
+  "cpu": "12th Gen Intel(R) Core(TM) i9-12900K",
+  "torch_threads": 16,
+  "questions_sha256": "14d9274ad6552cf9cfdda43d0d9c6f9233ce22dfece9df5abca96481b3c96874",
+  "chunks_sha256": "110dd51989a982c44bbeeb7db6025c8a07a635cfeaef9e360ecbd16dcede016f",
+  "chunk_config": {
+   "target_words": 112,
+   "min_words": 75,
+   "max_words": 150,
+   "overlap": 0.25,
+   "wpm": 150,
+   "note": "150 wpm spoken English: 75 words is about 30s, 150 words is about 60s. Target is about 45s. Overlap is the fraction of the previous chunk repeated, snapped to a sentence boundary. start_s and end_s stay null for these text chunks."
+  },
+  "models_toml_sha256": "c4d67f646db6f346396ae062ace20b9b16642bbfde652758b03855dd4293e293"
+ },
+ "reference": {
+  "model": "granite-english-r2",
+  "mode": "hybrid_rrf"
+ },
+ "excluded_models": [
+  {
+   "hf_id": "nomic-ai/nomic-embed-text-v2-moe",
+   "reason": "Benchmarked in W1-B, then excluded on lineage review (CTO, PR #2): the paper uses BAAI BGE-M3 to filter hard negatives for English and multilingual data (arXiv:2502.07972 sec. 4.4). AGENTS.md excludes models built with PRC models. Weaker notes: English pretraining pairs inherit Nomic v1 gte-base consistency filtering (arXiv:2402.01613); the sec. 7.3 ablation found Stella 1.5B (Qwen2-based) the best negative-mining teacher, final teacher not stated. Also the only trust_remote_code load."
+  },
+  {
+   "hf_id": "Snowflake/snowflake-arctic-embed-l-v2.0",
+   "reason": "Initialized from BAAI bge-m3-retromae (Beijing). AGENTS.md excludes BGE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
+  },
+  {
+   "hf_id": "Snowflake/snowflake-arctic-embed-m-v2.0",
+   "reason": "Initialized from Alibaba gte-multilingual-mlm-base. AGENTS.md excludes GTE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
+  }
+ ],
+ "models": {
+  "granite-english-r2": {
+   "key": "granite-english-r2",
+   "hf_id": "ibm-granite/granite-embedding-english-r2",
+   "revision": "47ea694b257b703fee9253d75c2b1f2985180498",
+   "license": "Apache-2.0",
+   "developer": "IBM Granite Embedding Team",
+   "lineage": "IBM-trained encoder, pretrained from scratch by IBM with the ModernBERT architecture recipe (no ModernBERT weights). Distilled from an IBM-tuned Mistral teacher. No MS-MARCO. No PRC base or teacher model.",
+   "lineage_sources": [
+    "https://huggingface.co/ibm-granite/granite-embedding-english-r2",
+    "https://arxiv.org/abs/2508.21085"
+   ],
+   "params": "149M",
+   "dtype_gpu": "fp32",
+   "dtype_cpu": "fp32",
+   "dim": 768,
+   "question_prefix": "",
+   "keyword_prefix": "",
+   "document_prefix": "",
+   "document_template": "",
+   "drop_config": [],
+   "trust_remote_code": false,
+   "enabled": true,
+   "gated": false,
+   "provenance": "clear",
+   "status": "ok",
+   "prompts": {
+    "question": "What did Wesley say about worry?",
+    "keyword": "Christian perfection",
+    "document": "By grace are ye saved."
+   },
+   "embed": {
+    "fingerprint": "13e0ed78bb32d86b",
+    "device": "cuda",
+    "dtype": "fp32",
+    "batch_size": 8,
+    "seconds": 85.2,
+    "chunks_per_s": 98.3,
+    "vram_baseline_mib": 4026,
+    "vram_peak_mib": 5362,
+    "vram_delta_mib": 1336,
+    "dim": 768,
+    "embedded_at": "2026-10-30T11:07:18-04:00",
+    "cached": true
+   },
+   "cpu_dtype": "fp32",
+   "per_query": {
+    "dense": {
+     "q-worry": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-087-c0070",
+       "wesley-108-c0038",
+       "wesley-068-c0065",
+       "wesley-089-c0058",
+       "wesley-041-c0005",
+       "wesley-029-c0069",
+       "wesley-126-c0037",
+       "wesley-029-c0062",
+       "wesley-041-c0043",
+       "wesley-068-c0052"
+      ]
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-043-c0022",
+       "wesley-011-c0025",
+       "wesley-010-c0029",
+       "wesley-106-c0023",
+       "wesley-010-c0009",
+       "wesley-072-c0054",
+       "wesley-018-c0048",
+       "wesley-138-c0039",
+       "wesley-011-c0012",
+       "wesley-010-c0016"
+      ]
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-089-c0050",
+       "wesley-094-c0050",
+       "wesley-050-c0032",
+       "wesley-028-c0076",
+       "wesley-061-c0073",
+       "wesley-050-c0060",
+       "wesley-068-c0034",
+       "wesley-116-c0044",
+       "wesley-068-c0041",
+       "wesley-028-c0065"
+      ]
+     },
+     "q-riches": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-061-c0072",
+       "wesley-028-c0047",
+       "wesley-068-c0036",
+       "wesley-116-c0044",
+       "wesley-068-c0034",
+       "wesley-028-c0044",
+       "wesley-108-c0012",
+       "wesley-028-c0083",
+       "wesley-126-c0020",
+       "wesley-126-c0000"
+      ]
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-046-c0023",
+       "wesley-024-c0012",
+       "wesley-089-c0021",
+       "wesley-101-c0041",
+       "wesley-025-c0075",
+       "wesley-024-c0018",
+       "wesley-026-c0023",
+       "wesley-089-c0023",
+       "wesley-016-c0037",
+       "wesley-026-c0019"
+      ]
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-026-c0072",
+       "wesley-005-c0030",
+       "wesley-138-c0022",
+       "wesley-026-c0003",
+       "wesley-021-c0044",
+       "wesley-026-c0074",
+       "wesley-128-c0046",
+       "wesley-014-c0068",
+       "wesley-006-c0060",
+       "wesley-008-c0048"
+      ]
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 1.0,
+      "ndcg@10": 0.8262346571285599,
+      "top10": [
+       "wesley-040-c0023",
+       "wesley-076-c0069",
+       "wesley-043-c0014",
+       "wesley-076-c0064",
+       "wesley-083-c0043",
+       "wesley-076-c0002",
+       "wesley-127-c0005",
+       "wesley-076-c0019",
+       "wesley-042-c0004",
+       "wesley-040-c0085"
+      ]
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-047-c0017",
+       "wesley-047-c0055",
+       "wesley-047-c0058",
+       "wesley-047-c0014",
+       "wesley-047-c0037",
+       "wesley-016-c0079",
+       "wesley-047-c0001",
+       "wesley-084-c0040",
+       "wesley-127-c0014",
+       "wesley-047-c0004"
+      ]
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.2,
+      "ndcg@10": 0.38685280723454163,
+      "top10": [
+       "wesley-047-c0031",
+       "wesley-047-c0029",
+       "wesley-135-c0006",
+       "wesley-135-c0028",
+       "wesley-135-c0003",
+       "wesley-017-c0048",
+       "wesley-054-c0032",
+       "wesley-127-c0005",
+       "wesley-099-c0052",
+       "wesley-021-c0073"
+      ]
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-024-c0007",
+       "wesley-042-c0008",
+       "wesley-113-c0042",
+       "wesley-072-c0048",
+       "wesley-062-c0013",
+       "wesley-122-c0021",
+       "wesley-072-c0056",
+       "wesley-016-c0056",
+       "wesley-034-c0070",
+       "wesley-038-c0018"
+      ]
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-082-c0036",
+       "wesley-082-c0022",
+       "wesley-086-c0074",
+       "wesley-082-c0050",
+       "wesley-082-c0044",
+       "wesley-082-c0054",
+       "wesley-029-c0075",
+       "wesley-019-c0044",
+       "wesley-082-c0028",
+       "wesley-086-c0001"
+      ]
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-101-c0002",
+       "wesley-101-c0051",
+       "wesley-101-c0012",
+       "wesley-101-c0007",
+       "wesley-101-c0010",
+       "wesley-101-c0054",
+       "wesley-101-c0048",
+       "wesley-101-c0042",
+       "wesley-101-c0021",
+       "wesley-101-c0044"
+      ]
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-016-c0014",
+       "wesley-097-c0037",
+       "wesley-098-c0001",
+       "wesley-016-c0012",
+       "wesley-042-c0024",
+       "wesley-045-c0036",
+       "wesley-059-c0031",
+       "wesley-001-c0004",
+       "wesley-042-c0063",
+       "wesley-012-c0034"
+      ]
+     },
+     "q-salvation": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-091-c0053",
+       "wesley-091-c0032",
+       "wesley-043-c0003",
+       "wesley-120-c0011",
+       "wesley-033-c0043",
+       "wesley-001-c0013",
+       "wesley-085-c0017",
+       "wesley-016-c0026",
+       "wesley-001-c0005",
+       "wesley-083-c0040"
+      ]
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-005-c0004",
+       "wesley-005-c0020",
+       "wesley-020-c0037",
+       "wesley-076-c0049",
+       "wesley-011-c0039",
+       "wesley-011-c0028",
+       "wesley-020-c0032",
+       "wesley-120-c0011",
+       "wesley-014-c0006",
+       "wesley-043-c0025"
+      ]
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-091-c0032",
+       "wesley-027-c0003",
+       "wesley-099-c0018",
+       "wesley-033-c0043",
+       "wesley-005-c0037",
+       "wesley-091-c0036",
+       "wesley-020-c0027",
+       "wesley-001-c0034",
+       "wesley-083-c0039",
+       "wesley-091-c0052"
+      ]
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996,
+      "top10": [
+       "wesley-045-c0003",
+       "wesley-045-c0017",
+       "wesley-045-c0000",
+       "wesley-018-c0052",
+       "wesley-045-c0021",
+       "wesley-045-c0038",
+       "wesley-018-c0044",
+       "wesley-045-c0072",
+       "wesley-014-c0074",
+       "wesley-001-c0025"
+      ]
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-013-c0063",
+       "wesley-013-c0025",
+       "wesley-013-c0033",
+       "wesley-013-c0000",
+       "wesley-013-c0066",
+       "wesley-014-c0007",
+       "wesley-013-c0004",
+       "wesley-013-c0029",
+       "wesley-001-c0023",
+       "wesley-013-c0010"
+      ]
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-053-c0060",
+       "wesley-044-c0015",
+       "wesley-123-c0018",
+       "wesley-044-c0050",
+       "wesley-057-c0002",
+       "wesley-127-c0032",
+       "wesley-127-c0005",
+       "wesley-044-c0048",
+       "wesley-116-c0019",
+       "wesley-005-c0036"
+      ]
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-039-c0054",
+       "wesley-039-c0057",
+       "wesley-039-c0060",
+       "wesley-039-c0065",
+       "wesley-003-c0054",
+       "wesley-081-c0024",
+       "wesley-116-c0019",
+       "wesley-104-c0004",
+       "wesley-128-c0022",
+       "wesley-038-c0066"
+      ]
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-086-c0068",
+       "wesley-086-c0007",
+       "wesley-024-c0035",
+       "wesley-086-c0026",
+       "wesley-129-c0067",
+       "wesley-013-c0025",
+       "wesley-086-c0066",
+       "wesley-018-c0006",
+       "wesley-104-c0004",
+       "wesley-019-c0043"
+      ]
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-048-c0028",
+       "wesley-048-c0003",
+       "wesley-048-c0012",
+       "wesley-048-c0014",
+       "wesley-048-c0044",
+       "wesley-116-c0035",
+       "wesley-108-c0041",
+       "wesley-105-c0038",
+       "wesley-048-c0061",
+       "wesley-048-c0021"
+      ]
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-041-c0003",
+       "wesley-041-c0038",
+       "wesley-041-c0024",
+       "wesley-041-c0011",
+       "wesley-041-c0014",
+       "wesley-041-c0036",
+       "wesley-041-c0033",
+       "wesley-041-c0030",
+       "wesley-041-c0006",
+       "wesley-029-c0069"
+      ]
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5,
+      "top10": [
+       "wesley-046-c0018",
+       "wesley-047-c0056",
+       "wesley-046-c0001",
+       "wesley-047-c0038",
+       "wesley-039-c0071",
+       "wesley-003-c0002",
+       "wesley-046-c0064",
+       "wesley-046-c0004",
+       "wesley-122-c0050",
+       "wesley-082-c0016"
+      ]
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-049-c0002",
+       "wesley-075-c0032",
+       "wesley-030-c0021",
+       "wesley-022-c0071",
+       "wesley-049-c0048",
+       "wesley-080-c0034",
+       "wesley-049-c0026",
+       "wesley-049-c0005",
+       "wesley-038-c0043",
+       "wesley-081-c0034"
+      ]
+     },
+     "k-romans-8-16": {
+      "sermon@5": 0.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-011-c0000",
+       "wesley-008-c0000",
+       "wesley-040-c0074",
+       "wesley-060-c0000",
+       "wesley-128-c0001",
+       "wesley-007-c0050",
+       "wesley-009-c0000",
+       "wesley-001-c0045",
+       "wesley-050-c0000",
+       "wesley-085-c0039"
+      ]
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-040-c0023",
+       "wesley-076-c0069",
+       "wesley-076-c0064",
+       "wesley-040-c0085",
+       "wesley-076-c0003",
+       "wesley-040-c0004",
+       "wesley-076-c0016",
+       "wesley-076-c0057",
+       "wesley-043-c0014",
+       "wesley-076-c0019"
+      ]
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-016-c0013",
+       "wesley-098-c0001",
+       "wesley-016-c0063",
+       "wesley-016-c0084",
+       "wesley-001-c0004",
+       "wesley-016-c0073",
+       "wesley-001-c0001",
+       "wesley-016-c0021",
+       "wesley-016-c0025",
+       "wesley-097-c0037"
+      ]
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-010-c0022",
+       "wesley-011-c0006",
+       "wesley-011-c0014",
+       "wesley-011-c0024",
+       "wesley-010-c0005",
+       "wesley-138-c0039",
+       "wesley-011-c0003",
+       "wesley-010-c0036",
+       "wesley-011-c0011",
+       "wesley-018-c0025"
+      ]
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-050-c0012",
+       "wesley-084-c0007",
+       "wesley-084-c0004",
+       "wesley-084-c0012",
+       "wesley-126-c0039",
+       "wesley-050-c0032",
+       "wesley-124-c0023",
+       "wesley-087-c0045",
+       "wesley-050-c0061",
+       "wesley-051-c0066"
+      ]
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-029-c0057",
+       "wesley-088-c0001",
+       "wesley-040-c0003",
+       "wesley-040-c0000",
+       "wesley-023-c0064",
+       "wesley-040-c0062",
+       "wesley-089-c0000",
+       "wesley-073-c0004",
+       "wesley-063-c0059",
+       "wesley-040-c0068"
+      ]
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-082-c0000",
+       "wesley-082-c0010",
+       "wesley-099-c0019",
+       "wesley-075-c0013",
+       "wesley-139-c0000",
+       "wesley-089-c0000",
+       "wesley-013-c0017",
+       "wesley-091-c0002",
+       "wesley-091-c0000",
+       "wesley-104-c0041"
+      ]
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-006-c0061",
+       "wesley-026-c0003",
+       "wesley-086-c0021",
+       "wesley-028-c0000",
+       "wesley-021-c0001",
+       "wesley-098-c0004",
+       "wesley-021-c0009",
+       "wesley-022-c0000",
+       "wesley-139-c0004",
+       "wesley-036-c0018"
+      ]
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-042-c0000",
+       "wesley-104-c0041",
+       "wesley-075-c0013",
+       "wesley-042-c0034",
+       "wesley-040-c0069",
+       "wesley-008-c0013",
+       "wesley-027-c0089",
+       "wesley-013-c0037",
+       "wesley-082-c0000",
+       "wesley-075-c0009"
+      ]
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5,
+      "top10": [
+       "wesley-048-c0000",
+       "wesley-016-c0033",
+       "wesley-101-c0000",
+       "wesley-040-c0092",
+       "wesley-040-c0078",
+       "wesley-108-c0040",
+       "wesley-104-c0011",
+       "wesley-104-c0035",
+       "wesley-030-c0053",
+       "wesley-112-c0000"
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-029-c0062",
+       "wesley-029-c0064",
+       "wesley-126-c0011",
+       "wesley-141-c0063",
+       "wesley-089-c0058",
+       "wesley-041-c0005",
+       "wesley-041-c0017",
+       "wesley-135-c0013",
+       "wesley-029-c0043",
+       "wesley-050-c0048"
+      ]
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-043-c0022",
+       "wesley-010-c0030",
+       "wesley-010-c0010",
+       "wesley-011-c0025",
+       "wesley-018-c0048",
+       "wesley-106-c0023",
+       "wesley-128-c0026",
+       "wesley-011-c0012",
+       "wesley-040-c0011",
+       "wesley-011-c0006"
+      ]
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-028-c0076",
+       "wesley-089-c0050",
+       "wesley-050-c0060",
+       "wesley-028-c0083",
+       "wesley-093-c0030",
+       "wesley-050-c0031",
+       "wesley-028-c0065",
+       "wesley-061-c0073",
+       "wesley-094-c0050",
+       "wesley-028-c0080"
+      ]
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-087-c0044",
+       "wesley-108-c0012",
+       "wesley-087-c0003",
+       "wesley-068-c0036",
+       "wesley-028-c0047",
+       "wesley-126-c0000",
+       "wesley-094-c0050",
+       "wesley-061-c0073",
+       "wesley-126-c0020",
+       "wesley-126-c0016"
+      ]
+     },
+     "q-prayer": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-025-c0075",
+       "wesley-101-c0041",
+       "wesley-016-c0037",
+       "wesley-089-c0021",
+       "wesley-026-c0018",
+       "wesley-046-c0023",
+       "wesley-092-c0041",
+       "wesley-025-c0073",
+       "wesley-026-c0029",
+       "wesley-016-c0080"
+      ]
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5,
+      "top10": [
+       "wesley-026-c0072",
+       "wesley-128-c0046",
+       "wesley-026-c0003",
+       "wesley-026-c0074",
+       "wesley-098-c0054",
+       "wesley-049-c0011",
+       "wesley-049-c0007",
+       "wesley-087-c0060",
+       "wesley-069-c0055",
+       "wesley-002-c0017"
+      ]
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-127-c0005",
+       "wesley-040-c0024",
+       "wesley-040-c0004",
+       "wesley-083-c0043",
+       "wesley-076-c0016",
+       "wesley-042-c0004",
+       "wesley-048-c0051",
+       "wesley-040-c0085",
+       "wesley-043-c0015",
+       "wesley-023-c0086"
+      ]
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333,
+      "top10": [
+       "wesley-047-c0017",
+       "wesley-047-c0058",
+       "wesley-047-c0014",
+       "wesley-047-c0055",
+       "wesley-047-c0003",
+       "wesley-047-c0021",
+       "wesley-047-c0000",
+       "wesley-047-c0037",
+       "wesley-047-c0004",
+       "wesley-027-c0030"
+      ]
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-135-c0003",
+       "wesley-047-c0030",
+       "wesley-135-c0028",
+       "wesley-135-c0006",
+       "wesley-135-c0000",
+       "wesley-021-c0074",
+       "wesley-135-c0012",
+       "wesley-135-c0024",
+       "wesley-003-c0037",
+       "wesley-096-c0054"
+      ]
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-042-c0008",
+       "wesley-042-c0044",
+       "wesley-042-c0000",
+       "wesley-002-c0030",
+       "wesley-046-c0031",
+       "wesley-024-c0007",
+       "wesley-042-c0012",
+       "wesley-113-c0042",
+       "wesley-042-c0048",
+       "wesley-038-c0062"
+      ]
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333,
+      "top10": [
+       "wesley-082-c0036",
+       "wesley-082-c0050",
+       "wesley-029-c0075",
+       "wesley-082-c0054",
+       "wesley-082-c0010",
+       "wesley-082-c0034",
+       "wesley-082-c0000",
+       "wesley-082-c0044",
+       "wesley-082-c0022",
+       "wesley-080-c0043"
+      ]
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-101-c0001",
+       "wesley-101-c0051",
+       "wesley-101-c0012",
+       "wesley-101-c0007",
+       "wesley-101-c0042",
+       "wesley-101-c0010",
+       "wesley-101-c0020",
+       "wesley-101-c0047",
+       "wesley-101-c0049",
+       "wesley-101-c0044"
+      ]
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-016-c0013",
+       "wesley-037-c0055",
+       "wesley-098-c0001",
+       "wesley-045-c0036",
+       "wesley-042-c0024",
+       "wesley-047-c0063",
+       "wesley-016-c0022",
+       "wesley-042-c0062",
+       "wesley-016-c0005",
+       "wesley-014-c0068"
+      ]
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1,
+      "ndcg@10": 0.2890648263178878,
+      "top10": [
+       "wesley-043-c0003",
+       "wesley-091-c0053",
+       "wesley-001-c0013",
+       "wesley-030-c0066",
+       "wesley-085-c0017",
+       "wesley-016-c0026",
+       "wesley-001-c0005",
+       "wesley-014-c0054",
+       "wesley-083-c0040",
+       "wesley-001-c0034"
+      ]
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-011-c0028",
+       "wesley-035-c0038",
+       "wesley-005-c0041",
+       "wesley-005-c0019",
+       "wesley-005-c0028",
+       "wesley-020-c0037",
+       "wesley-005-c0044",
+       "wesley-011-c0039",
+       "wesley-043-c0025",
+       "wesley-006-c0028"
+      ]
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-091-c0032",
+       "wesley-033-c0043",
+       "wesley-001-c0034",
+       "wesley-083-c0040",
+       "wesley-030-c0066",
+       "wesley-005-c0037",
+       "wesley-001-c0032",
+       "wesley-099-c0013",
+       "wesley-017-c0036",
+       "wesley-020-c0027"
+      ]
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996,
+      "top10": [
+       "wesley-045-c0003",
+       "wesley-045-c0017",
+       "wesley-045-c0000",
+       "wesley-045-c0038",
+       "wesley-045-c0072",
+       "wesley-018-c0052",
+       "wesley-018-c0000",
+       "wesley-045-c0062",
+       "wesley-045-c0021",
+       "wesley-045-c0049"
+      ]
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-013-c0063",
+       "wesley-013-c0025",
+       "wesley-013-c0065",
+       "wesley-014-c0007",
+       "wesley-013-c0061",
+       "wesley-043-c0039",
+       "wesley-008-c0021",
+       "wesley-013-c0000",
+       "wesley-008-c0050",
+       "wesley-046-c0015"
+      ]
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-044-c0048",
+       "wesley-044-c0000",
+       "wesley-044-c0015",
+       "wesley-044-c0051",
+       "wesley-127-c0032",
+       "wesley-044-c0013",
+       "wesley-057-c0002",
+       "wesley-053-c0060",
+       "wesley-001-c0014",
+       "wesley-034-c0025"
+      ]
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-039-c0054",
+       "wesley-039-c0060",
+       "wesley-039-c0057",
+       "wesley-039-c0063",
+       "wesley-128-c0023",
+       "wesley-053-c0071",
+       "wesley-039-c0065",
+       "wesley-074-c0030",
+       "wesley-116-c0019",
+       "wesley-120-c0024"
+      ]
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-086-c0007",
+       "wesley-086-c0068",
+       "wesley-086-c0065",
+       "wesley-086-c0009",
+       "wesley-013-c0025",
+       "wesley-086-c0026",
+       "wesley-013-c0031",
+       "wesley-086-c0055",
+       "wesley-085-c0036",
+       "wesley-024-c0035"
+      ]
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5,
+      "top10": [
+       "wesley-048-c0028",
+       "wesley-048-c0012",
+       "wesley-048-c0003",
+       "wesley-048-c0014",
+       "wesley-116-c0035",
+       "wesley-048-c0043",
+       "wesley-105-c0038",
+       "wesley-048-c0055",
+       "wesley-108-c0041",
+       "wesley-048-c0037"
+      ]
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-041-c0003",
+       "wesley-041-c0037",
+       "wesley-041-c0024",
+       "wesley-041-c0014",
+       "wesley-041-c0011",
+       "wesley-041-c0008",
+       "wesley-041-c0030",
+       "wesley-041-c0033",
+       "wesley-041-c0035",
+       "wesley-041-c0021"
+      ]
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-046-c0064",
+       "wesley-046-c0004",
+       "wesley-009-c0006",
+       "wesley-046-c0002",
+       "wesley-047-c0056",
+       "wesley-046-c0018",
+       "wesley-046-c0036",
+       "wesley-046-c0074",
+       "wesley-045-c0033",
+       "wesley-003-c0002"
+      ]
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-049-c0002",
+       "wesley-049-c0026",
+       "wesley-049-c0048",
+       "wesley-030-c0021",
+       "wesley-075-c0031",
+       "wesley-022-c0071",
+       "wesley-049-c0008",
+       "wesley-049-c0052",
+       "wesley-030-c0062",
+       "wesley-049-c0005"
+      ]
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-011-c0000",
+       "wesley-010-c0000",
+       "wesley-010-c0066",
+       "wesley-018-c0027",
+       "wesley-008-c0000",
+       "wesley-040-c0074",
+       "wesley-060-c0000",
+       "wesley-010-c0011",
+       "wesley-128-c0001",
+       "wesley-010-c0006"
+      ]
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-040-c0023",
+       "wesley-040-c0004",
+       "wesley-040-c0085",
+       "wesley-076-c0057",
+       "wesley-076-c0016",
+       "wesley-076-c0013",
+       "wesley-040-c0055",
+       "wesley-023-c0084",
+       "wesley-023-c0086",
+       "wesley-040-c0000"
+      ]
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-016-c0013",
+       "wesley-098-c0001",
+       "wesley-016-c0062",
+       "wesley-016-c0084",
+       "wesley-016-c0073",
+       "wesley-016-c0021",
+       "wesley-016-c0028",
+       "wesley-016-c0005",
+       "wesley-016-c0025",
+       "wesley-016-c0019"
+      ]
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-010-c0005",
+       "wesley-018-c0024",
+       "wesley-011-c0018",
+       "wesley-011-c0014",
+       "wesley-011-c0035",
+       "wesley-011-c0024",
+       "wesley-011-c0059",
+       "wesley-011-c0006",
+       "wesley-011-c0047",
+       "wesley-010-c0000"
+      ]
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-050-c0012",
+       "wesley-084-c0007",
+       "wesley-084-c0012",
+       "wesley-084-c0004",
+       "wesley-050-c0032",
+       "wesley-087-c0044",
+       "wesley-050-c0061",
+       "wesley-126-c0039",
+       "wesley-068-c0041",
+       "wesley-050-c0049"
+      ]
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-040-c0000",
+       "wesley-040-c0068",
+       "wesley-040-c0053",
+       "wesley-040-c0062",
+       "wesley-040-c0016",
+       "wesley-040-c0073",
+       "wesley-040-c0084",
+       "wesley-029-c0057",
+       "wesley-040-c0007",
+       "wesley-088-c0001"
+      ]
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-082-c0010",
+       "wesley-082-c0000",
+       "wesley-082-c0002",
+       "wesley-040-c0061",
+       "wesley-082-c0006",
+       "wesley-099-c0019",
+       "wesley-075-c0013",
+       "wesley-139-c0000",
+       "wesley-082-c0020",
+       "wesley-089-c0000"
+      ]
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-006-c0061",
+       "wesley-029-c0003",
+       "wesley-026-c0003",
+       "wesley-029-c0050",
+       "wesley-086-c0021",
+       "wesley-029-c0083",
+       "wesley-028-c0000",
+       "wesley-029-c0023",
+       "wesley-021-c0001",
+       "wesley-029-c0015"
+      ]
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-042-c0000",
+       "wesley-042-c0034",
+       "wesley-104-c0041",
+       "wesley-042-c0040",
+       "wesley-075-c0013",
+       "wesley-042-c0058",
+       "wesley-042-c0032",
+       "wesley-040-c0069",
+       "wesley-042-c0018",
+       "wesley-008-c0013"
+      ]
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-101-c0000",
+       "wesley-048-c0000",
+       "wesley-016-c0033",
+       "wesley-101-c0035",
+       "wesley-101-c0054",
+       "wesley-040-c0092",
+       "wesley-101-c0051",
+       "wesley-101-c0017",
+       "wesley-040-c0078",
+       "wesley-101-c0037"
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "q-worry": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-141-c0063",
+       "wesley-029-c0064",
+       "wesley-087-c0070",
+       "wesley-029-c0062",
+       "wesley-029-c0002",
+       "wesley-108-c0038",
+       "wesley-042-c0034",
+       "wesley-089-c0058",
+       "wesley-041-c0005",
+       "wesley-068-c0065"
+      ]
+     },
+     "q-assurance": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-043-c0022",
+       "wesley-010-c0010",
+       "wesley-010-c0030",
+       "wesley-011-c0025",
+       "wesley-106-c0023",
+       "wesley-128-c0026",
+       "wesley-018-c0048",
+       "wesley-016-c0057",
+       "wesley-072-c0054",
+       "wesley-011-c0012"
+      ]
+     },
+     "q-money": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-028-c0076",
+       "wesley-089-c0050",
+       "wesley-094-c0050",
+       "wesley-028-c0083",
+       "wesley-050-c0060",
+       "wesley-050-c0032",
+       "wesley-061-c0073",
+       "wesley-052-c0021",
+       "wesley-093-c0030",
+       "wesley-028-c0065"
+      ]
+     },
+     "q-riches": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-087-c0044",
+       "wesley-087-c0003",
+       "wesley-108-c0012",
+       "wesley-126-c0000",
+       "wesley-028-c0047",
+       "wesley-068-c0036",
+       "wesley-094-c0050",
+       "wesley-061-c0072",
+       "wesley-087-c0035",
+       "wesley-126-c0020"
+      ]
+     },
+     "q-prayer": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-025-c0075",
+       "wesley-101-c0041",
+       "wesley-016-c0037",
+       "wesley-089-c0021",
+       "wesley-046-c0023",
+       "wesley-026-c0018",
+       "wesley-024-c0012",
+       "wesley-091-c0039",
+       "wesley-092-c0041",
+       "wesley-024-c0018"
+      ]
+     },
+     "q-forgiveness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287,
+      "top10": [
+       "wesley-026-c0072",
+       "wesley-098-c0054",
+       "wesley-128-c0046",
+       "wesley-002-c0017",
+       "wesley-140-c0030",
+       "wesley-028-c0076",
+       "wesley-033-c0038",
+       "wesley-026-c0003",
+       "wesley-040-c0079",
+       "wesley-005-c0030"
+      ]
+     },
+     "q-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.52129602861432,
+      "top10": [
+       "wesley-127-c0005",
+       "wesley-040-c0023",
+       "wesley-040-c0004",
+       "wesley-083-c0043",
+       "wesley-076-c0069",
+       "wesley-076-c0016",
+       "wesley-042-c0004",
+       "wesley-040-c0085",
+       "wesley-043-c0015",
+       "wesley-039-c0071"
+      ]
+     },
+     "q-heaviness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333,
+      "top10": [
+       "wesley-047-c0017",
+       "wesley-047-c0058",
+       "wesley-047-c0055",
+       "wesley-047-c0014",
+       "wesley-047-c0003",
+       "wesley-047-c0021",
+       "wesley-047-c0000",
+       "wesley-047-c0037",
+       "wesley-047-c0004",
+       "wesley-027-c0030"
+      ]
+     },
+     "q-mourning": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-047-c0030",
+       "wesley-135-c0003",
+       "wesley-135-c0000",
+       "wesley-135-c0006",
+       "wesley-135-c0017",
+       "wesley-135-c0028",
+       "wesley-021-c0074",
+       "wesley-135-c0012",
+       "wesley-135-c0024",
+       "wesley-005-c0009"
+      ]
+     },
+     "q-satan": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-042-c0008",
+       "wesley-024-c0007",
+       "wesley-042-c0012",
+       "wesley-042-c0044",
+       "wesley-113-c0042",
+       "wesley-072-c0048",
+       "wesley-042-c0048",
+       "wesley-062-c0013",
+       "wesley-042-c0054",
+       "wesley-122-c0021"
+      ]
+     },
+     "q-temptation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287,
+      "top10": [
+       "wesley-082-c0050",
+       "wesley-082-c0036",
+       "wesley-029-c0075",
+       "wesley-082-c0054",
+       "wesley-082-c0010",
+       "wesley-082-c0022",
+       "wesley-082-c0034",
+       "wesley-082-c0000",
+       "wesley-086-c0074",
+       "wesley-082-c0044"
+      ]
+     },
+     "q-communion": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.25,
+      "ndcg@10": 0.4306765580733931,
+      "top10": [
+       "wesley-101-c0002",
+       "wesley-101-c0051",
+       "wesley-101-c0012",
+       "wesley-101-c0007",
+       "wesley-101-c0042",
+       "wesley-101-c0009",
+       "wesley-101-c0020",
+       "wesley-101-c0047",
+       "wesley-101-c0044",
+       "wesley-101-c0049"
+      ]
+     },
+     "q-means": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287,
+      "top10": [
+       "wesley-016-c0014",
+       "wesley-042-c0023",
+       "wesley-128-c0023",
+       "wesley-097-c0037",
+       "wesley-098-c0001",
+       "wesley-037-c0056",
+       "wesley-016-c0016",
+       "wesley-016-c0012",
+       "wesley-045-c0036",
+       "wesley-016-c0004"
+      ]
+     },
+     "q-salvation": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.1111111111111111,
+      "ndcg@10": 0.3010299956639812,
+      "top10": [
+       "wesley-091-c0053",
+       "wesley-043-c0003",
+       "wesley-001-c0013",
+       "wesley-030-c0066",
+       "wesley-085-c0017",
+       "wesley-016-c0026",
+       "wesley-091-c0032",
+       "wesley-001-c0005",
+       "wesley-001-c0034",
+       "wesley-014-c0054"
+      ]
+     },
+     "q-justification": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-035-c0038",
+       "wesley-005-c0041",
+       "wesley-011-c0028",
+       "wesley-005-c0004",
+       "wesley-005-c0019",
+       "wesley-020-c0037",
+       "wesley-005-c0028",
+       "wesley-011-c0039",
+       "wesley-006-c0028",
+       "wesley-005-c0044"
+      ]
+     },
+     "q-faith-works": {
+      "sermon@5": 0.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-091-c0032",
+       "wesley-001-c0034",
+       "wesley-033-c0043",
+       "wesley-083-c0040",
+       "wesley-030-c0066",
+       "wesley-005-c0037",
+       "wesley-027-c0003",
+       "wesley-099-c0018",
+       "wesley-020-c0027",
+       "wesley-099-c0013"
+      ]
+     },
+     "q-new-birth": {
+      "sermon@5": 1.0,
+      "recall@5": 0.5,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.41311732856427996,
+      "top10": [
+       "wesley-045-c0003",
+       "wesley-045-c0017",
+       "wesley-045-c0000",
+       "wesley-045-c0038",
+       "wesley-018-c0052",
+       "wesley-045-c0072",
+       "wesley-045-c0021",
+       "wesley-018-c0000",
+       "wesley-045-c0062",
+       "wesley-045-c0023"
+      ]
+     },
+     "q-sin-believers": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.0,
+      "ndcg@10": 0.0,
+      "top10": [
+       "wesley-013-c0063",
+       "wesley-013-c0025",
+       "wesley-013-c0065",
+       "wesley-013-c0061",
+       "wesley-014-c0007",
+       "wesley-043-c0039",
+       "wesley-008-c0050",
+       "wesley-013-c0000",
+       "wesley-008-c0021",
+       "wesley-013-c0033"
+      ]
+     },
+     "q-original-sin": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5,
+      "top10": [
+       "wesley-044-c0048",
+       "wesley-044-c0015",
+       "wesley-044-c0000",
+       "wesley-044-c0050",
+       "wesley-127-c0032",
+       "wesley-001-c0014",
+       "wesley-053-c0060",
+       "wesley-044-c0013",
+       "wesley-034-c0025",
+       "wesley-123-c0018"
+      ]
+     },
+     "q-catholic-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-039-c0054",
+       "wesley-039-c0060",
+       "wesley-039-c0057",
+       "wesley-128-c0023",
+       "wesley-141-c0004",
+       "wesley-039-c0063",
+       "wesley-039-c0065",
+       "wesley-053-c0058",
+       "wesley-003-c0054",
+       "wesley-053-c0071"
+      ]
+     },
+     "q-backsliders": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-086-c0007",
+       "wesley-086-c0068",
+       "wesley-086-c0065",
+       "wesley-086-c0009",
+       "wesley-086-c0026",
+       "wesley-013-c0025",
+       "wesley-139-c0001",
+       "wesley-024-c0035",
+       "wesley-086-c0024",
+       "wesley-128-c0019"
+      ]
+     },
+     "q-self-denial": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.3333333333333333,
+      "ndcg@10": 0.5,
+      "top10": [
+       "wesley-048-c0028",
+       "wesley-048-c0012",
+       "wesley-048-c0003",
+       "wesley-048-c0043",
+       "wesley-116-c0035",
+       "wesley-048-c0014",
+       "wesley-048-c0055",
+       "wesley-105-c0038",
+       "wesley-108-c0041",
+       "wesley-048-c0037"
+      ]
+     },
+     "q-wandering-thoughts": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-041-c0003",
+       "wesley-041-c0037",
+       "wesley-041-c0024",
+       "wesley-041-c0011",
+       "wesley-041-c0014",
+       "wesley-041-c0033",
+       "wesley-041-c0030",
+       "wesley-041-c0008",
+       "wesley-041-c0035",
+       "wesley-041-c0043"
+      ]
+     },
+     "q-wilderness": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.125,
+      "ndcg@10": 0.3154648767857287,
+      "top10": [
+       "wesley-046-c0018",
+       "wesley-046-c0064",
+       "wesley-019-c0007",
+       "wesley-046-c0044",
+       "wesley-047-c0056",
+       "wesley-046-c0004",
+       "wesley-009-c0006",
+       "wesley-046-c0002",
+       "wesley-046-c0009",
+       "wesley-121-c0013"
+      ]
+     },
+     "q-evil-speaking": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-049-c0001",
+       "wesley-049-c0003",
+       "wesley-030-c0021",
+       "wesley-049-c0026",
+       "wesley-049-c0048",
+       "wesley-075-c0032",
+       "wesley-022-c0071",
+       "wesley-049-c0008",
+       "wesley-049-c0052",
+       "wesley-038-c0072"
+      ]
+     },
+     "k-romans-8-16": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-010-c0000",
+       "wesley-011-c0000",
+       "wesley-010-c0066",
+       "wesley-008-c0000",
+       "wesley-010-c0011",
+       "wesley-040-c0074",
+       "wesley-060-c0000",
+       "wesley-128-c0001",
+       "wesley-007-c0050",
+       "wesley-009-c0000"
+      ]
+     },
+     "k-christian-perfection": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-040-c0023",
+       "wesley-040-c0004",
+       "wesley-040-c0085",
+       "wesley-076-c0057",
+       "wesley-076-c0016",
+       "wesley-076-c0013",
+       "wesley-127-c0005",
+       "wesley-076-c0069",
+       "wesley-040-c0055",
+       "wesley-023-c0084"
+      ]
+     },
+     "k-means-of-grace": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-016-c0013",
+       "wesley-098-c0001",
+       "wesley-016-c0084",
+       "wesley-016-c0062",
+       "wesley-016-c0073",
+       "wesley-016-c0021",
+       "wesley-016-c0028",
+       "wesley-016-c0005",
+       "wesley-016-c0019",
+       "wesley-016-c0025"
+      ]
+     },
+     "k-witness-of-the-spirit": {
+      "sermon@5": 1.0,
+      "recall@5": 0.0,
+      "mrr@10": 0.14285714285714285,
+      "ndcg@10": 0.3333333333333333,
+      "top10": [
+       "wesley-010-c0005",
+       "wesley-011-c0015",
+       "wesley-018-c0025",
+       "wesley-011-c0018",
+       "wesley-011-c0024",
+       "wesley-011-c0035",
+       "wesley-010-c0022",
+       "wesley-011-c0006",
+       "wesley-011-c0003",
+       "wesley-011-c0054"
+      ]
+     },
+     "k-gain-all-you-can": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-050-c0012",
+       "wesley-084-c0007",
+       "wesley-084-c0004",
+       "wesley-084-c0012",
+       "wesley-080-c0047",
+       "wesley-050-c0032",
+       "wesley-087-c0044",
+       "wesley-050-c0023",
+       "wesley-084-c0057",
+       "wesley-084-c0044"
+      ]
+     },
+     "k-philippians-3-12": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-040-c0000",
+       "wesley-029-c0057",
+       "wesley-040-c0007",
+       "wesley-088-c0001",
+       "wesley-040-c0003",
+       "wesley-040-c0062",
+       "wesley-040-c0068",
+       "wesley-023-c0064",
+       "wesley-089-c0000",
+       "wesley-073-c0004"
+      ]
+     },
+     "k-1-corinthians-10-13": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-082-c0010",
+       "wesley-082-c0000",
+       "wesley-082-c0006",
+       "wesley-082-c0002",
+       "wesley-099-c0019",
+       "wesley-075-c0013",
+       "wesley-139-c0000",
+       "wesley-089-c0000",
+       "wesley-013-c0017",
+       "wesley-091-c0002"
+      ]
+     },
+     "k-matthew-6-34": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 0.5,
+      "ndcg@10": 0.6309297535714574,
+      "top10": [
+       "wesley-006-c0061",
+       "wesley-029-c0003",
+       "wesley-029-c0050",
+       "wesley-029-c0083",
+       "wesley-026-c0003",
+       "wesley-086-c0021",
+       "wesley-028-c0000",
+       "wesley-021-c0001",
+       "wesley-098-c0004",
+       "wesley-021-c0009"
+      ]
+     },
+     "k-2-corinthians-2-11": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-042-c0000",
+       "wesley-042-c0034",
+       "wesley-042-c0040",
+       "wesley-042-c0058",
+       "wesley-104-c0041",
+       "wesley-042-c0032",
+       "wesley-075-c0013",
+       "wesley-042-c0018",
+       "wesley-040-c0069",
+       "wesley-008-c0013"
+      ]
+     },
+     "k-luke-22-19": {
+      "sermon@5": 1.0,
+      "recall@5": 1.0,
+      "mrr@10": 1.0,
+      "ndcg@10": 1.0,
+      "top10": [
+       "wesley-101-c0000",
+       "wesley-048-c0000",
+       "wesley-016-c0033",
+       "wesley-040-c0092",
+       "wesley-040-c0078",
+       "wesley-108-c0040",
+       "wesley-104-c0011",
+       "wesley-104-c0035",
+       "wesley-030-c0053",
+       "wesley-112-c0000"
+      ]
+     }
+    }
+   },
+   "negative_top1": {
+    "dense": {
+     "u-book-of-mormon": 0.8128553032875061,
+     "u-nuclear-weapons": 0.7863967418670654,
+     "u-smartphones": 0.7814620137214661,
+     "u-vaccines": 0.7987045049667358,
+     "u-pretrib-rapture": 0.8278799653053284
+    },
+    "hybrid_rrf": {
+     "u-book-of-mormon": 0.01639344262295082,
+     "u-nuclear-weapons": 0.01639344262295082,
+     "u-smartphones": 0.01639344262295082,
+     "u-vaccines": 0.01639344262295082,
+     "u-pretrib-rapture": 0.0225
+    },
+    "hybrid_weighted": {
+     "u-book-of-mormon": 0.5,
+     "u-nuclear-weapons": 0.5,
+     "u-smartphones": 0.5,
+     "u-vaccines": 0.5,
+     "u-pretrib-rapture": 0.5
+    }
+   },
+   "summary": {
+    "dense": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.6,
+      "ci95": [
+       0.44285714285714284,
+       0.7571428571428571
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.42000000000000004,
+      "ci95": [
+       0.2818809523809524,
+       0.5595238095238095
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.4640485795981522,
+      "ci95": [
+       0.32662351574619103,
+       0.5989569440605444
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.8,
+      "ci95": [
+       0.6571428571428571,
+       0.9142857142857143
+      ]
+     }
+    },
+    "hybrid_rrf": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.6142857142857143,
+      "ci95": [
+       0.44285714285714284,
+       0.7714285714285715
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.49673469387755104,
+      "ci95": [
+       0.35128911564625853,
+       0.6390476190476191
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5463711770974283,
+      "ci95": [
+       0.4057910917286047,
+       0.6824975840843848
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9714285714285714,
+      "ci95": [
+       0.9142857142857143,
+       1.0
+      ]
+     }
+    },
+    "hybrid_weighted": {
+     "n": 35,
+     "recall@5": {
+      "mean": 0.5428571428571428,
+      "ci95": [
+       0.38571428571428573,
+       0.7
+      ]
+     },
+     "mrr@10": {
+      "mean": 0.46133786848072567,
+      "ci95": [
+       0.3236337868480726,
+       0.5993197278911564
+      ]
+     },
+     "ndcg@10": {
+      "mean": 0.5282124384411407,
+      "ci95": [
+       0.3979332698934187,
+       0.655282987900217
+      ]
+     },
+     "sermon@5": {
+      "mean": 0.9428571428571428,
+      "ci95": [
+       0.8571428571428571,
+       1.0
+      ]
+     }
+    }
+   },
+   "cpu_latency": {
+    "dense": {
+     "p50_ms": 114.8,
+     "p95_ms": 162.8,
+     "n": 40
+    },
+    "hybrid_rrf": {
+     "p50_ms": 113.7,
+     "p95_ms": 143.0,
+     "n": 40
+    },
+    "hybrid_weighted": {
+     "p50_ms": 116.3,
+     "p95_ms": 321.2,
+     "n": 40
+    }
+   },
+   "embedding_bytes": 25752576,
+   "vs_reference": {
+    "dense": {
+     "recall@5": {
+      "diff": -0.014285714285714285,
+      "ci95": [
+       -0.11428571428571428,
+       0.08571428571428572
+      ],
+      "p_le_zero": 0.665,
+      "wins": 2,
+      "ties": 31,
+      "losses": 2
+     },
+     "mrr@10": {
+      "diff": -0.07673469387755101,
+      "ci95": [
+       -0.20095238095238094,
+       0.056328231292516975
+      ],
+      "p_le_zero": 0.8816,
+      "wins": 5,
+      "ties": 18,
+      "losses": 12
+     },
+     "ndcg@10": {
+      "diff": -0.08232259749927619,
+      "ci95": [
+       -0.19125183611789334,
+       0.03658448903087828
+      ],
+      "p_le_zero": 0.9173,
+      "wins": 5,
+      "ties": 18,
+      "losses": 12
+     },
+     "sermon@5": {
+      "diff": -0.17142857142857143,
+      "ci95": [
+       -0.3142857142857143,
+       -0.05714285714285714
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 29,
+      "losses": 6
+     }
+    },
+    "hybrid_rrf": {
+     "recall@5": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     },
+     "mrr@10": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     },
+     "ndcg@10": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     },
+     "sermon@5": {
+      "diff": 0.0,
+      "ci95": [
+       0.0,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 35,
+      "losses": 0
+     }
+    },
+    "hybrid_weighted": {
+     "recall@5": {
+      "diff": -0.07142857142857142,
+      "ci95": [
+       -0.17142857142857143,
+       0.014285714285714285
+      ],
+      "p_le_zero": 0.9551,
+      "wins": 1,
+      "ties": 31,
+      "losses": 3
+     },
+     "mrr@10": {
+      "diff": -0.0353968253968254,
+      "ci95": [
+       -0.10376417233560091,
+       0.02296173469387751
+      ],
+      "p_le_zero": 0.8649,
+      "wins": 3,
+      "ties": 26,
+      "losses": 6
+     },
+     "ndcg@10": {
+      "diff": -0.01815873865628757,
+      "ci95": [
+       -0.07575463840053748,
+       0.03708326771248537
+      ],
+      "p_le_zero": 0.7277,
+      "wins": 3,
+      "ties": 26,
+      "losses": 6
+     },
+     "sermon@5": {
+      "diff": -0.02857142857142857,
+      "ci95": [
+       -0.08571428571428572,
+       0.0
+      ],
+      "p_le_zero": 1.0,
+      "wins": 0,
+      "ties": 34,
+      "losses": 1
+     }
+    }
+   }
+  }
+ },
+ "bm25": {
+  "summary": {
+   "n": 35,
+   "recall@5": {
+    "mean": 0.42857142857142855,
+    "ci95": [
+     0.2571428571428571,
+     0.6
+    ]
+   },
+   "mrr@10": {
+    "mean": 0.31384353741496596,
+    "ci95": [
+     0.1947950680272109,
+     0.4414625850340136
+    ]
+   },
+   "ndcg@10": {
+    "mean": 0.37150392282457073,
+    "ci95": [
+     0.24905165295886084,
+     0.49840865225120523
+    ]
+   },
+   "sermon@5": {
+    "mean": 0.9142857142857143,
+    "ci95": [
+     0.8,
+     1.0
+    ]
+   }
+  },
+  "per_query": {
+   "q-worry": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-141-c0063",
+     "wesley-029-c0002",
+     "wesley-029-c0064",
+     "wesley-042-c0034",
+     "wesley-029-c0061",
+     "wesley-087-c0018",
+     "wesley-009-c0009",
+     "wesley-137-c0040",
+     "wesley-069-c0001",
+     "wesley-137-c0060"
+    ]
+   },
+   "q-assurance": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-043-c0022",
+     "wesley-016-c0057",
+     "wesley-010-c0010",
+     "wesley-070-c0037",
+     "wesley-010-c0030",
+     "wesley-126-c0013",
+     "wesley-128-c0026",
+     "wesley-012-c0037",
+     "wesley-045-c0043",
+     "wesley-018-c0047"
+    ]
+   },
+   "q-money": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-028-c0076",
+     "wesley-052-c0021",
+     "wesley-093-c0013",
+     "wesley-028-c0083",
+     "wesley-047-c0025",
+     "wesley-024-c0078",
+     "wesley-124-c0015",
+     "wesley-093-c0030",
+     "wesley-095-c0009",
+     "wesley-014-c0047"
+    ]
+   },
+   "q-riches": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.16666666666666666,
+    "ndcg@10": 0.2943107231069255,
+    "top10": [
+     "wesley-087-c0044",
+     "wesley-087-c0003",
+     "wesley-087-c0035",
+     "wesley-087-c0028",
+     "wesley-087-c0059",
+     "wesley-087-c0000",
+     "wesley-126-c0041",
+     "wesley-094-c0050",
+     "wesley-093-c0019",
+     "wesley-108-c0012"
+    ]
+   },
+   "q-prayer": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-016-c0037",
+     "wesley-091-c0039",
+     "wesley-025-c0075",
+     "wesley-101-c0041",
+     "wesley-026-c0029",
+     "wesley-092-c0041",
+     "wesley-037-c0031",
+     "wesley-033-c0040",
+     "wesley-086-c0032",
+     "wesley-026-c0018"
+    ]
+   },
+   "q-forgiveness": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-098-c0054",
+     "wesley-002-c0017",
+     "wesley-140-c0030",
+     "wesley-028-c0076",
+     "wesley-033-c0038",
+     "wesley-040-c0079",
+     "wesley-026-c0071",
+     "wesley-128-c0046",
+     "wesley-020-c0067",
+     "wesley-087-c0039"
+    ]
+   },
+   "q-perfection": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-127-c0004",
+     "wesley-040-c0004",
+     "wesley-068-c0027",
+     "wesley-040-c0114",
+     "wesley-040-c0000",
+     "wesley-040-c0024",
+     "wesley-040-c0009",
+     "wesley-040-c0098",
+     "wesley-048-c0051",
+     "wesley-083-c0043"
+    ]
+   },
+   "q-heaviness": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-047-c0022",
+     "wesley-047-c0017",
+     "wesley-047-c0003",
+     "wesley-027-c0030",
+     "wesley-047-c0058",
+     "wesley-047-c0008",
+     "wesley-047-c0014",
+     "wesley-047-c0030",
+     "wesley-047-c0055",
+     "wesley-047-c0038"
+    ]
+   },
+   "q-mourning": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574,
+    "top10": [
+     "wesley-135-c0017",
+     "wesley-135-c0003",
+     "wesley-135-c0001",
+     "wesley-047-c0030",
+     "wesley-005-c0009",
+     "wesley-003-c0037",
+     "wesley-135-c0025",
+     "wesley-135-c0019",
+     "wesley-021-c0074",
+     "wesley-135-c0008"
+    ]
+   },
+   "q-satan": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-042-c0012",
+     "wesley-042-c0045",
+     "wesley-042-c0048",
+     "wesley-042-c0054",
+     "wesley-042-c0017",
+     "wesley-042-c0034",
+     "wesley-042-c0010",
+     "wesley-042-c0025",
+     "wesley-042-c0000",
+     "wesley-042-c0038"
+    ]
+   },
+   "q-temptation": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.16666666666666666,
+    "ndcg@10": 0.3562071871080222,
+    "top10": [
+     "wesley-082-c0050",
+     "wesley-082-c0036",
+     "wesley-082-c0034",
+     "wesley-029-c0075",
+     "wesley-082-c0010",
+     "wesley-082-c0000",
+     "wesley-040-c0067",
+     "wesley-082-c0054",
+     "wesley-040-c0061",
+     "wesley-080-c0041"
+    ]
+   },
+   "q-communion": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.2,
+    "ndcg@10": 0.38685280723454163,
+    "top10": [
+     "wesley-101-c0001",
+     "wesley-101-c0051",
+     "wesley-101-c0020",
+     "wesley-101-c0042",
+     "wesley-101-c0007",
+     "wesley-101-c0012",
+     "wesley-101-c0009",
+     "wesley-101-c0047",
+     "wesley-101-c0030",
+     "wesley-101-c0018"
+    ]
+   },
+   "q-means": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-042-c0023",
+     "wesley-016-c0015",
+     "wesley-128-c0023",
+     "wesley-037-c0056",
+     "wesley-016-c0004",
+     "wesley-016-c0089",
+     "wesley-098-c0008",
+     "wesley-052-c0016",
+     "wesley-034-c0063",
+     "wesley-048-c0043"
+    ]
+   },
+   "q-salvation": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.3333333333333333,
+    "ndcg@10": 0.5,
+    "top10": [
+     "wesley-043-c0003",
+     "wesley-030-c0066",
+     "wesley-001-c0034",
+     "wesley-001-c0013",
+     "wesley-091-c0053",
+     "wesley-001-c0004",
+     "wesley-035-c0000",
+     "wesley-083-c0001",
+     "wesley-001-c0038",
+     "wesley-016-c0026"
+    ]
+   },
+   "q-justification": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-035-c0038",
+     "wesley-005-c0041",
+     "wesley-005-c0035",
+     "wesley-005-c0052",
+     "wesley-107-c0013",
+     "wesley-046-c0001",
+     "wesley-005-c0028",
+     "wesley-005-c0064",
+     "wesley-001-c0031",
+     "wesley-011-c0028"
+    ]
+   },
+   "q-faith-works": {
+    "sermon@5": 0.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-091-c0032",
+     "wesley-096-c0028",
+     "wesley-001-c0034",
+     "wesley-033-c0040",
+     "wesley-030-c0066",
+     "wesley-029-c0053",
+     "wesley-033-c0043",
+     "wesley-020-c0050",
+     "wesley-032-c0010",
+     "wesley-083-c0040"
+    ]
+   },
+   "q-new-birth": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.14285714285714285,
+    "ndcg@10": 0.27541155237618664,
+    "top10": [
+     "wesley-045-c0003",
+     "wesley-045-c0017",
+     "wesley-018-c0000",
+     "wesley-045-c0045",
+     "wesley-045-c0062",
+     "wesley-045-c0072",
+     "wesley-045-c0000",
+     "wesley-045-c0038",
+     "wesley-018-c0051",
+     "wesley-019-c0000"
+    ]
+   },
+   "q-sin-believers": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-013-c0063",
+     "wesley-013-c0061",
+     "wesley-008-c0050",
+     "wesley-013-c0065",
+     "wesley-043-c0039",
+     "wesley-013-c0025",
+     "wesley-013-c0052",
+     "wesley-043-c0011",
+     "wesley-008-c0021",
+     "wesley-123-c0030"
+    ]
+   },
+   "q-original-sin": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.125,
+    "ndcg@10": 0.3154648767857287,
+    "top10": [
+     "wesley-001-c0014",
+     "wesley-034-c0025",
+     "wesley-044-c0008",
+     "wesley-044-c0051",
+     "wesley-044-c0048",
+     "wesley-044-c0017",
+     "wesley-044-c0046",
+     "wesley-044-c0000",
+     "wesley-034-c0017",
+     "wesley-065-c0003"
+    ]
+   },
+   "q-catholic-spirit": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-039-c0055",
+     "wesley-141-c0004",
+     "wesley-053-c0058",
+     "wesley-074-c0030",
+     "wesley-039-c0064",
+     "wesley-128-c0023",
+     "wesley-039-c0060",
+     "wesley-045-c0001",
+     "wesley-120-c0024",
+     "wesley-042-c0041"
+    ]
+   },
+   "q-backsliders": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-086-c0065",
+     "wesley-086-c0008",
+     "wesley-139-c0001",
+     "wesley-086-c0025",
+     "wesley-128-c0019",
+     "wesley-061-c0019",
+     "wesley-014-c0071",
+     "wesley-034-c0070",
+     "wesley-082-c0003",
+     "wesley-064-c0027"
+    ]
+   },
+   "q-self-denial": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.25,
+    "ndcg@10": 0.4306765580733931,
+    "top10": [
+     "wesley-048-c0043",
+     "wesley-048-c0055",
+     "wesley-048-c0029",
+     "wesley-048-c0002",
+     "wesley-048-c0012",
+     "wesley-116-c0035",
+     "wesley-048-c0035",
+     "wesley-048-c0014",
+     "wesley-048-c0048",
+     "wesley-048-c0006"
+    ]
+   },
+   "q-wandering-thoughts": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574,
+    "top10": [
+     "wesley-041-c0037",
+     "wesley-041-c0003",
+     "wesley-041-c0024",
+     "wesley-041-c0014",
+     "wesley-041-c0011",
+     "wesley-041-c0008",
+     "wesley-041-c0000",
+     "wesley-041-c0030",
+     "wesley-041-c0021",
+     "wesley-041-c0035"
+    ]
+   },
+   "q-wilderness": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.1,
+    "ndcg@10": 0.2890648263178878,
+    "top10": [
+     "wesley-019-c0007",
+     "wesley-046-c0044",
+     "wesley-046-c0064",
+     "wesley-046-c0009",
+     "wesley-121-c0013",
+     "wesley-051-c0028",
+     "wesley-046-c0004",
+     "wesley-046-c0036",
+     "wesley-009-c0006",
+     "wesley-046-c0002"
+    ]
+   },
+   "q-evil-speaking": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-049-c0001",
+     "wesley-038-c0072",
+     "wesley-134-c0058",
+     "wesley-051-c0055",
+     "wesley-049-c0026",
+     "wesley-030-c0020",
+     "wesley-049-c0022",
+     "wesley-040-c0099",
+     "wesley-049-c0009",
+     "wesley-049-c0048"
+    ]
+   },
+   "k-romans-8-16": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-010-c0000",
+     "wesley-010-c0066",
+     "wesley-010-c0011",
+     "wesley-010-c0006",
+     "wesley-010-c0008",
+     "wesley-010-c0040",
+     "wesley-011-c0000",
+     "wesley-010-c0060",
+     "wesley-010-c0049",
+     "wesley-010-c0055"
+    ]
+   },
+   "k-christian-perfection": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574,
+    "top10": [
+     "wesley-040-c0004",
+     "wesley-040-c0023",
+     "wesley-127-c0005",
+     "wesley-040-c0085",
+     "wesley-076-c0013",
+     "wesley-040-c0106",
+     "wesley-040-c0000",
+     "wesley-040-c0007",
+     "wesley-040-c0027",
+     "wesley-040-c0055"
+    ]
+   },
+   "k-means-of-grace": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-016-c0013",
+     "wesley-016-c0062",
+     "wesley-016-c0084",
+     "wesley-098-c0000",
+     "wesley-016-c0073",
+     "wesley-016-c0028",
+     "wesley-016-c0021",
+     "wesley-016-c0009",
+     "wesley-016-c0004",
+     "wesley-016-c0053"
+    ]
+   },
+   "k-witness-of-the-spirit": {
+    "sermon@5": 1.0,
+    "recall@5": 0.0,
+    "mrr@10": 0.0,
+    "ndcg@10": 0.0,
+    "top10": [
+     "wesley-011-c0018",
+     "wesley-011-c0047",
+     "wesley-018-c0024",
+     "wesley-011-c0059",
+     "wesley-010-c0005",
+     "wesley-011-c0035",
+     "wesley-011-c0045",
+     "wesley-011-c0040",
+     "wesley-055-c0038",
+     "wesley-011-c0015"
+    ]
+   },
+   "k-gain-all-you-can": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-050-c0012",
+     "wesley-080-c0047",
+     "wesley-084-c0007",
+     "wesley-050-c0031",
+     "wesley-050-c0023",
+     "wesley-084-c0012",
+     "wesley-084-c0004",
+     "wesley-084-c0057",
+     "wesley-084-c0044",
+     "wesley-050-c0015"
+    ]
+   },
+   "k-philippians-3-12": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574,
+    "top10": [
+     "wesley-040-c0007",
+     "wesley-040-c0000",
+     "wesley-040-c0094",
+     "wesley-040-c0009",
+     "wesley-040-c0036",
+     "wesley-040-c0104",
+     "wesley-040-c0041",
+     "wesley-040-c0052",
+     "wesley-040-c0067",
+     "wesley-040-c0058"
+    ]
+   },
+   "k-1-corinthians-10-13": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 0.5,
+    "ndcg@10": 0.6309297535714574,
+    "top10": [
+     "wesley-082-c0010",
+     "wesley-082-c0000",
+     "wesley-082-c0006",
+     "wesley-082-c0002",
+     "wesley-082-c0020",
+     "wesley-082-c0049",
+     "wesley-082-c0037",
+     "wesley-082-c0039",
+     "wesley-082-c0024",
+     "wesley-082-c0046"
+    ]
+   },
+   "k-matthew-6-34": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-029-c0003",
+     "wesley-029-c0050",
+     "wesley-029-c0083",
+     "wesley-029-c0023",
+     "wesley-029-c0015",
+     "wesley-029-c0060",
+     "wesley-029-c0012",
+     "wesley-029-c0056",
+     "wesley-029-c0079",
+     "wesley-029-c0053"
+    ]
+   },
+   "k-2-corinthians-2-11": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-042-c0000",
+     "wesley-042-c0040",
+     "wesley-042-c0058",
+     "wesley-042-c0032",
+     "wesley-042-c0018",
+     "wesley-042-c0025",
+     "wesley-042-c0003",
+     "wesley-042-c0009",
+     "wesley-042-c0046",
+     "wesley-042-c0034"
+    ]
+   },
+   "k-luke-22-19": {
+    "sermon@5": 1.0,
+    "recall@5": 1.0,
+    "mrr@10": 1.0,
+    "ndcg@10": 1.0,
+    "top10": [
+     "wesley-101-c0000",
+     "wesley-101-c0035",
+     "wesley-101-c0054",
+     "wesley-101-c0051",
+     "wesley-101-c0017",
+     "wesley-101-c0037",
+     "wesley-101-c0003",
+     "wesley-101-c0013",
+     "wesley-101-c0028",
+     "wesley-101-c0030"
+    ]
+   }
+  },
+  "negative_top1": {
+   "u-book-of-mormon": null,
+   "u-nuclear-weapons": null,
+   "u-smartphones": null,
+   "u-vaccines": null,
+   "u-pretrib-rapture": 10.688915263544537
+  },
+  "vs_reference": {
+   "recall@5": {
+    "diff": -0.18571428571428572,
+    "ci95": [
+     -0.32857142857142857,
+     -0.04285714285714286
+    ],
+    "p_le_zero": 0.9951,
+    "wins": 1,
+    "ties": 26,
+    "losses": 8
+   },
+   "mrr@10": {
+    "diff": -0.18289115646258505,
+    "ci95": [
+     -0.30313690476190475,
+     -0.07118537414965995
+    ],
+    "p_le_zero": 0.9998,
+    "wins": 4,
+    "ties": 16,
+    "losses": 15
+   },
+   "ndcg@10": {
+    "diff": -0.1748672542728577,
+    "ci95": [
+     -0.29118706989853477,
+     -0.06633250521756184
+    ],
+    "p_le_zero": 0.9997,
+    "wins": 4,
+    "ties": 16,
+    "losses": 15
+   },
+   "sermon@5": {
+    "diff": -0.05714285714285714,
+    "ci95": [
+     -0.14285714285714285,
+     0.0
+    ],
+    "p_le_zero": 1.0,
+    "wins": 0,
+    "ties": 33,
+    "losses": 2
+   }
+  }
+ },
+ "finished_at": "2026-10-30T11:54:57-04:00"
+}

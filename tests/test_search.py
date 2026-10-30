@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import unittest
 
-import torch
+import dataclasses
 
-from preached.embed import LoadedModel, extended_encoder_mask, format_documents, format_query
-from preached.models import MODELS
+from preached.embed import format_documents, format_query
+from preached.models import DEFAULT_MODEL, EXCLUDED, MODELS, REFERENCE
+from preached.stats import bootstrap_ci, paired_bootstrap
 from preached.fts import scripture_match, to_fts_query
 from preached.metrics import mrr_at, ndcg_at, recall_at
 from preached.rank import reciprocal_rank_fusion, weighted_fusion
@@ -72,32 +73,68 @@ class MetricTests(unittest.TestCase):
         self.assertGreater(ndcg_at(good, quotes, 10), ndcg_at(bad, quotes, 10))
 
 
-class MaskShimTests(unittest.TestCase):
-    def test_encoder_mask_is_additive(self) -> None:
-        mask = torch.tensor([[1, 1, 0]], dtype=torch.int64)
-        extended = extended_encoder_mask(mask, mask.shape, torch.float32)
-        self.assertEqual(tuple(extended.shape), (1, 1, 1, 3))
-        self.assertEqual(float(extended[0, 0, 0, 0]), 0.0)
-        self.assertEqual(float(extended[0, 0, 0, 1]), 0.0)
-        self.assertEqual(float(extended[0, 0, 0, 2]), torch.finfo(torch.float32).min)
-        # MoE code squeezes this back to a (batch, seq) keep-mask.
-        keep = torch.where(extended.squeeze() == 0, 1, 0)
-        self.assertEqual(keep.tolist(), [1, 1, 0])
+class ModelConfigTests(unittest.TestCase):
+    def test_every_model_is_pinned(self) -> None:
+        for spec in MODELS.values():
+            self.assertRegex(spec.revision, r"^[0-9a-f]{40}$", spec.key)
+        self.assertIn(DEFAULT_MODEL, MODELS)
+        self.assertIn(REFERENCE["model"], MODELS)
 
-    def test_empty_document_prompt_is_not_used(self) -> None:
-        loaded = LoadedModel(
-            spec=MODELS["nomic-embed-text-v2-moe"],
-            model=None,
-            device="cpu",
-            batch_size=1,
-            prompts={"document": "", "passage": "search_document: ", "query": "search_query: "},
+    def test_embeddinggemma_never_fp16(self) -> None:
+        # The EmbeddingGemma cards say fp16 returns NaN or silently worse vectors.
+        for spec in MODELS.values():
+            if "embeddinggemma" in spec.hf_id:
+                self.assertNotIn("fp16", (spec.dtype_gpu, spec.dtype_cpu))
+
+    def test_gemma_prompts_match_card(self) -> None:
+        spec = MODELS["embeddinggemma-2"]
+        docs, prompt = format_documents(spec, ["Salvation by Faith (Eph 2:8)"], ["By grace are ye saved."])
+        # Card's Document prompt. Sermon titles in the document hurt (audit).
+        self.assertEqual((docs, prompt), (["By grace are ye saved."], "title: none | text: "))
+        titled = MODELS["embeddinggemma-2-titled"]
+        self.assertFalse(titled.enabled)
+        self.assertEqual(
+            format_documents(titled, ["Salvation by Faith (Eph 2:8)"], ["By grace."])[0],
+            ["title: Salvation by Faith (Eph 2:8) | text: By grace."],
         )
-        docs, name = format_documents(loaded, ["Salvation by Faith"], ["By grace are ye saved."])
-        self.assertEqual(name, "passage")
-        self.assertEqual(docs, ["By grace are ye saved."])
-        text, query_name = format_query(loaded, "What did Wesley say about worry?")
-        self.assertEqual(query_name, "query")
-        self.assertEqual(text, "What did Wesley say about worry?")
+        _, question = format_query(spec, "What did Wesley say about worry?")
+        self.assertEqual(question, "task: question answering | query: ")
+        _, keyword = format_query(spec, "Christian perfection")
+        self.assertEqual(keyword, "task: search result | query: ")
+
+    def test_excluded_models_are_not_runnable(self) -> None:
+        excluded = {item["hf_id"] for item in EXCLUDED}
+        self.assertIn("nomic-ai/nomic-embed-text-v2-moe", excluded)
+        self.assertFalse(excluded & {spec.hf_id for spec in MODELS.values()})
+        self.assertFalse(any(spec.trust_remote_code for spec in MODELS.values()))
+
+    def test_unclear_provenance_is_flagged(self) -> None:
+        self.assertTrue(MODELS["arctic-embed-l"].provenance.startswith("unclear:"))
+        self.assertEqual(MODELS[DEFAULT_MODEL].provenance, "clear")
+
+    def test_granite_has_no_prefix(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        self.assertEqual(format_documents(spec, ["t"], ["x"]), (["x"], ""))
+        self.assertEqual(format_query(spec, "why pray?"), ("why pray?", ""))
+
+    def test_fingerprint_tracks_document_side_only(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        self.assertNotEqual(spec.fingerprint(), dataclasses.replace(spec, revision="0" * 40).fingerprint())
+        self.assertNotEqual(spec.fingerprint(), dataclasses.replace(spec, dtype_gpu="fp16").fingerprint())
+        self.assertEqual(spec.fingerprint(), dataclasses.replace(spec, question_prefix="q: ").fingerprint())
+
+
+class StatsTests(unittest.TestCase):
+    def test_ci_brackets_mean(self) -> None:
+        ci = bootstrap_ci([0.0, 1.0] * 20)
+        self.assertAlmostEqual(ci["mean"], 0.5)
+        self.assertLess(ci["ci95"][0], 0.5)
+        self.assertGreater(ci["ci95"][1], 0.5)
+
+    def test_paired_counts(self) -> None:
+        result = paired_bootstrap([1.0, 1.0, 0.0, 0.5], [0.0, 1.0, 0.0, 1.0])
+        self.assertEqual((result["wins"], result["ties"], result["losses"]), (1, 2, 1))
+        self.assertAlmostEqual(result["diff"], 0.125)
 
 
 class FusionTests(unittest.TestCase):

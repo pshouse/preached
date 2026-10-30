@@ -22,6 +22,7 @@ function formatTime(seconds) {
   return hours + ":" + String(minutes).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
 }
 
+/* Same rule as the CSP: https anywhere, or this page's own origin. */
 function safeUrl(value) {
   if (typeof value !== "string" || value === "") return null;
   try {
@@ -29,7 +30,18 @@ function safeUrl(value) {
   } catch (err) {
     return null;
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  if (url.protocol === "https:") return url.href;
+  if (url.origin === window.location.origin) return url.href;
+  return null;
+}
+
+/* Media fragment for a start time. Replaces any fragment the URL already has. */
+function mediaUrlAt(href, seconds) {
+  if (seconds == null || seconds === "") return href;
+  var value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return href;
+  var url = new URL(href);
+  url.hash = "t=" + value;
   return url.href;
 }
 
@@ -71,7 +83,7 @@ function playClip(url, start, button, caption) {
   audio.dataset.seek = Number.isFinite(seconds) ? String(seconds) : "";
   if (audio.dataset.srcUrl !== url) {
     audio.dataset.srcUrl = url;
-    audio.src = Number.isFinite(seconds) ? url + "#t=" + seconds : url;
+    audio.src = mediaUrlAt(url, seconds);
     audio.load();
   }
   seekWhenReady(audio);

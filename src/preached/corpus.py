@@ -62,11 +62,24 @@ ABBREV = {
 }
 
 
-def download(url: str, dest: Path) -> None:
+MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024  # the CCEL text is ~4 MB
+
+
+def download(url: str, dest: Path, max_bytes: int = MAX_DOWNLOAD_BYTES) -> None:
+    """Stream to a temp file, refuse anything over max_bytes, then rename."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        dest.write_bytes(response.read())
+    partial = dest.with_suffix(dest.suffix + ".part")
+    total = 0
+    with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
+        for block in iter(lambda: response.read(1 << 16), b""):
+            total += len(block)
+            if total > max_bytes:
+                out.close()
+                partial.unlink(missing_ok=True)
+                raise RuntimeError(f"{url} is over {max_bytes} bytes; refusing it")
+            out.write(block)
+    partial.replace(dest)
 
 
 def sha256(path: Path) -> str:
@@ -437,10 +450,20 @@ def read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def fetch_corpus(force: bool = False) -> dict:
+def fetch_corpus(force: bool = False, accept_new_text: bool = False) -> dict:
     CORPUS_DIR.mkdir(parents=True, exist_ok=True)
     if force or not SERMONS_TEXT.exists():
         download(CCEL_TEXT_URL, SERMONS_TEXT)
+    # The eval quotes were checked against this exact text. A changed upstream
+    # file must be a deliberate decision, not a silent rebuild.
+    if catalog_path().exists() and not accept_new_text:
+        expected = json.loads(catalog_path().read_text()).get("sha256_text")
+        actual = sha256(SERMONS_TEXT)
+        if expected and actual != expected:
+            raise RuntimeError(
+                f"{SERMONS_TEXT} sha256 {actual} does not match corpus/catalog.json {expected}. "
+                "Rerun with --accept-new-text only after re-validating eval quotes."
+            )
     if force or not NUMBER_INDEX_HTML.exists():
         download(CCEL_INDEX_URL, NUMBER_INDEX_HTML)
     text = SERMONS_TEXT.read_text(encoding="utf-8")
