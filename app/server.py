@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 from collections import deque
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -52,12 +53,26 @@ from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
     Searcher,
     display_excerpt,
+    play_start,
+    sermon_flagged,
+    touches_flagged,
     row_value,
     _optional_int,
     _text_or_none,
 )
-from preached.store import EmbeddingMismatch, check_query_variant, index_stamp, open_readonly  # noqa: E402
-from preached.youtube.listing import public_audio_url  # noqa: E402
+from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
+from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
+from preached.store import (  # noqa: E402
+    EmbeddingMismatch,
+    check_query_variant,
+    index_stamp,
+    open_readonly,
+    pending_review_count,
+    public_domain_file,
+    visible_count,
+    visible_sql,
+)
+from preached.youtube.listing import chunk_video_id, policy_watch_url, public_audio_url  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -353,7 +368,39 @@ def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, 
     return query, k, mode
 
 
-def hit_dict(hit) -> dict:
+def _youtube_like(url) -> bool:
+    """Any string naming a YouTube host, valid or not (fail closed)."""
+    return isinstance(url, str) and ("youtube" in url.lower() or "youtu.be" in url.lower())
+
+
+def timed_link(hit) -> str | None:
+    """This passage's own seeked link, or None when it would be untimed (play from 0:00).
+
+    A YouTube link is rebuilt by ``policy_watch_url`` and must carry ``t=``.
+    Any other URL must pass ``public_audio_url`` and the passage must have a
+    start the page can seek to (``play_start``).
+    """
+    if _youtube_like(hit.audio_url) or _youtube_like(hit.source_url):
+        vid = chunk_video_id(getattr(hit, "video_id", None), hit.audio_url, hit.source_url)
+        url = policy_watch_url(vid, hit.start_s, hit.end_s, None, "none")
+        return url if url is not None and "&t=" in url else None
+    url = public_audio_url(hit.audio_url)
+    return url if url is not None and play_start(hit.start_s) is not None else None
+
+
+def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_flagged: bool = False) -> dict:
+    """The JSON for one result. A chunk with ``[name]`` or a review flag follows
+    the flagged-audio policy: ``none`` drops the play link and both times,
+    ``play`` is the normal link. See ``audio_policy.public_times``.
+    ``near_flag`` (``search.touches_flagged``) withholds audio under ``none``
+    for a card whose span touches a flagged chunk. A YouTube link on a flagged
+    card is rebuilt from validated parts, and under ``none`` its
+    YouTube source link (a watch link from 0:00) is dropped.
+
+    ``sermon_flagged`` (``search.sermon_flagged``): Patrick's link rule. In a
+    sermon with any flagged passage, an unflagged card keeps only its own
+    timed link (``timed_link``); its ``source_url`` and any untimed link are
+    dropped, since they play from 0:00."""
     payload = {
         "chunk_id": hit.chunk_id,
         "chunk_ids": hit.chunk_ids,
@@ -370,7 +417,44 @@ def hit_dict(hit) -> dict:
         "source_url": hit.source_url,
         "score": float(hit.score),
     }
-    return {key: payload[key] for key in RESULT_FIELDS}
+    result = {key: payload[key] for key in RESULT_FIELDS}
+    flag_end_s = getattr(hit, "flag_end_s", None)
+    if flag_end_s is None:
+        if not (near_flag and flagged_audio == "none"):
+            if sermon_flagged and flagged_audio != "play":
+                result["source_url"] = None
+                result["audio_url"] = timed_link(hit)
+                if result["audio_url"] is None:
+                    result["audio_withheld"] = True
+            return result
+        # Unflagged, but its span touches a flagged chunk (search.touches_flagged):
+        # under none a play link would run on into the name, so withhold it too.
+        start_s, end_s, allowed = None, None, False
+    else:
+        start_s, end_s, allowed = public_times(hit.start_s, hit.end_s, flag_end_s, flagged_audio)
+    result["start_s"] = start_s
+    result["end_s"] = end_s
+    youtube = _youtube_like(hit.audio_url) or _youtube_like(hit.source_url)
+    if flagged_audio != "play":
+        # This sermon has a flagged passage: its source link (a YouTube watch
+        # link or an archive.org page) plays from 0:00, which would reach the
+        # name; under none only the rebuilt link may remain.
+        result["source_url"] = None
+    if not allowed:
+        result["audio_url"] = None
+        result["audio_withheld"] = True
+        return result
+    vid = chunk_video_id(hit.video_id, hit.audio_url, hit.source_url)
+    if vid is not None or youtube:
+        # Rebuilt from validated parts, never the stored link: its t= was set
+        # at import time and may sit on the name. A YouTube link that does not validate is withheld.
+        result["audio_url"] = policy_watch_url(vid, hit.start_s, hit.end_s, hit.flag_end_s, flagged_audio)
+        if result["audio_url"] is None:
+            result["audio_withheld"] = True
+            result["start_s"] = result["end_s"] = None
+            result["source_url"] = None
+            return result
+    return result
 
 
 def default_loader(
@@ -494,6 +578,21 @@ class App:
             )
         self.rate_limiter = RateLimiter(rate_limit, rate_window_s)
         self.kill_file = Path(kill_file) if kill_file else None
+        # Any library but wesley is gated, except an allow-listed public-domain
+        # library's own file (store.public_domain_file, keyed on the slug).
+        # The gate is checked per request in SQL (preached.store.visible_sql),
+        # so an import, --redo or approval made while this process runs
+        # applies to the next request.
+        self.gated = library != LIBRARY
+        if hasattr(searcher, "gated"):
+            searcher.gated = searcher.gated or self.gated
+        if hasattr(searcher, "library"):
+            searcher.library = library
+        if is_public_domain(library) and not public_domain_file(connection, library):
+            logging.warning("%s is on the public-domain list but this file is not its own build; gate stays on", library)
+        # Always "none" for church libraries (Patrick's decision). Tests may set
+        # the attribute to exercise the other values; no flag, env or TOML can.
+        self.flagged_audio = resolve_flagged_audio(default_config().flagged_audio)
         self._stamp = self._capture_stamp()
         # A failed read must not let the next success adopt a stamp without
         # reloading. Init counts: the searcher was built before this read.
@@ -507,6 +606,14 @@ class App:
             logging.exception("could not read the index stamp")
             return None
 
+    def _searcher(self, model: str | None = None) -> Searcher:
+        """Every searcher this App builds carries the gate and the slug (#12 x #10).
+
+        The gate itself is still evaluated per request in SQL
+        (``store.visible_sql``) and the Searcher still reloads vectors on
+        ``PRAGMA data_version``; a reload only swaps the cached rows/vectors.
+        """
+        return Searcher(self.connection, model=model, gated=self.gated, library=self.library)
     def _refuse_unless_servable(self) -> bool:
         """Re-run the serve gate on the open file. On failure drop every
         cached row and serve nothing (fail closed); True when refused."""
@@ -532,7 +639,7 @@ class App:
         return True
 
     def _serve_keyword_only(self, note: str) -> None:
-        self.searcher = Searcher(self.connection)
+        self.searcher = self._searcher()
         self.encode = None
         self.model_name = None
         self.backend = None
@@ -542,10 +649,10 @@ class App:
     def _reload_cached_index(self) -> None:
         """Rebuild cached rows. fp32 pairing is checked again on this path."""
         if not self._weights_ok:
-            self.searcher = Searcher(self.connection)
+            self.searcher = self._searcher()
             return
         try:
-            self.searcher = Searcher(self.connection, model=self._configured_model)
+            self.searcher = self._searcher(self._configured_model)
             check_query_variant(
                 self.connection,
                 self._configured_model,
@@ -640,13 +747,19 @@ class App:
             return {"ok": False, "disabled": True}
         with self.lock:
             self._refresh_if_stale()
+            # /healthz re-runs the serve gate itself: a swapped -wal can leave the
+            # stamp unchanged, so the reload above never looks. Refused means 503.
+            if self.refused is None and self._refuse_unless_servable():
+                self._status_failed = True
             self._check_refused()
-            count = int(self.connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
+            count = visible_count(self.connection, gated=self.gated, library=self.library)
+            gated = self.gated and not public_domain_file(self.connection, self.library)
+            pending = pending_review_count(self.connection) if gated else None
             index_version = self._index_version()
         model_sha = None
         if self.encode is not None:
             model_sha = public_sha256(getattr(self.encode, "model_sha256", None))
-        return {
+        payload = {
             "ok": True,
             "disabled": False,
             "library": self.library,
@@ -659,6 +772,10 @@ class App:
             "index_version": index_version,
             "model_sha256": model_sha,
         }
+        if pending is not None:
+            # A count only: sermons imported but not approved. Never ids or titles.
+            payload["pending_review"] = pending
+        return payload
 
     def search(self, query: str, k: int, mode: str) -> dict:
         started = time.perf_counter()
@@ -675,11 +792,15 @@ class App:
                 effective = "bm25"
             vector = None if effective == "bm25" else self.encode(query)
             kept, confidence = search_with_confidence(self.searcher, query, vector, effective, k, self.floor)
+            nears = [self.flagged_audio == "none" and touches_flagged(self.connection, hit) for hit in kept]
+            flagged = {sid: sermon_flagged(self.connection, sid) for sid in {hit.sermon_id for hit in kept}}
         return {
             "query": query,
             "mode": effective,
             "took_ms": int(round((time.perf_counter() - started) * 1000)),
-            "results": [hit_dict(hit) for hit in kept],
+            "results": [
+                hit_dict(hit, self.flagged_audio, near, flagged[hit.sermon_id]) for hit, near in zip(kept, nears)
+            ],
             "note": note,
             # True when the page should say nothing strong was found. The
             # closest passages stay in results so a person can still look.
@@ -693,33 +814,78 @@ class App:
         with self.lock:
             self._refresh_if_stale()
             self._check_refused()
-            rows = list(
-                self.connection.execute(
-                    "SELECT * FROM chunks WHERE sermon_id = ? ORDER BY rowid",
-                    (sermon_id,),
-                )
-            )
-        if not rows:
-            return None
+            where = visible_sql(self.connection, "chunks", gated=self.gated, library=self.library)
+            sql = "SELECT * FROM chunks WHERE sermon_id = ?" + (f" AND {where}" if where else "") + " ORDER BY rowid"
+            rows = list(self.connection.execute(sql, (sermon_id,)))
+            if not rows:
+                return None
+            audio_url, source_url = self._sermon_links(rows)
         first = rows[0]
-        audio_url = None
         reader = None
         for row in rows:
-            if audio_url is None:
-                audio_url = _text_or_none(row_value(row, "audio_url"))
-            if reader is None:
-                reader = _text_or_none(row_value(row, "reader"))
-            if audio_url and reader:
+            reader = _text_or_none(row_value(row, "reader"))
+            if reader:
                 break
         return {
             "sermon_id": sermon_id,
             "sermon_number": _optional_int(row_value(first, "sermon_number")),
             "sermon_title": first["sermon_title"],
             "scripture": _text_or_none(row_value(first, "scripture")),
-            "source_url": _text_or_none(row_value(first, "source_url")),
+            "source_url": source_url,
             "audio_url": audio_url,
             "reader": reader,
         }
+
+    def _sermon_links(self, rows) -> tuple[str | None, str | None]:
+        """``(audio_url, source_url)`` for /api/sermon, under the same rules as a card.
+
+        The stored ``audio_url`` is never passed through: it goes through
+        ``public_audio_url``, and a YouTube link is rebuilt by
+        ``policy_watch_url`` (the stored ``t=`` was set at import time and may
+        sit on a name).
+
+        Patrick's link rule, when any chunk of the sermon is flagged (unless
+        the policy is ``play``): ``source_url`` is dropped, flagged chunks
+        and (under ``none``) chunks that touch one (``touches_flagged``) give
+        no link, and ``audio_url`` is the first remaining chunk's own timed
+        link (``timed_link``: a YouTube ``t=``, or ``#t=<seek>`` on an audio
+        file), never an untimed link that plays from 0:00. If no chunk has
+        one there is no link. A sermon with no flagged chunk is unchanged:
+        the first chunk's link and its ``source_url``.
+        """
+        policy = self.flagged_audio
+        flagged_any = policy != "play" and any(row_value(row, "flag_end_s") is not None for row in rows)
+        source_url = None if flagged_any else _text_or_none(row_value(rows[0], "source_url"))
+        for row in rows:
+            card = SimpleNamespace(
+                sermon_id=row["sermon_id"],
+                flag_end_s=row_value(row, "flag_end_s"),
+                word_start=row_value(row, "word_start"),
+                word_end=row_value(row, "word_end"),
+                start_s=row_value(row, "start_s"),
+                end_s=row_value(row, "end_s"),
+                video_id=row_value(row, "video_id"),
+                audio_url=_text_or_none(row_value(row, "audio_url")),
+                source_url=_text_or_none(row_value(row, "source_url")),
+            )
+            if card.audio_url is None:
+                continue
+            if flagged_any:
+                if card.flag_end_s is not None:
+                    continue
+                if policy == "none" and touches_flagged(self.connection, card):
+                    continue
+                url = timed_link(card)
+                if url is not None and not _youtube_like(url):
+                    url = f"{url.split('#')[0]}#t={play_start(card.start_s):g}"
+            elif _youtube_like(card.audio_url) or _youtube_like(card.source_url):
+                vid = chunk_video_id(card.video_id, card.audio_url, card.source_url)
+                url = policy_watch_url(vid, card.start_s, card.end_s, card.flag_end_s, policy)
+            else:
+                url = public_audio_url(card.audio_url)
+            if url is not None:
+                return url, source_url
+        return None, source_url
 
 
 def build_app(
@@ -1430,18 +1596,21 @@ def pins_skip_problem(index: Path) -> str | None:
     )
 
 
-def check_servable(connection, library: str, index: Path) -> None:
-    """SystemExit unless this file is the Wesley index or an allow-listed public-domain library.
+def check_servable(connection, library: str, index: Path, *, church_gate: bool = False) -> None:
+    """SystemExit unless this file may be served as ``library``.
 
-    Nothing else is served: church libraries (YouTube imports) have no
-    redaction or approval gate yet, so they are refused (fail closed) until
-    PR #12 lands.
+    Served: the Wesley index; an allow-listed public-domain library; and a
+    church library ONLY when ``church_gate`` is true, which ``main`` sets only
+    when a privacy config is loaded and the publish gate is on (every library
+    but wesley is gated: ``App.gated``). Without both, church libraries are
+    refused (fail closed).
 
     A classic (``--library spurgeon``/``edwards``) is served only from its
     canonical INDEX_DIR/<slug>.sqlite (``libraries.classic_index_problem``:
-    realpath equality, no symlinks, owner and mode, one link), and that file
-    must carry the matching
-    ``library`` marker. A marker anywhere else is not trusted.
+    realpath equality, no symlinks, owner and mode, one link, and the same
+    checks on any -wal, -shm or -journal file next to it), and that file
+    must carry the matching ``library`` marker. A marker anywhere else is
+    not trusted.
 
     Wesley must look like the Wesley index: chunks, every sermon id
     ``wesley-*``, no ``videos`` table, no ``library`` marker, and only the
@@ -1464,6 +1633,13 @@ def check_servable(connection, library: str, index: Path) -> None:
         row = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone()
         marker = row[0] if row is not None else None
     allowed = f"allowed: {', '.join((LIBRARY, *PUBLIC_DOMAIN))}"
+    if library != LIBRARY and not is_public_domain(library):
+        if not church_gate:
+            raise SystemExit(
+                f"error: --library {library!r} refused: church libraries are served only with a privacy "
+                "config ($PREACHED_PRIVACY) and the publish gate on."
+            )
+        return
     if library != LIBRARY:
         problem = classic_index_problem(library, index, INDEX_DIR)
         if problem is not None:
@@ -1524,16 +1700,31 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     args = parser.parse_args(argv)
+    try:
+        # Always none (Patrick's decision); a stale play/shifted setting stops here.
+        resolve_flagged_audio(default_config().flagged_audio)
+    except (ValueError, OSError) as exc:
+        raise SystemExit(f"flagged audio policy: {exc}") from exc
     if args.model not in MODELS:
         raise SystemExit(f"unknown model {args.model}")
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
-    if library != LIBRARY and not is_public_domain(library):
-        raise SystemExit(
-            f"error: --library {library!r} refused: only {', '.join((LIBRARY, *PUBLIC_DOMAIN))} are served. "
-            "Church libraries are not served until redaction and approval are in place."
-        )
+    # Every library but wesley is gated (App.gated, no switch turns it off).
+    # A church library is served only with a privacy config loaded.
+    church = library != LIBRARY and not is_public_domain(library)
+    church_gate = False
+    if church:
+        try:
+            required_config()  # $PREACHED_PRIVACY, the same config App reads
+        except MissingConfig as exc:
+            raise SystemExit(
+                f"error: --library {library!r} refused: {exc}. Only {', '.join((LIBRARY, *PUBLIC_DOMAIN))} "
+                "are served without one."
+            ) from exc
+        except (ValueError, OSError) as exc:
+            raise SystemExit(f"error: privacy config: {exc}") from exc
+        church_gate = True
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
@@ -1546,7 +1737,7 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(str(exc)) from exc
 
     def servable(conn) -> None:
-        check_servable(conn, library, index)
+        check_servable(conn, library, index, church_gate=church_gate)
         if identity is None or file_identity(index) != identity:
             raise SystemExit(f"error: {index} was replaced while it was being opened or served; refused")
 

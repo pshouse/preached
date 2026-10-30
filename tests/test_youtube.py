@@ -6,6 +6,7 @@ No network. Listings come from tests/fixtures. Transcription and download are fa
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -233,7 +234,7 @@ class ListingTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=samplevid01",
         )
         words = sample_words(12.2)
-        records = _chunks_for(video, words, {})
+        records, _ = _chunks_for(video, words, {})
         self.assertEqual(records[0]["chunk_id"], "samplevid01-c0000")
         self.assertEqual(records[0]["start_s"], words[0].start)
         self.assertAlmostEqual(records[0]["start_s"], 12.2)
@@ -241,7 +242,7 @@ class ListingTests(unittest.TestCase):
             records[0]["audio_url"],
             "https://www.youtube.com/watch?v=samplevid01&t=11s",
         )
-        late = _chunks_for(video, sample_words(100), {})
+        late, _ = _chunks_for(video, sample_words(100), {})
         self.assertAlmostEqual(late[0]["start_s"], 100)
         self.assertEqual(
             late[0]["audio_url"],
@@ -324,6 +325,19 @@ class ChunkTests(unittest.TestCase):
 
 
 class ImportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # The import refuses to run without a privacy config (fail closed);
+        # an empty one keeps the built-in name rules, which these samples pass.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        toml = Path(tmp.name) / "privacy.toml"
+        toml.write_text("# no library-specific names\n")
+        env = {k: v for k, v in os.environ.items() if k != "PREACHED_FLAGGED_AUDIO"}
+        env["PREACHED_PRIVACY"] = str(toml)
+        patcher = patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _run(self, argv: list[str], tmp: Path, **kwargs):
         stdout = StringIO()
         stderr = StringIO()
@@ -620,6 +634,8 @@ class ImportTests(unittest.TestCase):
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
+            code, _out, err = self._run(["--library", "sample", "--ack-review", "samplevid01"], root)
+            self.assertEqual(code, 0, err)
             path = root / "sample.sqlite"
             connection = open_readonly(path, check_same_thread=False)
             try:
@@ -718,6 +734,9 @@ class ImportTests(unittest.TestCase):
                 transcriber=lambda _path: sample_words(12.2),
                 embedder=embedder,
             )
+            self.assertEqual(code, 0, err)
+            # #12's publish gate: an imported sermon is served only once approved.
+            code, _out, err = self._run(["--library", "sample", "--ack-review", "samplevid02"], root)
             self.assertEqual(code, 0, err)
             path = root / "sample.sqlite"
 
@@ -916,6 +935,8 @@ class ImportTests(unittest.TestCase):
                 transcriber=lambda _path: sample_words(12.2),
                 embedder=embedder,
             )
+            self.assertEqual(code, 0, err)
+            code, _out, err = self._run(["--library", "sample", "--ack-review", video_id], root)
             self.assertEqual(code, 0, err)
             connection = open_readonly(root / "sample.sqlite", check_same_thread=False)
             try:

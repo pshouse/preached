@@ -16,6 +16,12 @@ build/
 *.egg-info/
 .python-version
 review/
+# The eval label review sheet holds only public Wesley text (EVAL-GRADE).
+# ``review/`` ignores every review directory (privacy output). Re-include this
+# directory, then keep only the review CSVs.
+!/eval/review/
+/eval/review/*
+!/eval/review/review-*.csv
 *.review.jsonl
 *.mp3
 *.m4a

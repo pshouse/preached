@@ -503,6 +503,44 @@ class VariantPairingTests(unittest.TestCase):
             self.assertIn("not fp32", err)
             self.assertNotIn("Traceback", err)
 
+    def test_query_artifact_error_is_one_line(self) -> None:
+        import contextlib
+        import importlib.util
+        import io
+        import sys
+
+        from preached.artifacts import ArtifactError
+
+        spec = importlib.util.spec_from_file_location("preached_query_artifact", ROOT / "search" / "query.py")
+        query = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(query)
+
+        def broken(*_args, **_kwargs):
+            raise ArtifactError("missing ONNX manifest at /cache/onnx/x/manifest.json\nrun the export")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "index.sqlite"
+            from preached.store import connect
+
+            connect(index).close()
+            original = query.load_embedder
+            query.load_embedder = broken
+            argv = sys.argv
+            sys.argv = ["query.py", "grace", "--mode", "hybrid", "-k", "1", "--index", str(index)]
+            stderr = io.StringIO()
+            try:
+                with self.assertRaises(SystemExit) as ctx:
+                    with contextlib.redirect_stderr(stderr):
+                        query.main()
+            finally:
+                sys.argv = argv
+                query.load_embedder = original
+            self.assertEqual(ctx.exception.code, 1)
+            err = stderr.getvalue().strip("\n")
+            self.assertNotIn("\n", err)
+            self.assertTrue(err.startswith("error: missing ONNX manifest"))
+            self.assertNotIn("Traceback", err)
+
 
 class BenchOutputTests(unittest.TestCase):
     def test_tag_and_out_avoid_the_numbered_collision(self) -> None:
@@ -537,6 +575,9 @@ class SchemaTests(unittest.TestCase):
 
             def fetchone(self):
                 return (3,)
+
+            def __iter__(self):  # PRAGMA table_info: no columns, so nothing is gated
+                return iter(())
 
         app = App(
             connection=_Conn(),

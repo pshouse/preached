@@ -1,15 +1,10 @@
-"""Privacy hook for transcript words.
+"""Privacy hook for transcript words: the W3-PRIV redactor.
 
-W3-PRIV replaces ``redact``. This module stays an identity function so the
-import path always calls it and a later change cannot be skipped by accident.
-Do not add a name list or a redaction rule here.
+``redact(words, config=None, source=None)`` flags likely congregant names as
+``[name]`` and keeps every timestamp. It is assisted, not guaranteed: a person
+must read the ``review()`` list before a sermon is published. The pipeline
+passes ``source=<video id>`` so ``drop`` windows apply. Do not add a name list
+or a rule here; they live in ``preached.privacy``.
 """
 
-from __future__ import annotations
-
-from preached.youtube.words import Word
-
-
-def redact(words: list[Word]) -> list[Word]:
-    """privacy.redact(words) -> words. Identity until W3-PRIV."""
-    return words
+from preached.privacy import redact  # noqa: F401

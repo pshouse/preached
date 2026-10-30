@@ -11,6 +11,7 @@ passage are not shown.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import sqlite3
@@ -18,8 +19,8 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weighted_fusion
-from preached.store import bm25_search, check_fingerprint, load_embeddings
+from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, top_indices, weighted_fusion
+from preached.store import bm25_search, check_fingerprint, load_embeddings, visible_count, visible_rowids, visible_sql
 
 CANDIDATES = 100
 # GET /api/search asks the ranker for this many hits, then de-dups down to k.
@@ -76,6 +77,8 @@ class Hit:
     text_source: str | None = None
     word_start: int | None = None
     word_end: int | None = None
+    video_id: str | None = None
+    flag_end_s: float | None = None
     # Every chunk in this passage, in reading order, when dedupe_adjacent
     # merged overlapping neighbours into it. Empty means just chunk_id.
     merged_ids: tuple[str, ...] = ()
@@ -91,17 +94,25 @@ class Searcher:
         connection: sqlite3.Connection,
         model: str | None = None,
         fingerprint: str | None = None,
+        gated: bool = False,
+        library: str | None = None,
     ):
         """model: a key in search/models.toml. Its stored document vectors
         must carry the fingerprint the config gives now (or `fingerprint`,
         when passed); otherwise EmbeddingMismatch is raised instead of
-        silently mixing old document vectors with new query vectors."""
+        silently mixing old document vectors with new query vectors.
+
+        gated: this file is a church library, so the publish gate applies even
+        if its schema is incomplete (see ``store.visible_sql``).
+
+        library: the slug this file is served as. Only an allow-listed
+        public-domain library's own file is exempt from the gate
+        (``store.public_domain_file``, re-checked per call)."""
         self.connection = connection
         self.model = model
-        self._rows = {
-            int(row["rowid"]): row
-            for row in connection.execute("SELECT * FROM chunks")
-        }
+        self.gated = gated
+        self.library = library
+        self._fingerprint = fingerprint
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
         if model:
@@ -110,27 +121,82 @@ class Searcher:
 
                 if model not in MODELS:
                     raise RuntimeError(f"unknown model {model!r}; see search/models.toml")
-                fingerprint = MODELS[model].fingerprint()
-            check_fingerprint(connection, model, fingerprint)
-            self._rowids, self._matrix = load_embeddings(connection, model)
+                self._fingerprint = MODELS[model].fingerprint()
+            self._load_vectors()
+        self._version = self._data_version()
 
-    def _pack(self, scored: list[tuple[int, float]], limit: int) -> list[Hit]:
-        hits = []
-        for rowid, score in scored[:limit]:
-            row = self._rows.get(rowid)
-            if row is None:
-                continue
-            hits.append(hit_from_row(row, score))
-        return hits
+    # The publish gate is checked on every call, in SQL, against the file as
+    # it is now (store.visible_sql): nothing cached here decides what is
+    # served. Rows are read per call too, so a --redo never serves stale text.
+    # Vectors are cached; when another process commits (an import or an
+    # approval), they are reloaded so new sermons become findable by dense.
+
+    def _data_version(self) -> int:
+        return int(self.connection.execute("PRAGMA data_version").fetchone()[0])
+
+    def _load_vectors(self) -> None:
+        check_fingerprint(self.connection, self.model, self._fingerprint)
+        self._rowids, self._matrix = load_embeddings(self.connection, self.model)
+
+    def _refresh(self) -> None:
+        version = self._data_version()
+        if version == self._version:
+            return
+        self._version = version
+        if self.model:
+            try:
+                self._load_vectors()
+            except Exception:
+                logging.exception("could not reload vectors after the index changed; keeping the old ones")
+
+    def _where(self) -> str | None:
+        return visible_sql(self.connection, "chunks", gated=self.gated, library=self.library)
+
+    def _pack(self, scored: list[tuple[int, float]], limit: int, where: str | None) -> list[Hit]:
+        scored = scored[:limit]
+        if not scored:
+            return []
+        rows = {}
+        wanted = [rowid for rowid, _ in scored]
+        sql = f"SELECT * FROM chunks WHERE rowid IN ({', '.join('?' * len(wanted))})"
+        if where:
+            sql += f" AND {where}"
+        for row in self.connection.execute(sql, wanted):
+            rows[int(row["rowid"])] = row
+        return [hit_from_row(rows[rowid], score) for rowid, score in scored if rowid in rows]
+
+    def _lexical(self, query: str, limit: int, where: str | None) -> list[tuple[int, float]]:
+        """BM25 over chunks visible now; the gate is part of the query."""
+        return bm25_search(self.connection, query, limit, where)
+
+    def _semantic(self, vector: np.ndarray, limit: int, where: str | None) -> list[tuple[int, float]]:
+        scores = dense_scores(vector, self._matrix)
+        if where is None:
+            return dense_hits(self._rowids, scores, limit)
+        # Walk the full ranking and keep the first ``limit`` rows visible now.
+        order = top_indices(scores, scores.shape[0])
+        kept: list[tuple[int, float]] = []
+        for start in range(0, len(order), max(limit, 1) * 4):
+            batch = [(self._rowids[int(i)], float(scores[int(i)])) for i in order[start : start + max(limit, 1) * 4]]
+            visible = visible_rowids(self.connection, [rowid for rowid, _ in batch], gated=self.gated, library=self.library)
+            kept.extend(item for item in batch if item[0] in visible)
+            if len(kept) >= limit:
+                break
+        return kept[:limit]
 
     def bm25(self, query: str, limit: int) -> list[Hit]:
-        return self._pack(bm25_search(self.connection, query, limit), limit)
+        where = self._where()
+        return self._pack(self._lexical(query, limit, where), limit, where)
+
+    def visible_count(self) -> int:
+        return visible_count(self.connection, gated=self.gated, library=self.library)
 
     def dense(self, vector: np.ndarray, limit: int) -> list[Hit]:
+        self._refresh()
         if self._matrix is None or self._rowids is None:
             raise RuntimeError("dense search needs a model index")
-        scores = dense_scores(vector, self._matrix)
-        return self._pack(dense_hits(self._rowids, scores, limit), limit)
+        where = self._where()
+        return self._pack(self._semantic(vector, limit, where), limit, where)
 
     def hybrid(
         self,
@@ -142,11 +208,12 @@ class Searcher:
         dense_weight: float = 0.5,
         candidates: int = CANDIDATES,
     ) -> list[Hit]:
+        self._refresh()
         if self._matrix is None or self._rowids is None:
             raise RuntimeError("hybrid search needs a model index")
-        lexical = bm25_search(self.connection, query, candidates)
-        scores = dense_scores(vector, self._matrix)
-        semantic = dense_hits(self._rowids, scores, candidates)
+        where = self._where()
+        lexical = self._lexical(query, candidates, where)
+        semantic = self._semantic(vector, candidates, where)
         if fusion == "weighted":
             fused = weighted_fusion(semantic, lexical, dense_weight=dense_weight)
         elif fusion == "rrf":
@@ -156,7 +223,7 @@ class Searcher:
             )
         else:
             raise RuntimeError(f"unknown fusion {fusion}")
-        return self._pack(fused, limit)
+        return self._pack(fused, limit, where)
 
 
 def row_value(row: sqlite3.Row, key: str):
@@ -217,6 +284,8 @@ def hit_from_row(row: sqlite3.Row, score: float) -> Hit:
         text_source=_text_or_none(row_value(row, "text_source")),
         word_start=_optional_int(row_value(row, "word_start")),
         word_end=_optional_int(row_value(row, "word_end")),
+        video_id=_text_or_none(row_value(row, "video_id")),
+        flag_end_s=_optional_float(row_value(row, "flag_end_s")),
     )
 
 
@@ -300,8 +369,16 @@ def merge_overlapping(kept: Hit, neighbour: Hit, max_words: int = MERGE_MAX_WORD
     texts share a boundary run (the chunker's sentence overlap) are merged.
     Anything else, or a merge longer than ``max_words``, returns None and
     the caller drops the neighbour as before.
+
+    Privacy: chunks are never merged when either side is flagged
+    (``flag_end_s`` set: a ``[name]`` or review item, see
+    ``preached.audio_policy``), or when their ``video_id``s differ. A merged
+    card keeps only ``kept``'s flag fields, so merging a flagged neighbour
+    into an unflagged card would give it a normal play link over the name.
     """
-    if kept.sermon_id != neighbour.sermon_id:
+    if kept.sermon_id != neighbour.sermon_id or kept.video_id != neighbour.video_id:
+        return None
+    if kept.flag_end_s is not None or neighbour.flag_end_s is not None:
         return None
     if None in (kept.word_start, kept.word_end, neighbour.word_start, neighbour.word_end):
         return None
@@ -418,6 +495,93 @@ def api_search(
     benchmark measures the list a user sees.
     """
     return dedupe_adjacent(ranked(searcher, query, vector, mode, max(pool, k)), k)
+
+
+def sermon_flagged(connection: sqlite3.Connection, sermon_id: object) -> bool:
+    """Whether any chunk of this sermon is flagged (``flag_end_s`` set), visible or not.
+
+    Patrick's link rule: such a sermon keeps the timed links of its
+    unflagged passages, but its untimed sermon-level links (a ``source_url``,
+    a watch link with no ``t=``, an audio file with no seek) all play from
+    0:00 and are dropped everywhere. Wesley's index has no ``flag_end_s``.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    if "flag_end_s" not in columns:
+        return False
+    return connection.execute(
+        "SELECT 1 FROM chunks WHERE sermon_id = ? AND flag_end_s IS NOT NULL LIMIT 1", (sermon_id,)
+    ).fetchone() is not None
+
+
+# A link may land this much before its seek (keyframes, player rounding), and
+# ASR word ends run late against the audio, so a flagged word that ends up to
+# this long before the seek still counts. Measured (large-v3-turbo vs forced
+# alignment, clean studio audio): word ends p95 0.12 s late, p99 0.48 s, max
+# 3.58 s. p99 + 0.5 s = 0.98 s; 1.5 is that plus headroom. Never rounded: seek_time floors toward the name.
+SEEK_SLACK_S = 1.5
+
+
+def seek_time(start_s: float | None) -> float | None:
+    """The earliest second any link for a passage starting at ``start_s`` seeks to.
+
+    The audio player seeks to ``play_start`` (``#t=``, 0.01 s); a YouTube
+    link to the whole second below it (``listing.watch_url``: ``int(start_s
+    - PREROLL_S)``). The smaller of the two, or None when there is no seek.
+    """
+    seek = play_start(start_s)
+    if seek is None:
+        return None
+    return min(seek, float(math.floor(max(0.0, float(start_s) - PREROLL_S))))
+
+
+def touches_flagged(connection: sqlite3.Connection, hit: Hit) -> bool:
+    """Whether a card's play link could reach a flagged chunk of its sermon.
+
+    The one check for this, used by the API cards, /api/sermon and
+    ``search/query.py``. True when the card itself is flagged, or when any
+    chunk of the same sermon with ``flag_end_s`` set:
+
+    - ends its flagged words after the card's seek minus SEEK_SLACK_S
+      (``seek_time``) and starts before the card's end (no end: anywhere
+      after). Back-to-back chunks share no words, so a word-span test alone
+      let the next chunk keep a link whose pre-roll starts inside or just
+      before the name (CTO round 4: ``&t=379s`` with the name at
+      378.86-379.22 s). A flagged chunk with no start counts.
+    - or overlaps the card's word span (its time span when it has no word span).
+
+    A card with no seek and no span touches any flagged chunk of its sermon.
+    An index without ``flag_end_s`` (Wesley) never touches one.
+    """
+    if hit.flag_end_s is not None:
+        return True
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+    if "flag_end_s" not in columns:
+        return False
+    base = "SELECT 1 FROM chunks WHERE sermon_id = ? AND flag_end_s IS NOT NULL"
+    seek = seek_time(hit.start_s)
+    if seek is not None and "start_s" in columns:
+        sql = base + " AND flag_end_s > ?"
+        args = [hit.sermon_id, seek - SEEK_SLACK_S]
+        if _finite(hit.end_s):
+            sql += " AND (start_s IS NULL OR start_s < ?)"
+            args.append(float(hit.end_s))
+        if connection.execute(sql + " LIMIT 1", args).fetchone() is not None:
+            return True
+    if hit.word_start is not None and hit.word_end is not None and {"word_start", "word_end"} <= columns:
+        sql = base + " AND word_start < ? AND word_end > ? LIMIT 1"
+        args = (hit.sermon_id, hit.word_end, hit.word_start)
+    elif hit.start_s is not None and hit.end_s is not None:
+        sql = base + " AND start_s < ? AND end_s > ? LIMIT 1"
+        args = (hit.sermon_id, hit.end_s, hit.start_s)
+    else:
+        # No span to compare: any flagged chunk in the sermon counts.
+        sql = base + " LIMIT 1"
+        args = (hit.sermon_id,)
+    return connection.execute(sql, args).fetchone() is not None
+
+
+def _finite(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 # CCEL keeps Wesley's paragraph numbers inline: "...to myself justice!" 8. Nearly

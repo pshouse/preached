@@ -7,7 +7,43 @@
 # only after privacy.review() and a human skim of the transcript.
 #
 # Changing allow, block or drop does NOT touch sermons that are already
-# imported. Re-import them (--redo) for a change to take effect.
+# imported. Re-import them (--redo) for a change to take effect. Approval
+# (--ack-review) must run under the same settings as the import (same
+# --privacy or PREACHED_PRIVACY); a changed config refuses approval.
+#
+# The review file (<index dir>/<library>/review/<id>.review.jsonl) is read
+# once, at approval, and checked against the sha256 stored at import. Nothing
+# re-reads it afterwards: editing or deleting it later does not unpublish.
+#
+# Announcements, prayer requests and testimonies are never indexed
+# (preached.skip proposes them; see reports/W3-PRIV-SKIP.md). The review file
+# lists each one as an "exclude" line. Before approving, confirm it, widen it,
+# or add a line such as {"field": "exclude", "start_s": 1200, "end_s": 1310}.
+# Approval excludes exactly what the file lists. A proposed stretch cannot be
+# narrowed, nothing else in the file may change, and any edit after approval
+# is refused. --redo keeps the previous file's exclude lines.
+#
+# LISTEN THROUGH THE WHOLE RECORDING BEFORE APPROVING (CTO ruling,
+# 2026-10-30). The proposed stretches are a starting point: on an LLM-written
+# synthetic test set the rules caught 87% of the words they should (word
+# recall 0.870), so they miss some. The human check is the real control; add
+# an exclude line for every stretch they missed.
+
+# What a play link may do for a chunk that contains [name] or overlaps a
+# review() flag. Redaction changes text only; the recording still has the name
+# spoken at that time. Patrick chose: no play link on name passages;
+# announcements, prayer requests and testimonies are excluded (see
+# W3-PRIV-SKIP). So the only accepted value is "none": no play link, no
+# YouTube link and no start/end times; the page shows text only. "shifted"
+# and "play" (and the same values in PREACHED_FLAGGED_AUDIO) are refused;
+# there is no command-line flag. The key may also be left out.
+#
+# Whole sermons are not withheld (Patrick's decision): a card that does not
+# touch a flagged passage keeps its link, and a listener can still scrub from
+# it to a flagged moment elsewhere in the same recording. Patrick accepted
+# that residual risk; human review and the W3-PRIV-SKIP exclusions are the
+# mitigation.
+flagged_audio = "none"
 
 # Names to keep: the pastor and staff who have agreed to be named. Each entry
 # is matched as a whole run of words, so "Pastor Jordan" keeps "Pastor Jordan"

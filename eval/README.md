@@ -1,16 +1,44 @@
 # Wesley retrieval eval
 
-Forty questions a church member might ask of John Wesley's *Sermons on Several Occasions* (Jackson numbering, CCEL text). The file is `questions.jsonl`.
+Ninety-three questions a church member might ask of John Wesley's *Sermons on Several Occasions* (Jackson numbering, CCEL text): the original 40, 23 plain-language rewrites (EVAL-DELEAK and EVAL-GRADE), and 30 questions written blind to the corpus (EVAL-PLAINQ, group `plain-blind`). The file is `questions.jsonl`.
 
-Each line has `id`, `query`, `type`, and `relevant`. Types are `conceptual` (25), `keyword` (10), and `unanswerable` (5). A relevant passage has `passage_id`, `sermon_id`, `sermon_title`, `grade`, `quote`, `source_url`, and `chunk_ids`. Grade 2 means the passage directly answers the question. Grade 1 means it is on the same subject but is not the passage that answers it. Unanswerable items have `relevant: []`.
+Each line has `id`, `query`, `type`, `group`, and `relevant`; rewrites also have `rewrite_of`. A relevant passage has `passage_id`, `sermon_id`, `sermon_title`, `grade`, `quote`, `source_url`, and `chunk_ids`. Grade 2 means the passage directly answers the question. Grade 1 means it is also acceptable: Wesley substantially addresses the question there too. Unanswerable items have `relevant: []`.
+
+**Proposed labels (EVAL-GRADE).** A label with `"status": "proposed"` was proposed by an LLM agent (Claude) during wider grading and is unconfirmed by a human. It also has a one-line `reason` and `found_by` set to `llm-proposed:claude`. All grade-1 labels added by pooling, and every label on a `plain-blind` question, are proposed. Labels without `status` are the earlier ones. `search/bench.py` scores three label sets: the plain metric names use the labels as they stood before wider grading (every label except proposed grade-1), `_strict` uses grade 2 only, and `_lenient` adds the proposed grade-1 labels. Nothing is fitted or tuned on proposed labels. Patrick confirms or rejects them in `eval/review/review-YYYY-MM-DD.csv`.
+
+## Wider grading (EVAL-GRADE): how to rerun the pool
+
+1. `uv run --group bench eval/pool.py` takes, for every answerable question and every `plain_candidates.jsonl` question, the top 20 chunks from BM25 and from each enabled model in each bench mode (dense, hybrid RRF, hybrid weighted). These are the same calls as the bench, and the top 10 matched the bench's lists on all 550 question × ranker pairs. A rewrite and its original are one family with one pool. It writes `eval/pool/pool-YYYY-MM-DD.jsonl` (ids and ranks) and `/cache/eval-pool/YYYY-MM-DD/<family>.md` (texts, then the rest of the grade-2 sermon for a reading pass). The pool section of that markdown is shuffled and does not name the ranker or the rank, so a grader cannot see which system returned a chunk.
+2. A reader judges every pooled chunk against the bar in `eval/pool/BRIEF.md`. For `plain-blind` questions the reader also searches the corpus beyond the pool. The output is one JSON per family.
+3. `uv run python eval/apply_grades.py --check DIR` validates the judgments: each quote is in its chunk, 6–60 words, a one-line reason, and no two labels share a chunk. `uv run python eval/apply_grades.py DIR` then writes them into `questions.jsonl` as proposed. It is idempotent and removes earlier proposals first.
+4. `uv run python scripts/review_sheet.py` writes the review CSV.
+
+## Groups (title leakage)
+
+Many of the original questions named the expected sermon's title ("What did Wesley say about the wilderness state?"), so they tested title lookup, not understanding. Each item now has a `group`, and `search/bench.py` reports every metric per group:
+
+| group | n | what it is |
+| --- | --- | --- |
+| `plain` | 25 | Everyday-language questions that share no content word (or listed synonym) with the expected sermon's title, avoid its signature term, and share no two-word phrase with the grade-2 quote or the sermon's key scripture. 23 are `-plain` rewrites of `names-topic` items (same `relevant` list as the original, `rewrite_of` points back). `q-prayer` and `q-forgiveness` were clean from the start. |
+| `plain-blind` | 30 | Written by an LLM agent (Grok) before it read the corpus (`plain_candidates.jsonl`, EVAL-PLAINQ; `provenance` is `llm-written:grok`). Wording is frozen. Unconfirmed by a human. All labels were proposed by an LLM agent (Claude) and are unconfirmed by a human (EVAL-GRADE). Items judged unanswerable have `type: "unanswerable"` and an `unanswerable_reason`. |
+| `names-topic` | 23 | Original conceptual questions that name the topic or title, or (`q-worry`, `q-assurance`, `q-faith-works`, moved in EVAL-GRADE) borrow a phrase from the gold quote or key scripture. Unchanged apart from `group`. |
+| `title-keyword` | 3 | Keyword queries equal to a title: `k-christian-perfection`, `k-means-of-grace`, `k-witness-of-the-spirit`. |
+| `scripture-keyword` | 7 | The other keyword queries: six scripture references and `k-gain-all-you-can` (a phrase from sermon 50, not a title). |
+| `unanswerable` | 5 | No answer in Wesley. |
+
+`names-topic` is the 15 questions Patrick listed plus five the lint found (`q-money`, `q-heaviness`, `q-communion`, `q-justification`, `q-backsliders`), which share a title word too.
+
+**Lint:** `uv run python scripts/check_title_leak.py` exits 1 if a `plain` question shares a content word (3+ letters, not a stopword, light suffix stemming) or a listed synonym with any of its sermons' titles, contains a signature phrase listed for that sermon, or shares two consecutive content words with its grade-2 quote or the key scripture of its grade-2 sermon (`key_scripture.json`, rebuilt with `--write-scripture`). Modern verse wording counts in that pair check ("anxious about tomorrow" overlaps Matt 6:34, "Take no thought for the morrow"). A single distinctive word does too (stem of 8 letters or more, for example "sanctification"). "fell" stems with "fall", and "fell away" is a signature of the backsliders sermon. `plain-blind` overlaps are printed as notes and do not fail. `tests/test_eval_leak.py` runs it. The `-plain` rewrites were written by the EVAL-DELEAK coding agent (an LLM, Claude), committed before any model was run on them, and not reviewed by a person. Results and the old vs new headline: `docs/research/embeddings.md`, "Title leakage", and `reports/EVAL-DELEAK.md`.
 
 ## How the labels were made
 
-**Who made these labels.** The Grok CLI coding agent (an LLM) wrote all 40 questions and chose every relevant passage and grade while working task W1-B. The quotes are verbatim CCEL text and are machine-checked against the chunks (`eval/validate.py`), but the relevance calls are the agent's judgment, not a person's. No model is used at search time to judge relevance, and no embedding model under test was used to pick labels.
+**Who made these labels.** The Grok CLI coding agent (an LLM) wrote the original 40 questions and chose every relevant passage and grade while working task W1-B. The quotes are verbatim CCEL text and are machine-checked against the chunks (`eval/validate.py`), but the relevance calls are the agent's judgment, and a human has not confirmed them. No model is used at search time to judge relevance, and no embedding model under test was used to pick labels.
+
+The 586 proposed labels added in EVAL-GRADE (`status` `proposed`, `found_by` `llm-proposed:claude`) were proposed by an LLM agent (Claude). They are unconfirmed by a human. The 30 `plain-blind` questions were written by an LLM agent (Grok) before it read the corpus (`provenance` `llm-written:grok` on each question in `questions.jsonl` and `plain_candidates.jsonl`). They are unconfirmed by a human. The 23 `-plain` rewrites were written by an LLM agent (Claude) in EVAL-DELEAK; see the lint note above.
 
 **Human review.**
 
-- Status: pending: Patrick to review all 40 items before submission.
+- Status: pending: Patrick to review all 93 items (the 23 `-plain` rewrites, the 30 `plain-blind` questions, and every proposed label) in `eval/review/review-2026-10-30.csv` before submission.
 - Reviewer:
 - Date:
 - Changes made in review:
@@ -57,9 +85,16 @@ The current file `/cache/corpus/wesley/chunks.jsonl` has 8,383 chunks (median 12
 ## Known biases
 
 - Labels were found with keyword search, so passages that share words with the question are over-represented. That favors BM25 and hybrid modes.
-- 23 of the 35 answerable questions share a content word with the title of the sermon that answers them (for example "Christian perfection", "the means of grace", "the witness of the Spirit", "riches", "temptation"), and FTS5 indexes the title column. Absolute scores are optimistic for any lexical component.
-- 35 answerable questions is small: one question moves a mean by about 0.03. `search/bench.py` reports bootstrap 95% intervals; read differences inside them as ties.
+- 23 of the 35 original answerable questions share a content word with the title of the sermon that answers them (for example "Christian perfection", "the means of grace", "the witness of the Spirit", "riches", "temptation"), and FTS5 indexes the title column. They are now the `names-topic` and `title-keyword` groups; read `plain` for natural-language quality.
+- The graded passages were picked with keyword search for the titled wording. A plain rewrite keeps those labels, so another paragraph of the right sermon that answers it scores 0. `sermon@5` is the fairer check on `plain`.
+- 55 answerable questions (25 `plain`) is small: one question moves the overall mean by about 0.02 and a `plain` mean by 0.04. `search/bench.py` reports bootstrap 95% intervals; read differences inside them as ties.
 
 ## Natural-language probes (W3-POLISH, not human-reviewed)
 
 `nl-questions-w3polish.jsonl` holds 18 short questions **written by the W3-POLISH coding agent (an LLM, Claude), not reviewed by a person**. They avoid sermon-title words where possible and include the CTO's "worry" and "How do I stop worrying?". Each lists the sermon(s) the agent expects to answer it (`expected_sermons`), checked only against sermon titles and a text grep, so treat them as probes, not labels. They are not part of `questions.jsonl`, are not used by `bench.py`, and the abstain floor is **not** fitted on them. `uv run --group bench scripts/check_nl_questions.py` prints the abstain level for each and what a refit would do. Results: `reports/W3-POLISH.md`, fix-up section.
+
+## Stretch-exclusion set (`skip/`, W3-PRIV-SKIP): synthetic, LLM-written, not human-reviewed
+
+`skip/dev.jsonl` (8 docs) and `skip/test.jsonl` (12 docs) are **synthetic service transcripts written by an LLM (Claude, the W3-PRIV-SKIP coding agent)**. The same LLM marked every gold stretch (announcements, prayer requests, testimonies). No person wrote or checked them, and nothing in them was transcribed from a real service; every name is invented. Each line carries a `provenance` field saying so, and `skip/evaluate.py` refuses a line without it. The same agent also wrote the rules being scored (`src/preached/skip.py`), which is weak protection against overfitting.
+
+On the test split the rules excluded 635 of 730 gold words (word recall 0.870). **The cues are not enough alone.** The human check is the real control: whoever approves a church sermon must listen through the whole recording before approving (CTO ruling, 2026-10-30). Real services are unmeasured. Results: `skip/results-2026-10-30.json` and `reports/W3-PRIV-SKIP.md`.
