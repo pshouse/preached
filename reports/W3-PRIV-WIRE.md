@@ -2,8 +2,10 @@
 
 **Base.** PR #8 (`feat/w3-priv`) and PR #4 (`feat/w2-youtube`) were NOT merged into `origin/main` when I started. The branch is `origin/feat/w3-priv` + `origin/main` + `origin/feat/w2-youtube`, all merged (no rebase). The PR is therefore stacked on #4 and #8. One conflict, in `store.replace_chunks` (kept both main's transaction docstring and the review-item guard), and one in `.gitignore` (kept both sets of lines).
 
-## Pending decision
-**The exact audio policy for flagged chunks is pending Patrick's decision.** Config key: `flagged_audio` in the privacy TOML, or `PREACHED_FLAGGED_AUDIO`, or `--flagged-audio` (import CLI, server, `search/query.py`). Precedence: flag, env, TOML key, default. Values are exactly `play`, `shifted`, `none`; anything else is an error. Default `none`.
+## Audio policy decision
+**Decided (2026-10-30, see the last section): Patrick chose: no play link on name passages; announcements, prayer requests and testimonies are excluded (see W3-PRIV-SKIP).** `none` is now fixed for church libraries. The `--flagged-audio` flags are gone, and `play`/`shifted` in the TOML or env are refused. The original text below is kept as history.
+
+~~The exact audio policy for flagged chunks is pending Patrick's decision.~~ Config key: `flagged_audio` in the privacy TOML, or `PREACHED_FLAGGED_AUDIO`, or `--flagged-audio` (import CLI, server, `search/query.py`). Precedence: flag, env, TOML key, default. Values are exactly `play`, `shifted`, `none`; anything else is an error. Default `none`.
 
 ## What changed
 1. **W2-YT:** `youtube/privacy.py` re-exports `preached.privacy.redact`. The pipeline calls it with `config=` and `source=<video id>` (drop windows work). `test_privacy_hook_is_identity` still passes unchanged (no names, no drop windows: `redact` returns the same list). Two existing tests changed for the new behaviour: `_chunks_for` now returns `(records, review_items)`, and two tests that serve an imported library now run `--ack-review` first.
@@ -120,3 +122,70 @@ Tests: `tests/test_privacy_merge.py`, 13 new.
 - **The whole video and the sermon-level link stay public.** A clear card's YouTube link (and the `/api/sermon/<id>` `audio_url`) plays from its `t=` onward. A clear card's YouTube `source_url` plays from 0:00, so it can play an opening name. Only cards that touch a flagged chunk lose their links. Closing this fully means withholding YouTube links per sermon whenever any of its chunks is flagged. That is a product call for Patrick, together with the pending `flagged_audio` decision.
 - `touches_flagged` runs one SQL query per card under `none` (on Wesley too, where it finds nothing). That is fine at k ≤ 50 and was not timed separately. I did not repeat the byte-identical Wesley API check from the fix-up section; the bench per-question identity covers the ranking, not the JSON.
 - The page still labels a YouTube `source_url` "Read this sermon on CCEL". That predates this merge (#13).
+
+## Fix-up: merge with main (#15) and #14, shared public-domain allow-list, Patrick's decisions
+
+**Base.** I checked PR #14 on the GitHub API first: it is **open, not merged**. `gh` is not installed here, so I used the public REST endpoint. I merged two things into this branch, merge commits only, no rebase and no force-push:
+- `origin/main` at `4129646` (#15 merged), as **`cca8cbf`**;
+- the PR #14 branch `origin/feat/w3-lib` at `18825ef`, as **`812d618`**, so that `src/preached/libraries.py` is present.
+
+**Once #14 merges, this PR's diff against main shrinks by #14's files.** PR #10 (`feat/w3-cpu`) is **not on main**, so the "re-apply hidden rows in #10's per-request reload" requirement does not apply yet. The gate here is already a per-request SQL condition (fix-up M1). The reload is #10's code and is not in this branch.
+
+### Conflicts (6 files, both behaviours kept)
+| File | Merge | Resolution |
+|---|---|---|
+| `src/preached/youtube/listing.py` | main | One builder. `watch_url` keeps #15's `_watch_link`, its 24 h / duration cap and its non-finite handling, and gains #12's `end_s`/`flag_end_s`/`policy`. **The shifted seek is built by `watch_url` → `_watch_link`** from a validated 11-character id and an `int` `t` (ceil of the shifted start). A shifted seek that is non-finite, or that the cap would pull back onto the name, returns no link. `watch_video_id` reads the id from `youtube_watch_url`'s canonical output, and `policy_watch_url` calls `watch_url`. There is no separate builder. |
+| `src/preached/youtube/pipeline.py` | main | `watch_url(..., duration_s=video.duration_s, end_s=, flag_end_s=, policy=)`. |
+| `app/server.py` | main | Imports from both sides (`public_audio_url` plus the policy helpers). |
+| `app/static/app.js` | main | #15's `watchHref` (source-link dedupe) is set on the YouTube link, and its label uses the shifted start (`playLabel`). |
+| `search/query.py` | #14 | #14's `INDEX_DIR`/`open_readonly` plus #12's `touches_flagged`/`chunk_video_id`/`policy_watch_url`. |
+| `src/preached/youtube/library.py` | #14 | `index_video` takes both #12's `review_sha256`/`privacy_sha256` and #14's `reader`/`sermon_number`/`librivox_id`. |
+
+`tests/test_youtube.py` merged cleanly, but #15's new assertion used `_chunks_for`'s old return value. I unpacked `(records, items)` there.
+
+### CTO decision: one shared allow-list, everything else fails closed (`fb944fe`)
+- **The gate exemption is keyed on the slug.** `store.public_domain_file(connection, library)` returns true only when `preached.libraries.is_public_domain(library)` holds (spurgeon or edwards, with committed provenance) **and** the file is that library's own build: meta `library` equals the slug (written by `build_library.py`), no `videos.review_sha256` is set and no chunk has `flag_end_s`. `visible_sql(..., library=)` re-checks this on every call, so church rows written into a classics file re-gate it on the next request. A missing column never exempts a file. Without this, the merged branch hid the classics entirely: their files have `videos`/`video_id` and no approvals. The server (`App`), `/healthz` (no `pending_review` key for the classics), `/api/sermon`, `search/query.py --library` and `scripts/classics_smoke.py` all pass the slug. A server started with an allow-listed slug on a file that is not its own build logs a warning and stays gated.
+- **Fails closed:**
+  - **YouTube import:** `--privacy` or `$PREACHED_PRIVACY` is now required for import, `--dry-run` and `--ack-review` (new `privacy.required_config`). Before, an empty config was used silently. Without one the import exits 2 before listing or downloading anything. `wesley`, `spurgeon` and `edwards` are refused as import slugs, because those files are served ungated.
+  - **`align/asr_chunks.py`:** unchanged for church slugs (config required, redaction, review file, unpublished). It now also refuses `spurgeon`/`edwards`.
+  - **`search/build_library.py` and `ingest/run.py --library`:** these are only for the allow-list. Any other slug exits non-zero with or without a privacy config. Church audio never goes through them.
+- **Classics stay visible** (`ClassicsVisibleTests`): a Spurgeon file built by the real `build_library.py` (synthetic transcript, fake embedder) is served by `App(library="spurgeon")`, `/healthz`, `/api/sermon` and `query.py --library spurgeon`. The same file stays hidden in each of these cases: served as `edwards`, `church`, `talmage` or another slug; tainted with a review hash or a flag; or lacking the marker. A test also shows that without the slug the gate hides it.
+- **Non-allow-listed slug, no privacy config, non-zero exit on each path** (`FailClosedTests`): YouTube import and `--dry-run` (exit 2, no callbacks run, nothing written), `--ack-review` (2), `asr_chunks.py` (2, no output), `build_library.py church` and `ingest/run.py --library church --all` (non-zero, also with a config). The public-domain slugs are refused by the YouTube import, `--ack-review` and `asr_chunks.py`.
+- On the real `/cache` indexes: spurgeon 534/534 and edwards 2,514/2,514 chunks visible, and `cc-speech` 0/11 (gated). `scripts/classics_smoke.py`: 12/12 (a smoke test, not a quality metric).
+
+### Patrick's decisions
+- **Church audio policy is `none`, fixed.** `audio_policy.resolve_flagged_audio()` always returns `none`. `PREACHED_FLAGGED_AUDIO` and the TOML key `flagged_audio` may still say `none`, so old configs load, but `play`/`shifted` raise ("Patrick chose 'none'…") and the import, server and CLI exit 2. The `--flagged-audio` flags are removed from `import/youtube.py`, `app/server.py` and `search/query.py`. The `shifted` code is kept because it is tested (`flagged_play`, `public_times`, `watch_url(policy=)`, `hit_dict(policy)`). It is now reachable only from code: tests set `app.flagged_audio` directly. `ServedTests` and the new sermon tests write play-era links into the fixture DB to simulate an import made before the decision, because `play` can no longer be configured. New test: `test_church_audio_policy_cannot_be_chosen`.
+- **Default embedding model:** unchanged (Granite English R2).
+- **Whole-sermon withholding: NO.** Only cards that touch flagged passages lose their play/YouTube links, which is the current behaviour. **Residual risk, accepted by Patrick:** an unflagged card's link, and the `/api/sermon` link, can still be scrubbed to a flagged moment elsewhere in the same sermon (on YouTube, the whole video is public). Human review plus the W3-PRIV-SKIP exclusions are the mitigation. This is recorded in `BRIEF.md` (Privacy), `README.md`, `privacy.example.toml` and the `audio_policy` docstring.
+- Docs wording: "policy pending Patrick" is replaced with "Patrick chose: no play link on name passages; announcements, prayer requests and testimonies are excluded (see W3-PRIV-SKIP)" in `privacy.example.toml`, `audio_policy.py`, BRIEF and the top of this report. BRIEF had no "pending" sentence, so the decision was added to its Privacy bullet. W3-PRIV-SKIP is not in this branch; the docs only point to it.
+
+### CTO: `/api/sermon` returned the stored `audio_url` (`fb944fe`)
+`App._sermon_links` applies the card rules. The stored link is never passed through:
+- A non-YouTube URL goes through `public_audio_url`, so `javascript:`, `http:` and `data:` give no link.
+- A YouTube link is rebuilt by `policy_watch_url` from the validated id.
+- Flagged chunks are skipped (any policy but `play`). Under `none`, chunks that touch a flagged chunk (`touches_flagged`) are skipped too. The first chunk left gives the link; if none is left there is no link.
+- A YouTube `source_url` (a watch link from 0:00) is dropped when the sermon has any flagged chunk.
+
+Tests are `SermonLinkTests` (a YouTube sermon whose stored first link plays the names gets the first clear chunk's rebuilt link; an unflagged sermon keeps its links; an all-flagged sermon gets no link) and `ChurchAsrSermonTests` (archive URL kept; unsafe stored URLs give None). This changes one existing assertion: `LiveGateTests` now expects sermon A's YouTube `source_url` to be null.
+
+### Results
+- Full suite (`uv run python -m unittest discover -s tests`): **340 tests, all pass**, Deno page tests included. That is 326 after both merges, plus 1 policy test and 13 in `tests/test_priv_allowlist.py`.
+- `uv lock --check`: `Resolved 75 packages`. `pyproject.toml` and `uv.lock` are identical to main. **No dependencies added.** No LLM.
+- **Wesley API byte-identical to `origin/main`.** Method: `git archive origin/main` was extracted to `/tmp`, and the same script ran in both trees on `/cache/index/wesley.sqlite` with Granite on CPU (asserted no fallback). It covered 40 eval questions × bm25/dense/hybrid at k=10, `/healthz`, and `/api/sermon` for all 141 sermon ids: 262 responses with `took_ms` removed. `cmp` reports them identical; sha256 `a7183ca0…f405df` for both.
+
+### How to run
+```
+uv run --extra youtube import/youtube.py <channel-url> --library church --privacy /cache/index/church-privacy.toml
+uv run --extra youtube import/youtube.py --library church --ack-review <id> --privacy /cache/index/church-privacy.toml
+uv run app/server.py --library church          # flagged passages: text only
+uv run app/server.py --library spurgeon        # classics: no gate
+uv run search/query.py --library edwards "sinners in the hands of an angry god" --mode bm25
+uv run python -m unittest discover -s tests && uv lock --check
+```
+
+### Open issues
+- **#14 is not merged.** If #14 changes `libraries.py` before it merges, this branch needs another merge. #10 is not on main, so its reload has not been checked against the gate.
+- `public_domain_file` trusts the meta `library` marker, which `build_library.py` writes. Anyone with write access to `/cache/index` could forge it on a church file. The review-hash and flag checks catch files written by the church import paths, but not a hand-edited file.
+- A junk stored YouTube `audio_url` with a valid `source_url` still gets a link rebuilt from that id (same as cards). It is never the stored string.
+- `/api/sermon` runs one `touches_flagged` query per chunk until it finds a clear one, and only for sermons with flagged chunks. This was not timed.
+- The open issues from the earlier sections still apply: `[name]` timestamps in text, the silent-miss class, title recall 0.926, and the public YouTube video.
