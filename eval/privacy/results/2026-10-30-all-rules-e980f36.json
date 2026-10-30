@@ -1,0 +1,186 @@
+[
+  {
+    "set": "eval/privacy/dev.jsonl",
+    "sentences": 184,
+    "private_words": 115,
+    "private_redacted": 115,
+    "recall": 1.0,
+    "public_words": 170,
+    "public_redacted": 0,
+    "false_redaction_rate": 0.0,
+    "other_words": 1884,
+    "other_redacted": 0,
+    "other_rate": 0.0,
+    "errors_in_review_queue": 0,
+    "errors_not_in_review_queue": 0,
+    "by_category": {
+      "announcement": {
+        "other": "0/296",
+        "private": "37/37",
+        "public": "0/2"
+      },
+      "church_history": {
+        "other": "0/283",
+        "public": "0/56"
+      },
+      "prayer_request": {
+        "other": "0/326",
+        "private": "45/45",
+        "public": "0/2"
+      },
+      "quoted_author": {
+        "other": "0/257",
+        "public": "0/48"
+      },
+      "scripture_narration": {
+        "other": "0/370",
+        "public": "0/60"
+      },
+      "testimony": {
+        "other": "0/352",
+        "private": "33/33",
+        "public": "0/2"
+      }
+    }
+  },
+  {
+    "set": "eval/privacy/blind1.jsonl",
+    "sentences": 184,
+    "private_words": 144,
+    "private_redacted": 137,
+    "recall": 0.9514,
+    "public_words": 220,
+    "public_redacted": 2,
+    "false_redaction_rate": 0.0091,
+    "other_words": 2650,
+    "other_redacted": 0,
+    "other_rate": 0.0,
+    "errors_in_review_queue": 0,
+    "errors_not_in_review_queue": 9,
+    "by_category": {
+      "announcement": {
+        "other": "0/462",
+        "private": "54/54",
+        "public": "0/2"
+      },
+      "church_history": {
+        "other": "0/356",
+        "private": "3/3",
+        "public": "2/70"
+      },
+      "prayer_request": {
+        "other": "0/489",
+        "private": "46/49",
+        "public": "0/8"
+      },
+      "quoted_author": {
+        "other": "0/453",
+        "private": "3/4",
+        "public": "0/65"
+      },
+      "scripture_narration": {
+        "other": "0/397",
+        "private": "0/1",
+        "public": "0/60"
+      },
+      "testimony": {
+        "other": "0/493",
+        "private": "31/33",
+        "public": "0/15"
+      }
+    }
+  },
+  {
+    "set": "eval/privacy/blind2.jsonl",
+    "sentences": 234,
+    "private_words": 170,
+    "private_redacted": 154,
+    "recall": 0.9059,
+    "public_words": 285,
+    "public_redacted": 4,
+    "false_redaction_rate": 0.014,
+    "other_words": 4403,
+    "other_redacted": 7,
+    "other_rate": 0.0016,
+    "errors_in_review_queue": 3,
+    "errors_not_in_review_queue": 24,
+    "by_category": {
+      "announcement": {
+        "other": "4/731",
+        "private": "50/56",
+        "public": "0/15"
+      },
+      "church_history": {
+        "other": "1/715",
+        "private": "4/4",
+        "public": "2/90"
+      },
+      "prayer_request": {
+        "other": "1/765",
+        "private": "57/63",
+        "public": "0/4"
+      },
+      "quoted_author": {
+        "other": "1/711",
+        "private": "4/5",
+        "public": "0/84"
+      },
+      "scripture_narration": {
+        "other": "0/660",
+        "public": "1/76"
+      },
+      "testimony": {
+        "other": "0/821",
+        "private": "39/42",
+        "public": "1/16"
+      }
+    }
+  },
+  {
+    "set": "eval/privacy/blind3.jsonl",
+    "sentences": 272,
+    "private_words": 242,
+    "private_redacted": 224,
+    "recall": 0.9256,
+    "public_words": 354,
+    "public_redacted": 55,
+    "false_redaction_rate": 0.1554,
+    "other_words": 6405,
+    "other_redacted": 14,
+    "other_rate": 0.0022,
+    "errors_in_review_queue": 44,
+    "errors_not_in_review_queue": 43,
+    "by_category": {
+      "announcement": {
+        "other": "2/891",
+        "private": "67/72",
+        "public": "4/21"
+      },
+      "church_history": {
+        "other": "3/1122",
+        "private": "11/12",
+        "public": "14/101"
+      },
+      "prayer_request": {
+        "other": "2/960",
+        "private": "67/75",
+        "public": "0/11"
+      },
+      "quoted_author": {
+        "other": "4/972",
+        "private": "16/16",
+        "public": "26/95"
+      },
+      "scripture_narration": {
+        "other": "0/1157",
+        "private": "11/14",
+        "public": "2/97"
+      },
+      "testimony": {
+        "other": "3/1303",
+        "private": "52/53",
+        "public": "9/29"
+      }
+    }
+  }
+]

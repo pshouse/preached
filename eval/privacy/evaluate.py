@@ -9,6 +9,8 @@ removed, the sentence is split on spaces into Whisper-style word records
 - recall = private words redacted / private words
 - false-redaction rate = kept-name words redacted / kept-name words
 - other-word rate = unmarked words redacted / unmarked words
+- errors flagged for review = wrong words that ``privacy.review`` lists for
+  a person to check before publishing
 
     python3 eval/privacy/evaluate.py eval/privacy/dev.jsonl eval/privacy/heldout.jsonl
     python3 eval/privacy/evaluate.py eval/privacy/heldout.jsonl --errors
@@ -27,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from preached.privacy import Config, TOKEN, lists, redact  # noqa: E402
+from preached.privacy import Config, TOKEN, lists, redact, review  # noqa: E402
 
 MARK = re.compile(r"\[\[(.+?)\]\]|\{\{(.+?)\}\}")
 
@@ -68,18 +70,22 @@ def score(path: Path, config: Config, show: bool) -> dict:
         words = parse(row["text"])
         records = [{"start": i * 0.3, "end": i * 0.3 + 0.25, "text": w} for i, (w, _) in enumerate(words)]
         out = redact(records, config=config)
+        flagged = set()
+        for item in review(records, config=config):
+            flagged.update(i for i, r in enumerate(records) if item["start"] <= r["start"] and r["end"] <= item["end"])
         if len(out) != len(records) or any(
             (a["start"], a["end"]) != (b["start"], b["end"]) for a, b in zip(records, out)
         ):
             raise SystemExit(f"{row['id']}: timing or word count changed")
         wrong = []
-        for (word, label), result in zip(words, out):
+        for index, ((word, label), result) in enumerate(zip(words, out)):
             hidden = TOKEN in result["text"]
             counts[label][0] += hidden
             counts[label][1] += 1
             by_category[row["category"]][label][0] += hidden
             by_category[row["category"]][label][1] += 1
             if (label == "private") != hidden:
+                counts["errors_reviewed" if index in flagged else "errors_unreviewed"][0] += 1
                 wrong.append(f"{'MISS' if label == 'private' else 'OVER'}:{word}")
         if wrong:
             errors.append((row["id"], row["category"], " ".join(wrong), " ".join(r["text"] for r in out)))
@@ -99,6 +105,8 @@ def score(path: Path, config: Config, show: bool) -> dict:
         "other_words": other[1],
         "other_redacted": other[0],
         "other_rate": round(other[0] / other[1], 4) if other[1] else None,
+        "errors_in_review_queue": counts["errors_reviewed"][0],
+        "errors_not_in_review_queue": counts["errors_unreviewed"][0],
         "by_category": {
             category: {
                 label: f"{values[0]}/{values[1]}" for label, values in sorted(labels.items())
@@ -125,7 +133,9 @@ def main() -> None:
             f"{result['set']}: {result['sentences']} sentences  "
             f"recall {result['private_redacted']}/{result['private_words']} = {result['recall']}  "
             f"false-redaction {result['public_redacted']}/{result['public_words']} = {result['false_redaction_rate']}  "
-            f"other words {result['other_redacted']}/{result['other_words']} = {result['other_rate']}"
+            f"other words {result['other_redacted']}/{result['other_words']} = {result['other_rate']}  "
+            f"errors flagged for review {result['errors_in_review_queue']}/"
+            f"{result['errors_in_review_queue'] + result['errors_not_in_review_queue']}"
         )
         for category, labels in result["by_category"].items():
             print(f"    {category:20s} " + "  ".join(f"{k} {v}" for k, v in labels.items()))
