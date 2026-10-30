@@ -96,7 +96,7 @@ def sample_words(start: float = 12.2) -> list[Word]:
 class ListingTests(unittest.TestCase):
     def test_fixture_flattens_tabs_and_skips_live(self) -> None:
         videos = listing()
-        self.assertEqual([video.id for video in videos], ["abcdefghijk", "bbbcccddd11", "shortvid0001"])
+        self.assertEqual([video.id for video in videos], ["abcdefghijk", "bbbcccddd11", "shortvid001"])
         hope = videos[0]
         self.assertEqual(hope.title, "On Hope")
         self.assertEqual(hope.published, date(2024, 3, 15))
@@ -106,6 +106,20 @@ class ListingTests(unittest.TestCase):
         self.assertEqual(faith.published, datetime.fromtimestamp(1705276800, timezone.utc).date())
         self.assertEqual(faith.url, "https://www.youtube.com/watch?v=bbbcccddd11")
         self.assertEqual(videos[2].published, date(2022, 1, 2))
+
+    def test_video_id_is_exactly_eleven_characters(self) -> None:
+        payload = {
+            "title": "Example Lectures",
+            "entries": [
+                {"id": "../x", "title": "traversal"},
+                {"id": "a.b", "title": "dotted"},
+                {"id": "abc", "title": "short"},
+                {"id": "A" * 12, "title": "long"},
+                {"id": "BGoD6CIpLWQ", "title": "Are speeches public domain?", "duration": 322},
+            ],
+        }
+        videos = parse_listing(payload)
+        self.assertEqual([video.id for video in videos], ["BGoD6CIpLWQ"])
 
     def test_creative_commons_field(self) -> None:
         self.assertTrue(creative_commons("Creative Commons Attribution license (reuse allowed)"))

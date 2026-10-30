@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from urllib.parse import urlsplit
 
-VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
+# A YouTube video id is 11 characters. That is also the form /api/sermon/<id> accepts.
+VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 # Gaston Community Church is named in BRIEF.md. Permission is still pending.
