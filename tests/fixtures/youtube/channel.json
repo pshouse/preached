@@ -1,0 +1,55 @@
+{
+  "_type": "playlist",
+  "id": "UCexamplechannel0000001",
+  "title": "Example Lectures",
+  "channel": "Example Lectures",
+  "uploader": "Example Lectures",
+  "entries": [
+    {
+      "_type": "playlist",
+      "title": "Videos",
+      "entries": [
+        {
+          "_type": "url",
+          "ie_key": "Youtube",
+          "id": "abcdefghijk",
+          "url": "https://www.youtube.com/watch?v=abcdefghijk",
+          "title": "On Hope",
+          "duration": 754,
+          "upload_date": "20240315",
+          "channel": "Example Lectures"
+        },
+        {
+          "_type": "url",
+          "id": "bbbcccddd11",
+          "title": "On Faith\tand love",
+          "duration": 1800.5,
+          "timestamp": 1705276800,
+          "url": "bbbcccddd11"
+        },
+        null,
+        {
+          "_type": "url",
+          "id": "livevideo11",
+          "title": "Live now",
+          "duration": null,
+          "is_live": true,
+          "live_status": "is_live"
+        }
+      ]
+    },
+    {
+      "_type": "playlist",
+      "title": "Shorts",
+      "entries": [
+        {
+          "_type": "url",
+          "id": "shortvid001",
+          "title": "A short word",
+          "duration": 40,
+          "upload_date": "2022-01-02"
+        }
+      ]
+    }
+  ]
+}
