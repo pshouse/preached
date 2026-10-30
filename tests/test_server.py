@@ -16,6 +16,7 @@ import numpy as np
 
 from app.server import (
     FALLBACK_NOTE,
+    STALE_NOTE,
     MAX_BODY,
     MAX_TARGET,
     REQUEST_TIMEOUT_S,
@@ -27,7 +28,10 @@ from app.server import (
     load_search,
     make_server,
 )
-from preached.store import connect, write_embeddings
+from preached.models import MODELS
+from preached.store import connect, save_embedding_info, write_embeddings
+
+FIXTURE_FP = "fixture-fingerprint"
 
 COLUMNS = (
     "chunk_id",
@@ -178,6 +182,10 @@ def build_rich_index(path: Path) -> None:
     for index, _row in enumerate(rows):
         matrix[index, index % 4] = 1.0
     write_embeddings(connection, "fixture", [int(row[0]) for row in rows], matrix)
+    save_embedding_info(connection, "fixture", {"fingerprint": FIXTURE_FP})
+    # Granite vectors from an older revision: the fingerprint no longer matches models.toml.
+    write_embeddings(connection, "granite-english-r2", [int(row[0]) for row in rows], matrix)
+    save_embedding_info(connection, "granite-english-r2", {"fingerprint": "older-revision"})
     connection.close()
 
 
@@ -255,7 +263,7 @@ class ServerTests(unittest.TestCase):
         rich = reopen(cls.rich_path)
         cls.rich_app = App(
             connection=rich,
-            searcher=Searcher(rich, model="fixture"),
+            searcher=Searcher(rich, model="fixture", fingerprint=FIXTURE_FP),
             encode=encode_fixture,
             fallback_note=None,
             model_name="fixture",
@@ -586,6 +594,18 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(body)["error"], "internal error")
         self.assertNotIn(b"SECRET_TRACEBACK_TOKEN", body)
         self.assertNotIn(b"Traceback", body)
+
+    def test_stale_vectors_fall_back_to_bm25_before_loading_weights(self) -> None:
+        connection = reopen(self.rich_path)
+        try:
+            self.assertNotEqual(MODELS["granite-english-r2"].fingerprint(), "older-revision")
+            # The real loader: the fingerprint check refuses before load_model runs.
+            searcher, encode, note = load_search(connection, "granite-english-r2")
+            self.assertIsNone(encode)
+            self.assertEqual(note, STALE_NOTE)
+            self.assertIsNone(searcher.model)
+        finally:
+            connection.close()
 
     def test_bm25_fallback_is_flagged(self) -> None:
         self.assertIsNone(self.fallback_encode)

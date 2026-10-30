@@ -42,7 +42,7 @@ from preached.search import (  # noqa: E402
     _optional_int,
     _text_or_none,
 )
-from preached.store import open_readonly  # noqa: E402
+from preached.store import EmbeddingMismatch, open_readonly  # noqa: E402
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
@@ -80,6 +80,7 @@ SERMON_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
+STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -209,12 +210,9 @@ def default_loader(connection, model_key: str):
     from preached.embed import encode_query, load_model, unload
 
     spec = MODELS[model_key]
+    # Check the stored vectors' fingerprint before paying for the weights.
+    searcher = Searcher(connection, model=model_key)
     loaded = load_model(spec, device="cpu", batch_size=1)
-    try:
-        searcher = Searcher(connection, model=model_key)
-    except Exception:
-        unload(loaded)
-        raise
 
     def encode(query: str):
         return encode_query(loaded, query)
@@ -229,6 +227,10 @@ def load_search(connection, model_key: str, *, bm25_only: bool = False, loader=N
     loader = loader or default_loader
     try:
         searcher, encode = loader(connection, model_key)
+    except EmbeddingMismatch:
+        # Never pair new query vectors with old document vectors.
+        logging.exception("stored vectors do not match search/models.toml; serving BM25 only")
+        return Searcher(connection), None, STALE_NOTE
     except Exception:
         logging.exception("embedding model unavailable; serving BM25 only")
         return Searcher(connection), None, FALLBACK_NOTE

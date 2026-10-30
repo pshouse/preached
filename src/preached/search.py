@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weighted_fusion
-from preached.store import bm25_search, load_embeddings
+from preached.store import bm25_search, check_fingerprint, load_embeddings
 
 CANDIDATES = 100
 # GET /api/search asks the ranker for this many hits, then de-dups down to k.
@@ -51,7 +51,16 @@ class Hit:
 
 
 class Searcher:
-    def __init__(self, connection: sqlite3.Connection, model: str | None = None):
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        model: str | None = None,
+        fingerprint: str | None = None,
+    ):
+        """model: a key in search/models.toml. Its stored document vectors
+        must carry the fingerprint the config gives now (or `fingerprint`,
+        when passed); otherwise EmbeddingMismatch is raised instead of
+        silently mixing old document vectors with new query vectors."""
         self.connection = connection
         self.model = model
         self._rows = {
@@ -61,6 +70,13 @@ class Searcher:
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
         if model:
+            if fingerprint is None:
+                from preached.models import MODELS
+
+                if model not in MODELS:
+                    raise RuntimeError(f"unknown model {model!r}; see search/models.toml")
+                fingerprint = MODELS[model].fingerprint()
+            check_fingerprint(connection, model, fingerprint)
             self._rowids, self._matrix = load_embeddings(connection, model)
 
     def _pack(self, scored: list[tuple[int, float]], limit: int) -> list[Hit]:
