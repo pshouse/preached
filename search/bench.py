@@ -1,6 +1,7 @@
 """Benchmark BM25, each embedding model, and hybrids on the Wesley eval set.
 
-One command:  uv run search/bench.py
+One command:  uv run --group bench search/bench.py
+(The bench group adds Pillow and torchvision, which EmbeddingGemma 2 needs to load.)
 Models come from search/models.toml (one table per model, pinned revision).
 Each run writes eval/results/YYYY-MM-DD[-N].json and .md and never
 overwrites an earlier run. Document vectors are cached in the SQLite index
