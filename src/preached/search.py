@@ -4,8 +4,9 @@ Chunks overlap their neighbors by about 25% (see corpus/chunk_config.json).
 ``dedupe_adjacent`` drops a lower-ranked hit when it repeats a hit already
 kept from the same sermon, so a result list does not show those words twice.
 A neighbour the ranker placed inside the requested top k is merged into the
-kept hit instead of dropped, so de-dup never hides words the plain top k
-would have shown.
+kept hit instead of dropped when the passages stitch exactly within
+``MERGE_MAX_WORDS``; otherwise it is dropped and its words outside the kept
+passage are not shown.
 """
 
 from __future__ import annotations
@@ -340,12 +341,20 @@ def dedupe_adjacent(hits: list[Hit], limit: int) -> list[Hit]:
     wider pool than ``limit`` so dropping a neighbor still leaves a full page.
 
     A neighbour that ranks inside the top ``limit`` (so the list without
-    de-dup would have shown it) is merged into the kept passage it overlaps
-    (``merge_overlapping``) rather than dropped. Then every word the plain
-    top ``limit`` showed is still on the page, at the same rank or higher,
-    and no word is shown twice. A neighbour ranked below ``limit`` is
-    dropped, so passages grow only from hits the user would have seen, and
-    never past ``MERGE_MAX_WORDS``.
+    de-dup would have shown it) is merged into the kept passage(s) it
+    overlaps (``merge_overlapping``) when every join succeeds; if any join
+    fails (no exact boundary, different audio or text source, or past
+    ``MERGE_MAX_WORDS``) it is dropped and the kept passages are unchanged.
+    A neighbour ranked below ``limit`` is always dropped, so passages grow
+    only from hits the user would have seen.
+
+    Guaranteed: no two returned hits repeat each other by the rules of
+    ``repeats_kept`` (for chunks with word offsets: same sermon, overlapping
+    word ranges), so no word is shown twice; a merge never makes a passage
+    longer than ``MERGE_MAX_WORDS``; and the function is idempotent
+    (de-duping its own output returns the same list). Not guaranteed: every word of the plain top
+    ``limit`` stays on the page. A dropped neighbour's words outside the
+    kept passage are hidden, as before merging existed.
     """
     if limit <= 0:
         return []
@@ -362,19 +371,20 @@ def dedupe_adjacent(hits: list[Hit], limit: int) -> list[Hit]:
             continue
         # Fold the neighbour, and any kept passage it bridges to, into the
         # best-ranked kept passage it overlaps.
+        # All or nothing: if any join fails (usually the word cap), the
+        # neighbour is dropped and the kept passages stay as they were.
+        # A partial merge would leave the merged card overlapping the kept
+        # passage it failed to absorb, so some words would show twice.
         target = overlapping[0]
         merged = merge_overlapping(kept[target], hit)
+        for index in overlapping[1:]:
+            if merged is None:
+                break
+            merged = merge_overlapping(merged, kept[index])
         if merged is None:
             continue
-        absorbed = []
-        for index in overlapping[1:]:
-            bridged = merge_overlapping(merged, kept[index])
-            if bridged is None:
-                continue
-            merged = bridged
-            absorbed.append(index)
         kept[target] = merged
-        for index in reversed(absorbed):
+        for index in reversed(overlapping[1:]):
             del kept[index]
     return kept
 

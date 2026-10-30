@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import random
 import unittest
 
-from preached.search import Hit, boundary_overlap, dedupe_adjacent, merge_overlapping
+from preached.search import MERGE_MAX_WORDS, Hit, boundary_overlap, dedupe_adjacent, merge_overlapping, repeats_kept
 
 
 def hit(**kwargs) -> Hit:
@@ -210,6 +211,78 @@ class MergeTests(unittest.TestCase):
         best = hit(chunk_id="a", score=2, word_start=None, word_end=None, start_s=0, end_s=30)
         neighbour = hit(chunk_id="b", score=1, word_start=None, word_end=None, start_s=20, end_s=50)
         self.assertIsNone(merge_overlapping(best, neighbour))
+
+    def test_failed_second_join_drops_the_bridge(self) -> None:
+        # CTO review of PR #11: the bridge joins the first card, then the
+        # second join passes the word cap. Both cards used to keep the
+        # bridge's words (225..259 shown twice). Now the bridge is dropped.
+        left = hit(chunk_id="a", score=3, word_start=0, word_end=150, text=words("w", 0, 150))
+        right = hit(chunk_id="c", score=2, word_start=225, word_end=375, text=words("w", 225, 375))
+        bridge = hit(chunk_id="b", score=1, word_start=110, word_end=260, text=words("w", 110, 260))
+        kept = dedupe_adjacent([left, right, bridge], limit=10)
+        self.assertEqual([item.chunk_ids for item in kept], [["a"], ["c"]])
+        self.assertEqual(kept[0].text, words("w", 0, 150))
+        self.assertEqual(kept[1].text, words("w", 225, 375))
+
+
+def random_pool(rng: random.Random) -> list[Hit]:
+    """Chunks the shape the chunker makes: windows of 60-150 words over 1-3
+    sermons, each overlapping the next by about 25%, with random scores.
+    Some neighbours sit in another audio file, so their joins fail."""
+    pool = []
+    rowid = 0
+    for sermon in range(rng.randint(1, 3)):
+        start = 0
+        for index in range(rng.randint(1, 12)):
+            size = rng.randint(60, 150)
+            end = start + size
+            rowid += 1
+            pool.append(hit(
+                rowid=rowid,
+                score=rng.choice([rng.random(), round(rng.random(), 1)]),  # some ties
+                chunk_id=f"s{sermon}-c{index:04d}",
+                sermon_id=f"wesley-{sermon:03d}",
+                text=words(f"s{sermon}w", start, end),
+                word_start=start,
+                word_end=end,
+                audio_url=rng.choice(["https://archive.org/a.mp3"] * 5 + ["https://archive.org/b.mp3"]),
+            ))
+            start = end - max(1, size // 4)
+    rng.shuffle(pool)
+    return rng.sample(pool, rng.randint(1, len(pool)))
+
+
+class DedupePropertyTests(unittest.TestCase):
+    """Seeded random lists (stdlib only). CTO fuzz on the first version found
+    repeated words in 1,406 of 20k lists and 1,362 non-idempotent results."""
+
+    RUNS = 20000
+
+    def test_random_lists(self) -> None:
+        rng = random.Random(20261030)
+        for run in range(self.RUNS):
+            pool = random_pool(rng)
+            limit = rng.randint(1, 10)
+            kept = dedupe_adjacent(pool, limit)
+            with self.subTest(run=run, limit=limit, pool=[(h.chunk_id, h.score) for h in pool]):
+                self.assertLessEqual(len(kept), limit)
+                for i, first in enumerate(kept):
+                    for second in kept[i + 1:]:
+                        if first.sermon_id == second.sermon_id:
+                            # Same-sermon cards never overlap in word range.
+                            self.assertLessEqual(
+                                min(first.word_end, second.word_end) - max(first.word_start, second.word_start), 0
+                            )
+                        self.assertFalse(repeats_kept(second, first))
+                # No word is shown twice.
+                shown = " ".join(item.text for item in kept).split()
+                self.assertEqual(len(shown), len(set(shown)))
+                # A merge never passes the cap (input chunks are <= 150 words).
+                for item in kept:
+                    self.assertLessEqual(len(item.text.split()), MERGE_MAX_WORDS)
+                    self.assertEqual(len(item.text.split()), item.word_end - item.word_start)
+                # Idempotent.
+                self.assertEqual(dedupe_adjacent(kept, limit), kept)
 
 
 if __name__ == "__main__":
