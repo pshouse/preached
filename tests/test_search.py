@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import unittest
 
-import torch
-
 import dataclasses
 
-from preached.embed import extended_encoder_mask, format_documents, format_query
-from preached.models import DEFAULT_MODEL, MODELS, REFERENCE
+from preached.embed import format_documents, format_query
+from preached.models import DEFAULT_MODEL, EXCLUDED, MODELS, REFERENCE
 from preached.stats import bootstrap_ci, paired_bootstrap
 from preached.fts import scripture_match, to_fts_query
 from preached.metrics import mrr_at, ndcg_at, recall_at
@@ -75,19 +73,6 @@ class MetricTests(unittest.TestCase):
         self.assertGreater(ndcg_at(good, quotes, 10), ndcg_at(bad, quotes, 10))
 
 
-class MaskShimTests(unittest.TestCase):
-    def test_encoder_mask_is_additive(self) -> None:
-        mask = torch.tensor([[1, 1, 0]], dtype=torch.int64)
-        extended = extended_encoder_mask(mask, mask.shape, torch.float32)
-        self.assertEqual(tuple(extended.shape), (1, 1, 1, 3))
-        self.assertEqual(float(extended[0, 0, 0, 0]), 0.0)
-        self.assertEqual(float(extended[0, 0, 0, 1]), 0.0)
-        self.assertEqual(float(extended[0, 0, 0, 2]), torch.finfo(torch.float32).min)
-        # MoE code squeezes this back to a (batch, seq) keep-mask.
-        keep = torch.where(extended.squeeze() == 0, 1, 0)
-        self.assertEqual(keep.tolist(), [1, 1, 0])
-
-
 class ModelConfigTests(unittest.TestCase):
     def test_every_model_is_pinned(self) -> None:
         for spec in MODELS.values():
@@ -117,11 +102,15 @@ class ModelConfigTests(unittest.TestCase):
         _, keyword = format_query(spec, "Christian perfection")
         self.assertEqual(keyword, "task: search result | query: ")
 
-    def test_nomic_uses_search_document_prefix(self) -> None:
-        spec = MODELS["nomic-embed-text-v2-moe"]
-        docs, prompt = format_documents(spec, ["t"], ["By grace are ye saved."])
-        self.assertEqual((docs, prompt), (["By grace are ye saved."], "search_document: "))
-        self.assertEqual(format_query(spec, "Christian perfection")[1], "search_query: ")
+    def test_excluded_models_are_not_runnable(self) -> None:
+        excluded = {item["hf_id"] for item in EXCLUDED}
+        self.assertIn("nomic-ai/nomic-embed-text-v2-moe", excluded)
+        self.assertFalse(excluded & {spec.hf_id for spec in MODELS.values()})
+        self.assertFalse(any(spec.trust_remote_code for spec in MODELS.values()))
+
+    def test_unclear_provenance_is_flagged(self) -> None:
+        self.assertTrue(MODELS["arctic-embed-l"].provenance.startswith("unclear:"))
+        self.assertEqual(MODELS[DEFAULT_MODEL].provenance, "clear")
 
     def test_granite_has_no_prefix(self) -> None:
         spec = MODELS["granite-english-r2"]

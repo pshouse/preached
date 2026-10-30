@@ -39,6 +39,7 @@ class ModelSpec:
     trust_remote_code: bool = False
     enabled: bool = True
     gated: bool = False
+    provenance: str = "clear"
 
     def query_prefix(self, keyword: bool) -> str:
         if keyword and self.keyword_prefix:
@@ -83,10 +84,14 @@ def load_config(path: Path | None = None) -> dict:
                 raise ValueError(f"{key}: dtype {dtype!r} is not one of {DTYPES}")
         if not spec.revision:
             raise ValueError(f"{key}: pin a revision (commit hash) in models.toml")
+        if spec.provenance != "clear" and not spec.provenance.startswith("unclear:"):
+            raise ValueError(f"{key}: provenance must be 'clear' or 'unclear: <reason>'")
         models[key] = spec
     default = raw.get("default")
     if default not in models:
         raise ValueError(f"default model {default!r} is not in models.toml")
+    if models[default].provenance != "clear":
+        raise ValueError(f"default model {default!r} has unresolved provenance")
     return {
         "models": models,
         "default": default,

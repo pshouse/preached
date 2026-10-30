@@ -18,6 +18,9 @@
 #   trust_remote_code    Only when the repo needs its own modeling code.
 #   enabled = false      Keep the entry for the record but skip it by default.
 #   gated = true         Weights need an accepted license and HF_TOKEN.
+#   provenance           "clear", or "unclear: <why>" while a lineage question is open.
+#                        Unclear models are benchmarked and flagged, never shipped by default.
+#   provenance_sources   Links that support the lineage claim.
 
 # The model search/query.py uses unless --model is given.
 default = "granite-english-r2"
@@ -29,7 +32,8 @@ hf_id = "google/embeddinggemma-2"
 revision = "f9972ac22e696a105c482202646979e33e4b5a1e"
 license = "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)"
 developer = "Google DeepMind"
-lineage = "Gemma 4 text backbone, Google DeepMind (Oct 2026). Not derived from a PRC model."
+lineage = "Gemma 4 text backbone, Google DeepMind (Oct 2026). Not derived from a PRC model per the model card and paper."
+provenance = "clear"
 lineage_sources = ["https://huggingface.co/google/embeddinggemma-2", "https://arxiv.org/abs/2610.37364"]
 params = "270M text-only (740M with vision and audio towers)"
 dtype_gpu = "fp32"   # card: bf16 or fp32, never fp16
@@ -83,7 +87,8 @@ hf_id = "ibm-granite/granite-embedding-english-r2"
 revision = "47ea694b257b703fee9253d75c2b1f2985180498"
 license = "Apache-2.0"
 developer = "IBM Granite Embedding Team"
-lineage = "ModernBERT architecture (Answer.AI, US; LightOn, France), pretrained and fine-tuned by IBM. No PRC base model."
+lineage = "IBM-trained encoder, pretrained from scratch by IBM with the ModernBERT architecture recipe (no ModernBERT weights). Distilled from an IBM-tuned Mistral teacher. No MS-MARCO. No PRC base or teacher model."
+provenance = "clear"
 lineage_sources = ["https://huggingface.co/ibm-granite/granite-embedding-english-r2", "https://arxiv.org/abs/2508.21085"]
 params = "149M"
 dtype_gpu = "fp32"
@@ -96,7 +101,8 @@ hf_id = "Snowflake/snowflake-arctic-embed-l"
 revision = "d8fb21ca8d905d2832ee8b96c894d3298964346b"
 license = "Apache-2.0"
 developer = "Snowflake"
-lineage = "Arctic-Embed 1.0 large, initialized from Microsoft intfloat/e5-large-unsupervised (BERT-large)."
+lineage = "Arctic-Embed 1.0 large, initialized from intfloat/e5-large-unsupervised (Microsoft Research Asia, BERT-large)."
+provenance = "unclear: the Arctic-Embed paper does not name the models used for hard-negative mining or synthetic query generation. Pending Patrick's decision."
 lineage_sources = ["https://huggingface.co/Snowflake/snowflake-arctic-embed-l", "https://arxiv.org/abs/2405.05374"]
 params = "334M"
 dtype_gpu = "fp32"
@@ -104,23 +110,11 @@ dtype_cpu = "fp32"
 dim = 1024
 question_prefix = "Represent this sentence for searching relevant passages: "
 
-[models.nomic-embed-text-v2-moe]
-hf_id = "nomic-ai/nomic-embed-text-v2-moe"
-revision = "1066b6599d099fbb93dfcb64f9c37a7c9e503e85"
-# Remote modeling code comes from nomic-ai/nomic-bert-2048 at 7710840340a098cfb869c4f65e87cf2b1b70caca.
-license = "Apache-2.0"
-developer = "Nomic AI (New York)"
-lineage = "FacebookAI/xlm-roberta-base (Meta) -> nomic-ai/nomic-xlm-2048 -> nomic-embed-text-v2-moe-unsupervised -> this checkpoint."
-lineage_sources = ["https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe", "https://arxiv.org/abs/2502.07972"]
-params = "475M total / 305M active (MoE)"
-dtype_gpu = "fp32"
-dtype_cpu = "fp32"
-dim = 768
-question_prefix = "search_query: "
-document_prefix = "search_document: "
-trust_remote_code = true
-
 # Considered and not run. Reasons and sources are in docs/research/embeddings.md.
+[[excluded]]
+hf_id = "nomic-ai/nomic-embed-text-v2-moe"
+reason = "Benchmarked in W1-B, then excluded on lineage review (CTO, PR #2): English training data was hard-negative-mined with Alibaba gte-base, the negative-mining teacher is Stella 1.5B v5 (built on Qwen2), and the paper uses BAAI BGE-M3 for filtering. AGENTS.md excludes models built with PRC models. Also the only trust_remote_code load. arXiv:2502.07972."
+
 [[excluded]]
 hf_id = "Snowflake/snowflake-arctic-embed-l-v2.0"
 reason = "Initialized from BAAI bge-m3-retromae (Beijing). AGENTS.md excludes BGE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
