@@ -1,9 +1,13 @@
-"""Run eval/classics_questions.jsonl against the per-preacher libraries (hybrid, top 5).
+"""SMOKE TEST ONLY: does each classics library open, search and return a playable hit?
 
-    uv run scripts/classics_check.py [--library spurgeon]
+    uv run scripts/classics_smoke.py [--library spurgeon]
 
-A question passes when an expected sermon is in the top 5 and that hit has a start_s and an
-archive.org play URL. The questions were written by an agent and are not human-reviewed.
+Runs eval/classics_smoke.jsonl (hybrid, top 5). A question passes when an expected sermon is in
+the top 5 and that hit has a start_s and an archive.org play URL.
+
+This is not evidence of retrieval quality and must not be reported as such: the questions were
+written by an agent (not human-reviewed) and mostly paraphrase sermon titles, and Spurgeon has
+only 6 sermons, so a random top 5 contains a given one 5/6 (~83%) of the time.
 """
 
 from __future__ import annotations
@@ -26,11 +30,11 @@ from preached.store import connect  # noqa: E402
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--library")
     ap.add_argument("-k", type=int, default=5)
     args = ap.parse_args()
-    questions = [json.loads(line) for line in (ROOT / "eval" / "classics_questions.jsonl").read_text().splitlines() if line.strip()]
+    questions = [json.loads(line) for line in (ROOT / "eval" / "classics_smoke.jsonl").read_text().splitlines() if line.strip()]
     model = load_model(MODELS[DEFAULT_MODEL], device="cpu", batch_size=1)
     passed = total = 0
     try:
@@ -50,7 +54,7 @@ def main() -> int:
                 print(f"{'PASS' if ok else 'FAIL'} [{lib}] rank={rank} {q['question']!r} -> {where}")
     finally:
         unload(model)
-    print(f"{passed}/{total} passed")
+    print(f"smoke: {passed}/{total} passed (pipeline check, not a quality metric)")
     return 0 if passed == total else 1
 
 

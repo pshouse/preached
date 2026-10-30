@@ -39,7 +39,7 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("talmage", classics.SOURCES)
         self.assertFalse(manifest.MANIFEST.with_name("talmage.jsonl").exists())
         self.assertFalse(manifest.MANIFEST.with_name("talmage.provenance.json").exists())
-        questions = (ROOT / "eval" / "classics_questions.jsonl").read_text()
+        questions = (ROOT / "eval" / "classics_smoke.jsonl").read_text()
         self.assertNotIn("talmage", questions)
 
     def test_clean_title(self):
