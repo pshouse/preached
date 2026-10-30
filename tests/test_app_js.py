@@ -11,8 +11,28 @@ from pathlib import Path
 APP_JS = Path(__file__).resolve().parents[1] / "app" / "static" / "app.js"
 
 PRELUDE = """
+function FakeEl(tag) {
+  this.tagName = String(tag).toUpperCase();
+  this.className = "";
+  this.textContent = "";
+  this.children = [];
+  this.attrs = {};
+  this.href = "";
+  this.target = "";
+  this.rel = "";
+  this.type = "";
+}
+FakeEl.prototype.appendChild = function (child) { this.children.push(child); return child; };
+FakeEl.prototype.setAttribute = function (name, value) { this.attrs[name] = String(value); };
+FakeEl.prototype.addEventListener = function () {};
 globalThis.window = { location: { origin: "http://127.0.0.1:8000" } };
-globalThis.document = { addEventListener() {}, getElementById() { return null; } };
+globalThis.document = {
+  addEventListener() {},
+  getElementById() { return null; },
+  createElement(tag) { return new FakeEl(tag); },
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
+};
 """
 
 CHECKS = """
@@ -44,6 +64,96 @@ eq(playStart(NaN), null, "NaN");
 eq(playStart(Infinity), null, "inf");
 eq(playStart(-Infinity), null, "-inf");
 eq(formatTime(32.81), "0:00:32", "label stays exact");
+
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijk&t=11s"), "https://www.youtube.com/watch?v=abcdefghijk&t=11s", "stored www");
+eq(youtubeWatchUrl("https://youtube.com/watch?v=abcdefghijk&t=0s"), "https://youtube.com/watch?v=abcdefghijk&t=0s", "apex host");
+eq(youtubeWatchUrl("https://m.youtube.com/watch?v=abcdefghijk&t=3s"), "https://m.youtube.com/watch?v=abcdefghijk&t=3s", "mobile host");
+eq(youtubeWatchUrl("https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s"), "https://WWW.YouTube.com/watch?v=abc_def-01X&t=11s", "stored as-is");
+eq(youtubeWatchUrl("https://www.youtube.com:443/watch?v=abcdefghijk&t=11s"), "https://www.youtube.com:443/watch?v=abcdefghijk&t=11s", "port 443");
+eq(youtubeWatchUrl("https://www.youtube.com.evil.com/watch?v=abcdefghijk"), null, "evil suffix");
+eq(youtubeWatchUrl("javascript:alert(1)"), null, "javascript");
+eq(youtubeWatchUrl("http://www.youtube.com/watch?v=abcdefghijk"), null, "http youtube");
+eq(youtubeWatchUrl("https://youtu.be/abcdefghijk"), null, "short link");
+eq(youtubeWatchUrl("https://www.youtube.com/embed/abcdefghijk"), null, "embed");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=short"), null, "short id");
+eq(youtubeWatchUrl("https://www.youtube.com/watch?v=abcdefghijkl"), null, "12 char id");
+eq(youtubeWatchUrl("https://evil.com@www.youtube.com/watch?v=abcdefghijk"), null, "userinfo");
+eq(youtubeWatchUrl("https://www.youtube.com:8443/watch?v=abcdefghijk"), null, "odd port");
+eq(youtubeWatchUrl("https://archive.org/download/x/y.mp3"), null, "archive is not youtube");
+
+function walk(node, out) {
+  out.push(node);
+  var kids = node.children || [];
+  for (var i = 0; i < kids.length; i += 1) walk(kids[i], out);
+  return out;
+}
+function playNodes(root, tag) {
+  return walk(root, []).filter(function (node) {
+    return node.tagName === tag && node.className === "play";
+  });
+}
+
+var yt = renderCard({
+  sermon_title: "On Mercy",
+  text: "grace",
+  start_s: 95,
+  end_s: 110,
+  audio_url: "https://www.youtube.com/watch?v=abcdefghijk&t=94s",
+  source_url: "https://www.ccel.org/x",
+});
+var watch = playNodes(yt, "A");
+eq(watch.length, 1, "one watch link");
+eq(watch[0].textContent, "Watch on YouTube at 0:01:35", "watch label");
+eq(watch[0].href, "https://www.youtube.com/watch?v=abcdefghijk&t=94s", "stored href");
+eq(watch[0].target, "_blank", "new tab");
+eq(watch[0].rel, "noopener noreferrer", "rel");
+eq(watch[0].href.indexOf("#t="), -1, "no media fragment");
+eq(playNodes(yt, "BUTTON").length, 0, "youtube has no player button");
+
+var archive = renderCard({
+  sermon_title: "Salvation by Faith",
+  sermon_number: 1,
+  text: "grace",
+  start_s: 32.81,
+  end_s: 40,
+  audio_url: "https://archive.org/download/x/y.mp3",
+  reader: "Reader",
+  source_url: "https://www.ccel.org/x",
+});
+var buttons = playNodes(archive, "BUTTON");
+eq(buttons.length, 1, "archive button");
+eq(buttons[0].textContent, "Play from 0:00:32", "archive label");
+eq(playNodes(archive, "A").length, 0, "archive is not a youtube link");
+
+var evil = renderCard({
+  sermon_title: "Nope",
+  text: "x",
+  start_s: 3,
+  end_s: 4,
+  audio_url: "https://www.youtube.com.evil.com/watch?v=abcdefghijk",
+});
+eq(playNodes(evil, "A").length, 0, "evil host is not a watch link");
+eq(playNodes(evil, "BUTTON").length, 1, "evil host keeps the player button");
+
+var scriptUrl = renderCard({
+  sermon_title: "Nope",
+  text: "x",
+  start_s: 3,
+  end_s: 4,
+  audio_url: "javascript:alert(1)",
+});
+eq(playNodes(scriptUrl, "A").length, 0, "javascript is not a link");
+eq(playNodes(scriptUrl, "BUTTON").length, 0, "javascript is not a player");
+
+var mobile = renderCard({
+  sermon_title: "Mobile",
+  text: "x",
+  start_s: 12.2,
+  end_s: 20,
+  audio_url: "https://m.youtube.com/watch?v=abcdefghijk&t=11s",
+});
+eq(playNodes(mobile, "A")[0].href, "https://m.youtube.com/watch?v=abcdefghijk&t=11s", "mobile href as stored");
+eq(playNodes(mobile, "A")[0].textContent, "Watch on YouTube at 0:00:12", "mobile label");
 console.log("ok");
 """
 
