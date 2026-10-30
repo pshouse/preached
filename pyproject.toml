@@ -8,11 +8,17 @@ authors = [
 ]
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "einops>=0.8.2",
     "numpy>=2.1",
-    "pillow>=10",
     "sentence-transformers>=6.1.0",
     "torch>=2.5",
+]
+
+[dependency-groups]
+# Only needed to load models we benchmark but do not ship: EmbeddingGemma 2
+# builds image/video processors even for a text-only load.
+# Use: uv run --group bench search/bench.py
+bench = [
+    "pillow>=10",
     "torchvision>=0.29.2",
 ]
 
