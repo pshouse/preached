@@ -5,16 +5,24 @@ Embeddings are written by search/bench.py so each model is timed on the GPU.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
-from preached.store import chunk_count, connect, sync_chunks  # noqa: E402
+from preached.store import NullTimingRefused, chunk_count, connect, sync_chunks  # noqa: E402
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--force-null-timings",
+        action="store_true",
+        help="allow the chunk file to replace stored timings, audio, and reader with nulls",
+    )
+    args = parser.parse_args()
     try:
         chunks_path = index_chunks_jsonl()
     except StaleChunks as exc:
@@ -22,7 +30,10 @@ def main() -> None:
     if not chunks_path.exists():
         raise SystemExit(f"missing {chunks_path}")
     connection = connect(INDEX_PATH)
-    sync_chunks(connection, chunks_path)
+    try:
+        sync_chunks(connection, chunks_path, force_null_timings=args.force_null_timings)
+    except NullTimingRefused as exc:
+        raise SystemExit(f"error: {exc}") from exc
     print(f"indexed {chunk_count(connection)} chunks at {INDEX_PATH}")
 
 

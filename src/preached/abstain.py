@@ -7,11 +7,13 @@ No model is asked anything. The rule reads two signals the ranker already has:
    the depth reciprocal rank fusion already uses). If no shown passage is
    found by both, the words of the question and its meaning point to
    different places, or the words do not occur at all.
-2. **Dense floor** (one number per model). The top dense cosine against
-   ``floor``. Cosines are not comparable across models (Granite's
-   unanswerable questions top out near 0.83, EmbeddingGemma 2's near 0.75),
-   so ``floor`` is calibrated per model and stored in ``search/abstain.toml``
-   with the fingerprints of the vectors it was fitted on.
+2. **Dense floor** (one number per model, backend, and variant). The top
+   dense cosine against ``floor``. Cosines are not comparable across models
+   (Granite's unanswerable questions top out near 0.83, EmbeddingGemma 2's
+   near 0.75), or across backends (int8 ONNX moves the top cosine), so
+   ``floor`` is calibrated per (model, backend, variant) and stored in
+   ``search/abstain.toml`` with the fingerprints of the vectors it was
+   fitted on.
 
 Levels:
 
@@ -192,30 +194,31 @@ def query_fingerprint(spec) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
-def load_calibrations(path: Path | None = None) -> dict:
-    """The ``[models]`` tables of the calibration file.
+def load_calibrations(path: Path | None = None) -> list[dict]:
+    """The ``[[models]]`` entries of the calibration file.
 
-    A missing file is no calibration. An unreadable or malformed file (not
-    UTF-8, bad TOML, ``models`` not a table) is logged and also treated as
-    no calibration, so a bad edit can never stop the server: search keeps
+    One entry per (model, backend, variant). A missing file is no
+    calibration. An unreadable or malformed file (not UTF-8, bad TOML,
+    ``models`` not an array of tables) is logged and also treated as no
+    calibration, so a bad edit can never stop the server: search keeps
     working and simply never abstains on dense evidence.
     """
     path = path or calibration_path()
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
+        return []
     except (OSError, UnicodeDecodeError) as exc:
         log.warning("ignoring %s: cannot read it (%s); abstain floor disabled", path, exc)
-        return {}
+        return []
     try:
-        models = tomllib.loads(text).get("models", {})
+        models = tomllib.loads(text).get("models", [])
     except tomllib.TOMLDecodeError as exc:
         log.warning("ignoring %s: not valid TOML (%s); abstain floor disabled", path, exc)
-        return {}
-    if not isinstance(models, dict):
-        log.warning("ignoring %s: 'models' is not a table; abstain floor disabled", path)
-        return {}
+        return []
+    if not isinstance(models, list) or any(not isinstance(entry, dict) for entry in models):
+        log.warning("ignoring %s: 'models' is not an array of tables; abstain floor disabled", path)
+        return []
     return models
 
 
@@ -235,58 +238,85 @@ def floor_for(
 ) -> float | None:
     """The calibrated floor for ``model`` on this query embedder, or None.
 
-    None when the model has no entry, the entry is not a table, the stored
-    fingerprints no longer match search/models.toml, the entry was fitted
-    on another ``backend``/``variant``, or ``dense_floor`` is not a finite
-    number in [-1, 1] (a cosine). Never raises on a bad file.
+    None when that (model, backend, variant) has no entry, more than one
+    entry, the stored fingerprints no longer match search/models.toml, or
+    ``dense_floor`` is not a finite number in [-1, 1] (a cosine; 1 and -1
+    count). Never raises on a bad file.
     """
     if not model:
         return None
     from preached.models import MODELS
 
     spec = MODELS.get(model)
-    entry = load_calibrations(path).get(model)
-    if spec is None or entry is None:
+    if spec is None:
         return None
     where = path or calibration_path()
-    if not isinstance(entry, dict):
-        log.warning("ignoring %s: models.%s is not a table; abstain floor disabled", where, model)
+    wanted = embedder_variant(spec, backend, variant)
+    matches = [
+        entry for entry in load_calibrations(path)
+        if entry.get("model") == model and entry.get("backend") == backend and entry.get("variant") == wanted
+    ]
+    if not matches:
         return None
+    if len(matches) > 1:
+        log.warning(
+            "ignoring %s: more than one floor for %s %s %s; abstain floor disabled",
+            where, model, backend, wanted,
+        )
+        return None
+    entry = matches[0]
     if entry.get("fingerprint") != spec.fingerprint():
         return None
     if entry.get("query_fingerprint") != query_fingerprint(spec):
         return None
-    if entry.get("backend") != backend or entry.get("variant") != embedder_variant(spec, backend, variant):
-        return None
     floor = entry.get("dense_floor")
+    # 1 and -1 are cosines (the fixture vectors sit at 1). +inf, nan, and
+    # anything outside [-1, 1] are not.
     if not isinstance(floor, (int, float)) or isinstance(floor, bool) or not math.isfinite(floor) \
             or not -1.0 <= floor <= 1.0:
-        log.warning("ignoring %s: models.%s.dense_floor %r is not a cosine in [-1, 1]; abstain floor disabled",
-                    where, model, floor)
+        log.warning(
+            "ignoring %s: dense_floor %r for %s %s %s is not a cosine in [-1, 1]; abstain floor disabled",
+            where, floor, model, backend, wanted,
+        )
         return None
     return float(floor)
 
 
-def calibration_toml(entries: dict[str, dict]) -> str:
-    """search/abstain.toml text. ``entries``: model key -> fields."""
+def _toml_value(field: str, value) -> str:
+    if field == "dense_floor" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value):.4f}"
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    return json.dumps(value)
+
+
+def calibration_toml(entries: list[dict]) -> str:
+    """search/abstain.toml text. ``entries``: one dict per (model, backend, variant)."""
     lines = [
-        "# Per-model dense floor for the abstain rule (src/preached/abstain.py).",
+        "# Dense floors for the abstain rule (src/preached/abstain.py).",
+        "# One [[models]] entry per (model, backend, variant).",
         "# Written by: uv run --group bench search/bench.py --abstain --write-calibration",
         "# A floor applies only while both fingerprints match search/models.toml and",
-        "# the query embedder is the backend/variant it was fitted on; otherwise that",
-        "# model never abstains (results with a note at most). The floor is a",
+        "# the query embedder is that backend and variant; otherwise that combination",
+        "# never abstains (results with a note at most). The floor is a",
         "# heuristic: it rests on very few unanswerable questions (reports/W3-POLISH.md).",
         "# Fitted on LLM-written eval labels pending human review (eval/README.md).",
         "",
     ]
-    for key in sorted(entries):
-        entry = entries[key]
-        lines.append(f"[models.{key}]")
-        for field in ("dense_floor", "fingerprint", "query_fingerprint", "backend", "variant", "fitted_on", "results"):
+    fields = ("model", "backend", "variant", "dense_floor", "fingerprint", "query_fingerprint", "fitted_on", "results")
+    ordered = sorted(entries, key=lambda entry: (
+        str(entry.get("model")), str(entry.get("backend")), str(entry.get("variant")),
+    ))
+    for entry in ordered:
+        lines.append("[[models]]")
+        for field in fields:
             if field not in entry or entry[field] is None:
                 continue
-            value = entry[field]
-            lines.append(f"{field} = {json.dumps(value)}")
+            lines.append(f"{field} = {_toml_value(field, entry[field])}")
         lines.append("")
     return "\n".join(lines)
 

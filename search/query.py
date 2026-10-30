@@ -8,6 +8,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -17,11 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
 from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
-from preached.embed import encode_query, load_model, unload  # noqa: E402
+from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
-from preached.paths import INDEX_PATH, StaleChunks, index_chunks_jsonl  # noqa: E402
+from preached.paths import INDEX_PATH  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start  # noqa: E402
-from preached.store import EmbeddingMismatch, connect, sync_chunks  # noqa: E402
+from preached.store import EmbeddingMismatch, check_query_variant, open_readonly  # noqa: E402
 from preached.youtube.listing import youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
@@ -33,18 +34,6 @@ UNSAFE_URL = "n/a (unsafe URL hidden)"
 def clean(value: object) -> str:
     """Printable text for the terminal: control characters become one space."""
     return CONTROL_RE.sub(" ", str(value))
-
-
-def ensure_chunks(connection) -> None:
-    try:
-        chunks_path = index_chunks_jsonl()
-    except StaleChunks as exc:
-        raise SystemExit(f"error: {exc}") from exc
-    if not chunks_path.exists():
-        raise SystemExit(
-            f"missing {chunks_path}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
-        )
-    sync_chunks(connection, chunks_path)
 
 
 def fmt_time(value) -> str:
@@ -112,15 +101,28 @@ def main() -> None:
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--dense-weight", type=float, default=0.5)
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
-    parser.add_argument("--device", default="cpu", help="device for the query embedding")
+    parser.add_argument("--device", default="cpu", help="device for the torch query embedding")
+    parser.add_argument(
+        "--embed-backend",
+        choices=("onnx", "torch"),
+        default=None,
+        help=f"query embedder (default {DEFAULT_EMBED_BACKEND}, or PREACHED_EMBED_BACKEND)",
+    )
+    parser.add_argument("--onnx-variant", choices=("fp32",), default=None)
+    parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
     args = parser.parse_args()
 
-    connection = connect(args.index)
-    ensure_chunks(connection)
+    # Read-only, and it does not sync. A text-only chunks.jsonl matches the
+    # aligned index on ids and text; syncing it would null every start_s,
+    # end_s, audio_url, and reader.
+    try:
+        connection = open_readonly(args.index)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"error: {exc}") from exc
     model_name = None
-    loaded = None
+    embedder = None
     vector = None
     try:
         if args.mode == "bm25":
@@ -128,9 +130,22 @@ def main() -> None:
             hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
-            spec = MODELS[model_name]
-            loaded = load_model(spec, device=args.device, batch_size=1)
-            vector = encode_query(loaded, args.query)
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            embedder = load_embedder(
+                model_name,
+                args.embed_backend,
+                variant=args.onnx_variant,
+                ort_threads=args.ort_threads,
+                device=args.device,
+                batch_size=1,
+            )
+            try:
+                check_query_variant(connection, model_name, getattr(embedder, "variant", None))
+            except EmbeddingMismatch as exc:
+                message = " ".join(str(exc).split())
+                print(f"error: {message}", file=sys.stderr)
+                raise SystemExit(1) from exc
+            vector = embedder.encode_queries([args.query])[0]
             try:
                 searcher = Searcher(connection, model=model_name)
             except EmbeddingMismatch as exc:
@@ -147,10 +162,17 @@ def main() -> None:
                     dense_weight=args.dense_weight,
                 )
     finally:
-        if loaded is not None:
-            unload(loaded)
-    # Same abstain rule and per-model floor as GET /api/search (preached.abstain).
-    floor = floor_for(model_name) if vector is not None else None
+        if embedder is not None and hasattr(embedder, "close"):
+            embedder.close()
+    # Same abstain rule and per-backend floor as GET /api/search (preached.abstain).
+    # BM25 has no dense signal, so the floor stays off.
+    floor = None
+    if vector is not None:
+        floor = floor_for(
+            model_name,
+            backend=getattr(embedder, "backend", "torch"),
+            variant=getattr(embedder, "variant", None),
+        )
     confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
     mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
     if confidence.abstain and hits and args.hide_low_confidence:

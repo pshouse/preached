@@ -10,7 +10,7 @@ from unittest import mock
 
 from preached import abstain
 from preached.abstain import Signals, decide, fit_floor, floor_for
-from preached.models import MODELS
+from preached.models import DEFAULT_MODEL, MODELS
 from preached.search import Searcher
 
 from test_server import (
@@ -90,7 +90,8 @@ class CalibrationFileTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / "abstain.toml"
-        path.write_text(abstain.calibration_toml(entries))
+        rows = [{"model": key, **fields} for key, fields in entries.items()]
+        path.write_text(abstain.calibration_toml(rows))
         return path
 
     def test_floor_needs_matching_fingerprints(self) -> None:
@@ -119,16 +120,75 @@ class CalibrationFileTests(unittest.TestCase):
             abstain.query_fingerprint(MODELS["embeddinggemma-2"]),
         )
 
-    def test_committed_file_is_per_model(self) -> None:
+    def test_two_backends_for_one_model(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        base = {
+            "fingerprint": spec.fingerprint(),
+            "query_fingerprint": abstain.query_fingerprint(spec),
+        }
+        rows = [
+            {**base, "model": "granite-english-r2", "backend": "torch", "variant": "fp32", "dense_floor": 0.81},
+            {**base, "model": "granite-english-r2", "backend": "onnx", "variant": "fp32", "dense_floor": 0.79},
+            {**base, "model": "embeddinggemma-2", "backend": "torch", "variant": "fp32", "dense_floor": 0.74,
+             "fingerprint": MODELS["embeddinggemma-2"].fingerprint(),
+             "query_fingerprint": abstain.query_fingerprint(MODELS["embeddinggemma-2"])},
+        ]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "abstain.toml"
+        path.write_text(abstain.calibration_toml(rows))
+        self.assertEqual(floor_for("granite-english-r2", path, backend="torch", variant="fp32"), 0.81)
+        self.assertEqual(floor_for("granite-english-r2", path, backend="onnx", variant="fp32"), 0.79)
+        self.assertIsNone(floor_for("granite-english-r2", path, backend="onnx", variant="int8"))
+        self.assertEqual(floor_for("embeddinggemma-2", path), 0.74)
+
+    def test_floor_of_one_is_a_cosine(self) -> None:
+        # TOML `dense_floor = 1` is an int. The boundary is a valid cosine.
+        spec = MODELS["granite-english-r2"]
+        good = {
+            "dense_floor": 1,
+            "fingerprint": spec.fingerprint(),
+            "query_fingerprint": abstain.query_fingerprint(spec),
+            "backend": "torch",
+            "variant": spec.dtype_cpu,
+        }
+        self.assertEqual(floor_for("granite-english-r2", self.write({"granite-english-r2": good})), 1.0)
+
+    def test_duplicate_entry_disables_that_floor(self) -> None:
+        spec = MODELS["granite-english-r2"]
+        row = {
+            "model": "granite-english-r2",
+            "dense_floor": 0.81,
+            "fingerprint": spec.fingerprint(),
+            "query_fingerprint": abstain.query_fingerprint(spec),
+            "backend": "torch",
+            "variant": "fp32",
+        }
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "abstain.toml"
+        path.write_text(abstain.calibration_toml([row, {**row, "dense_floor": 0.5}]))
+        with self.assertLogs("preached.abstain", level="WARNING"):
+            self.assertIsNone(floor_for("granite-english-r2", path))
+
+    def test_committed_file_is_one_row_per_backend(self) -> None:
         entries = abstain.load_calibrations()
-        for key, entry in entries.items():
-            self.assertIn(key, MODELS)
+        seen = set()
+        for entry in entries:
+            key = (entry["model"], entry["backend"], entry["variant"])
+            self.assertNotIn(key, seen)
+            seen.add(key)
+            self.assertIn(entry["model"], MODELS)
             self.assertIsInstance(entry["dense_floor"], float)
-            self.assertTrue(0 < entry["dense_floor"] < 1)
+            self.assertTrue(-1.0 <= entry["dense_floor"] <= 1.0)
             self.assertIn("fingerprint", entry)
             self.assertIn("query_fingerprint", entry)
-            self.assertEqual(entry["backend"], "torch")
-            self.assertEqual(entry["variant"], MODELS[key].dtype_cpu)
+        self.assertIn(("embeddinggemma-2", "torch", "fp32"), seen)
+        self.assertIn(("granite-english-r2", "torch", "fp32"), seen)
+        self.assertEqual(
+            floor_for("granite-english-r2", backend="torch", variant="fp32"),
+            0.8129,
+        )
 
     def test_floor_is_keyed_on_backend_and_variant(self) -> None:
         # int8 ONNX lowers the top cosine 0.008-0.053 with the same document
@@ -163,8 +223,11 @@ def good_entry() -> dict:
 
 def entry_toml(**overrides) -> str:
     entry = {**good_entry(), **overrides}
-    return "[models.granite-english-r2]\n" + "".join(f"{key} = {value}\n" for key, value in (
-        (key, json.dumps(value) if isinstance(value, str) else value) for key, value in entry.items()))
+    lines = ["[[models]]", 'model = "granite-english-r2"']
+    for key, value in entry.items():
+        rendered = json.dumps(value) if isinstance(value, str) else value
+        lines.append(f"{key} = {rendered}")
+    return "\n".join(lines) + "\n"
 
 
 # CTO review of PR #11: each of these used to crash server startup or be
@@ -173,12 +236,54 @@ BAD_FILES = {
     "truncated TOML": entry_toml().encode()[:60],
     "models = 5": b"models = 5\n",
     "entry not a table": b"[models]\n\"granite-english-r2\" = 0.5\n",
-    "not UTF-8": entry_toml().encode().replace(b"[models.", b"\xff\xfe[models.", 1),
+    "not UTF-8": entry_toml().encode().replace(b"[[models]]", b"\xff\xfe[[models]]", 1),
     "nan floor": entry_toml(dense_floor="NAN").replace('"NAN"', "nan").encode(),
     "floor 5.0": entry_toml(dense_floor=5.0).encode(),
     "floor -inf": entry_toml(dense_floor="X").replace('"X"', "-inf").encode(),
+    "floor +inf": entry_toml(dense_floor="X").replace('"X"', "+inf").encode(),
     "floor is a string": entry_toml(dense_floor="0.5").encode(),
 }
+
+
+class DefaultServerFloorTests(unittest.TestCase):
+    """The server default is ONNX fp32 Granite. That row must have a floor."""
+
+    def test_default_configuration_resolves_a_floor(self) -> None:
+        from preached.backends import DEFAULT_EMBED_BACKEND
+
+        self.assertEqual(DEFAULT_EMBED_BACKEND, "onnx")
+        self.assertEqual(DEFAULT_MODEL, "granite-english-r2")
+        floor = floor_for(DEFAULT_MODEL, backend=DEFAULT_EMBED_BACKEND, variant="fp32")
+        self.assertIsNotNone(floor)
+        self.assertIsNone(floor_for(DEFAULT_MODEL, backend="onnx", variant="int8"))
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        index = Path(tmp.name) / "rich.sqlite"
+        build_rich_index(index)
+
+        def encode(query: str):
+            return encode_fixture(query)
+
+        encode.backend = "onnx"
+        encode.variant = "fp32"
+
+        def loader(connection, _model_key):
+            return Searcher(connection, model="fixture", fingerprint=FIXTURE_FP), encode
+
+        app = build_app(
+            reopen(index),
+            model_key="granite-english-r2",
+            bm25_only=False,
+            hosts={"127.0.0.1"},
+            static_dir=STATIC_DIR,
+            loader=loader,
+        )
+        self.assertEqual(app.floor, floor)
+        health = app.health()
+        self.assertTrue(health["abstain_calibrated"])
+        self.assertEqual(health["backend"], "onnx")
+        self.assertTrue(health["dense"])
 
 
 class BadCalibrationFileTests(unittest.TestCase):
