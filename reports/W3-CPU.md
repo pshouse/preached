@@ -10,13 +10,13 @@ Pinned model: `ibm-granite/granite-embedding-english-r2` revision `47ea694b257b7
 
 - Exported the encoder to ONNX (opset 18, legacy tracer, dynamic batch and sequence, output `last_hidden_state`). Pooling and L2 norm stay in numpy (`preached.pooling`), matching the sentence-transformers path.
 - Dynamic int8 quantization of that graph (`QuantType.QInt8`, per-channel, `MatMulConstBOnly`).
-- Runtime loader checks the manifest sha256 of every file and falls back to BM25 with the existing note if anything is missing or mismatched. It does not download and it does not crash.
+- Runtime loader checks the manifest sha256 of the selected graph, `tokenizer.json`, and `pooling.json`, then the pinned sha256 of `model.fp32.onnx` and `tokenizer.json`. A missing int8 file does not matter for fp32. A needed file that is missing or mismatched, or a swapped file whose manifest was rewritten, falls back to BM25. The session and the tokenizer are loaded from the bytes just hashed. The loader does not download and it does not crash.
 - Embedder interface: `encode_queries` / `encode_documents` return float32 L2-normalized vectors. `--embed-backend onnx|torch`, default `onnx`. Torch is imported only when that backend is selected.
 - Tokenizer is `tokenizers` plus the pinned `tokenizer.json`. Ids and attention masks match the transformers tokenizer on all 8,383 chunk texts and all 40 eval queries (0 mismatches, 3.3 s).
 - Re-embedded copies live under `/cache/index/` and do not replace `wesley.sqlite`.
 - `search/bench.py` takes `--embed-backend`, `--onnx-variant`, `--ort-threads`, and `--index`. ONNX refuses to write into the shipped `wesley.sqlite`.
 
-118 tests, `python -m unittest discover -s tests`, all passing. That includes backend selection, manifest sha256 refusal, BM25 fallback, CLS pooling, the fixture tokenizer (truncation, padding, mask), the import guard (`app.server` and `preached.search` do not load `torch`), the API field list, and a real fp32 ONNX query when the artifacts are present.
+172 tests, `python -m unittest discover -s tests`, all passing after the merge of `origin/main` (`af1c3de`, PR #7 and PR #9). That includes the earlier backend, pooling, tokenizer, and import-guard tests, plus fp32-without-int8, int8-absent fallback, a mismatched fp32 fallback, the pinned-digest refusal, a real fp32 load from a directory that has no int8 file, the null-timing refusal, read-only `query.py`, and the server reload when the chunk hash or embedding records change.
 
 ## How to run
 
@@ -152,7 +152,7 @@ The other 25 kept the same three metrics with a different top-10. Dedupe hybrid 
 
 Fresh runtime venv, `UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-runtime uv sync --frozen --no-default-groups`: 156,609,454 bytes (149.4 MiB) right after install. `uv pip list` has numpy 2.5.4, onnxruntime 1.31.1, tokenizers 0.23.3, and the libraries those pull in (huggingface-hub, hf-xet, httpx2, protobuf, flatbuffers, pyyaml, and their dependencies). No `torch`, no `nvidia-*`, no sentence-transformers, no Pillow. `uv tree` still names the transcribe extra because it is in the lock; those packages are not installed. Importing `app.server` and `preached.search` in that venv does not put `torch` on `sys.modules`.
 
-Artifact directory `/cache/models/granite-english-r2-onnx/47ea694b257b703fee9253d75c2b1f2985180498/` is 716.1 MiB. The loader hashes every file in `manifest.json`, so the directory has to be complete:
+Artifact directory `/cache/models/granite-english-r2-onnx/47ea694b257b703fee9253d75c2b1f2985180498/` is 716.1 MiB. The loader hashes the selected graph plus `tokenizer.json` and `pooling.json`. int8 is not required for the fp32 server. The fp32 graph and the tokenizer are also pinned in `src/preached/artifacts.py` (`FP32_ONNX_SHA256`, `TOKENIZER_SHA256`). The on-disk fp32 file hashes to `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`, which matches that pin. The tokenizer hashes to `6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30`.
 
 | file | bytes | MiB |
 | --- | --- | --- |
@@ -208,7 +208,8 @@ Transcribe extra, unchanged from main, opt-in: faster-whisper, av, nvidia-cublas
 
 ## What the Sprite task needs
 
-- Copy the whole artifact directory, including `model.int8.onnx`. A missing or edited file fails the sha256 check and the server serves BM25 with the existing fallback note.
+- Copy `model.fp32.onnx`, `tokenizer.json`, `pooling.json`, and `manifest.json`. `model.int8.onnx` is not required. A missing or edited file that the fp32 load needs fails the sha256 check and the server serves BM25 with the existing fallback note. A file that matches a rewritten manifest but not the pinned fp32 or tokenizer digest does the same.
+- Copy `chunks_aligned.jsonl` and `chunks_aligned.source.json` with the corpus (`/cache/corpus/wesley/`). The live index was built from the aligned file. The server and `search/query.py` do not sync, so they will not rebuild it, and they also will not invent timings if that file was never loaded. `search/bench.py` and `search/build_index.py` still sync, and they refuse to replace stored timings with nulls.
 - Path: `/cache/models/granite-english-r2-onnx/47ea694b257b703fee9253d75c2b1f2985180498/` or set `PREACHED_ONNX_DIR` to the parent of the revision folder.
 - Env: `PREACHED_EMBED_BACKEND=onnx` (the default), `PREACHED_ONNX_VARIANT=fp32` (the manifest default), `PREACHED_ORT_INTRA_OP_THREADS=1` (the default). Do not set 4 threads on a 1-vCPU Sprite.
 - `CUDA_VISIBLE_DEVICES=""` if a GPU is visible. The session asks for `CPUExecutionProvider` only and refuses anything else.
@@ -219,11 +220,29 @@ Transcribe extra, unchanged from main, opt-in: faster-whisper, av, nvidia-cublas
 
 YouTube import (`feat/w2-youtube`, not on this branch) embeds in `src/preached/youtube/pipeline.py` `_embed_on_cpu`, which calls `preached.embed.load_model` and `encode_documents`. Swap that for `load_embedder("granite-english-r2", "onnx")` and `encode_documents(texts, titles)`. Granite's document template is empty, so titles are ignored, same as today. The returned matrix is float32 and L2-normalized, which is what `library.py` stores. That call does not import torch.
 
+## Fix-up (CTO review of `7c6b330`)
+
+Checked read-only against `/cache/index/wesley.sqlite` and the two chunk files. Nothing in this fix-up wrote to that index.
+
+| item | commit | test |
+| --- | --- | --- |
+| Rename this branch's `2026-10-30-{2,3,4}` and `dedupe-{2,3,4}` results so they do not collide with main's `2026-10-30-2`. Main's `eval/results/2026-10-30-2.json` and `.md` are unchanged. `--tag` and `--out` on `search/bench.py` keep a later run from taking the next number. | `353c6d3` (rename), `ee6e29d` (`--tag` / `--out`) | `BenchOutputTests.test_tag_and_out_avoid_the_numbered_collision` |
+| Merge `origin/main` (`af1c3de`, PR #7 and PR #9). No rebase. README keeps the ONNX runtime note and the W1-CLI timestamp sentence. `search/query.py` keeps the play URL, h:mm:ss, and `--embed-backend`. `search/bench.py` keeps `index_chunks_jsonl()` and the ONNX flags. `uv lock --check` passed; the lock was not regenerated. | `12eb566` | full suite, 172 tests |
+| Verify only the selected graph, tokenizer, and pooling config. int8 is not on the fp32 runtime path. fp32 present and int8 absent loads. int8 selected and int8 absent falls back to BM25. A mismatched fp32 falls back. | `ee6e29d` | `ManifestTests.test_fp32_without_int8_verifies`, `test_listed_int8_is_not_required_for_fp32`, `test_int8_selected_without_the_file_is_refused`, `FallbackTests.test_int8_absent_falls_back`, `test_mismatched_fp32_without_int8_falls_back`, `RealOnnxTests.test_fp32_directory_without_int8_loads` |
+| `query.py` opens the index read-only and does not sync. `sync_chunks` refuses to replace stored `start_s`, `end_s`, `audio_url`, or `reader` with nulls unless `force_null_timings=True` (`--force-null-timings` on bench and build_index). | `ee6e29d` | `PrerollTests.test_query_does_not_sync_or_write_the_index`, `InPlaceMetadataTests.test_null_timings_are_refused_unless_forced` |
+| The server rechecks the chunk hash and the embedding meta, count, and byte size on each search and health request. A change reloads the rows and vectors. Missing or mismatched vectors fall back to BM25 until a later change brings them back. The weights stay loaded. | `ee6e29d` | `ServerTests.test_search_reloads_when_the_chunk_hash_or_embeddings_change` |
+| Sprite steps copy `chunks_aligned.jsonl` and `chunks_aligned.source.json`. | this report | deploy text under "What the Sprite task needs" |
+| Pin fp32 ONNX sha256 `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` and tokenizer sha256 `6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30`. Both match the `/cache` bytes, not only `manifest.json`. A self-consistent rewritten manifest is refused. | `ee6e29d` | `RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins`, `ManifestTests.test_pinned_digest_refuses_a_rewritten_manifest` |
+| int8 queries are not paired with non-int8 document vectors. No one-chunk re-embed at startup: the shipped vectors are fp32, and the default variant is fp32. | `ee6e29d` | `VariantPairingTests.test_int8_query_refuses_fp32_document_vectors` |
+| `OnnxEmbedder.load` builds the ORT session and the tokenizer from the verified bytes (`InferenceSession` bytes, `Tokenizer.from_buffer`). | `ee6e29d` | `RealOnnxTests.test_fp32_directory_without_int8_loads`, `test_fp32_query_is_unit_normalized` |
+
+Fresh runtime check after this fix-up: `UV_PROJECT_ENVIRONMENT=/cache/w3-cpu/venv-runtime-check uv sync --frozen --no-default-groups` installed 21 packages (numpy 2.5.4, onnxruntime 1.31.1, tokenizers 0.23.3, and the huggingface-hub stack). No `torch`, no `nvidia-*`, no `sentence-transformers`. Importing `app.server` and `preached.search` in that venv did not put `torch` on `sys.modules`.
+
 ## Open issues
 
-- int8 is exported and measured and is not the default. Another quantizer (static, or int8 only on the MatMuls that moved the rankings) would be a new experiment. The dynamic int8 graph stays in the artifact directory because the manifest hashes it.
-- `search/query.py` and `search/bench.py` call `sync_chunks` against `chunks.jsonl`. The live `/cache/index/wesley.sqlite` was built from `chunks_aligned.jsonl` (same 8,383 texts and chunk ids, different `start_s` / `end_s`, hash `198339132f68…`). Running those commands against the live file will rebuild the chunks and delete embeddings. The server opens the index read-only and does not sync. This branch's eval copies use the `chunks.jsonl` hash, so benching them is safe. Text is identical, so the vectors match either file.
-- The manifest requires the unused int8 file. A Sprite that only has room for the 569 MiB fp32 graph has to edit the manifest or the load falls back to BM25.
+- int8 is exported and measured and is not the default. Another quantizer (static, or int8 only on the MatMuls that moved the rankings) would be a new experiment. The dynamic int8 graph can stay next to the fp32 graph. The fp32 server does not hash it and does not require it.
+- The live-index timing wipe is closed. `/cache/index/wesley.sqlite` records `chunks_sha256` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`, which is `/cache/corpus/wesley/chunks_aligned.jsonl`. All 8,383 rows have `start_s`, `audio_url`, and `reader`. `chunks.jsonl` (`110dd519…`) has the same chunk ids, titles, scripture, and text, and null `start_s`, `audio_url`, and `reader` on every row. With the aligned file present, `index_chunks_jsonl()` selects it and a sync is a hash no-op, so bench and build_index do not rebuild and do not delete embeddings. If that file is absent, those commands now raise `NullTimingRefused` instead of nulling the 8,383 timings. `query.py` does not sync. This was checked by reading the index with `mode=ro` and comparing the two JSONL files. Nothing wrote to `wesley.sqlite`.
+- The fp32 server no longer requires the int8 file. A mismatched or missing file that fp32 does need still falls back to BM25.
 - huggingface-hub is installed because tokenizers requires it. The server never downloads.
 - Default one thread is the safe Sprite setting. On this 24-thread CPU, four threads is the fast setting (26 ms embed+search p50). Measure again on the Sprite before raising it.
 - Retrieval knobs (chunking, RRF k=60, adjacent-chunk dedupe) are unchanged.
