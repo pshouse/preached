@@ -344,6 +344,12 @@ PR #17: https://github.com/pshouse/preached/pull/17. After pushing `565ede0`, Gi
 
 Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/check_title_leak.py` (with a test); its docstring now says 3+ letter content words, matching `tokens()`; `eval/pool.py` opens the index with `open_readonly`; the abstain.toml hashes above are labelled file (blob) hashes; the 17/24 note is added to the CTO cross-check. No label status, question, search, fusion, or dependency changed. No LLM, no re-grading.
 
-**Open problem.** The new `trick` synonym flags `q-satan-plain` ("How do I keep from being tricked?") as a leak against "Satan's Devices". `test_plain_questions_do_not_share_title_words` fails because of it (the only failing test). The brief says not to change questions, so I left the wording alone. It needs a decision: rewrite that question, or exempt it.
+**Rewrite (director-authorised, Oct 30).** The new `trick` synonym made `q-satan-plain` leak the title of wesley-042, so the question was reworded instead of adding a lint exemption. Same intent (resisting deceptions and temptations that look good); no title words and no synonym-map words for any sermon. No other question, label, or grading changed.
 
-**Tests.** `uv run python -m unittest discover -s tests`: 529 tests, 1 failure (above). `uv lock --check`: `Resolved 79 packages`, exit 0.
+- Old: "Something keeps trying to pull me away from God and make me lose heart. How do I keep from being tricked?"
+- New: "Something keeps pulling me away from God and wearing me down, and the wrong choices look so good. How do I stand firm?"
+- The same text was updated in `eval/pool/pool-2026-10-30.jsonl` and `eval/review/review-2026-10-30.csv`. `reports/EVAL-DELEAK.md` still quotes the old wording as history.
+
+**Tests.** `uv run python -m unittest discover -s tests`: 529 tests, 0 failures. `uv lock --check`: `Resolved 79 packages`, exit 0.
+
+**PR.** Not opened: `gh` is not installed in this environment. Branch `feat/eval-nits` is pushed; open the PR to main titled "EVAL-NITS: CTO should-fixes from #17 r3 (synonyms, docstring, read-only pool, report notes)". PR number: pending.
