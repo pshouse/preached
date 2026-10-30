@@ -13,6 +13,18 @@ dependencies = [
     "torch>=2.5",
 ]
 
+[project.optional-dependencies]
+# Offline transcription on a CUDA GPU only; not needed by the search app.
+# Use: uv run --extra transcribe ingest/run.py --all
+transcribe = [
+    "faster-whisper>=1.2.1,<1.3",
+    # faster-whisper 1.2.1 passes av.open(metadata_errors=...), removed in av 19.
+    "av>=18.1,<19",
+    # CTranslate2 loads CUDA 12 cuBLAS/cuDNN 9 at runtime; the box has no system CUDA.
+    "nvidia-cublas-cu12>=12.4,<13",
+    "nvidia-cudnn-cu12>=9,<10",
+]
+
 [dependency-groups]
 # Only needed to load models we benchmark but do not ship: EmbeddingGemma 2
 # builds image/video processors even for a text-only load.

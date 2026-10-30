@@ -32,6 +32,18 @@ eq(mediaUrlAt("https://archive.org/a.mp3#t=10", 95), "https://archive.org/a.mp3#
 eq(mediaUrlAt("https://archive.org/a.mp3?x=1#frag", 1.5), "https://archive.org/a.mp3?x=1#t=1.5", "replace other");
 eq(mediaUrlAt("https://archive.org/a.mp3#keep", null), "https://archive.org/a.mp3#keep", "no time");
 eq(mediaUrlAt("https://archive.org/a.mp3", -1), "https://archive.org/a.mp3", "negative");
+eq(PREROLL_S, 0.75, "pre-roll");
+eq(playStart(32.81), 32.06, "pre-roll start");
+eq(playStart(10), 9.25, "pre-roll whole");
+eq(playStart(0.5), 0, "clamped at 0");
+eq(playStart(0), 0, "zero");
+eq(playStart(null), null, "no time");
+eq(playStart(-3), null, "negative");
+eq(playStart("abc"), null, "nan");
+eq(playStart(NaN), null, "NaN");
+eq(playStart(Infinity), null, "inf");
+eq(playStart(-Infinity), null, "-inf");
+eq(formatTime(32.81), "0:00:32", "label stays exact");
 console.log("ok");
 """
 
@@ -55,6 +67,23 @@ class AppJsTests(unittest.TestCase):
         source = APP_JS.read_text()
         self.assertIn("audio.src = mediaUrlAt(url, seconds);", source)
         self.assertNotIn('"#t="', source)
+
+    def test_seek_uses_the_preroll(self) -> None:
+        source = APP_JS.read_text()
+        self.assertIn("var seconds = playStart(start);", source)
+        # The label is built from the exact start_s, not the pre-rolled one.
+        self.assertIn("var startLabel = formatTime(hit.start_s);", source)
+
+
+class PrerollParityTests(unittest.TestCase):
+    def test_same_preroll_as_python(self) -> None:
+        import re
+
+        from preached.search import PREROLL_S
+
+        match = re.search(r"var PREROLL_S = ([0-9.]+);", APP_JS.read_text())
+        self.assertIsNotNone(match)
+        self.assertEqual(float(match.group(1)), PREROLL_S)
 
 
 if __name__ == "__main__":

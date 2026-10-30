@@ -1,0 +1,1438 @@
+{
+ "summary": {
+  "files": 142,
+  "coverage_mean": 0.9851,
+  "coverage_median": 0.9863,
+  "coverage_min": 0.9312,
+  "coverage_words_weighted": 0.9851,
+  "files_under_90": [],
+  "sentences_checked": 22863,
+  "sentence_window_recall_median": 1.0,
+  "sentence_window_recall_p10": 0.956,
+  "sentences_recall_under_50": 24,
+  "sentences_under_0_2s": 0,
+  "spot_check_seed": 20261030
+ },
+ "per_file": [
+  {
+   "file_id": "wesley-s1-01",
+   "sermon_id": "wesley-001",
+   "title": "Salvation by Faith",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9779,
+   "canonical_words": 4163,
+   "asr_words": 4120
+  },
+  {
+   "file_id": "wesley-s1-02",
+   "sermon_id": "wesley-002",
+   "title": "The Almost Christian",
+   "reader": "Christopher Smith",
+   "coverage": 0.9867,
+   "canonical_words": 3465,
+   "asr_words": 3444
+  },
+  {
+   "file_id": "wesley-s1-03",
+   "sermon_id": "wesley-003",
+   "title": "Awake, Thou That Sleepest",
+   "reader": "Greg Giordano",
+   "coverage": 0.9776,
+   "canonical_words": 4964,
+   "asr_words": 4905
+  },
+  {
+   "file_id": "wesley-s1-04",
+   "sermon_id": "wesley-004",
+   "title": "Scriptural Christianity",
+   "reader": "Tim Cote",
+   "coverage": 0.9845,
+   "canonical_words": 6951,
+   "asr_words": 6980
+  },
+  {
+   "file_id": "wesley-s1-05",
+   "sermon_id": "wesley-005",
+   "title": "Justification By Faith",
+   "reader": "Bill Mosley",
+   "coverage": 0.9921,
+   "canonical_words": 5079,
+   "asr_words": 5089
+  },
+  {
+   "file_id": "wesley-s1-06",
+   "sermon_id": "wesley-006",
+   "title": "The Righteousness of Faith",
+   "reader": "Brian Wilson",
+   "coverage": 0.9869,
+   "canonical_words": 5022,
+   "asr_words": 5012
+  },
+  {
+   "file_id": "wesley-s1-07",
+   "sermon_id": "wesley-007",
+   "title": "The Way to the Kingdom",
+   "reader": "Tim Cote",
+   "coverage": 0.9883,
+   "canonical_words": 4428,
+   "asr_words": 4433
+  },
+  {
+   "file_id": "wesley-s1-08",
+   "sermon_id": "wesley-008",
+   "title": "THE FIRST FRUITS OF THE SPIRIT",
+   "reader": "Tim Cote",
+   "coverage": 0.9879,
+   "canonical_words": 4796,
+   "asr_words": 4793
+  },
+  {
+   "file_id": "wesley-s1-09",
+   "sermon_id": "wesley-009",
+   "title": "The Spirit of Bondage and of Adoption.",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9793,
+   "canonical_words": 5985,
+   "asr_words": 5937
+  },
+  {
+   "file_id": "wesley-s1-10",
+   "sermon_id": "wesley-010",
+   "title": "THE WITNESS OF THE SPIRIT, Discourse I",
+   "reader": "Tim Cote",
+   "coverage": 0.9877,
+   "canonical_words": 5191,
+   "asr_words": 5208
+  },
+  {
+   "file_id": "wesley-s1-11",
+   "sermon_id": "wesley-011",
+   "title": "The Witness of the Spirit, Discourse II",
+   "reader": "Tim Cote",
+   "coverage": 0.9834,
+   "canonical_words": 4765,
+   "asr_words": 4755
+  },
+  {
+   "file_id": "wesley-s1-12",
+   "sermon_id": "wesley-012",
+   "title": "The Witness of our own Spirit",
+   "reader": "Tim Cote",
+   "coverage": 0.9914,
+   "canonical_words": 4292,
+   "asr_words": 4302
+  },
+  {
+   "file_id": "wesley-s1-13",
+   "sermon_id": "wesley-013",
+   "title": "On Sin in Believers",
+   "reader": "Jackson Bates",
+   "coverage": 0.9856,
+   "canonical_words": 5204,
+   "asr_words": 5190
+  },
+  {
+   "file_id": "wesley-s1-14",
+   "sermon_id": "wesley-014",
+   "title": "The Repentance of Believers",
+   "reader": "RLC",
+   "coverage": 0.9904,
+   "canonical_words": 6134,
+   "asr_words": 6126
+  },
+  {
+   "file_id": "wesley-s1-15",
+   "sermon_id": "wesley-015",
+   "title": "The Great Assize",
+   "reader": "Robert Hoffman",
+   "coverage": 0.9842,
+   "canonical_words": 6135,
+   "asr_words": 6094
+  },
+  {
+   "file_id": "wesley-s1-16",
+   "sermon_id": "wesley-016",
+   "title": "The Means of Grace",
+   "reader": "fshort",
+   "coverage": 0.988,
+   "canonical_words": 7253,
+   "asr_words": 7247
+  },
+  {
+   "file_id": "wesley-s1-17",
+   "sermon_id": "wesley-017",
+   "title": "The Circumcision of the Heart",
+   "reader": "Kim Moses",
+   "coverage": 0.9812,
+   "canonical_words": 4572,
+   "asr_words": 4551
+  },
+  {
+   "file_id": "wesley-s1-18",
+   "sermon_id": "wesley-018",
+   "title": "The Marks of the New Birth",
+   "reader": "RLC",
+   "coverage": 0.984,
+   "canonical_words": 4935,
+   "asr_words": 4965
+  },
+  {
+   "file_id": "wesley-s1-19",
+   "sermon_id": "wesley-019",
+   "title": "The Great Privilege of those that are Born of God",
+   "reader": "Fr. Richard Zeile of Detroit",
+   "coverage": 0.9883,
+   "canonical_words": 4358,
+   "asr_words": 4360
+  },
+  {
+   "file_id": "wesley-s1-20",
+   "sermon_id": "wesley-020",
+   "title": "The Lord our Righteousness",
+   "reader": "Matthew James Gray",
+   "coverage": 0.9855,
+   "canonical_words": 5159,
+   "asr_words": 5154
+  },
+  {
+   "file_id": "wesley-s1-21",
+   "sermon_id": "wesley-021",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 1",
+   "reader": "Tim Cote",
+   "coverage": 0.986,
+   "canonical_words": 6482,
+   "asr_words": 6469
+  },
+  {
+   "file_id": "wesley-s1-22",
+   "sermon_id": "wesley-022",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 2",
+   "reader": "fshort",
+   "coverage": 0.9876,
+   "canonical_words": 6801,
+   "asr_words": 6778
+  },
+  {
+   "file_id": "wesley-s1-23",
+   "sermon_id": "wesley-023",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 3",
+   "reader": "Kris Gannon, Braden River, Florida",
+   "coverage": 0.9868,
+   "canonical_words": 7139,
+   "asr_words": 7168
+  },
+  {
+   "file_id": "wesley-s1-24",
+   "sermon_id": "wesley-024",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 4",
+   "reader": "Joseph Abell",
+   "coverage": 0.9889,
+   "canonical_words": 6851,
+   "asr_words": 6873
+  },
+  {
+   "file_id": "wesley-s1-25",
+   "sermon_id": "wesley-025",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 5",
+   "reader": "TriciaG",
+   "coverage": 0.99,
+   "canonical_words": 7475,
+   "asr_words": 7462
+  },
+  {
+   "file_id": "wesley-s1-26",
+   "sermon_id": "wesley-026",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 6",
+   "reader": "Matthew James Gray",
+   "coverage": 0.9827,
+   "canonical_words": 6918,
+   "asr_words": 6980
+  },
+  {
+   "file_id": "wesley-s1-27",
+   "sermon_id": "wesley-027",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 7",
+   "reader": "Matthew James Gray",
+   "coverage": 0.9854,
+   "canonical_words": 7261,
+   "asr_words": 7264
+  },
+  {
+   "file_id": "wesley-s1-28",
+   "sermon_id": "wesley-028",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 8",
+   "reader": "Joseph Abell",
+   "coverage": 0.9854,
+   "canonical_words": 7454,
+   "asr_words": 7511
+  },
+  {
+   "file_id": "wesley-s1-29",
+   "sermon_id": "wesley-029",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 9",
+   "reader": "Joseph Abell",
+   "coverage": 0.9943,
+   "canonical_words": 6636,
+   "asr_words": 6799
+  },
+  {
+   "file_id": "wesley-s1-30",
+   "sermon_id": "wesley-030",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 10",
+   "reader": "Joseph Abell",
+   "coverage": 0.9843,
+   "canonical_words": 5029,
+   "asr_words": 5018
+  },
+  {
+   "file_id": "wesley-s1-31",
+   "sermon_id": "wesley-031",
+   "title": "Upon our Lord'S Sermon on the Mount, Discourse 11",
+   "reader": "Melora",
+   "coverage": 0.989,
+   "canonical_words": 3620,
+   "asr_words": 3616
+  },
+  {
+   "file_id": "wesley-s1-32",
+   "sermon_id": "wesley-032",
+   "title": "Upon our Lord's Sermon on the Mount, Discourse 12",
+   "reader": "Fr. Richard Zeile of Detroit",
+   "coverage": 0.986,
+   "canonical_words": 4071,
+   "asr_words": 4054
+  },
+  {
+   "file_id": "wesley-s1-33",
+   "sermon_id": "wesley-033",
+   "title": "UPON OUR LORD'S SERMON ON THE MOUNT, Discourse 13",
+   "reader": "Alistair Bench",
+   "coverage": 0.9911,
+   "canonical_words": 4613,
+   "asr_words": 4603
+  },
+  {
+   "file_id": "wesley-s1-34",
+   "sermon_id": "wesley-034",
+   "title": "The Original, Nature, Property, and Use of the Law",
+   "reader": "Greg Giordano",
+   "coverage": 0.9836,
+   "canonical_words": 5930,
+   "asr_words": 5908
+  },
+  {
+   "file_id": "wesley-s1-35",
+   "sermon_id": "wesley-035",
+   "title": "The Law Established through Faith, Discourse I",
+   "reader": "Aaron Weber",
+   "coverage": 0.9733,
+   "canonical_words": 4646,
+   "asr_words": 4601
+  },
+  {
+   "file_id": "wesley-s1-36",
+   "sermon_id": "wesley-036",
+   "title": "The Law Established through Faith, Discourse 2",
+   "reader": "Aaron Weber",
+   "coverage": 0.981,
+   "canonical_words": 3888,
+   "asr_words": 3882
+  },
+  {
+   "file_id": "wesley-s1-37",
+   "sermon_id": "wesley-037",
+   "title": "The Nature of Enthusiasm",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9847,
+   "canonical_words": 5162,
+   "asr_words": 5251
+  },
+  {
+   "file_id": "wesley-s1-38",
+   "sermon_id": "wesley-038",
+   "title": "A Caution against Bigotry",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9831,
+   "canonical_words": 5753,
+   "asr_words": 5723
+  },
+  {
+   "file_id": "wesley-s1-39",
+   "sermon_id": "wesley-039",
+   "title": "Catholic Spirit",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9794,
+   "canonical_words": 5683,
+   "asr_words": 5710
+  },
+  {
+   "file_id": "wesley-s1-40",
+   "sermon_id": "wesley-040",
+   "title": "Christian Perfection",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9312,
+   "canonical_words": 4709,
+   "asr_words": 4426
+  },
+  {
+   "file_id": "wesley-s1-41",
+   "sermon_id": "wesley-040",
+   "title": "Christian Perfection",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9451,
+   "canonical_words": 4861,
+   "asr_words": 4637
+  },
+  {
+   "file_id": "wesley-s1-42",
+   "sermon_id": "wesley-041",
+   "title": "Wandering Thoughts",
+   "reader": "Greg Giordano",
+   "coverage": 0.978,
+   "canonical_words": 3909,
+   "asr_words": 3882
+  },
+  {
+   "file_id": "wesley-s1-43",
+   "sermon_id": "wesley-042",
+   "title": "Satan's Devices",
+   "reader": "Greg Giordano",
+   "coverage": 0.9821,
+   "canonical_words": 4965,
+   "asr_words": 4934
+  },
+  {
+   "file_id": "wesley-s1-44",
+   "sermon_id": "wesley-043",
+   "title": "The Scripture Way of Salvation",
+   "reader": "RLC",
+   "coverage": 0.9859,
+   "canonical_words": 4670,
+   "asr_words": 4648
+  },
+  {
+   "file_id": "wesley-s1-45",
+   "sermon_id": "wesley-044",
+   "title": "Original Sin",
+   "reader": "Kevin W. Davidson",
+   "coverage": 0.9808,
+   "canonical_words": 4798,
+   "asr_words": 4782
+  },
+  {
+   "file_id": "wesley-s1-46",
+   "sermon_id": "wesley-045",
+   "title": "The New Birth",
+   "reader": "RLC",
+   "coverage": 0.9913,
+   "canonical_words": 5373,
+   "asr_words": 5375
+  },
+  {
+   "file_id": "wesley-s1-47",
+   "sermon_id": "wesley-046",
+   "title": "The Wilderness State",
+   "reader": "Arnie Horton",
+   "coverage": 0.9961,
+   "canonical_words": 6223,
+   "asr_words": 6223
+  },
+  {
+   "file_id": "wesley-s1-48",
+   "sermon_id": "wesley-047",
+   "title": "Heaviness through Manifold Temptations",
+   "reader": "RLC",
+   "coverage": 0.9858,
+   "canonical_words": 5066,
+   "asr_words": 5057
+  },
+  {
+   "file_id": "wesley-s1-49",
+   "sermon_id": "wesley-048",
+   "title": "Self-denial",
+   "reader": "RLC",
+   "coverage": 0.9894,
+   "canonical_words": 4804,
+   "asr_words": 4789
+  },
+  {
+   "file_id": "wesley-s1-50",
+   "sermon_id": "wesley-049",
+   "title": "The Cure of Evil-speaking",
+   "reader": "Bill Mosley",
+   "coverage": 0.9964,
+   "canonical_words": 4476,
+   "asr_words": 4491
+  },
+  {
+   "file_id": "wesley-s1-51",
+   "sermon_id": "wesley-050",
+   "title": "The Use of Money",
+   "reader": "Tim Cote",
+   "coverage": 0.9875,
+   "canonical_words": 5181,
+   "asr_words": 5174
+  },
+  {
+   "file_id": "wesley-s1-52",
+   "sermon_id": "wesley-051",
+   "title": "The Good Steward",
+   "reader": "John Lieder",
+   "coverage": 0.9917,
+   "canonical_words": 5670,
+   "asr_words": 5664
+  },
+  {
+   "file_id": "wesley-s1-53",
+   "sermon_id": "wesley-052",
+   "title": "The Reformation of Manners",
+   "reader": "amaskill",
+   "coverage": 0.9872,
+   "canonical_words": 7762,
+   "asr_words": 7743
+  },
+  {
+   "file_id": "wesley-s1-54",
+   "sermon_id": "wesley-053",
+   "title": "On the Death of the Rev. Mr. George Whitefield",
+   "reader": "Chessie Joy",
+   "coverage": 0.9839,
+   "canonical_words": 6474,
+   "asr_words": 6480
+  },
+  {
+   "file_id": "wesley-s2-01",
+   "sermon_id": "wesley-054",
+   "title": "On Eternity",
+   "reader": "MaryAnn",
+   "coverage": 0.9832,
+   "canonical_words": 3994,
+   "asr_words": 3999
+  },
+  {
+   "file_id": "wesley-s2-02",
+   "sermon_id": "wesley-055",
+   "title": "On the Trinity",
+   "reader": "MaryAnn",
+   "coverage": 0.9868,
+   "canonical_words": 2947,
+   "asr_words": 3013
+  },
+  {
+   "file_id": "wesley-s2-03",
+   "sermon_id": "wesley-056",
+   "title": "God's Approbation of His Works",
+   "reader": "MaryAnn",
+   "coverage": 0.9815,
+   "canonical_words": 3567,
+   "asr_words": 3562
+  },
+  {
+   "file_id": "wesley-s2-04",
+   "sermon_id": "wesley-057",
+   "title": "On the Fall of Man",
+   "reader": "Ladypolanna",
+   "coverage": 0.9915,
+   "canonical_words": 4142,
+   "asr_words": 4155
+  },
+  {
+   "file_id": "wesley-s2-05",
+   "sermon_id": "wesley-058",
+   "title": "On Predestination",
+   "reader": "TriciaG",
+   "coverage": 0.9904,
+   "canonical_words": 2512,
+   "asr_words": 2517
+  },
+  {
+   "file_id": "wesley-s2-06",
+   "sermon_id": "wesley-059",
+   "title": "God's Love to Fallen Man",
+   "reader": "Jacob Paul Starr",
+   "coverage": 0.9882,
+   "canonical_words": 4234,
+   "asr_words": 4230
+  },
+  {
+   "file_id": "wesley-s2-07",
+   "sermon_id": "wesley-060",
+   "title": "The General Deliverance",
+   "reader": "Lynne T",
+   "coverage": 0.9921,
+   "canonical_words": 5068,
+   "asr_words": 5049
+  },
+  {
+   "file_id": "wesley-s2-08",
+   "sermon_id": "wesley-061",
+   "title": "The Mystery of Iniquity",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9703,
+   "canonical_words": 6031,
+   "asr_words": 5940
+  },
+  {
+   "file_id": "wesley-s2-09",
+   "sermon_id": "wesley-062",
+   "title": "The End of Christ's Coming",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9829,
+   "canonical_words": 4275,
+   "asr_words": 4259
+  },
+  {
+   "file_id": "wesley-s2-10",
+   "sermon_id": "wesley-063",
+   "title": "The General Spread of the Gospel",
+   "reader": "TriciaG",
+   "coverage": 0.9896,
+   "canonical_words": 4819,
+   "asr_words": 4825
+  },
+  {
+   "file_id": "wesley-s2-11",
+   "sermon_id": "wesley-064",
+   "title": "The New Creation",
+   "reader": "Greg Giordano",
+   "coverage": 0.9865,
+   "canonical_words": 2661,
+   "asr_words": 3218
+  },
+  {
+   "file_id": "wesley-s2-12",
+   "sermon_id": "wesley-065",
+   "title": "The Duty of Reproving our Neighbour",
+   "reader": "KHand",
+   "coverage": 0.9853,
+   "canonical_words": 3404,
+   "asr_words": 3396
+  },
+  {
+   "file_id": "wesley-s2-13",
+   "sermon_id": "wesley-066",
+   "title": "The Signs of the Times",
+   "reader": "KHand",
+   "coverage": 0.9896,
+   "canonical_words": 3946,
+   "asr_words": 3937
+  },
+  {
+   "file_id": "wesley-s2-14",
+   "sermon_id": "wesley-067",
+   "title": "On Divine Providence",
+   "reader": "KHand",
+   "coverage": 0.9782,
+   "canonical_words": 5233,
+   "asr_words": 5175
+  },
+  {
+   "file_id": "wesley-s2-15",
+   "sermon_id": "wesley-068",
+   "title": "The Wisdom of God's Counsels",
+   "reader": "TriciaG",
+   "coverage": 0.9924,
+   "canonical_words": 5135,
+   "asr_words": 5183
+  },
+  {
+   "file_id": "wesley-s2-16",
+   "sermon_id": "wesley-069",
+   "title": "The Imperfection of Human Knowledge",
+   "reader": "TimoleonWash",
+   "coverage": 0.9859,
+   "canonical_words": 5818,
+   "asr_words": 5800
+  },
+  {
+   "file_id": "wesley-s2-17",
+   "sermon_id": "wesley-070",
+   "title": "The Case of Reason Impartially Considered",
+   "reader": "TimoleonWash",
+   "coverage": 0.9816,
+   "canonical_words": 4301,
+   "asr_words": 4301
+  },
+  {
+   "file_id": "wesley-s2-18",
+   "sermon_id": "wesley-071",
+   "title": "Of Good Angels",
+   "reader": "TriciaG",
+   "coverage": 0.9903,
+   "canonical_words": 3805,
+   "asr_words": 3811
+  },
+  {
+   "file_id": "wesley-s2-19",
+   "sermon_id": "wesley-072",
+   "title": "Of Evil Angels",
+   "reader": "TriciaG",
+   "coverage": 0.9908,
+   "canonical_words": 4471,
+   "asr_words": 4507
+  },
+  {
+   "file_id": "wesley-s2-20",
+   "sermon_id": "wesley-073",
+   "title": "Of Hell",
+   "reader": "Bill Mosley",
+   "coverage": 0.9887,
+   "canonical_words": 4517,
+   "asr_words": 4521
+  },
+  {
+   "file_id": "wesley-s2-21",
+   "sermon_id": "wesley-074",
+   "title": "Of the Church",
+   "reader": "Bill Mosley",
+   "coverage": 0.9874,
+   "canonical_words": 3890,
+   "asr_words": 3903
+  },
+  {
+   "file_id": "wesley-s2-22",
+   "sermon_id": "wesley-075",
+   "title": "On Schism",
+   "reader": "Simon Brouwer",
+   "coverage": 0.9595,
+   "canonical_words": 4002,
+   "asr_words": 3988
+  },
+  {
+   "file_id": "wesley-s2-23",
+   "sermon_id": "wesley-076",
+   "title": "On Perfection",
+   "reader": "Larry Wilson",
+   "coverage": 0.9825,
+   "canonical_words": 5899,
+   "asr_words": 5880
+  },
+  {
+   "file_id": "wesley-s2-24",
+   "sermon_id": "wesley-077",
+   "title": "Spiritual Worship",
+   "reader": "TriciaG",
+   "coverage": 0.9864,
+   "canonical_words": 4417,
+   "asr_words": 4433
+  },
+  {
+   "file_id": "wesley-s2-25",
+   "sermon_id": "wesley-078",
+   "title": "Spiritual Idolatry",
+   "reader": "Greg Giordano",
+   "coverage": 0.9765,
+   "canonical_words": 3827,
+   "asr_words": 3814
+  },
+  {
+   "file_id": "wesley-s2-26",
+   "sermon_id": "wesley-079",
+   "title": "On Dissipation",
+   "reader": "Larry Wilson",
+   "coverage": 0.9809,
+   "canonical_words": 3294,
+   "asr_words": 3277
+  },
+  {
+   "file_id": "wesley-s2-27",
+   "sermon_id": "wesley-080",
+   "title": "On Friendship with the World",
+   "reader": "MaryAnn",
+   "coverage": 0.9838,
+   "canonical_words": 5056,
+   "asr_words": 5053
+  },
+  {
+   "file_id": "wesley-s2-28",
+   "sermon_id": "wesley-081",
+   "title": "In What Sense we are to Leave the World",
+   "reader": "MaryAnn",
+   "coverage": 0.9847,
+   "canonical_words": 4895,
+   "asr_words": 4895
+  },
+  {
+   "file_id": "wesley-s2-29",
+   "sermon_id": "wesley-082",
+   "title": "On Temptation",
+   "reader": "MaryAnn",
+   "coverage": 0.9805,
+   "canonical_words": 4052,
+   "asr_words": 4058
+  },
+  {
+   "file_id": "wesley-s2-30",
+   "sermon_id": "wesley-083",
+   "title": "On Patience",
+   "reader": "Beth Thomas (1974-2020)",
+   "coverage": 0.9924,
+   "canonical_words": 3531,
+   "asr_words": 3522
+  },
+  {
+   "file_id": "wesley-s2-31",
+   "sermon_id": "wesley-084",
+   "title": "The Important Question",
+   "reader": "MaryAnne",
+   "coverage": 0.9847,
+   "canonical_words": 5374,
+   "asr_words": 5353
+  },
+  {
+   "file_id": "wesley-s2-32",
+   "sermon_id": "wesley-085",
+   "title": "On Working out our own Salvation",
+   "reader": "Beth Thomas (1974-2020)",
+   "coverage": 0.9874,
+   "canonical_words": 3415,
+   "asr_words": 3406
+  },
+  {
+   "file_id": "wesley-s2-33",
+   "sermon_id": "wesley-086",
+   "title": "A Call to Backsliders",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9862,
+   "canonical_words": 5782,
+   "asr_words": 5754
+  },
+  {
+   "file_id": "wesley-s2-34",
+   "sermon_id": "wesley-087",
+   "title": "The Danger of Riches",
+   "reader": "Larry Wilson",
+   "coverage": 0.9849,
+   "canonical_words": 6024,
+   "asr_words": 5995
+  },
+  {
+   "file_id": "wesley-s2-35",
+   "sermon_id": "wesley-088",
+   "title": "On Dress",
+   "reader": "TriciaG",
+   "coverage": 0.9897,
+   "canonical_words": 4672,
+   "asr_words": 4710
+  },
+  {
+   "file_id": "wesley-s2-36",
+   "sermon_id": "wesley-089",
+   "title": "The More Excellent Way",
+   "reader": "MaryAnne",
+   "coverage": 0.9872,
+   "canonical_words": 4858,
+   "asr_words": 4867
+  },
+  {
+   "file_id": "wesley-s2-37",
+   "sermon_id": "wesley-090",
+   "title": "An Israelite Indeed",
+   "reader": "Christopher Smith",
+   "coverage": 0.989,
+   "canonical_words": 3357,
+   "asr_words": 3351
+  },
+  {
+   "file_id": "wesley-s2-38",
+   "sermon_id": "wesley-091",
+   "title": "On Charity",
+   "reader": "Denise Nordell",
+   "coverage": 0.9884,
+   "canonical_words": 5018,
+   "asr_words": 5015
+  },
+  {
+   "file_id": "wesley-s2-39",
+   "sermon_id": "wesley-092",
+   "title": "On Zeal",
+   "reader": "Simon Brouwer",
+   "coverage": 0.9619,
+   "canonical_words": 4195,
+   "asr_words": 4192
+  },
+  {
+   "file_id": "wesley-s2-40",
+   "sermon_id": "wesley-093",
+   "title": "On Redeeming the Time",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9893,
+   "canonical_words": 3735,
+   "asr_words": 3705
+  },
+  {
+   "file_id": "wesley-s2-41",
+   "sermon_id": "wesley-094",
+   "title": "On Family Religion",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9855,
+   "canonical_words": 4413,
+   "asr_words": 4391
+  },
+  {
+   "file_id": "wesley-s2-42",
+   "sermon_id": "wesley-095",
+   "title": "On the Education of Children",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9904,
+   "canonical_words": 5436,
+   "asr_words": 5413
+  },
+  {
+   "file_id": "wesley-s2-43",
+   "sermon_id": "wesley-096",
+   "title": "On Obedience to Parents",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9939,
+   "canonical_words": 4296,
+   "asr_words": 4285
+  },
+  {
+   "file_id": "wesley-s2-44",
+   "sermon_id": "wesley-097",
+   "title": "On Obedience to Pastors",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9907,
+   "canonical_words": 3782,
+   "asr_words": 3777
+  },
+  {
+   "file_id": "wesley-s2-45",
+   "sermon_id": "wesley-098",
+   "title": "On Visiting the Sick",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9891,
+   "canonical_words": 4511,
+   "asr_words": 4494
+  },
+  {
+   "file_id": "wesley-s2-46",
+   "sermon_id": "wesley-099",
+   "title": "The Reward of the Righteous",
+   "reader": "TriciaG",
+   "coverage": 0.9886,
+   "canonical_words": 4641,
+   "asr_words": 4631
+  },
+  {
+   "file_id": "wesley-s2-47",
+   "sermon_id": "wesley-100",
+   "title": "On Pleasing all Men",
+   "reader": "Larry Wilson",
+   "coverage": 0.9915,
+   "canonical_words": 3313,
+   "asr_words": 3309
+  },
+  {
+   "file_id": "wesley-s2-48",
+   "sermon_id": "wesley-101",
+   "title": "The Duty of Constant Communion J.W.",
+   "reader": "Larry Wilson",
+   "coverage": 0.9872,
+   "canonical_words": 4514,
+   "asr_words": 4550
+  },
+  {
+   "file_id": "wesley-s2-49",
+   "sermon_id": "wesley-102",
+   "title": "Of Former Times",
+   "reader": "Robert G. Smith",
+   "coverage": 0.9779,
+   "canonical_words": 3984,
+   "asr_words": 3944
+  },
+  {
+   "file_id": "wesley-s2-50",
+   "sermon_id": "wesley-103",
+   "title": "What is Man?",
+   "reader": "Timothy Watson",
+   "coverage": 0.9803,
+   "canonical_words": 3038,
+   "asr_words": 3013
+  },
+  {
+   "file_id": "wesley-s2-51",
+   "sermon_id": "wesley-104",
+   "title": "On Attending the Church Service",
+   "reader": "Bill Mosley",
+   "coverage": 0.9878,
+   "canonical_words": 4898,
+   "asr_words": 4879
+  },
+  {
+   "file_id": "wesley-s2-52",
+   "sermon_id": "wesley-105",
+   "title": "On Conscience",
+   "reader": "TimoleonWash",
+   "coverage": 0.9793,
+   "canonical_words": 3820,
+   "asr_words": 3808
+  },
+  {
+   "file_id": "wesley-s2-53",
+   "sermon_id": "wesley-106",
+   "title": "On Faith",
+   "reader": "TimoleonWash",
+   "coverage": 0.9856,
+   "canonical_words": 3189,
+   "asr_words": 3189
+  },
+  {
+   "file_id": "wesley-s2-54",
+   "sermon_id": "wesley-107",
+   "title": "On God's Vineyard",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9912,
+   "canonical_words": 4751,
+   "asr_words": 4733
+  },
+  {
+   "file_id": "wesley-s2-55",
+   "sermon_id": "wesley-108",
+   "title": "On Riches",
+   "reader": "Bruce Kachuk",
+   "coverage": 0.9902,
+   "canonical_words": 3589,
+   "asr_words": 3581
+  },
+  {
+   "file_id": "wesley-s3to5-01",
+   "sermon_id": "wesley-109",
+   "title": "What is Man?",
+   "reader": "MaryAnn",
+   "coverage": 0.9884,
+   "canonical_words": 2584,
+   "asr_words": 2582
+  },
+  {
+   "file_id": "wesley-s3to5-02",
+   "sermon_id": "wesley-110",
+   "title": "On the Discoveries of Faith",
+   "reader": "MaryAnn",
+   "coverage": 0.9871,
+   "canonical_words": 3096,
+   "asr_words": 3091
+  },
+  {
+   "file_id": "wesley-s3to5-03",
+   "sermon_id": "wesley-111",
+   "title": "On the Omnipresence of God",
+   "reader": "Andrea Rovny",
+   "coverage": 0.9832,
+   "canonical_words": 2617,
+   "asr_words": 2618
+  },
+  {
+   "file_id": "wesley-s3to5-04",
+   "sermon_id": "wesley-112",
+   "title": "The Rich Man and Lazarus",
+   "reader": "Andrea Rovny",
+   "coverage": 0.9829,
+   "canonical_words": 4867,
+   "asr_words": 4855
+  },
+  {
+   "file_id": "wesley-s3to5-05",
+   "sermon_id": "wesley-113",
+   "title": "The Difference Between Walking by Sight, and Walking by Faith",
+   "reader": "Bob Scott",
+   "coverage": 0.9922,
+   "canonical_words": 3581,
+   "asr_words": 3578
+  },
+  {
+   "file_id": "wesley-s3to5-06",
+   "sermon_id": "wesley-114",
+   "title": "The Unity of the Divine Being",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9798,
+   "canonical_words": 3712,
+   "asr_words": 3698
+  },
+  {
+   "file_id": "wesley-s3to5-07",
+   "sermon_id": "wesley-115",
+   "title": "The Ministerial Office",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9777,
+   "canonical_words": 3274,
+   "asr_words": 3257
+  },
+  {
+   "file_id": "wesley-s3to5-08",
+   "sermon_id": "wesley-116",
+   "title": "Causes of the Inefficacy of Christianity",
+   "reader": "TimoleonWash",
+   "coverage": 0.9887,
+   "canonical_words": 3894,
+   "asr_words": 3883
+  },
+  {
+   "file_id": "wesley-s3to5-09",
+   "sermon_id": "wesley-117",
+   "title": "On Knowing Christ after the Flesh",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9862,
+   "canonical_words": 2528,
+   "asr_words": 2530
+  },
+  {
+   "file_id": "wesley-s3to5-10",
+   "sermon_id": "wesley-118",
+   "title": "On a Single Eye",
+   "reader": "laurencetrask",
+   "coverage": 0.9868,
+   "canonical_words": 3553,
+   "asr_words": 3556
+  },
+  {
+   "file_id": "wesley-s3to5-11",
+   "sermon_id": "wesley-119",
+   "title": "On Worldly Folly",
+   "reader": "laurencetrask",
+   "coverage": 0.9896,
+   "canonical_words": 2404,
+   "asr_words": 2406
+  },
+  {
+   "file_id": "wesley-s3to5-12",
+   "sermon_id": "wesley-120",
+   "title": "On the Wedding Garment",
+   "reader": "laurencetrask",
+   "coverage": 0.9862,
+   "canonical_words": 2819,
+   "asr_words": 2816
+  },
+  {
+   "file_id": "wesley-s3to5-13",
+   "sermon_id": "wesley-121",
+   "title": "Human Life a Dream",
+   "reader": "laurencetrask",
+   "coverage": 0.9878,
+   "canonical_words": 3272,
+   "asr_words": 3281
+  },
+  {
+   "file_id": "wesley-s3to5-14",
+   "sermon_id": "wesley-122",
+   "title": "On Faith",
+   "reader": "TimoleonWash",
+   "coverage": 0.9832,
+   "canonical_words": 3872,
+   "asr_words": 3855
+  },
+  {
+   "file_id": "wesley-s3to5-15",
+   "sermon_id": "wesley-123",
+   "title": "The Deceitfulness of the Human Heart",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9792,
+   "canonical_words": 3466,
+   "asr_words": 3464
+  },
+  {
+   "file_id": "wesley-s3to5-16",
+   "sermon_id": "wesley-124",
+   "title": "The Heavenly Treasure in Earthen Vessels",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9777,
+   "canonical_words": 2016,
+   "asr_words": 2016
+  },
+  {
+   "file_id": "wesley-s3to5-17",
+   "sermon_id": "wesley-125",
+   "title": "On Living Without God",
+   "reader": "AlvinJPrice",
+   "coverage": 0.9852,
+   "canonical_words": 2493,
+   "asr_words": 2494
+  },
+  {
+   "file_id": "wesley-s3to5-18",
+   "sermon_id": "wesley-126",
+   "title": "On the Danger of Increasing Riches",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9819,
+   "canonical_words": 3588,
+   "asr_words": 3587
+  },
+  {
+   "file_id": "wesley-s3to5-19",
+   "sermon_id": "wesley-127",
+   "title": "The Trouble and Rest of Good Men",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9846,
+   "canonical_words": 3253,
+   "asr_words": 3251
+  },
+  {
+   "file_id": "wesley-s3to5-20",
+   "sermon_id": "wesley-128",
+   "title": "Free Grace",
+   "reader": "Matthew",
+   "coverage": 0.9813,
+   "canonical_words": 5765,
+   "asr_words": 5861
+  },
+  {
+   "file_id": "wesley-s3to5-21",
+   "sermon_id": "wesley-129",
+   "title": "The Cause and Cure of Earthquakes",
+   "reader": "Kathleen Moore",
+   "coverage": 0.9915,
+   "canonical_words": 5665,
+   "asr_words": 5687
+  },
+  {
+   "file_id": "wesley-s3to5-22",
+   "sermon_id": "wesley-130",
+   "title": "National Sins and Miseries",
+   "reader": "Kathleen Moore",
+   "coverage": 0.9828,
+   "canonical_words": 3657,
+   "asr_words": 3634
+  },
+  {
+   "file_id": "wesley-s3to5-23",
+   "sermon_id": "wesley-131",
+   "title": "The Late Work of God in North America",
+   "reader": "Michele Fry",
+   "coverage": 0.9859,
+   "canonical_words": 4334,
+   "asr_words": 4320
+  },
+  {
+   "file_id": "wesley-s3to5-24",
+   "sermon_id": "wesley-132",
+   "title": "On Laying the Foundation of the New Chapel, Near the City-Road, London",
+   "reader": "Larry Wilson",
+   "coverage": 0.9868,
+   "canonical_words": 4760,
+   "asr_words": 4759
+  },
+  {
+   "file_id": "wesley-s3to5-25",
+   "sermon_id": "wesley-133",
+   "title": "Preached on Occasion of the Death of the Rev. Mr. John Fletcher, Vicar of",
+   "reader": "Larry Wilson",
+   "coverage": 0.9893,
+   "canonical_words": 7871,
+   "asr_words": 7881
+  },
+  {
+   "file_id": "wesley-s3to5-26",
+   "sermon_id": "wesley-134",
+   "title": "True Christianity Defended",
+   "reader": "Avielh Tolentino",
+   "coverage": 0.9761,
+   "canonical_words": 4514,
+   "asr_words": 4523
+  },
+  {
+   "file_id": "wesley-s3to5-27",
+   "sermon_id": "wesley-135",
+   "title": "On Mourning for the Dead",
+   "reader": "TriciaG",
+   "coverage": 0.994,
+   "canonical_words": 2334,
+   "asr_words": 2368
+  },
+  {
+   "file_id": "wesley-s3to5-28",
+   "sermon_id": "wesley-136",
+   "title": "On Corrupting the Word Of God",
+   "reader": "Bob Scott",
+   "coverage": 0.9845,
+   "canonical_words": 2322,
+   "asr_words": 2310
+  },
+  {
+   "file_id": "wesley-s3to5-29",
+   "sermon_id": "wesley-137",
+   "title": "On the Resurrection of the Dead",
+   "reader": "Tony Addison",
+   "coverage": 0.9885,
+   "canonical_words": 5062,
+   "asr_words": 5114
+  },
+  {
+   "file_id": "wesley-s3to5-30",
+   "sermon_id": "wesley-138",
+   "title": "On Grieving the Holy Spirit",
+   "reader": "Larry Wilson",
+   "coverage": 0.9929,
+   "canonical_words": 3105,
+   "asr_words": 3120
+  },
+  {
+   "file_id": "wesley-s3to5-31",
+   "sermon_id": "wesley-139",
+   "title": "On Love",
+   "reader": "David Lodes",
+   "coverage": 0.9881,
+   "canonical_words": 3201,
+   "asr_words": 3210
+  },
+  {
+   "file_id": "wesley-s3to5-32",
+   "sermon_id": "wesley-140",
+   "title": "On Public Diversions",
+   "reader": "AlvinJPrice",
+   "coverage": 0.9943,
+   "canonical_words": 3695,
+   "asr_words": 3722
+  },
+  {
+   "file_id": "wesley-s3to5-33",
+   "sermon_id": "wesley-141",
+   "title": "On the Holy Spirit",
+   "reader": "Larry Wilson",
+   "coverage": 0.9915,
+   "canonical_words": 5419,
+   "asr_words": 5429
+  }
+ ],
+ "spot_check": [
+  {
+   "sermon_id": "wesley-105",
+   "file_id": "wesley-s2-52",
+   "start_s": 455.28,
+   "end_s": 459.86,
+   "anchored": 1.0,
+   "canonical": "Professor Hutcheson, late of Glasgow, places conscience in a different light.",
+   "whisper_window": "Professor Hutchinson, late of Glasgow, places conscience in a different light.",
+   "whisper_first_last": [
+    455.28,
+    459.86
+   ],
+   "word_recall": 0.909
+  },
+  {
+   "sermon_id": "wesley-041",
+   "file_id": "wesley-s1-42",
+   "start_s": 644.87,
+   "end_s": 653.87,
+   "anchored": 0.97,
+   "canonical": "Add to this, that they can inject a thousand thoughts, without any of the preceding means; it being as natural for spirit to act upon spirit, as for matter to act upon matter.",
+   "whisper_window": "Add to this that they can inject a thousand thoughts, without any of the preceding means, of being as natural for spirit to act upon spirit, as for matter to act upon matter.",
+   "whisper_first_last": [
+    644.87,
+    653.87
+   ],
+   "word_recall": 0.972
+  },
+  {
+   "sermon_id": "wesley-108",
+   "file_id": "wesley-s2-55",
+   "start_s": 837.52,
+   "end_s": 854.92,
+   "anchored": 1.0,
+   "canonical": "How strongly and continually are they solicited to seek happiness (if not in grand, yet) in beautiful houses, in elegant furniture, in curious pictures, in delightful gardens! perhaps in that trifle of all trifles,--rich or gay apparel!",
+   "whisper_window": "How strongly and continually are they solicited to seek happiness, if not in grand, yet in beautiful houses, in elegant furniture, in curious pictures, in delightful gardens! Perhaps in that trifle of all trifles, rich or gay apparel,",
+   "whisper_first_last": [
+    837.52,
+    854.92
+   ],
+   "word_recall": 1.0
+  },
+  {
+   "sermon_id": "wesley-063",
+   "file_id": "wesley-s2-10",
+   "start_s": 1249.58,
+   "end_s": 1255.68,
+   "anchored": 1.0,
+   "canonical": "From them the leaven will soon spread to those who till then, had no fear of God before their eyes.",
+   "whisper_window": "From them the leaven will soon spread to those who till then had no fear of God before their eyes.",
+   "whisper_first_last": [
+    1249.58,
+    1255.68
+   ],
+   "word_recall": 1.0
+  },
+  {
+   "sermon_id": "wesley-079",
+   "file_id": "wesley-s2-26",
+   "start_s": 329.72,
+   "end_s": 349.25,
+   "anchored": 1.0,
+   "canonical": "The whole visible world, all we see, hear, or touch, all the objects either of our senses or understanding, have a tendency to dissipate our thoughts from the invisible world; and to distract our minds from attending to him who is both the Author and end of our being.",
+   "whisper_window": "the whole visible world all we see hear or touch all the objects either of our senses or understanding have a tendency to dissipate our thoughts from the invisible world and to distract our minds from attending to him who is both the author and end of our being",
+   "whisper_first_last": [
+    329.72,
+    349.25
+   ],
+   "word_recall": 1.0
+  },
+  {
+   "sermon_id": "wesley-009",
+   "file_id": "wesley-s1-09",
+   "start_s": 863.25,
+   "end_s": 884.05,
+   "anchored": 1.0,
+   "canonical": "And as he knows, \"all things are naked and open unto the eyes of him with whom we have to do,\" so he sees himself naked, stripped of all the fig-leaves which he had sewed together, of all his poor pretenses to religion or virtue, and his wretched excuses for sinning against God.",
+   "whisper_window": "And as he knows, all things are naked and open unto the eyes of him with whom we have to do. So he sees himself. Naked, stripped of all the fig -leaves which he had sewed together, of all his poor pretences to religion or virtue, and his wretched excuses for sinning against God.",
+   "whisper_first_last": [
+    863.25,
+    884.05
+   ],
+   "word_recall": 0.982
+  },
+  {
+   "sermon_id": "wesley-099",
+   "file_id": "wesley-s2-46",
+   "start_s": 614.12,
+   "end_s": 618.62,
+   "anchored": 1.0,
+   "canonical": "Does not the very expression imply the excellency of what is so termed?",
+   "whisper_window": "Does not the very expression imply the excellency of what is so termed? Is",
+   "whisper_first_last": [
+    614.12,
+    619.44
+   ],
+   "word_recall": 1.0
+  },
+  {
+   "sermon_id": "wesley-116",
+   "file_id": "wesley-s3to5-08",
+   "start_s": 415.21,
+   "end_s": 442.92,
+   "anchored": 1.0,
+   "canonical": "What know they of the very first principles of it? -- of the natural and moral attributes of God; of his particular providence; of the redemption of man; of the offices of Christ; of the operations of the Holy Ghost; of justification; of the new birth; of inward and outward sanctification? speak of any of these things to the first ten persons you are in company with; and will you not find nine out of the ten ignorant of the whole affair?",
+   "whisper_window": "What know they of the very first principles of it, of the natural and moral attributes of God, of His particular providence, of the redemption of man, of the offices of Christ, of the operations of the Holy Ghost, of justification, of the new birth of inward and outward sanctification? Speak of any of these things to the first ten persons you are in company with, and will you not find nine out of the ten ignorant of the whole affair?",
+   "whisper_first_last": [
+    415.21,
+    442.92
+   ],
+   "word_recall": 1.0
+  },
+  {
+   "sermon_id": "wesley-049",
+   "file_id": "wesley-s1-50",
+   "start_s": 1663.42,
+   "end_s": 1670.95,
+   "anchored": 1.0,
+   "canonical": "Indeed, you still owe to him, as to all other heathens, earnest, tender goodwill.",
+   "whisper_window": "Indeed, you still owe to him, as to all other heathens, earnest, tender goodwill.",
+   "whisper_first_last": [
+    1663.42,
+    1670.95
+   ],
+   "word_recall": 1.0
+  },
+  {
+   "sermon_id": "wesley-127",
+   "file_id": "wesley-s3to5-19",
+   "start_s": 832.0,
+   "end_s": 834.22,
+   "anchored": 1.0,
+   "canonical": "Sin hath no more dominion over thee.",
+   "whisper_window": "Sin hath no more dominion over thee, For",
+   "whisper_first_last": [
+    832.0,
+    834.96
+   ],
+   "word_recall": 1.0
+  }
+ ]
+}
