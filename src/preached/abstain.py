@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import tomllib
 from dataclasses import asdict, dataclass
@@ -46,7 +47,14 @@ from preached.paths import repo_root
 from preached.rank import dense_hits, dense_scores
 from preached.store import bm25_search
 
+log = logging.getLogger(__name__)
+
 CANDIDATES = 100
+# The query embedder the shipped floors were fitted with. A floor applies
+# only to the backend and variant it was fitted on: int8 ONNX lowers the top
+# cosine by 0.008-0.053 (PR #10) and the document fingerprint cannot see it.
+# For torch the variant is the CPU dtype.
+DEFAULT_BACKEND = "torch"
 # Stored floors are rounded up to this many decimals, so a fitted question
 # that sat exactly on the floor still compares <= after rounding.
 FLOOR_DECIMALS = 4
@@ -174,29 +182,76 @@ def query_fingerprint(spec) -> str:
 
 
 def load_calibrations(path: Path | None = None) -> dict:
+    """The ``[models]`` tables of the calibration file.
+
+    A missing file is no calibration. An unreadable or malformed file (not
+    UTF-8, bad TOML, ``models`` not a table) is logged and also treated as
+    no calibration, so a bad edit can never stop the server: search keeps
+    working and simply never abstains on dense evidence.
+    """
     path = path or calibration_path()
-    if not path.exists():
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return {}
-    return tomllib.loads(path.read_text()).get("models", {})
+    except (OSError, UnicodeDecodeError) as exc:
+        log.warning("ignoring %s: cannot read it (%s); abstain floor disabled", path, exc)
+        return {}
+    try:
+        models = tomllib.loads(text).get("models", {})
+    except tomllib.TOMLDecodeError as exc:
+        log.warning("ignoring %s: not valid TOML (%s); abstain floor disabled", path, exc)
+        return {}
+    if not isinstance(models, dict):
+        log.warning("ignoring %s: 'models' is not a table; abstain floor disabled", path)
+        return {}
+    return models
 
 
-def floor_for(model: str | None, path: Path | None = None) -> float | None:
-    """The calibrated floor for ``model``, or None when it has none or the
-    stored fingerprints no longer match search/models.toml."""
+def embedder_variant(spec, backend: str, variant: str | None) -> str | None:
+    """The variant a floor is keyed on: as given, or the CPU dtype for torch."""
+    if variant is None and backend == "torch":
+        return spec.dtype_cpu
+    return variant
+
+
+def floor_for(
+    model: str | None,
+    path: Path | None = None,
+    *,
+    backend: str = DEFAULT_BACKEND,
+    variant: str | None = None,
+) -> float | None:
+    """The calibrated floor for ``model`` on this query embedder, or None.
+
+    None when the model has no entry, the entry is not a table, the stored
+    fingerprints no longer match search/models.toml, the entry was fitted
+    on another ``backend``/``variant``, or ``dense_floor`` is not a finite
+    number in [-1, 1] (a cosine). Never raises on a bad file.
+    """
     if not model:
         return None
     from preached.models import MODELS
 
     spec = MODELS.get(model)
     entry = load_calibrations(path).get(model)
-    if spec is None or not entry:
+    if spec is None or entry is None:
+        return None
+    where = path or calibration_path()
+    if not isinstance(entry, dict):
+        log.warning("ignoring %s: models.%s is not a table; abstain floor disabled", where, model)
         return None
     if entry.get("fingerprint") != spec.fingerprint():
         return None
     if entry.get("query_fingerprint") != query_fingerprint(spec):
         return None
+    if entry.get("backend") != backend or entry.get("variant") != embedder_variant(spec, backend, variant):
+        return None
     floor = entry.get("dense_floor")
-    if not isinstance(floor, (int, float)) or isinstance(floor, bool):
+    if not isinstance(floor, (int, float)) or isinstance(floor, bool) or not math.isfinite(floor) \
+            or not -1.0 <= floor <= 1.0:
+        log.warning("ignoring %s: models.%s.dense_floor %r is not a cosine in [-1, 1]; abstain floor disabled",
+                    where, model, floor)
         return None
     return float(floor)
 
@@ -206,15 +261,17 @@ def calibration_toml(entries: dict[str, dict]) -> str:
     lines = [
         "# Per-model dense floor for the abstain rule (src/preached/abstain.py).",
         "# Written by: uv run --group bench search/bench.py --abstain --write-calibration",
-        "# A floor applies only while both fingerprints match search/models.toml;",
-        "# otherwise that model never abstains (results with a note at most).",
+        "# A floor applies only while both fingerprints match search/models.toml and",
+        "# the query embedder is the backend/variant it was fitted on; otherwise that",
+        "# model never abstains (results with a note at most). The floor is a",
+        "# heuristic: it rests on very few unanswerable questions (reports/W3-POLISH.md).",
         "# Fitted on LLM-written eval labels pending human review (eval/README.md).",
         "",
     ]
     for key in sorted(entries):
         entry = entries[key]
         lines.append(f"[models.{key}]")
-        for field in ("dense_floor", "fingerprint", "query_fingerprint", "fitted_on", "results"):
+        for field in ("dense_floor", "fingerprint", "query_fingerprint", "backend", "variant", "fitted_on", "results"):
             if field not in entry or entry[field] is None:
                 continue
             value = entry[field]

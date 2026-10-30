@@ -543,7 +543,7 @@ def run_abstain(args, connection, questions, started) -> None:
         "models": {},
     }
     print(f"abstain eval, questions={len(questions)} -> {json_path}", flush=True)
-    calibrations = abstain.load_calibrations()
+    calibrations = {k: v for k, v in abstain.load_calibrations().items() if isinstance(v, dict)}
     for key in args.models:
         spec = MODELS[key]
         entry = {"hf_id": spec.hf_id, "revision": spec.revision, "fingerprint": spec.fingerprint(),
@@ -570,6 +570,9 @@ def run_abstain(args, connection, questions, started) -> None:
                     "dense_floor": floor,
                     "fingerprint": spec.fingerprint(),
                     "query_fingerprint": abstain.query_fingerprint(spec),
+                    # abstain_rows embeds queries with torch on CPU at dtype_cpu.
+                    "backend": "torch",
+                    "variant": spec.dtype_cpu,
                     "fitted_on": f"eval/questions.jsonl sha256 {sha256(questions_path())[:16]}, "
                                  f"{len(answerable)} answerable + {len(questions) - len(answerable)} unanswerable",
                     "results": str(json_path.relative_to(repo_root())) if json_path.is_relative_to(repo_root())

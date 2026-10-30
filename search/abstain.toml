@@ -1,13 +1,17 @@
 # Per-model dense floor for the abstain rule (src/preached/abstain.py).
 # Written by: uv run --group bench search/bench.py --abstain --write-calibration
-# A floor applies only while both fingerprints match search/models.toml;
-# otherwise that model never abstains (results with a note at most).
+# A floor applies only while both fingerprints match search/models.toml and
+# the query embedder is the backend/variant it was fitted on; otherwise that
+# model never abstains (results with a note at most). The floor is a
+# heuristic: it rests on very few unanswerable questions (reports/W3-POLISH.md).
 # Fitted on LLM-written eval labels pending human review (eval/README.md).
 
 [models.embeddinggemma-2]
 dense_floor = 0.7413
 fingerprint = "affcd14fa7a7bfee"
 query_fingerprint = "66cfc353bfc19649"
+backend = "torch"
+variant = "fp32"
 fitted_on = "eval/questions.jsonl sha256 14d9274ad6552cf9, 35 answerable + 5 unanswerable"
 results = "eval/results/2026-10-30-abstain-2.json"
 
@@ -15,5 +19,7 @@ results = "eval/results/2026-10-30-abstain-2.json"
 dense_floor = 0.8129
 fingerprint = "13e0ed78bb32d86b"
 query_fingerprint = "ab84c60ae72e3806"
+backend = "torch"
+variant = "fp32"
 fitted_on = "eval/questions.jsonl sha256 14d9274ad6552cf9, 35 answerable + 5 unanswerable"
 results = "eval/results/2026-10-30-abstain-2.json"

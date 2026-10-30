@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from preached import abstain
 from preached.abstain import Signals, decide, fit_floor, floor_for
@@ -18,6 +19,7 @@ from test_server import (
     STATIC_DIR,
     App,
     Running,
+    build_app,
     build_rich_index,
     encode_fixture,
     load_search,
@@ -97,6 +99,8 @@ class CalibrationFileTests(unittest.TestCase):
             "dense_floor": 0.81,
             "fingerprint": spec.fingerprint(),
             "query_fingerprint": abstain.query_fingerprint(spec),
+            "backend": "torch",
+            "variant": spec.dtype_cpu,
         }
         self.assertEqual(floor_for("granite-english-r2", self.write({"granite-english-r2": good})), 0.81)
         stale_docs = {**good, "fingerprint": "older-revision"}
@@ -123,6 +127,109 @@ class CalibrationFileTests(unittest.TestCase):
             self.assertTrue(0 < entry["dense_floor"] < 1)
             self.assertIn("fingerprint", entry)
             self.assertIn("query_fingerprint", entry)
+            self.assertEqual(entry["backend"], "torch")
+            self.assertEqual(entry["variant"], MODELS[key].dtype_cpu)
+
+    def test_floor_is_keyed_on_backend_and_variant(self) -> None:
+        # int8 ONNX lowers the top cosine 0.008-0.053 with the same document
+        # fingerprint, so a torch fp32 floor must not apply to it.
+        spec = MODELS["granite-english-r2"]
+        good = {
+            "dense_floor": 0.81,
+            "fingerprint": spec.fingerprint(),
+            "query_fingerprint": abstain.query_fingerprint(spec),
+            "backend": "torch",
+            "variant": "fp32",
+        }
+        path = self.write({"granite-english-r2": good})
+        self.assertEqual(floor_for("granite-english-r2", path), 0.81)
+        self.assertEqual(floor_for("granite-english-r2", path, backend="torch", variant="fp32"), 0.81)
+        self.assertIsNone(floor_for("granite-english-r2", path, backend="onnx", variant="int8"))
+        self.assertIsNone(floor_for("granite-english-r2", path, backend="onnx", variant="fp32"))
+        unkeyed = {key: value for key, value in good.items() if key not in ("backend", "variant")}
+        self.assertIsNone(floor_for("granite-english-r2", self.write({"granite-english-r2": unkeyed})))
+
+
+def good_entry() -> dict:
+    spec = MODELS["granite-english-r2"]
+    return {
+        "dense_floor": 0.5,
+        "fingerprint": spec.fingerprint(),
+        "query_fingerprint": abstain.query_fingerprint(spec),
+        "backend": "torch",
+        "variant": spec.dtype_cpu,
+    }
+
+
+def entry_toml(**overrides) -> str:
+    entry = {**good_entry(), **overrides}
+    return "[models.granite-english-r2]\n" + "".join(f"{key} = {value}\n" for key, value in (
+        (key, json.dumps(value) if isinstance(value, str) else value) for key, value in entry.items()))
+
+
+# CTO review of PR #11: each of these used to crash server startup or be
+# accepted as a floor. Each must leave the server up with abstain off.
+BAD_FILES = {
+    "truncated TOML": entry_toml().encode()[:60],
+    "models = 5": b"models = 5\n",
+    "entry not a table": b"[models]\n\"granite-english-r2\" = 0.5\n",
+    "not UTF-8": entry_toml().encode().replace(b"[models.", b"\xff\xfe[models.", 1),
+    "nan floor": entry_toml(dense_floor="NAN").replace('"NAN"', "nan").encode(),
+    "floor 5.0": entry_toml(dense_floor=5.0).encode(),
+    "floor -inf": entry_toml(dense_floor="X").replace('"X"', "-inf").encode(),
+    "floor is a string": entry_toml(dense_floor="0.5").encode(),
+}
+
+
+class BadCalibrationFileTests(unittest.TestCase):
+    """A malformed search/abstain.toml disables the floor; the server starts."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self.index = self.dir / "rich.sqlite"
+        build_rich_index(self.index)
+
+    def calibration(self, data: bytes) -> Path:
+        path = self.dir / "abstain.toml"
+        path.write_bytes(data)
+        return path
+
+    def start(self, path: Path) -> Running:
+        def loader(connection, _model_key):
+            return Searcher(connection, model="fixture", fingerprint=FIXTURE_FP), encode_fixture
+
+        with mock.patch.object(abstain, "calibration_path", return_value=path):
+            app = build_app(reopen(self.index), model_key="granite-english-r2", bm25_only=False,
+                            hosts={"127.0.0.1"}, static_dir=STATIC_DIR, loader=loader)
+        running = Running(app)
+        self.addCleanup(running.close)
+        return running
+
+    def test_good_file_sets_the_floor(self) -> None:
+        # Control: the same harness does pick up a valid floor.
+        running = self.start(self.calibration(entry_toml().encode()))
+        health = json.loads(running.request("GET", "/healthz")[2])
+        self.assertTrue(health["abstain_calibrated"])
+
+    def test_bad_files_disable_abstain(self) -> None:
+        for name, data in BAD_FILES.items():
+            with self.subTest(name):
+                path = self.calibration(data)
+                with self.assertLogs("preached.abstain", level="WARNING"):
+                    self.assertIsNone(floor_for("granite-english-r2", path))
+                running = self.start(path)
+                health = json.loads(running.request("GET", "/healthz")[2])
+                self.assertTrue(health["ok"])
+                self.assertTrue(health["dense"])
+                self.assertFalse(health["abstain_calibrated"])
+                status, _, body = running.request("GET", "/api/search?q=nosuchwordanywhere&mode=hybrid&k=10")
+                self.assertEqual(status, 200)
+                payload = json.loads(body)
+                self.assertFalse(payload["abstain"])
+                self.assertFalse(payload["confidence"]["calibrated"])
+                self.assertGreater(len(payload["results"]), 0)
 
 
 class ApiConfidenceTests(unittest.TestCase):

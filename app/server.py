@@ -344,7 +344,19 @@ def build_app(
         loader=loader,
     )
     if floor is None and encode is not None:
-        floor = floor_for(model_key)
+        try:
+            # Keyed on the query embedder too: a floor fitted on torch fp32
+            # does not apply to another backend or variant.
+            floor = floor_for(
+                model_key,
+                backend=getattr(encode, "backend", "torch"),
+                variant=getattr(encode, "variant", None),
+            )
+        except Exception:
+            # floor_for already treats a bad file as no floor; this guard
+            # keeps any other surprise from stopping the server.
+            logging.exception("abstain calibration unusable; abstain floor disabled")
+            floor = None
     return App(
         floor=floor,
         connection=connection,
