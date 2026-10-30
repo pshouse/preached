@@ -538,6 +538,9 @@ class SchemaTests(unittest.TestCase):
             def fetchone(self):
                 return (3,)
 
+            def __iter__(self):  # PRAGMA table_info: no columns, so nothing is gated
+                return iter(())
+
         app = App(
             connection=_Conn(),
             searcher=None,

@@ -7,7 +7,29 @@
 # only after privacy.review() and a human skim of the transcript.
 #
 # Changing allow, block or drop does NOT touch sermons that are already
-# imported. Re-import them (--redo) for a change to take effect.
+# imported. Re-import them (--redo) for a change to take effect. Approval
+# (--ack-review) must run under the same settings as the import (same
+# --privacy or PREACHED_PRIVACY); a changed config refuses approval.
+#
+# The review file (<index dir>/<library>/review/<id>.review.jsonl) is read
+# once, at approval, and checked against the sha256 stored at import. Nothing
+# re-reads it afterwards: editing or deleting it later does not unpublish.
+
+# What a play link may do for a chunk that contains [name] or overlaps a
+# review() flag. Redaction changes text only; the recording still has the name
+# spoken at that time. Patrick chose: no play link on name passages;
+# announcements, prayer requests and testimonies are excluded (see
+# W3-PRIV-SKIP). So the only accepted value is "none": no play link, no
+# YouTube link and no start/end times; the page shows text only. "shifted"
+# and "play" (and the same values in PREACHED_FLAGGED_AUDIO) are refused;
+# there is no command-line flag. The key may also be left out.
+#
+# Whole sermons are not withheld (Patrick's decision): a card that does not
+# touch a flagged passage keeps its link, and a listener can still scrub from
+# it to a flagged moment elsewhere in the same recording. Patrick accepted
+# that residual risk; human review and the W3-PRIV-SKIP exclusions are the
+# mitigation.
+flagged_audio = "none"
 
 # Names to keep: the pastor and staff who have agreed to be named. Each entry
 # is matched as a whole run of words, so "Pastor Jordan" keeps "Pastor Jordan"

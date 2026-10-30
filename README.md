@@ -30,7 +30,7 @@ Another library is a separate SQLite file. The server still serves one file per 
 uv run app/server.py --library <slug> --bm25-only
 ```
 
-That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`. Only `wesley` and the public-domain libraries in `src/preached/libraries.py` (`spurgeon`, `edwards`) are served; any other slug or `--index` file, including a church YouTube import, is refused until redaction and approval are in place.
+That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesley`. Pass `library=<slug>` on `/api/search`. Without a privacy config, only `wesley` and the public-domain libraries in `src/preached/libraries.py` (`spurgeon`, `edwards`) are served. A classic is served only from its own owner-only `/cache/index/<slug>.sqlite`. A church library (a YouTube or ASR import) is served only with `$PREACHED_PRIVACY` set, and always behind the publish gate: a sermon appears only after `--ack-review`. Passages with a redacted name get no link, and such a sermon loses its untimed links (see `reports/W3-PRIV-WIRE.md`).
 
 ## Credits
 
@@ -42,10 +42,12 @@ That opens `/cache/index/<slug>.sqlite`. The page keeps asking for `library=wesl
 Paste a channel (or one watch URL) and build a library the search server can read. Audio is downloaded only as a working file under `/cache/youtube/<slug>/` and deleted after the video is indexed. `--keep-audio` leaves the file. The index stores the transcript excerpt and the exact start and end seconds. The watch URL's `t=` starts 0.75 s before that start (never below 0) and is truncated to a whole second. The video stays on YouTube. `text_source` is `asr`. `reader` is left empty.
 
 ```bash
-uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --dry-run
-uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --limit 5 --since 2024-01-01
-uv run --extra youtube --extra transcribe import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library <slug> --require-cc
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --privacy <toml> --dry-run
+uv run --extra youtube import/youtube.py "https://www.youtube.com/@channel/videos" --library <slug> --privacy <toml> --limit 5 --since 2024-01-01
+uv run --extra youtube --extra transcribe import/youtube.py "https://www.youtube.com/watch?v=VIDEO" --library <slug> --privacy <toml> --require-cc
 ```
+
+A privacy config is required (`--privacy <toml>` or `$PREACHED_PRIVACY`, see `privacy.example.toml`); without one the import exits 2 before listing anything. Names are redacted, every sermon gets a private review file and lands unpublished until `--ack-review <id>`. Passages that hold a name get no play link (Patrick's decision). `wesley`, `spurgeon` and `edwards` are refused as import slugs: only those public-domain libraries are exempt from redaction and the publish gate (`src/preached/libraries.py`), and church audio must never land in them. Details: `reports/W3-PRIV-WIRE.md`.
 
 `--dry-run` prints `id`, `title`, `YYYY-MM-DD`, and duration in seconds, and writes nothing. A second run skips video ids already imported. One bad video does not stop the rest. `--require-cc` skips a video unless yt-dlp's `license` field names Creative Commons. That flag is for a public test clip, not for a church that has given permission.
 

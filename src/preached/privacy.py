@@ -66,12 +66,15 @@ import dataclasses
 import gzip
 import os
 import re
+import stat
 import tomllib
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+from preached.audio_policy import check_church_policy
 
 DATA = Path(__file__).with_name("privacy_data")
 TOKEN = "[name]"
@@ -317,10 +320,11 @@ class Config:
     block: frozenset[str] = frozenset()
     drop: tuple[tuple[str | None, float, float], ...] = ()
     token: str = TOKEN
+    flagged_audio: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
-        unknown = set(data) - {"allow", "block", "drop", "token"}
+        unknown = set(data) - {"allow", "block", "drop", "token", "flagged_audio"}
         if unknown:
             raise ValueError(f"unknown privacy settings: {', '.join(sorted(unknown))}")
         allow = frozenset(_phrase(name) for name in data.get("allow", []) if _phrase(name))
@@ -331,7 +335,17 @@ class Config:
             if end <= start:
                 raise ValueError(f"drop window ends before it starts: {window}")
             drop.append((window.get("source"), start, end))
-        return cls(allow=allow, block=block, drop=tuple(drop), token=str(data.get("token", TOKEN)))
+        flagged = data.get("flagged_audio")
+        if flagged is not None:
+            # Only "none" (Patrick's decision); kept as a key so old files still load.
+            check_church_policy(flagged)
+        return cls(
+            allow=allow,
+            block=block,
+            drop=tuple(drop),
+            token=str(data.get("token", TOKEN)),
+            flagged_audio=flagged,
+        )
 
 
 def load_config(path: str | os.PathLike[str]) -> Config:
@@ -342,6 +356,26 @@ def load_config(path: str | os.PathLike[str]) -> Config:
 def default_config() -> Config:
     path = os.environ.get(CONFIG_ENV)
     return load_config(path) if path else Config()
+
+
+class MissingConfig(ValueError):
+    """A church library was given no privacy config (fail closed)."""
+
+
+def required_config(path: str | os.PathLike[str] | None = None) -> Config:
+    """``path`` (``--privacy``), else ``$PREACHED_PRIVACY``; neither is an error.
+
+    Every library except Wesley and the public-domain allow-list
+    (``preached.libraries``) is a church library and must name its config, so
+    nobody imports church audio under an empty config by forgetting a flag.
+    """
+    chosen = path or os.environ.get(CONFIG_ENV)
+    if not chosen:
+        raise MissingConfig(
+            f"a church library needs a privacy config: --privacy <toml> or ${CONFIG_ENV} "
+            "(see privacy.example.toml)"
+        )
+    return load_config(chosen)
 
 
 # ---------------------------------------------------------------- word records
@@ -406,7 +440,7 @@ def redact(words: list, *, config: Config | None = None, source: str | None = No
     without a ``source`` apply to every input.
     """
     config = default_config() if config is None else config
-    kept = [w for w in words if not _dropped(w, config, source)] if config.drop else words
+    kept = apply_drops(words, config, source)
     texts = [_text(word) for word in kept]
     hide = decide(texts, config)
     if not any(hide):
@@ -415,6 +449,12 @@ def redact(words: list, *, config: Config | None = None, source: str | None = No
         _with_text(word, _mask(text, config.token)) if flag else word
         for word, text, flag in zip(kept, texts, hide)
     ]
+
+
+def apply_drops(words: list, config: Config | None = None, source: str | None = None) -> list:
+    """The words left after ``drop`` windows for ``source`` are removed."""
+    config = default_config() if config is None else config
+    return [w for w in words if not _dropped(w, config, source)] if config.drop else words
 
 
 def redact_text(text: str, config: Config | None = None) -> str:
@@ -428,6 +468,40 @@ def redact_text(text: str, config: Config | None = None) -> str:
     return " ".join(_mask(t, config.token) if flag else t for t, flag in zip(texts, decide(texts, config)))
 
 
+def _cased_like_prose(texts: Sequence[str]) -> list[str]:
+    """Titles in ALL CAPS or Title Case, recased so the rules can read them.
+
+    The rules take a capital letter as evidence. A title capitalizes every
+    word, so "PRAYER FOR GRACE TOWNSEND" kept "GRACE" (not on any list in
+    capitals) and "Baby Dedication: Liam" read "Dedication" as part of a
+    name. Here an all-capital word becomes "Grace", then a capitalized word
+    that is only an English word (not a given, Bible, public or place name)
+    becomes lowercase: "prayer for Grace Townsend", "baby dedication: Liam".
+    One output per input word, so flags map back onto the original words.
+    Titles and descriptions only; ``redact`` on transcripts is unchanged.
+    """
+    recased = []
+    for text in texts:
+        match = WORD.match(text.strip())
+        core = match["core"] if match else ""
+        if sum(ch.isalpha() for ch in core) > 1 and core.isupper():
+            text = text.replace(core, core[0] + core[1:].lower(), 1)
+        recased.append(text)
+    toks = _Pass(recased, Config()).toks
+    out = []
+    for text, tok in zip(recased, toks):
+        if tok.cap and tok.kind == "word" and not tok.initials:
+            text = text.replace(tok.core, tok.core.lower(), 1)
+        out.append(text)
+    return out
+
+
+def _redact_field(text: str, config: Config) -> str:
+    texts = text.split()
+    hide = decide(_cased_like_prose(texts), config)
+    return " ".join(_mask(t, config.token) if flag else t for t, flag in zip(texts, hide))
+
+
 def redact_metadata(
     title: str | None = None,
     description: str | None = None,
@@ -438,13 +512,51 @@ def redact_metadata(
 
     Returns ``(title, description)``; ``None`` stays ``None``. Same rules and
     same limits as ``redact``: "Baby dedication – the Hendersons" becomes
-    "Baby dedication – the [name]". Whitespace runs collapse to single spaces.
+    "Baby dedication – the [name]". ALL-CAPS and Title Case text is recased
+    first (``_cased_like_prose``), so "PRAYER FOR GRACE TOWNSEND" becomes
+    "PRAYER FOR [name] [name]". Whitespace runs collapse to single spaces.
     """
     config = default_config() if config is None else config
     return (
-        None if title is None else redact_text(title, config),
-        None if description is None else redact_text(description, config),
+        None if title is None else _redact_field(title, config),
+        None if description is None else _redact_field(description, config),
     )
+
+
+def review_metadata(text: str | None, *, config: Config | None = None) -> ReviewList:
+    """``review()`` for a title or description, read the way ``redact_metadata`` reads it.
+
+    Items carry the original words (real names); ``start`` and ``end`` are
+    word positions, not seconds.
+    """
+    config = default_config() if config is None else config
+    if not text:
+        return ReviewList()
+    texts = text.split()
+    run = _Pass(_cased_like_prose(texts), config)
+    run.run()
+    return ReviewList(
+        ReviewItem(start=a, end=b, text=" ".join(texts[a:b]), reason=why) for a, b, why in sorted(run.reviews)
+    )
+
+
+def config_sha256(config: Config | None = None) -> str:
+    """A stable hash of the settings that change redaction (allow, block, drop, token).
+
+    Stored with each import; approval is refused when the config in effect
+    has a different hash, because the reviewed output came from other rules.
+    """
+    import hashlib
+    import json
+
+    config = default_config() if config is None else config
+    body = {
+        "allow": sorted(list(p) for p in config.allow),
+        "block": sorted(config.block),
+        "drop": sorted([s or "", a, b] for s, a, b in config.drop),
+        "token": config.token,
+    }
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def redact_transcript(transcript: dict, *, config: Config | None = None, source: str | None = None) -> dict:
@@ -553,27 +665,102 @@ def review(words: list, *, config: Config | None = None) -> ReviewList:
     )
 
 
+def _open_private_dir(folder: Path) -> int:
+    """Open ``folder`` component by component from ``/`` with no symlink followed.
+
+    Each component is opened ``O_DIRECTORY | O_NOFOLLOW`` relative to the
+    previous descriptor (created 0700 with ``mkdirat`` when missing), so there
+    is no window between checking an ancestor and using it: a component
+    swapped for a symlink makes the open fail, and the descriptor we hold
+    keeps pointing at the directory we checked. Returns the final descriptor.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    current = os.open("/", flags)
+    try:
+        for part in folder.parts[1:]:
+            try:
+                try:
+                    following = os.open(part, flags, dir_fd=current)
+                except FileNotFoundError:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=current)
+                    except FileExistsError:
+                        pass  # lost a mkdir race: retry the open once; it fails closed if it is not a plain directory
+                    following = os.open(part, flags, dir_fd=current)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"review path {folder} is not a plain directory path ({part}: {exc.strerror})"
+                ) from None
+            os.close(current)
+            current = following
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
 def write_review_file(items: Iterable[dict], path: str | os.PathLike[str]) -> int:
     """Write review items as JSON lines to a private file; return the count.
 
-    The directory is created 0700 and the file is 0600, so only the owner can
-    read it. One file per sermon; delete it after approval
-    (``delete_review_file``). Prints a count and the path, never a name. Put
-    the file outside the repo (``review/`` is git-ignored as a backstop).
+    See ``write_review_file_sha256``, which also returns the file's sha256.
     """
-    import json
+    return write_review_file_sha256(items, path)[0]
 
-    path = Path(path)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    count = 0
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(descriptor, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        for item in items:
-            handle.write(json.dumps(dict(item), ensure_ascii=False) + "\n")
-            count += 1
+
+def write_review_file_sha256(items: Iterable[dict], path: str | os.PathLike[str]) -> tuple[int, str]:
+    """Write review items as JSON lines to a private file; return ``(count, sha256)``.
+
+    No symlink is ever followed. ``path`` is made absolute without resolving
+    it, and every existing directory above it must not be a symlink. The
+    directory is created 0700 and then opened ``O_DIRECTORY | O_NOFOLLOW``;
+    through that descriptor it must be a directory owned by this user, and it
+    is tightened to 0700 with ``fchmod`` (never ``chmod`` on a path). The
+    file is written to a new 0600 temp file in that directory (``O_CREAT |
+    O_EXCL | O_NOFOLLOW``, ``dir_fd``) and renamed over the name within the
+    same directory descriptor, so a symlink planted at ``path`` is replaced,
+    never followed, and its target and the target's directory are untouched.
+    The sha256 is of the bytes written, not of a re-read. One file per
+    sermon; delete it after approval (``delete_review_file``). Prints a count
+    and the path, never a name. Put the file outside the repo (``review/`` is
+    git-ignored as a backstop).
+    """
+    import hashlib
+    import json
+    import secrets
+
+    path = Path(os.path.abspath(path))
+    folder = path.parent
+    dir_fd = _open_private_dir(folder)
+    try:
+        info = os.fstat(dir_fd)
+        if not stat.S_ISDIR(info.st_mode):
+            raise RuntimeError(f"review directory {folder} is not a plain directory")
+        if info.st_uid != os.geteuid():
+            raise RuntimeError(f"review directory {folder} belongs to another user")
+        if stat.S_IMODE(info.st_mode) != 0o700:
+            os.fchmod(dir_fd, 0o700)
+        data = b"".join((json.dumps(dict(item), ensure_ascii=False) + "\n").encode("utf-8") for item in items)
+        count = data.count(b"\n")
+        temp = f".{path.name}.{secrets.token_hex(8)}.tmp"
+        descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            os.fsync(dir_fd)
+        except BaseException:
+            try:
+                os.unlink(temp, dir_fd=dir_fd)
+            except FileNotFoundError:
+                pass
+            raise
+    finally:
+        os.close(dir_fd)
     print(f"wrote {count} review items to {path} (owner-only; delete after approval)")
-    return count
+    return count, hashlib.sha256(data).hexdigest()
 
 
 def delete_review_file(path: str | os.PathLike[str]) -> None:
