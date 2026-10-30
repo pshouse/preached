@@ -18,20 +18,15 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import CHUNKS_JSONL, INDEX_PATH  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import chunk_count, connect, replace_chunks  # noqa: E402
+from preached.store import connect, sync_chunks  # noqa: E402
 
 
 def ensure_chunks(connection) -> None:
-    from preached.corpus import read_jsonl
-
     if not CHUNKS_JSONL.exists():
         raise SystemExit(
             f"missing {CHUNKS_JSONL}. Run: uv run corpus/fetch_wesley.py && uv run corpus/chunk_sermons.py"
         )
-    have = chunk_count(connection)
-    chunks = read_jsonl(CHUNKS_JSONL)
-    if have != len(chunks):
-        replace_chunks(connection, chunks)
+    sync_chunks(connection, CHUNKS_JSONL)
 
 
 def fmt_time(value) -> str:

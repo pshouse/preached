@@ -45,10 +45,9 @@ from preached.paths import CHUNKS_JSONL, INDEX_PATH, chunk_config_path, question
 from preached.search import Searcher  # noqa: E402
 from preached.stats import bootstrap_ci, paired_bootstrap  # noqa: E402
 from preached.store import (  # noqa: E402
-    chunk_count,
     connect,
     embedding_bytes,
-    replace_chunks,
+    sync_chunks,
     write_embeddings,
 )
 
@@ -154,10 +153,7 @@ def is_gated(exc: BaseException) -> bool:
 def ensure_chunks(connection) -> int:
     if not CHUNKS_JSONL.exists():
         raise SystemExit(f"missing {CHUNKS_JSONL}. Run corpus/fetch_wesley.py and corpus/chunk_sermons.py")
-    chunks = read_jsonl(CHUNKS_JSONL)
-    if chunk_count(connection) != len(chunks):
-        replace_chunks(connection, chunks)
-    return len(chunks)
+    return sync_chunks(connection, CHUNKS_JSONL)
 
 
 def run_mode(searcher: Searcher, query: str, vector, mode: str) -> list:
@@ -333,8 +329,9 @@ def markdown(report: dict) -> str:
             s = entry["summary"][mode]
             lat = entry["cpu_latency"][mode]
             vs = entry["vs_reference"].get(mode, {}).get("ndcg@10")
+            flag = "" if entry.get("provenance", "clear") == "clear" else " ⚠ lineage unclear"
             lines.append(
-                f"| {key} | `{entry['revision'][:10]}` | {mode} | {fmt_ci(s['recall@5'])} | {fmt_ci(s['mrr@10'])} | "
+                f"| {key}{flag} | `{entry['revision'][:10]}` | {mode} | {fmt_ci(s['recall@5'])} | {fmt_ci(s['mrr@10'])} | "
                 f"{fmt_ci(s['ndcg@10'])} | {fmt_ci(s['sermon@5'])} | {fmt_diff(vs)} | {embed.get('dtype', '')} | "
                 f"{embed.get('chunks_per_s') or ''} | {lat['p50_ms']} / {lat['p95_ms']} | {embed.get('dim', '')} |"
             )

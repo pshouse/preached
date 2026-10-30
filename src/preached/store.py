@@ -104,6 +104,36 @@ def replace_chunks(connection: sqlite3.Connection, chunks: list[dict]) -> None:
     connection.commit()
 
 
+def sync_chunks(connection: sqlite3.Connection, chunks_path: Path) -> int:
+    """Load chunks only when the chunk file's content changed.
+
+    Compares the file's sha256 with the one recorded in meta. Same content:
+    nothing is touched, so cached embeddings survive. New content: chunks are
+    replaced and embeddings are dropped, because their rowids no longer match.
+    """
+    import hashlib
+    import json
+
+    digest = hashlib.sha256(chunks_path.read_bytes()).hexdigest()
+    row = connection.execute("SELECT value FROM meta WHERE key = 'chunks_sha256'").fetchone()
+    if row is not None and row[0] == digest:
+        return chunk_count(connection)
+    if row is None and chunk_count(connection) > 0:
+        # Index built before the hash was recorded. Adopt it if the text matches.
+        texts = [json.loads(line)["text"] for line in chunks_path.read_text().splitlines() if line.strip()]
+        stored = [r[0] for r in connection.execute("SELECT text FROM chunks ORDER BY rowid")]
+        if stored == texts:
+            connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('chunks_sha256', ?)", (digest,))
+            connection.commit()
+            return len(stored)
+    chunks = [json.loads(line) for line in chunks_path.read_text().splitlines() if line.strip()]
+    replace_chunks(connection, chunks)
+    connection.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('chunks_sha256', ?)", (digest,))
+    connection.execute("DELETE FROM meta WHERE key LIKE 'embeddings:%'")
+    connection.commit()
+    return len(chunks)
+
+
 def chunk_count(connection: sqlite3.Connection) -> int:
     return int(connection.execute("SELECT count(*) FROM chunks").fetchone()[0])
 
@@ -126,8 +156,9 @@ def bm25_search(connection: sqlite3.Connection, query: str, limit: int) -> list[
             """,
             (match, limit),
         ).fetchall()
-    except sqlite3.OperationalError:
-        return []
+    except sqlite3.OperationalError as exc:
+        # Do not turn a broken query into "nothing found".
+        raise RuntimeError(f"FTS5 query failed for MATCH {match!r}: {exc}") from exc
     return [(int(row["rowid"]), -float(row["score"])) for row in rows]
 
 
