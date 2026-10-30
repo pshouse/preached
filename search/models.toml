@@ -1,0 +1,124 @@
+# Embedding models for the Wesley retrieval benchmark (search/bench.py) and
+# for search/query.py. Adding a model is one [models.<key>] table.
+# How to choose values and what each field means: docs/research/embeddings.md.
+#
+# Fields
+#   hf_id, revision      Hugging Face repo and the commit hash we tested. Pin it;
+#                        a model repo can change under the same name.
+#   dtype_gpu, dtype_cpu "fp32", "bf16", or "fp16". Check the model card. Some
+#                        models (EmbeddingGemma) break silently in fp16.
+#   dim                  Output size. Below the native size means Matryoshka
+#                        truncation, then re-normalization (only if the card allows it).
+#   question_prefix      Prepended to natural-language questions.
+#   keyword_prefix       Prepended to short keyword queries (falls back to question_prefix).
+#   document_prefix      Prepended to every chunk.
+#   document_template    Optional. Formats each chunk with its sermon title,
+#                        e.g. "title: {title} | text: {text}". Used instead of document_prefix.
+#   drop_config          Sub-configs set to None at load (e.g. unused vision/audio towers).
+#   trust_remote_code    Only when the repo needs its own modeling code.
+#   enabled = false      Keep the entry for the record but skip it by default.
+#   gated = true         Weights need an accepted license and HF_TOKEN.
+#   provenance           "clear", or "unclear: <why>" while a lineage question is open.
+#                        Unclear models are benchmarked and flagged, never shipped by default.
+#   provenance_sources   Links that support the lineage claim.
+
+# The model search/query.py uses unless --model is given.
+default = "granite-english-r2"
+# The (model, mode) every other row is compared against in the paired bootstrap.
+reference = { model = "granite-english-r2", mode = "hybrid_rrf" }
+
+[models.embeddinggemma-2]
+hf_id = "google/embeddinggemma-2"
+revision = "f9972ac22e696a105c482202646979e33e4b5a1e"
+license = "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)"
+developer = "Google DeepMind"
+lineage = "Gemma 4 text backbone, Google DeepMind (Oct 2026). Not derived from a PRC model per the model card and paper."
+provenance = "clear"
+lineage_sources = ["https://huggingface.co/google/embeddinggemma-2", "https://arxiv.org/abs/2610.37364"]
+params = "270M text-only (740M with vision and audio towers)"
+dtype_gpu = "fp32"   # card: bf16 or fp32, never fp16
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "task: question answering | query: "
+keyword_prefix = "task: search result | query: "
+# Card's Document prompt. The first run used "title: {sermon title} | text: ..."
+# and lost about 0.23 dense Recall@5 (see docs/research/embeddings.md, audit).
+document_prefix = "title: none | text: "
+drop_config = ["vision_config", "audio_config"]
+
+# The configuration of the first (superseded) run, kept so the audit can be
+# reproduced: uv run search/bench.py --models embeddinggemma-2-titled
+[models.embeddinggemma-2-titled]
+hf_id = "google/embeddinggemma-2"
+revision = "f9972ac22e696a105c482202646979e33e4b5a1e"
+license = "Apache-2.0 (card also points to the Gemma 4 license and Gemma prohibited-use policy)"
+developer = "Google DeepMind"
+lineage = "Same checkpoint as embeddinggemma-2. Documents carry the sermon title and scripture."
+lineage_sources = ["https://huggingface.co/google/embeddinggemma-2"]
+params = "270M text-only"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "task: question answering | query: "
+keyword_prefix = "task: search result | query: "
+document_template = "title: {title} | text: {text}"
+drop_config = ["vision_config", "audio_config"]
+enabled = false
+
+[models.embeddinggemma-300m]
+hf_id = "google/embeddinggemma-300m"
+revision = "57c266a740f537b4dc058e1b0cda161fd15afa75"
+license = "Gemma license (gated weights)"
+developer = "Google DeepMind"
+lineage = "EmbeddingGemma 1 (2025), Gemma 3 backbone. Predecessor of EmbeddingGemma 2."
+lineage_sources = ["https://huggingface.co/google/embeddinggemma-300m"]
+params = "308M"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+question_prefix = "task: question answering | query: "
+keyword_prefix = "task: search result | query: "
+document_template = "title: {title} | text: {text}"
+gated = true
+enabled = false   # needs HF_TOKEN with the Gemma license accepted
+
+[models.granite-english-r2]
+hf_id = "ibm-granite/granite-embedding-english-r2"
+revision = "47ea694b257b703fee9253d75c2b1f2985180498"
+license = "Apache-2.0"
+developer = "IBM Granite Embedding Team"
+lineage = "IBM-trained encoder, pretrained from scratch by IBM with the ModernBERT architecture recipe (no ModernBERT weights). Distilled from an IBM-tuned Mistral teacher. No MS-MARCO. No PRC base or teacher model."
+provenance = "clear"
+lineage_sources = ["https://huggingface.co/ibm-granite/granite-embedding-english-r2", "https://arxiv.org/abs/2508.21085"]
+params = "149M"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 768
+# Card: no query or document prefix. CLS pooling (from the repo's 1_Pooling).
+
+[models.arctic-embed-l]
+hf_id = "Snowflake/snowflake-arctic-embed-l"
+revision = "d8fb21ca8d905d2832ee8b96c894d3298964346b"
+license = "Apache-2.0"
+developer = "Snowflake"
+lineage = "Arctic-Embed 1.0 large, initialized from intfloat/e5-large-unsupervised (Microsoft Research Asia, BERT-large)."
+provenance = "unclear: the Arctic-Embed paper does not name the models used for hard-negative mining or synthetic query generation. Pending Patrick's decision."
+lineage_sources = ["https://huggingface.co/Snowflake/snowflake-arctic-embed-l", "https://arxiv.org/abs/2405.05374"]
+params = "334M"
+dtype_gpu = "fp32"
+dtype_cpu = "fp32"
+dim = 1024
+question_prefix = "Represent this sentence for searching relevant passages: "
+
+# Considered and not run. Reasons and sources are in docs/research/embeddings.md.
+[[excluded]]
+hf_id = "nomic-ai/nomic-embed-text-v2-moe"
+reason = "Benchmarked in W1-B, then excluded on lineage review (CTO, PR #2): the paper uses BAAI BGE-M3 to filter hard negatives for English and multilingual data (arXiv:2502.07972 sec. 4.4). AGENTS.md excludes models built with PRC models. Weaker notes: English pretraining pairs inherit Nomic v1 gte-base consistency filtering (arXiv:2402.01613); the sec. 7.3 ablation found Stella 1.5B (Qwen2-based) the best negative-mining teacher, final teacher not stated. Also the only trust_remote_code load."
+
+[[excluded]]
+hf_id = "Snowflake/snowflake-arctic-embed-l-v2.0"
+reason = "Initialized from BAAI bge-m3-retromae (Beijing). AGENTS.md excludes BGE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
+
+[[excluded]]
+hf_id = "Snowflake/snowflake-arctic-embed-m-v2.0"
+reason = "Initialized from Alibaba gte-multilingual-mlm-base. AGENTS.md excludes GTE and fine-tunes of it. arXiv:2412.04506 sec. 2.1."
