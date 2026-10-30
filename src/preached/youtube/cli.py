@@ -73,7 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="VIDEO_ID",
         help="Approve a sermon after reading <index dir>/<library>/review/<id>.review.jsonl and skimming its transcript. "
         "Repeat per video. Run without a channel URL, under the same --privacy (or $PREACHED_PRIVACY) as the import. "
-        "Imports are unpublished until approved. The review file is read once, at approval.",
+        "Imports are unpublished until approved. The review file is read once, at approval. Its exclude lines "
+        "(announcements, prayer requests, testimonies) may be confirmed, widened or added to before approval; "
+        "approval excludes exactly what they list, and any edit after approval is refused.",
     )
     return parser
 
@@ -104,7 +106,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         except (OSError, ValueError) as exc:
             print(f"privacy: {exc.__class__.__name__}: {exc}", file=sys.stderr)
             return 2
-        return acknowledge(index_root / f"{args.library}.sqlite", index_root / args.library / "review", args.ack_review, config)
+        return acknowledge(index_root / f"{args.library}.sqlite", index_root / args.library / "review", args.ack_review, config, embedder)
     if not args.channel_url:
         print("channel_url is required unless --ack-review is given", file=sys.stderr)
         return 2

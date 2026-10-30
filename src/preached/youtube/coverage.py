@@ -5,7 +5,7 @@ holes. A name spoken inside a hole is never transcribed, so it is never
 flagged or redacted. This module compares word time against speech time and
 lists every stretch of non-silent audio, longer than ``MAX_UNCOVERED_S``, that
 no word covers. The library refuses to approve a sermon while any such span is
-open (``preached.youtube.library.approve_review``).
+open (``preached.exclusions.approve``).
 
 Speech time is energy based, on the decoded audio. The stack's Silero VAD is
 not used: it is the first suspect for the holes, and a check that shares the

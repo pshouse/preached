@@ -24,7 +24,7 @@ if str(ROOT / "align") not in sys.path:
     sys.path.insert(0, str(ROOT / "align"))
 
 import asr_chunks  # noqa: E402
-from preached.privacy import _open_private_dir  # noqa: E402
+from preached.privacy import _open_private_dir, read_private_file  # noqa: E402
 from preached.youtube.pipeline import write_private_review  # noqa: E402
 from test_privacy_wire import FILLER, embedder, words_for  # noqa: E402
 
@@ -220,6 +220,15 @@ class MkdirRaceTests(unittest.TestCase):
         with patch("preached.privacy.os.mkdir", mkdir):
             fd = _open_private_dir(target)
         return fd
+
+    def test_create_false_never_makes_a_missing_directory(self) -> None:
+        target = self.root / "absent" / "deeper"
+        with self.assertRaises(FileNotFoundError):
+            _open_private_dir(target, create=False)
+        self.assertFalse((self.root / "absent").exists())
+        with self.assertRaises(FileNotFoundError):
+            read_private_file(target / "x.review.jsonl")
+        self.assertFalse((self.root / "absent").exists())
 
     def test_rival_creates_the_directory_first(self) -> None:
         fd = self.race(lambda target: target.mkdir(mode=0o700))
