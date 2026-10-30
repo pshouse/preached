@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -325,6 +326,105 @@ class WerTests(unittest.TestCase):
         self.assertEqual(errs, 1)  # deletion
         _, errs = wer_check.wer(ref, [])
         self.assertEqual(errs, len(ref))
+
+
+class CcelShaTests(unittest.TestCase):
+    """PR #5 re-review: a missing sha256_text is fatal, not a skipped check."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.text = self.dir / "sermons.txt"
+        self.text.write_text("First Series\n     ___ body")
+        self.catalog = self.dir / "catalog.json"
+        self.good = hashlib.sha256(self.text.read_bytes()).hexdigest()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def patched(self):
+        return (
+            mock.patch.object(manifest, "SERMONS_TEXT", self.text),
+            mock.patch.object(manifest, "catalog_path", lambda: self.catalog),
+        )
+
+    def run_ccel(self) -> str:
+        a, b = self.patched()
+        with a, b:
+            return manifest.ccel_text()
+
+    def test_matching_sha_is_read(self) -> None:
+        self.catalog.write_text(json.dumps({"sha256_text": self.good}))
+        self.assertIn("body", self.run_ccel())
+
+    def test_wrong_sha_is_refused(self) -> None:
+        self.catalog.write_text(json.dumps({"sha256_text": "0" * 64}))
+        with self.assertRaisesRegex(RuntimeError, "!="):
+            self.run_ccel()
+
+    def test_missing_or_empty_sha_is_fatal(self) -> None:
+        for body in ({}, {"sha256_text": ""}, {"sha256_text": None}):
+            with self.subTest(body=body):
+                self.catalog.write_text(json.dumps(body))
+                with self.assertRaisesRegex(RuntimeError, "no sha256_text"):
+                    self.run_ccel()
+
+    def test_missing_catalog_is_fatal(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "missing"):
+            self.run_ccel()
+
+    def test_corpus_fetch_refuses_missing_sha_but_accept_new_text_still_works(self) -> None:
+        from preached import corpus
+
+        self.catalog.write_text(json.dumps({"work": "x"}))
+        with mock.patch.object(corpus, "CORPUS_DIR", self.dir), \
+                mock.patch.object(corpus, "SERMONS_TEXT", self.text), \
+                mock.patch.object(corpus, "catalog_path", lambda: self.catalog):
+            with self.assertRaisesRegex(RuntimeError, "no sha256_text"):
+                corpus.fetch_corpus()
+            # The escape hatch skips the check; stop right after it.
+            with mock.patch.object(corpus, "NUMBER_INDEX_HTML", self.dir / "idx.html"), \
+                    mock.patch.object(corpus, "download", side_effect=RuntimeError("past the check")):
+                with self.assertRaisesRegex(RuntimeError, "past the check"):
+                    corpus.fetch_corpus(accept_new_text=True)
+
+
+class ModelBinShaTests(unittest.TestCase):
+    """Optional runtime pin of Whisper's model.bin (tests use a tiny fake file)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "model.bin"
+        self.path.write_bytes(b"fake weights")
+        self.good = hashlib.sha256(b"fake weights").hexdigest()
+        transcribe._VERIFIED.clear()
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+        transcribe._VERIFIED.clear()
+
+    def test_match_is_verified_once_per_process(self) -> None:
+        self.assertTrue(transcribe.verify_model_bin(self.path, self.good, env={}))
+        with mock.patch.object(Path, "open", side_effect=AssertionError("hashed twice")):
+            self.assertTrue(transcribe.verify_model_bin(self.path, self.good, env={}))
+
+    def test_mismatch_is_refused(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Refusing to load"):
+            transcribe.verify_model_bin(self.path, "0" * 64, env={})
+
+    def test_modified_file_is_rechecked(self) -> None:
+        transcribe.verify_model_bin(self.path, self.good, env={})
+        self.path.write_bytes(b"tampered weights")
+        with self.assertRaises(RuntimeError):
+            transcribe.verify_model_bin(self.path, self.good, env={})
+
+    def test_opt_out_and_absent_file_skip(self) -> None:
+        self.assertFalse(transcribe.verify_model_bin(self.path, "0" * 64, env={"PREACHED_SKIP_MODEL_SHA": "1"}))
+        self.assertFalse(transcribe.verify_model_bin(self.path.with_name("none.bin"), self.good, env={}))
+
+    def test_pin_matches_the_report(self) -> None:
+        report = (Path(__file__).resolve().parents[1] / "reports" / "W1-A.md").read_text()
+        self.assertIn(transcribe.MODEL_BIN_SHA256, report)
 
 
 if __name__ == "__main__":

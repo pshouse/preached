@@ -3,6 +3,7 @@
 import ctypes
 import gc
 import glob
+import hashlib
 import os
 import re
 import sys
@@ -22,6 +23,37 @@ TRANSCRIPT_DIR = CACHE_ROOT / "transcripts" / "wesley"
 MODEL = "large-v3-turbo"
 MODEL_REPO = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 MODEL_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+# LFS sha256 of that revision's model.bin (1,617,884,929 bytes), from reports/W1-A.md.
+# Checked once per process before the weights are used; PREACHED_SKIP_MODEL_SHA=1 opts out.
+MODEL_BIN_SHA256 = "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da"
+_VERIFIED: set = set()  # (path, size, mtime_ns) already hashed OK in this process
+
+
+def snapshot_model_bin(repo: str = MODEL_REPO, revision: str = MODEL_REVISION) -> Path:
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    return Path(HF_HUB_CACHE) / ("models--" + repo.replace("/", "--")) / "snapshots" / revision / "model.bin"
+
+
+def verify_model_bin(path: Path, expected: str = MODEL_BIN_SHA256, env=os.environ) -> bool:
+    """Hash model.bin once per process; raise on a mismatch. False if skipped or absent."""
+    if env.get("PREACHED_SKIP_MODEL_SHA") == "1" or not path.exists():
+        return False
+    stat = path.stat()
+    key = (str(path.resolve()), stat.st_size, stat.st_mtime_ns, expected)
+    if key in _VERIFIED:
+        return True
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(8 << 20), b""):
+            digest.update(block)
+    if digest.hexdigest() != expected:
+        raise RuntimeError(
+            f"{path} sha256 {digest.hexdigest()} != pinned {expected}. Refusing to load these weights; "
+            "re-download the pinned revision (or set PREACHED_SKIP_MODEL_SHA=1 to skip this check)."
+        )
+    _VERIFIED.add(key)
+    return True
 
 SR = 16000
 GAP_FILL_S = 4.0  # re-decode untranscribed stretches longer than this
@@ -145,8 +177,14 @@ class Transcriber:
         from faster_whisper import BatchedInferencePipeline, WhisperModel
 
         if self._model is None:
+            # Pre-check cached weights; a first download is checked right after it lands.
+            bin_path = snapshot_model_bin(self.model_repo, self.revision)
+            if (self.model_repo, self.revision) == (MODEL_REPO, MODEL_REVISION):
+                verify_model_bin(bin_path)
             self._model = WhisperModel(self.model_repo, revision=self.revision,
                                        device="cuda", compute_type=self.compute_type)
+            if (self.model_repo, self.revision) == (MODEL_REPO, MODEL_REVISION):
+                verify_model_bin(bin_path)
             self._pipe = BatchedInferencePipeline(self._model)
 
     def _step_down(self) -> None:
