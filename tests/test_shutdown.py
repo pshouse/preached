@@ -100,6 +100,9 @@ class _Server:
             self.proc.wait()
             rc = "hang"
         self._errt.join(10)
+        self._out.join(10)
+        self.proc.stdout.close()
+        self.proc.stderr.close()
         return rc, "".join(self._err)
 
 

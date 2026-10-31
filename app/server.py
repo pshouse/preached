@@ -1728,13 +1728,12 @@ class PreachedServer(ThreadingHTTPServer):
     ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
     the cap, the connection is closed on the accept thread with a short 503
     and no handler thread is started.
-
-    Handler threads are not daemons and are kept (``block_on_close``), so
-    neither ``server_close`` nor interpreter exit runs while a handler still
-    uses the index or the ONNX session. ``drain`` stops them first.
     """
 
     allow_reuse_address = True
+    # Handler threads are not daemons and are kept (block_on_close), so
+    # neither server_close nor interpreter exit runs while a handler still
+    # uses the index or the ONNX session. drain() stops them first.
     daemon_threads = False
     block_on_close = True
     max_connections = DEFAULT_MAX_CONNECTIONS
