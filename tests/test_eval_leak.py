@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -42,6 +43,16 @@ def load_sheet_chunks() -> dict[str, str]:
         cells = [c.strip() for c in line.strip("|").split("|")]
         if len(cells) > 6 and cells[0].startswith("L") and cells[0][1:].isdigit():
             rows[cells[0]] = cells[6]
+    return rows
+
+
+def load_key_segments() -> dict[str, list[str]]:
+    """Sheet row id -> the quoted KEY segments (split at ` ... `) for that row."""
+    rows = {}
+    for line in (ROOT / "reports" / "W3-LABEL-SHEET-KEY.md").read_text().splitlines():
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) > 8 and cells[0].startswith("L") and cells[0][1:].isdigit():
+            rows[cells[0]] = [s for q in re.findall(r'"([^"]+)"', cells[8]) for s in q.split(" ... ")]
     return rows
 
 
@@ -118,6 +129,7 @@ class TitleLeakTest(unittest.TestCase):
         lines = load_partials()
         self.assertTrue(lines)
         sources = {}
+        seen = set()
         for line in lines:
             label, where = line["label"], f'{line["question_id"]} {line["sheet_row"]}'
             self.assertIn(line["question_id"], by_id, where)
@@ -127,6 +139,8 @@ class TitleLeakTest(unittest.TestCase):
             self.assertEqual(label.get("sheet_row"), line["sheet_row"], where)
             self.assertEqual(label.get("status"), "confirmed", where)
             self.check_label(label, verdicts, primary=False)
+            self.assertNotIn((line["question_id"], line["sheet_row"]), seen, f"duplicate line: {where}")
+            seen.add((line["question_id"], line["sheet_row"]))
             if "mirrored_from" not in line:
                 sources[(line["question_id"], line["sheet_row"])] = line
         for line in lines:
@@ -137,6 +151,20 @@ class TitleLeakTest(unittest.TestCase):
                 self.assertEqual(line["label"], source["label"], where)
                 # The mirror goes on the original of that -plain rewrite.
                 self.assertEqual(by_id[line["mirrored_from"]].get("rewrite_of"), line["question_id"], where)
+        # And the other way: every non-mirror line on a -plain rewrite has exactly one mirror on its original.
+        for (qid, row), line in sources.items():
+            original = by_id[qid].get("rewrite_of")
+            if original:
+                mirrors = [m for m in lines if m["question_id"] == original and m.get("mirrored_from") == qid
+                           and m["sheet_row"] == row]
+                self.assertEqual(len(mirrors), 1, f"{qid} {row}: needs exactly one mirror on {original}")
+
+    def test_key_segment_quotes_are_key_segments_of_their_row(self):
+        segments = load_key_segments()
+        self.assertEqual(len(segments), 24)
+        for p in confirmed_labels():
+            if p["quote_source"] == "key-segment":
+                self.assertIn(p["quote"], segments[p["sheet_row"]], f'{p["passage_id"]} {p["sheet_row"]}')
 
     @unittest.skipUnless(validate.CHUNKS_JSONL.is_file(), "needs the chunked corpus in /cache")
     def test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk(self):
