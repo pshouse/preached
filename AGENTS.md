@@ -23,7 +23,7 @@ Read `BRIEF.md` first. This file holds the rules. If it conflicts with BRIEF.md,
 - **No models developed by organizations based in the People's Republic of China.** Examples excluded: Qwen (Alibaba), DeepSeek, BGE (BAAI), GTE (Alibaba), Yi, InternLM, MiniCPM, Baichuan, GLM/Zhipu, Moonshot/Kimi, Stella/Jasper (derived from Qwen/GTE).
 - This includes fine-tunes or distillations of those models.
 - **When unsure of a model's developer or base model, exclude it and note it in your report.** (Jina AI embeddings are excluded under this rule: the company has had PRC operations, and provenance is unclear.)
-- Allowed examples: Whisper (OpenAI), EmbeddingGemma (Google), Granite Embedding (IBM), Arctic Embed (Snowflake), Nomic Embed (Nomic), all checked for base-model lineage.
+- Allowed examples: Whisper (OpenAI), EmbeddingGemma (Google), Granite Embedding (IBM), Nomic Embed (Nomic), all checked for base-model lineage.
 
 ## 4. Data, weights, and the repo
 

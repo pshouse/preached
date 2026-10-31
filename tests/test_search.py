@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import dataclasses
 
@@ -127,6 +128,65 @@ class ModelConfigTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "eval-only"):
             Searcher(sqlite3.connect(":memory:"), model="arctic-embed-l")
+
+    def test_config_rejects_eval_only_default(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from preached.models import load_config
+
+        toml = (
+            'default = "m"\n[models.m]\nhf_id = "x/y"\nrevision = "abc"\n'
+            "eval_only = true\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "models.toml"
+            path.write_text(toml)
+            with self.assertRaisesRegex(ValueError, "eval_only"):
+                load_config(path)
+            path.write_text(toml.replace("eval_only = true", "eval_only = false"))
+            self.assertEqual(load_config(path)["default"], "m")
+
+    def test_searcher_rejects_eval_only_even_with_fingerprint(self) -> None:
+        import sqlite3
+
+        from preached.search import Searcher
+
+        with self.assertRaisesRegex(RuntimeError, "eval-only"):
+            Searcher(sqlite3.connect(":memory:"), model="arctic-embed-l", fingerprint="x")
+
+    def test_load_embedder_rejects_eval_only_model(self) -> None:
+        from preached.backends import load_embedder
+        from preached.torch_embed import TorchEmbedder
+
+        for backend in ("onnx", "torch"):
+            with self.assertRaisesRegex(ValueError, "eval-only"):
+                load_embedder("arctic-embed-l", backend)
+        # Patched so a missing guard can never download Arctic.
+        with patch("preached.embed.load_model", side_effect=AssertionError("loaded")):
+            with self.assertRaisesRegex(ValueError, "eval-only"):
+                TorchEmbedder.load("arctic-embed-l")
+
+    def test_build_app_rejects_unknown_model(self) -> None:
+        import sqlite3
+
+        from app.server import build_app
+
+        with self.assertRaisesRegex(ValueError, "unknown model"):
+            build_app(sqlite3.connect(":memory:"), model_key="granite-english-r3",
+                      bm25_only=False, hosts={"127.0.0.1"}, static_dir=None)
+
+    def test_build_app_rejects_eval_only_model(self) -> None:
+        import sqlite3
+
+        from app.server import build_app
+
+        for bm25_only in (True, False):
+            with self.assertRaisesRegex(ValueError, "eval-only"):
+                build_app(
+                    sqlite3.connect(":memory:"), model_key="arctic-embed-l",
+                    bm25_only=bm25_only, hosts={"127.0.0.1"}, static_dir=None,
+                )
 
     def test_server_rejects_eval_only_model(self) -> None:
         from app.server import main

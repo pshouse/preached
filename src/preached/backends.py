@@ -34,7 +34,13 @@ def load_embedder(
 
     The caller (the server) turns that into the BM25 fallback. This function
     does not catch it, and it does not import torch when ``backend`` is onnx.
+    eval_only models are refused here; search/bench.py loads them through
+    ``preached.embed.load_model`` directly.
     """
+    from preached.models import MODELS
+
+    if model_key in MODELS and MODELS[model_key].eval_only:
+        raise ValueError(f"model {model_key!r} is eval-only and cannot be loaded for the product")
     choice = normalize_backend(backend)
     if choice == "onnx":
         from preached.onnx_embed import OnnxEmbedder
