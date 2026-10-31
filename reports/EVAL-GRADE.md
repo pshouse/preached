@@ -255,7 +255,7 @@ In short, the floor is set by `u-book-of-mormon` (0.8129). Short, vague, real-us
   - Dense alone does about 3.5× better there (0.39). Fusing with BM25 hurts because the lexical list is noise for "help i messed up bad".
   - sermon@50 is ~0.82 for every model, so the passages exist and a better ranker could reach them.
 - **Mixed on `plain` rewrites.** The rewrites keep enough doctrinal vocabulary that hybrid does as well as dense.
-- So both diagnoses are right, for different populations. Before any fusion change, Patrick should confirm the labels (especially `plain-blind`), and the next comparison should lead with `plain-blind` lenient hit@10 and sermon@10.
+- So both diagnoses are right, for different populations. Before any fusion change, Patrick should confirm the labels (especially `plain-blind`), and the next comparison should report `plain-blind` lenient hit@10 and sermon@10 only as an in-sample check; the confirmatory test is a fresh blind set, frozen and committed before any ranker runs on it (see `reports/W3-FUSION-PREREG.md`).
 
 ## 5. Open issues, risks, exclusions
 
