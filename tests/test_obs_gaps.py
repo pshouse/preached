@@ -22,6 +22,7 @@ import numpy as np  # noqa: E402
 
 MISMATCH = "ERROR:root:stored vectors do not match search/models.toml; serving BM25 only"
 UNAVAILABLE = "ERROR:root:embedding model unavailable; serving BM25 only"
+STATUS_UNREADABLE = "ERROR:root:index status unreadable after reload; serving BM25 only"
 
 
 class ReloadFallbackLogTests(unittest.TestCase):
@@ -68,7 +69,8 @@ class ReloadFallbackLogTests(unittest.TestCase):
     def test_an_unreadable_index_status_logs_one_error_line_per_transition(self) -> None:
         with patch("app.server.index_stamp", side_effect=sqlite3.OperationalError("disk I/O error")):
             lines = self.requests()
-        self.assertEqual(lines.count(UNAVAILABLE), 1)  # three requests, one transition
+        self.assertEqual(lines.count(STATUS_UNREADABLE), 1)  # three requests, one transition
+        self.assertNotIn(UNAVAILABLE, lines)  # the model is fine; do not say it is not
         self.assertEqual(self.app.fallback_note, INDEX_READ_NOTE)
         # Recovery clears it; a second failure is a new transition and logs again.
         self.connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
@@ -77,7 +79,53 @@ class ReloadFallbackLogTests(unittest.TestCase):
         self.assertIsNone(self.app.fallback_note)
         with patch("app.server.index_stamp", side_effect=sqlite3.OperationalError("disk I/O error")):
             again = self.requests(2)
-        self.assertEqual(again.count(UNAVAILABLE), 1)
+        self.assertEqual(again.count(STATUS_UNREADABLE), 1)
+
+    def test_the_stamp_traceback_is_logged_once_per_outage(self) -> None:
+        stamp_lines = lambda: [l for l in self.requests() if "could not read the index stamp" in l]  # noqa: E731
+        with patch("app.server.index_stamp", side_effect=sqlite3.OperationalError("disk I/O error")):
+            self.assertEqual(len(stamp_lines()), 1)  # three requests, one ERROR
+            self.assertEqual(stamp_lines(), [])  # still down: DEBUG only
+        self.connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
+        self.connection.commit()
+        self.app.search("grace", 5, "dense")  # recovers
+        with patch("app.server.index_stamp", side_effect=sqlite3.OperationalError("disk I/O error")):
+            self.assertEqual(len(stamp_lines()), 1)  # a new outage logs again
+
+
+class Bm25OnlyStatusReadTests(unittest.TestCase):
+    """A server with no weights is BM25 by design: a status-read failure pages nobody."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.connection = connect(Path(tmp.name) / "index.sqlite")
+        self.addCleanup(self.connection.close)
+        _insert(self.connection, chunk_id="c1", text="By grace are ye saved through faith.", start_s=10, end_s=20)
+        self.connection.execute("INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa')")
+        self.connection.commit()
+        self.app = App(
+            connection=self.connection, searcher=Searcher(self.connection), encode=None, fallback_note=None,
+            model_name=None, hosts={"127.0.0.1"}, static_dir=STATIC_DIR,
+        )
+
+    def test_a_status_read_failure_logs_no_d1_or_d2_line_and_healthz_recovers(self) -> None:
+        with self.assertLogs(level="DEBUG") as logs:
+            with patch("app.server.index_stamp", side_effect=sqlite3.OperationalError("disk I/O error")):
+                for _ in range(3):
+                    self.app.search("grace", 5, "bm25")
+            logging.info("marker")
+        errors = [l for l in logs.output if l.startswith(("ERROR", "WARNING"))]
+        self.assertEqual(len(errors), 1)  # only the stamp traceback (S2), never a D1/D2 string
+        self.assertNotIn(UNAVAILABLE, logs.output)
+        self.assertNotIn(STATUS_UNREADABLE, logs.output)
+        self.assertNotIn(MISMATCH, logs.output)
+        self.assertEqual(self.app.fallback_note, INDEX_READ_NOTE)
+        # Recovery: the startup note (None for --bm25-only) comes back.
+        self.connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
+        self.connection.commit()
+        self.app.search("grace", 5, "bm25")
+        self.assertIsNone(self.app.fallback_note)
 
 
 class StoppedCleanlyTests(unittest.TestCase):
