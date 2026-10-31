@@ -82,6 +82,16 @@ def build(
     rng = np.random.default_rng(7)
     audio = rng.normal(0, 3e-5, int(seconds * SR)).astype(np.float32)  # room tone, about -90 dBFS
     if timings is not None:
+        if not isinstance(timings, list):
+            raise ValueError("timings must be a JSON list of [start_s, end_s] or [start_s, end_s, word]")
+        for t in timings:
+            if (
+                not isinstance(t, list)
+                or len(t) not in (2, 3)
+                or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in t[:2])
+                or (len(t) == 3 and not (isinstance(t[2], str) and t[2].strip()))
+            ):
+                raise ValueError(f"word time {t!r} is not [start_s, end_s] or [start_s, end_s, word]")
         times = [(float(t[0]), float(t[1])) for t in timings]
         tokens_for = [t[2] if len(t) > 2 else None for t in timings]
         last = 0.0
@@ -108,8 +118,8 @@ def write(
     jitter_seed: int | None = None,
     timings: list[list] | None = None,
 ) -> tuple[Path, Path]:
+    audio, words = build(seconds, text, jitter_seed, timings)  # bad timings raise before anything is written
     folder.mkdir(parents=True, exist_ok=True)
-    audio, words = build(seconds, text, jitter_seed, timings)
     wav = folder / f"{sermon_id}.wav"
     with wave.open(str(wav), "wb") as handle:
         handle.setnchannels(1)
@@ -138,8 +148,16 @@ def main(argv: list[str] | None = None) -> None:
     if args.jitter_seed is not None and args.timings:
         parser.error("--jitter-seed and --timings are exclusive")
     text = args.text_file.read_text() if args.text_file else args.text
-    timings = json.loads(args.timings.read_text()) if args.timings else None
-    wav, transcript = write(args.folder, args.id, args.seconds, text, jitter_seed=args.jitter_seed, timings=timings)
+    try:
+        timings = json.loads(args.timings.read_text()) if args.timings else None
+    except (OSError, ValueError) as exc:
+        parser.error(f"--timings: {exc}")
+    try:
+        wav, transcript = write(args.folder, args.id, args.seconds, text, jitter_seed=args.jitter_seed, timings=timings)
+    except ValueError as exc:
+        if timings is None:
+            raise
+        parser.error(f"--timings: {exc}")
     print(f"{wav}\n{transcript}")
 
 
