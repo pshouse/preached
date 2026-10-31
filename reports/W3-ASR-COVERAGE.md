@@ -183,3 +183,113 @@ uv run python align/asr_chunks.py T.json --out o.jsonl --library church --index 
 - The gate fails closed on music, applause or hymns with no words (by design). The reviewer clears them by re-importing with a window.
 - The noise-floor guard uses the 5th-percentile frame level. A recording with no quiet frames at all (continuous music bed) raises the threshold, and quieter speech under the music is then not counted.
 - I did not re-run #12's gate-leak benchmark. Serving still goes through the same `visible_sql`, with one more condition.
+
+## Round-2 fix-up (CTO review of PR #20 at b9e3725)
+
+This section supersedes the parts above that it contradicts: the AMX guard no longer keeps any operator value, `REL_DB` is 45, and the church path needs `meta.duration_s`.
+
+Commits on `feat/w3-asr-coverage`: `7091123` (merge of `origin/main` 5358c6e, #22 and #24; no conflicts), `9cf4eec` (N1), `9446396` (N2), `566adb8` (S-a, S-b, S-c, S-f, docs), `553fdae` (S-d), `6db2d34` (S-e), `58b1a6a` (S-g and the coverage sweep script), `6d08e04` (N1 audit: visible-only BM25 and dense, and the gate leak sweep), plus the commit adding this section.
+
+### Must-fixes
+
+| Item | Change | Tests |
+|---|---|---|
+| N1 signals probe unpublished sermons | `abstain.compute_signals` runs BM25 and dense through the searcher's gate (`searcher._where()`, `Searcher._lexical`, `Searcher._semantic`). `bm25_hits`, `dense_top` and agreement now count only chunks a reader may see. The audit below found that filtering was not enough on its own and fixed that too. | `tests/test_gate_signals.py` (7): two church files that differ only by one unapproved sermon (coverage NULL) give identical `compute_signals`, identical `/api/search` for "righteousness", "grace" and a nonsense word in bm25/dense/hybrid (`took_ms` aside), the same `/healthz` chunk count, and no `/api/sermon` for the hidden id. Before the fix: `bm25_hits` 1 vs 0 for "righteousness", the hidden chunk's cosine 1.0 as `dense_top`, and the level moved between `weak` and `none`. |
+| N2 AMX guard accepts unsafe values | On an AMX CPU, `cpu_guard.avoid_amx` keeps `MKL_ENABLE_INSTRUCTIONS` only if it is exactly one of `SAFE_VALUES` = AVX512, AVX512_E1, AVX512_E2, AVX512_E3, AVX2, AVX, SSE4_2 (case-sensitive). Any other non-empty value raises `AmxUnsafe`, naming the value and the allowed list, whether or not ctranslate2 is loaded. An empty value counts as unset and is set to AVX512. A CPU without AMX is not touched. | `tests/test_cpu_guard.py`: every safe value is kept; `AVX512_E4`, `AVX512_E5`, `avx512`, `AVX521`, `" AVX512"`, `"AVX512 "`, `AMX`, `avx2`, `SSE42` raise both before and after ctranslate2 loads, and the environment is left unchanged; empty → AVX512; a desktop CPU keeps `AVX512_E4`. |
+
+### N1 audit: everything a response could take from hidden chunks
+
+| Surface | Finding | Status |
+|---|---|---|
+| `confidence.signals` (`bm25_hits`, `dense_top`, `agreement`), `abstain`, `confidence.level` | Counted hidden chunks (the CTO's finding). | Fixed (`9cf4eec`). |
+| BM25 `score` and **BM25 order** (bm25 mode, the BM25 half of hybrid, agreement) | FTS5 `bm25()` takes its term statistics (row count, document frequency per term, mean length) from every row in `chunks_fts`, hidden ones included. Filtering rows in the `WHERE` clause does not change those statistics. A hidden sermon that uses a word changes the raw score of every visible hit for that word and, for OR queries (5+ terms), the order of the visible hits. The first sweep run (after `9cf4eec` only) found 40+ eval questions whose bm25 and hybrid responses differed. | Fixed (`6d08e04`). A gated `Searcher` keeps an in-memory FTS5 copy of the visible rows only (same tokenizer, read from the file's schema), rebuilt when `PRAGMA data_version`, the gate SQL or the vectors change. Scores are then exactly those of a file that never held the hidden rows. The server's read-only connection is untouched (`query_only` stays on). `test_hidden_rows_do_not_move_the_bm25_order` checks that the raw index puts B first and the searcher puts A first in both files. `test_visible_index_follows_an_approval` checks that an approval written by another process is picked up on the next query. |
+| Dense `score` | The cosines did not change, but BLAS rounding of `matrix @ vector` depends on the matrix shape: one score differed by 2e-7 with the hidden rows present. Dense also walked past hidden rows in batches, so its run time depended on how close hidden chunks were to the query. | Fixed (`6d08e04`). A gated file scores only a cached sub-matrix of the visible rows. |
+| `took_ms` | With the fixes, a word found only in hidden sermons times the same as a nonsense word (bm25 median 80.5 vs 80.4 µs on the hidden file; 79.1 vs 77.9 µs on the clean file). The first query after a file change rebuilds the visible index: 5.7 ms for 363 rows, about 0.8 s at 50k rows by extrapolation. That shows a write happened, which `pending_review` already discloses. | Fixed, apart from the rebuild time. |
+| `/healthz` `chunks` | Already counts visible chunks only (`visible_count`). | No change needed. |
+| `/healthz` `pending_review` | A count of sermons awaiting approval, by design (never ids or titles). This is the one intended difference between the two files. | Kept, by design. S-e fixed its value when gate columns are missing. |
+| `/api/sermon/<id>` | Gated in SQL and returns 404 for a hidden id. Timing: hidden id 55.0 µs vs absent id 50.4 µs median (2,000 calls each). The ~5 µs is the gate subquery running on the hidden sermon's rows. That is far below network jitter, and all it could show is that an id exists in the file. Ids are YouTube video ids, which are public. | Reported, not fixed. |
+| `sermon_flagged`, `touches_flagged` | These read the flags of the hit's own sermon. A hit is only served if its sermon is approved, and the gate is per sermon, so these never consult a hidden sermon. | No change needed. |
+| Errors | An FTS syntax error gives the same 500 whether or not hidden rows match. | No change needed. |
+| `/api/side` church column | Still the empty side until #12 lands there (W3-SIDE); it reads nothing from the church file. | No change needed. |
+
+**Gate leak sweep** (`scripts/gate_leak_sweep.py`; this re-runs the #12 check). I could not find #12's original sweep script or its results in the repo or `/cache`, so I wrote this one. It builds two church files through the real church path: `align/asr_chunks.py` with Granite ONNX on CPU, the built-in privacy rules, and `--ack-review`. The input is 12 public-domain Wesley transcripts relabelled as church sermons, with made-up sample names spoken twice in each. Coverage is stubbed to `[]`. The `hidden` file holds 6 approved sermons, 3 never approved, 2 approved with coverage NULL, and 1 approved with an open span. The `clean` file holds only the 6 approved sermons. Both files are queried with the 93 eval questions, 60 words that occur only in the hidden sermons, a nonsense word and the 4 sample names, each in bm25, dense and hybrid, plus `/api/sermon` for all 12 ids and `/healthz`.
+
+```
+hidden chunks 302, queries 158, responses compared 487
+leaks 0   (no hidden chunk or id in any response; every response identical to the clean file
+           apart from took_ms; pending_review 0 vs 6 is the intended count)
+links served 2,846; 2,199 start after a flagged word of their sermon
+link margin (seek minus nearest earlier flagged word end): min 11.45 s, p5 27.84 s, median 226.84 s
+           (SEEK_SLACK_S 1.5; no link seeks within it)
+```
+
+### Should-fixes
+
+| Item | Change | Tests |
+|---|---|---|
+| S-a stretched word hides ~5 s | New `coverage.stretched_spans`: a word longer than `LONG_WORD_S = 4.0` s whose middle (the part `WORD_MAX_COVER_S` leaves uncovered) holds at least `MIN_SOUND_S` of sound is a span covering the whole word. `clip_to_window` now keeps a span that lies wholly inside the window at any length; a span the window cuts still needs more than 5 s left. I could not test against c01.tiny.1t-b: that run is not in the repo or in `/cache`. The synthetic case is the same shape: a 7 s word over speech, invisible to both the gap rule and the density rule. | `test_stretched_word_over_speech_is_a_span`; `test_stretched_word_over_silence_or_under_the_limit_passes` (a 7 s word over room tone, or a 4.0 s word, passes); window case in `test_window_clips_and_drops_spans` |
+| S-b same-timestamp words inflate density | `sparse_spans` counts distinct start times: one entry per start, ending where its longest word ends. | `test_words_sharing_a_timestamp_count_once` (three words on each stray timestamp used to pass; three distinct starts still pass) |
+| S-c no test of the 2 s tolerance | | `test_audio_a_few_seconds_short_is_unchecked`: audio 3, 4 or 5 s shorter than `duration_s` or the last word → `Unchecked`; exactly 2 s short → runs |
+| S-d church transcript without `meta.duration_s` passes | `sermon_gaps` stores NULL (unchecked; approval refuses) when `meta.duration_s` is missing, not a number, a bool, not finite, or ≤ 0. Documented in the `align/asr_chunks.py` docstring and `--audio-dir` help. Stubbed church tests get a duration from the last word (`tests/coverage_stub.py`). | `test_no_stated_duration_stores_null` (None, 0, −5, `"60"`, `true`, key absent → NULL, `ack` refuses; with a duration → `[]`) |
+| S-e pending 0 without the coverage column | `pending_review_count` agrees with `visible_sql`: when any gate column is missing nothing is served, so every `status = 'ok'` import counts as pending (every row, if there is no `status` column). | `PendingCountTests` |
+| S-f hum/music bed | Coverage docstring: speech within about `NOISE_MARGIN_DB` (6 dB) of a steady hum or a music bed cannot be told from it by level, so a hole there is not found and such a recording needs a human listen. | doc |
+| S-g 45 dB | `REL_DB = 45.0`, after the Wesley re-run below. | `test_speech_43_db_down_is_sound` (fails at 40) |
+| Docs: placeholder words | Coverage docstring, "Clearing a span": never add placeholder words (`...`, `[music]`, made-up text) to a transcript to clear a span. | doc |
+
+The 0.5 words-per-second density floor is unchanged. The coverage gate still runs on every transcript, on every CPU.
+
+### S-g: Wesley false-positive check at 40 and 45 dB
+
+`uv run python scripts/coverage_sweep.py --rel-db 40 45` runs all 143 Wesley GPU transcripts against their mp3s with the round-2 rules. Frame levels are cached in `/cache/w3-asr/levels`.
+
+| | 40 dB | 45 dB |
+|---|---|---|
+| files flagged | 94 | 94 |
+| spans | 98 | 98 |
+| spans that touch the searchable window | 85 | 85 |
+| density of unflagged windows, p5 / min (words per s of sound) | 2.25 / 0.81 | 2.25 / 0.81 |
+
+The two thresholds flag exactly the same spans because `REL_DB` never decides the threshold on Wesley: the −58 dBFS floor decides it on 135 files and the noise guard on 8. So Wesley stays clean at 45 dB, but it cannot show what 45 dB changes. The change only matters on recordings whose loud end is above about −13 dBFS, where 45 dB counts speech 40-45 dB down as sound. I made the change because the gate fails closed and a missed name costs more than a false flag. Expect somewhat more spans to clear on loud, noisy church audio.
+
+Compared with round 1 (90 spans in 90 files), round 2 flags 8 new spans:
+
+- 3 in LibriVox intros: `wesley-s1-00` 5.5-16.5 s, `wesley-s2-21` 3.7-9.4 and 17.2-23.7 s, where words like "Occasions," and "Several" are stretched 5-7 s over the disclaimer. These are the same class as round 1's disclaimer spans.
+- 5 mid-sermon words of 4.1-4.9 s. Re-transcribing each with large-v3 (GPU, fp16, VAD off) shows real dropped speech under every one, so none is a false positive:
+
+| Sermon | Stretched word | Re-run finds |
+|---|---|---|
+| s1-08 728.4-733.3 | "that" 4.86 s | Greek "hoti dikaio… nomos" |
+| s1-10 439.6-443.6 | "hereby" 4.08 s | "first john four verse thirteen" |
+| s1-27 62.3-66.4 | "has" 4.10 s | "Matthew 6, 16-18" |
+| s2-17 1376.6-1380.9 | "Occasions," 4.32 s | a Latin line |
+| s2-26 859.9-864.2 | "attempted" 4.24 s | a Latin line |
+
+The density rule's lowest unflagged window is now 0.81 words per second of sound (round 1: 0.52). Counting distinct start times did not push any clean window toward the 0.5 floor.
+
+### How to run
+
+```bash
+uv run python -m unittest discover -s tests
+uv run python scripts/coverage_sweep.py --rel-db 40 45 --json /cache/w3-asr/sweep-round2.json   # ~2 min first run, cached after
+uv run python scripts/gate_leak_sweep.py --work /cache/w3-asr/gate-sweep                         # ~6.5 min, exits 1 on any leak
+uv lock --check
+```
+
+### Results
+
+- **Tests:** 619 pass. 601 after merging main (595 at round 1, plus #22/#24's tests), plus 18 new: `test_gate_signals` 7, `test_cpu_guard` 4, `test_coverage` 7.
+- **Wesley byte-identical vs `origin/main` (5358c6e):** `git archive` extracted to `/tmp`, each tree run with its own `src` first on the path (checked).
+  - ASR chunks: 143 transcripts, 8,265 chunks, sha256 `5f624dd5fd082eaa8a5fcb095f6fe991e5f8555d99ab1aa06aab8e2cc8aee720` in both trees (the same as round 1).
+  - API on `/cache/index/wesley.sqlite` with Granite: 93 eval questions × bm25/dense/hybrid at k=10, `/api/sermon` for all 141 ids, and `/healthz`, with `took_ms` removed: 421 responses, sha256 `5bfc028c2d17c20ae00be96d9f4c0fd2bcaedf0896f9badd58a80e124d337fea` in both trees. Dense was in use: all 186 dense and hybrid responses carry `dense_top`. Wesley is not gated, so it never uses the new visible-only index.
+- **Gate leak sweep (#12 re-run):** 0 leaks in 487 compared responses; minimum link margin 11.45 s against `SEEK_SLACK_S` 1.5 s (details above).
+- **`uv lock --check`:** passes (79 packages, unchanged).
+- **Dependencies:** none added.
+- **Head SHA:** given in the final message and on the PR (a report cannot contain its own commit's SHA).
+
+### Open issues and risks
+
+- **YouTube path without a duration:** `pipeline` passes `video.duration_s`, which can be None if yt-dlp metadata lacks it. A download cut short after the last word would then pass, the same hole S-d closed on the church path. Not changed here because S-d named only the church path. Recommended follow-up: treat a missing YouTube duration as `Unchecked` too.
+- **c01.tiny.1t-b** is not available here. S-a is tested on a synthetic stretched word and on Wesley; please confirm on that run.
+- **AMX:** this box has no AMX, so N2 is tested with a fake `/proc/cpuinfo` only. The value list is the CTO's, from MKL verbose output on the AMX box.
+- **Visible-index memory:** a gated `Searcher` holds an in-memory FTS5 copy of the visible text plus a copy of the visible vectors. For a church library of a few hundred sermons that is tens of MB.
+- **`/api/sermon` timing** (~5 µs for a hidden id versus an absent one): reported above, not fixed.
