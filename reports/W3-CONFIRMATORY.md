@@ -129,18 +129,20 @@ nDCG@10 lenient on `--dedupe`: **names-topic 0.456 vs 0.485 baseline (lower)**; 
 
 ### Abstain (shipped floor 0.8129 for granite-english-r2/torch/fp32 from `search/abstain.toml`, not refit)
 
-There are 7 unanswerable items: the 5 `unanswerable` questions plus `p-004` and `p-023`, which are plain-blind questions with no labels. There are 86 answerable items.
+There are 5 labelled unanswerable items (the `unanswerable` group). Separately, `p-004` and `p-023` are unlabelled plain-blind questions; they are reported on their own below and are not counted in the 5. There are 86 answerable items.
 
-| path | w | abstained (`none`) on unanswerable | `none` on answerable (false abstain) | `weak` on answerable | levels strong/weak/none |
+| path | w | abstained (`none`) on the 5 labelled unanswerable | `none` on answerable (false abstain) | `weak` on answerable | levels strong/weak/none |
 | --- | --- | --- | --- | --- | --- |
-| raw | 1.0 | 4/7 (57.1%) | 2/86 (2.3%: p-016, p-017) | 11/86 (12.8%) | 76/11/6 |
-| raw | 0.5 | 4/7 (57.1%) | 2/86 (2.3%: p-016, p-017) | **12/86 (14.0%)** | 75/12/6 |
-| dedupe | 1.0 | 4/7 (57.1%) | 2/86 (2.3%) | 11/86 (12.8%) | 76/11/6 |
-| dedupe | 0.5 | 4/7 (57.1%) | 2/86 (2.3%) | **12/86 (14.0%)** | 75/12/6 |
+| raw | 1.0 | 4/5 (80.0%) | 2/86 (2.3%: p-016, p-017) | 11/86 (12.8%) | 76/11/6 |
+| raw | 0.5 | 4/5 (80.0%) | 2/86 (2.3%: p-016, p-017) | **12/86 (14.0%)** | 75/12/6 |
+| dedupe | 1.0 | 4/5 (80.0%) | 2/86 (2.3%) | 11/86 (12.8%) | 76/11/6 |
+| dedupe | 0.5 | 4/5 (80.0%) | 2/86 (2.3%) | **12/86 (14.0%)** | 75/12/6 |
 
-- Unanswerable levels are identical under both weights. `u-book-of-mormon`, `u-nuclear-weapons`, `u-smartphones` and `u-vaccines` get `none`. **`u-pretrib-rapture`, `p-004` and `p-023` get `strong`, which is a false answer under both weights.** So rule 5 ("more false answers on unanswerable items") does not fire.
-- **Against us:** `p-013` (answerable) moves from `strong` to `weak` under `w = 0.5`, on both paths. Rule 5 names false answers on unanswerable items, and this is not one. I report it as a small change in abstain behaviour; it is the CTO's call whether it counts.
-- For reference only, what `search/bench.py --abstain` itself would print: it refits a floor in memory (never written; `--write-calibration` was not used). That fitted floor is 0.7753 under both weights, and with it the in-sample and leave-one-out abstain recall on unanswerable items is 0.0, against 4/7 with the shipped floor. The shipped 0.8129 was fitted on a smaller, older set (35 answerable + 5 unanswerable); today's set is 86 + 7. The floor is not refit here, as the prereg says.
+- Labelled unanswerable levels are identical under both weights: 4/5 abstain. `u-book-of-mormon`, `u-nuclear-weapons`, `u-smartphones` and `u-vaccines` get `none`. **`u-pretrib-rapture` gets `strong`, a false answer under both weights.**
+- Unlabelled: `p-004` and `p-023` (plain-blind, no labels) also get `strong` under both weights. They are not in the 4/5 and are not scored as unanswerable.
+- Rule 5 does **not** fire. The prereg defines "degrade" as more false answers on unanswerable items, or lower hit@10 with `--dedupe`; neither moved.
+- **Against us:** `p-013` (answerable) moves from `strong` to `weak` under `w = 0.5`, on both paths. Rule 5 names false answers on unanswerable items, and this is not one. It is a minor adverse move, disclosed here: `weak` on answerable items goes from 11 to 12 of 86. It does not trigger rule 5.
+- For reference only, what `search/bench.py --abstain` itself would print: it refits a floor in memory (never written; `--write-calibration` was not used). That fitted floor is 0.7753 under both weights, and with it the in-sample and leave-one-out abstain recall on unanswerable items is 0.0, against 4 of the 5 labelled unanswerable items with the shipped floor. The shipped 0.8129 was fitted on a smaller, older set (35 answerable + 5 unanswerable); today's set is 86 answerable + 5 labelled unanswerable. The floor is not refit here, as the prereg says.
 
 ## 5. In-sample check and sensitivity analysis
 
@@ -171,9 +173,13 @@ Under the sensitivity labels the pooled selection hits are 51 / 52 / 51, so the 
 | 2. more than one loss in any selection group, or any loss in title- or scripture-keyword | **not triggered:** names-topic loses 1 (q-worry) and gains 1 (q-money). Keyword groups are unchanged on every metric. |
 | 3. fresh-set CI includes zero and at least one fresh question lost | **not evaluable: no fresh blind set exists** |
 | 4. chosen `w` does not beat baseline on the fresh set | **not evaluable: no fresh blind set exists** |
-| 5. abstain or `--dedupe` degrade | **not triggered as worded:** unanswerable levels are identical, and pooled `--dedupe` selection hit@10 is 0.879 → 0.879 (2/54/2). Disclosed: p-013 moves strong → weak; on `--dedupe` q-money-plain and q-worry are lost (and two gained); names-topic `--dedupe` nDCG@10 falls 0.485 → 0.456. |
+| 5. abstain or `--dedupe` degrade | **does not fire** (the prereg defines degrade as more false answers on unanswerable items, or lower hit@10 with `--dedupe`; neither moved): unanswerable levels are identical, and pooled `--dedupe` selection hit@10 is 0.879 → 0.879 (2/54/2). Disclosed as a minor adverse move: p-013 moves strong → weak (weak on answerable 11 → 12 of 86); on `--dedupe` q-money-plain and q-worry are lost (and two gained); names-topic `--dedupe` nDCG@10 falls 0.485 → 0.456. |
 
-**This is a mixed and incomplete result.** On the selection data the pre-declared change gains one question net, with an interval that includes zero. Rules 1, 2 and 5 do not fire. The confirmatory evidence the prereg requires is missing. Under the prereg, nothing here may be read as an accuracy gain. No third weight was tried, the rule was not changed and no label was edited.
+**This is a mixed and incomplete result.** On the selection data the pre-declared change gains one question net, with an interval that includes zero. Rules 1, 2 and 5 do not fire. The confirmatory evidence the prereg requires is missing. Under the prereg, nothing here may be read as an accuracy gain.
+
+**The only citable statement:** "In a pre-registered blind evaluation (58 questions, labels written with AI help and graded blind), the tuned fusion weight was statistically indistinguishable from the baseline (hit@10 51 vs 50; paired difference +0.017, 95% CI −0.034 to +0.086)." The default weight stays 1.0; this PR changes no weight. No third weight was tried, the rule was not changed and no label was edited.
+
+**Who ran this.** Run by agent Claude Code, model claude-opus-5-5 (Anthropic), session claude-20261031-120632, task 77-W3-CONFIRMATORY, on omarchy in the Preached sandbox on 2026-10-31, roughly 12:06–12:17 EDT. This agent wrote `run.py` and executed both phases (`select` and `after`). It had already seen the corpus, the questions, the diag report and the prereg, which is why it cannot author the fresh blind set. The git commit author is the repo owner's identity, not the runner.
 
 **Provenance (f).** Every question is LLM-written: the 40 originals and labels by Grok (W1-B), the 23 `-plain` rewrites by Claude, the 30 `plain-blind` questions by Grok (`llm-written:grok`), and every `status: proposed` label by Claude. Every grade-2 label in the selection groups was LLM-chosen and is not confirmed by a person. The exceptions are the three Patrick-judged grade-2 labels (L02 `q-forgiveness`, L08 `p-013`, L20 `q-justification` and `q-justification-plain`) and the 7 verdict-1 rows used only in the sensitivity analysis. `eval/review/review-2026-10-30.csv` is still pending. The selection groups are also small (3 and 7 questions in the keyword groups).
 
@@ -202,7 +208,7 @@ Environment: i9-12900K, CPU query encoding, torch 2.15.0+cu132, sentence-transfo
 
 - `uv lock --check`: OK (79 packages). `uv run python -m unittest discover -s tests` (with `PREACHED_CACHE=/cache`) on 387e959: **979 tests, OK**.
 - **Open: the fresh blind set.** It must be written by a person, or by a non-PRC LLM that has seen neither the corpus, this repo's questions, the diag report nor the prereg. It must be frozen and committed with provenance before any ranker runs on it, and labelled by grep and reading, not by a ranker. Only then can rules 3 and 4 be run (baseline and `w = 0.5`, once). Until then no accuracy claim can be made. Per (g), no claim is made in README, DEMO-SCRIPT, SUBMISSION-DRAFT or the app.
-- Open: `u-pretrib-rapture`, `p-004` and `p-023` get `strong` under both weights (an existing abstain weakness, not caused by `w`). bench's own in-memory refit on today's labels (0.7753) would abstain on none of the unanswerable items. Not acted on: the floor is not refit by rule.
+- Open: `u-pretrib-rapture` (labelled) and the unlabelled `p-004` and `p-023` get `strong` under both weights (an existing abstain weakness, not caused by `w`). bench's own in-memory refit on today's labels (0.7753) would abstain on none of the unanswerable items. Not acted on: the floor is not refit by rule.
 - Not done (CTO, out of scope): the optional #50 r3 nits S6, N2 and N3.
 - Dependencies added: none. No code, test or label change.
 
