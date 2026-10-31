@@ -446,12 +446,13 @@ def church_shaped(path: Path) -> bool:
         connection.close()
 
 
-def _church_shape_problem(connection: sqlite3.Connection) -> str | None:
+def _church_shape_problem(connection: sqlite3.Connection, *, busy_pauses: bool = False) -> str | None:
     """None when the open file has a ``videos`` table and a ``chunks.video_id``
     column, with no ``meta.library`` naming a classic.
 
     Wesley's index has neither table nor column; build_library.py records
-    its slug in ``meta.library``.
+    its slug in ``meta.library``. With ``busy_pauses``, a writer's lock
+    (``is_busy``) raises ``ChurchPaused`` instead of giving a problem.
     """
     try:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -463,6 +464,8 @@ def _church_shape_problem(connection: sqlite3.Connection) -> str | None:
         if is_classic_slug(get_meta(connection, "library")):
             return "is a classic library build (meta.library)"
     except sqlite3.Error as exc:
+        if busy_pauses and is_busy(exc):
+            raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc
         return f"cannot be read ({exc})"
     return None
 
@@ -495,6 +498,21 @@ def _new_files(before: dict[int, os.stat_result]) -> tuple[list[os.stat_result],
         if stat.S_ISREG(st.st_mode):
             opened.append(st)
     return opened, now
+
+
+def _one_new_file(before: dict[int, os.stat_result]) -> tuple[os.stat_result, dict[int, os.stat_result]]:
+    """The one regular file opened since ``before`` (``_new_files``), and the new snapshot.
+
+    SQLite opens the main database file when it connects, before any read,
+    so a connect opens exactly one. Raises ``ValueError`` (the reason, no
+    file name) for none or more than one.
+    """
+    opened, now = _new_files(before)
+    if not opened:
+        raise ValueError("could not be checked once opened (no new descriptor)")
+    if len(opened) != 1:
+        raise ValueError(f"could not be checked once opened ({len(opened)} new files, not 1)")
+    return opened[0], now
 
 
 def _sidecar_problem(path: Path) -> str | None:
@@ -573,17 +591,16 @@ class _Checked:
         except sqlite3.Error as exc:
             raise UnsafeOpen(self.path, f"could not be opened for writing ({exc})") from exc
         try:
-            opened, self._seen = _new_files(before)
-            if not opened:
-                raise UnsafeOpen(self.path, "could not be checked once opened (no new descriptor)")
-            if len(opened) != 1:
-                raise UnsafeOpen(self.path, f"could not be checked once opened ({len(opened)} new files, not 1)")
+            try:
+                opened, self._seen = _one_new_file(before)
+            except ValueError as exc:
+                raise UnsafeOpen(self.path, str(exc)) from None
             try:
                 named = os.stat(self.path)
             except OSError as exc:
                 raise UnsafeOpen(self.path, f"could not be checked once opened ({exc.strerror})") from exc
-            self._refuse_file(opened[0], sidecar=False)
-            if (opened[0].st_dev, opened[0].st_ino) != (named.st_dev, named.st_ino):
+            self._refuse_file(opened, sidecar=False)
+            if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
                 raise UnsafeOpen(self.path, "is not the file SQLite opened (the name changed)")
             self.connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
             self.recheck()
@@ -656,7 +673,58 @@ class ChurchRefused(ValueError):
 
 
 class ChurchPaused(Exception):
-    """The church file is in WAL mode (``--ack-review`` is writing it): skip this search, read nothing."""
+    """The church file is in WAL mode or locked by a writer (``--ack-review``): skip this search."""
+
+
+def is_busy(exc: BaseException) -> bool:
+    """True for SQLITE_BUSY or SQLITE_LOCKED (any extended code): another
+    connection holds a lock. The church connection waits for none
+    (``busy_timeout = 0``)."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    return isinstance(exc, sqlite3.OperationalError) and code is not None and code & 0xFF in (5, 6)
+
+
+def _owners() -> set[int] | None:
+    return {0, os.geteuid()} if hasattr(os, "geteuid") else None
+
+
+def _ancestor_problem(path: Path) -> str | None:
+    """Why a directory above the church file would let another user swap it, or None.
+
+    A user who can write any directory on the way to the file can rename a
+    directory below it and put another file under the same name (PR #37
+    r2 must-fix 2). Every directory from ``/`` down, on the name given
+    (each component ``lstat``-ed, not followed) and on the real path, must
+    be owned by the serving euid or root and must not be group- or
+    world-writable. One exception: a root-owned sticky directory (``/tmp``)
+    whose next component is owned by the serving euid or root, since
+    sticky stops others renaming what they do not own. A symlink component
+    is checked for owner only; its target is on the real path, walked too.
+    """
+    owners = _owners()
+    for chain in dict.fromkeys([os.path.abspath(path), os.path.realpath(path)]):
+        parts = Path(chain).parts
+        components = [Path(*parts[: i + 1]) for i in range(len(parts))]
+        for directory, below in zip(components, components[1:]):
+            try:
+                st = os.lstat(directory)
+            except OSError as exc:
+                return f"directory {directory} above the church file cannot be checked ({exc.__class__.__name__})"
+            if owners is not None and st.st_uid not in owners:
+                return f"directory {directory} above the church file is owned by uid {st.st_uid}, not the serving uid or root"
+            if stat.S_ISLNK(st.st_mode) or not st.st_mode & 0o022:
+                continue
+            if st.st_uid == 0 and st.st_mode & stat.S_ISVTX and owners is not None:
+                try:
+                    if os.lstat(below).st_uid in owners:
+                        continue
+                except OSError:
+                    pass
+            return (
+                f"directory {directory} above the church file is group- or world-writable "
+                f"(mode {stat.S_IMODE(st.st_mode):o})"
+            )
+    return None
 
 
 def _church_identity(path: Path) -> tuple[int, int] | None:
@@ -671,7 +739,9 @@ def church_path_problem(path: Path) -> str | None:
     a symlink lets a file in a directory other local users can write be
     served from a safe-looking one (PR #37 r1). The real file and the
     directory that really holds it must be owned by the serving uid or root
-    and must not be group- or world-writable. Never opens the file.
+    and must not be group- or world-writable. So must every directory above
+    it, on the name given and on the real path (``_ancestor_problem``).
+    Never opens the file.
     """
     path = Path(path)
     try:
@@ -680,7 +750,7 @@ def church_path_problem(path: Path) -> str | None:
     except OSError as exc:
         return f"{path.name} cannot be checked ({exc.__class__.__name__})"
     real = Path(os.path.realpath(path))
-    owners = {0, os.geteuid()} if hasattr(os, "geteuid") else None
+    owners = _owners()
     for target, what in ((real, "church file"), (real.parent, "church file's directory")):
         try:
             st = os.stat(target)
@@ -690,16 +760,33 @@ def church_path_problem(path: Path) -> str | None:
             return f"{what} {target} is owned by uid {st.st_uid}, not the serving uid or root"
         if st.st_mode & 0o022:
             return f"{what} {target} is group- or world-writable (mode {stat.S_IMODE(st.st_mode):o})"
-    return None
+    return _ancestor_problem(path)
 
 
-def wal_mode(path: Path) -> bool | None:
-    """True when the file's SQLite header says WAL; None when it cannot be read. Opens no database."""
+def wal_mode(path: Path, identity: tuple[int, int] | None = None) -> bool | None:
+    """True when the file's SQLite header says WAL; None when it cannot be read. Opens no database.
+
+    The open never blocks and never follows a symlink (``O_NONBLOCK``,
+    ``O_NOFOLLOW``): a FIFO swapped in under the name would block a plain
+    ``open()`` forever, with the server's lock held (PR #37 r2 B). Only a
+    regular file is read, and with ``identity`` only that
+    ``(st_dev, st_ino)``; anything else gives None.
+    """
     try:
-        with open(path, "rb") as handle:
-            header = handle.read(20)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
     except OSError:
         return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        if identity is not None and (st.st_dev, st.st_ino) != tuple(identity):
+            return None
+        header = os.pread(fd, 20, 0)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
     if len(header) < 20 or not header.startswith(b"SQLite format 3\x00"):
         return None
     return header[18] == 2 or header[19] == 2
@@ -716,10 +803,13 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
     Refused, in this order: no privacy config (``privacy.required_config``),
     a missing file, a classic or hardlinked file (``classic_church_refusal``),
     a symlinked name or a real file or directory with the wrong owner or
-    mode (``church_path_problem``), a WAL-mode file, the classic index itself, an unsafe sidecar, a file that is not a church
-    import (``_church_shape_problem``), a file without the publish-gate
-    columns (``store.visible_sql`` gives ``"0"``), and a file replaced while
-    it was opened. Each one means the church side is empty; the caller logs
+    mode (``church_path_problem``, every directory up to ``/``), a WAL-mode
+    or non-regular file, the classic index itself, an unsafe sidecar, a
+    file SQLite opened that is not the inode checked, a file that is not a
+    church import (``_church_shape_problem``), a file without the
+    publish-gate columns (``store.visible_sql`` gives ``"0"``), and a file
+    replaced while it was opened. The connection never waits for a lock
+    (``busy_timeout = 0``). Each one means the church side is empty; the caller logs
     the message and carries on with the classic side.
     """
     from preached.privacy import MissingConfig, required_config
@@ -737,24 +827,40 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
     refusal = classic_church_refusal(None, path) or church_path_problem(path)
     if refusal:
         raise ChurchRefused(refusal)
-    if wal_mode(path):
-        # A read-only open of a WAL file creates -wal and -shm beside it.
-        # Approval (--ack-review) leaves the file in DELETE mode.
-        raise ChurchRefused(f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it")
     identity = _church_identity(path)
     if identity is None:
         raise ChurchRefused(f"{path.name} cannot be checked; it is not opened")
+    wal = wal_mode(path, identity)
+    if wal is None:
+        raise ChurchRefused(f"{path.name} cannot be read as the regular file that was checked; it is not opened")
+    if wal:
+        # A read-only open of a WAL file creates -wal and -shm beside it.
+        # Approval (--ack-review) leaves the file in DELETE mode.
+        raise ChurchRefused(f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it")
     if classic is not None and identity == _church_identity(Path(classic)):
         raise ChurchRefused(f"{path.name} is the classic index; it cannot be your church")
+    before = _descriptors()
     try:
         connection = open_readonly(path, check_same_thread=False)
     except UnsafeSidecar as exc:
         raise ChurchRefused(str(exc)) from exc
     except (OSError, sqlite3.Error) as exc:
         raise ChurchRefused(f"{path.name} cannot be opened ({exc})") from exc
+    problem = None
     try:
+        # The name is re-resolved by the connect: the file SQLite opened must
+        # be the one checked above (PR #37 r2 should-fix A, _Checked's check).
         try:
-            problem = church_file_problem(connection, path, identity)
+            opened, _now = _one_new_file(before)
+            if (opened.st_dev, opened.st_ino) != identity:
+                problem = f"{path.name} is not the file SQLite opened (the name changed); it is not opened"
+        except ValueError as exc:
+            problem = f"{path.name} {exc}; it is not opened"
+        # A writer's lock pauses the church side; it never stalls the server.
+        connection.execute("PRAGMA busy_timeout = 0")
+        try:
+            if problem is None:
+                problem = church_file_problem(connection, path, identity)
         except ChurchPaused as exc:
             problem = f"{exc}; it is not opened"
         if problem is None and visible_sql(connection, "chunks", gated=True) == "0":
@@ -775,7 +881,8 @@ def church_file_problem(connection: sqlite3.Connection, path: Path, identity: tu
     at the file that was opened (same ``(st_dev, st_ino)``, one link, not a classic), its
     sidecars are still safe (``_sidecar_problem``), and the open file still
     reads as a church import. A WAL-mode file raises ``ChurchPaused`` before
-    anything is read: skip this search, but it is not a refusal.
+    anything is read, and so does a writer's lock (``is_busy``): skip this
+    search, but it is not a refusal.
     """
     path = Path(path)
     problem = church_path_problem(path)
@@ -791,11 +898,14 @@ def church_file_problem(connection: sqlite3.Connection, path: Path, identity: tu
     sidecar = _sidecar_problem(path)
     if sidecar is not None:
         return f"{path.name} {sidecar}; refused"
-    if wal_mode(path):
+    wal = wal_mode(path, identity)
+    if wal is None:
+        return f"{path.name} cannot be read as the regular file that was opened; refused"
+    if wal:
         # Before the first read: reading now would join the WAL (creating
         # -wal/-shm) and stop --ack-review's switch back to DELETE mode.
         raise ChurchPaused(f"{path.name} is in WAL journal mode")
-    shape = _church_shape_problem(connection)
+    shape = _church_shape_problem(connection, busy_pauses=True)
     if shape is not None:
         return f"{path.name} {shape}; refused"
     return None
