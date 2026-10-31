@@ -278,6 +278,9 @@ SERMON_ID = re.compile(r"^(?:[a-z0-9][a-z0-9-]{0,63}|[A-Za-z0-9_-]{11})$")
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
+MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"
+UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"
+INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 REFUSED_ERROR = "index unavailable"
 
@@ -830,10 +833,10 @@ def load_search(
             searcher, encode = loader(connection, model_key)
     except EmbeddingMismatch:
         # Never pair new query vectors with old document vectors.
-        logging.exception("stored vectors do not match search/models.toml; serving BM25 only")
+        logging.exception(MISMATCH_LOG)
         return Searcher(connection), None, STALE_NOTE
     except Exception:
-        logging.exception("embedding model unavailable; serving BM25 only")
+        logging.exception(UNAVAILABLE_LOG)
         return Searcher(connection), None, FALLBACK_NOTE
     return searcher, encode, None
 
@@ -954,6 +957,10 @@ class App:
         self._configured_model = model_name
         self._weights_ok = encode is not None
         self.fallback_note = fallback_note
+        # What fallback_note was at start; restored when a status blip ends
+        # on a server whose weights were never loaded.
+        self._base_note = fallback_note
+        self._stamp_failing = False
         self.model_name = model_name if encode is not None else None
         self.backend = None if encode is None else (backend if backend is not None else getattr(encode, "backend", None))
         # Abstain floor for this embedder (search/abstain.toml). None: never
@@ -1073,10 +1080,15 @@ class App:
     def _capture_stamp(self):
         try:
             model = self._configured_model if self._weights_ok else None
-            return index_stamp(self.connection, model)
+            stamp = index_stamp(self.connection, model)
         except Exception:
-            logging.exception("could not read the index stamp")
+            # ERROR with the traceback once per outage; DEBUG while it lasts.
+            level = logging.DEBUG if self._stamp_failing else logging.ERROR
+            self._stamp_failing = True
+            logging.log(level, "could not read the index stamp", exc_info=True)
             return None
+        self._stamp_failing = False
+        return stamp
 
     def _searcher(self, model: str | None = None) -> Searcher:
         """Every searcher this App builds carries the gate and the slug (#12 x #10).
@@ -1116,7 +1128,12 @@ class App:
         self.backend = None
         self.floor = None
 
-    def _serve_keyword_only(self, note: str) -> None:
+    def _serve_keyword_only(self, note: str, message: str | None) -> None:
+        """Drop to BM25. ``message`` is logged once per transition (the note
+        changes), not per request; the strings are the ones the alerts match.
+        None logs nothing (BM25 was already the plan)."""
+        if message is not None and self.fallback_note != note:
+            logging.error("%s", message)
         self.searcher = self._searcher()
         self.encode = None
         self.model_name = None
@@ -1138,6 +1155,7 @@ class App:
         """Rebuild cached rows. fp32 pairing is checked again on this path."""
         if not self._weights_ok:
             self.searcher = self._searcher()
+            self.fallback_note = self._base_note
             return
         try:
             self.searcher = self._searcher(self._configured_model)
@@ -1147,7 +1165,7 @@ class App:
                 getattr(self._encode, "variant", None),
             )
         except (EmbeddingMismatch, RuntimeError):
-            self._serve_keyword_only(STALE_NOTE)
+            self._serve_keyword_only(STALE_NOTE, MISMATCH_LOG)
             return
         self.encode = self._encode
         self.model_name = self._configured_model
@@ -1187,7 +1205,10 @@ class App:
         if stamp is None:
             self._status_failed = True
             if not self._refuse_unless_servable():
-                self._serve_keyword_only(INDEX_READ_NOTE)
+                # Only a server that had a dense side lost something; a
+                # --bm25-only or failed-load server is BM25 by design (and
+                # startup already logged why), so it stays quiet.
+                self._serve_keyword_only(INDEX_READ_NOTE, INDEX_STATUS_LOG if self._weights_ok else None)
             return
         if not self._status_failed and stamp == self._stamp:
             return
@@ -3192,6 +3213,7 @@ def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
             if app.church_connection is not None:
                 app.church_connection.close()
             app.close_embedder()
+            logging.info("stopped cleanly")
     if stuck:
         raise SystemExit(1)
 

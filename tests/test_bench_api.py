@@ -119,6 +119,10 @@ class BenchApiMainTests(unittest.TestCase):
         (self.root / "app" / "server.py").write_text(FAKE_SERVER)
         self.module = load_module()
         self.module.ROOT = self.root
+        # tempfile caches its directory, so TMPDIR in run_main alone leaves the stderr file in the real one.
+        patcher = mock.patch.object(tempfile, "tempdir", str(self.root))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.module.queries = lambda: [("a", "q")]
         self.env_out = self.root / "env.json"
 

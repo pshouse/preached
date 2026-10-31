@@ -166,6 +166,23 @@ class StartupPauseTests(_Root):
         finally:
             release(writer)
 
+    def test_a_pause_after_startup_is_logged_even_in_the_deferred_mode(self) -> None:
+        # SF1: log_startup_pause must switch deferral off, or a later pause is held forever.
+        church_open, _calls = self.opener()
+        classic = reopen(self.wesley)
+        self.addCleanup(classic.close)
+        app = build_app(classic, model_key="granite-english-r2", bm25_only=True, hosts={"127.0.0.1"},
+                        static_dir=STATIC_DIR, floor=0.5, church_open=church_open, defer_church_pause_log=True)
+        self.addCleanup(lambda: app.church_connection is not None and app.church_connection.close())
+        app.log_startup_pause()  # nothing was paused at start: no line, deferral off
+        writer = lock(self.church)
+        try:
+            with self.assertLogs(level="INFO") as logs:
+                app.side("approvedtoken", 5, "bm25")
+            self.assertIn(f"INFO:root:{PAUSED_LOCK}", logs.output)
+        finally:
+            release(writer)
+
     def test_the_backoff_doubles_to_the_cap(self) -> None:
         church_open, calls = self.opener()
         writer = lock(self.church)
@@ -769,8 +786,42 @@ class ConnectionCapAndReserveServeTests(_ChurchServer):
         self.assertEqual(rc, 0, err[-3000:])
 
 
+class ReserveUpperBoundServeTests(_ChurchServer):
+    """SF2: the /healthz reserve admits exactly ``PREACHED_HEALTH_RESERVED_CONNECTIONS``, no more."""
+
+    ENV = ConnectionCapAndReserveServeTests.ENV
+
+    def test_a_second_over_cap_connection_is_refused_while_the_reserve_is_held(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            running = self.start(tmp, hold_s=3)
+            port = running.port
+            socks = []
+            for n in (2, 3):  # fill the two connections
+                sock = socket.create_connection(("127.0.0.1", port), timeout=30, source_address=(f"127.0.0.{n}", 0))
+                sock.sendall(b"GET /api/side?q=approvedtoken&mode=bm25 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                socks.append(sock)
+            deadline = time.monotonic() + 20
+            while not self.mark.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(self.mark.exists(), "the church search never started")
+            time.sleep(0.5)
+            # The one reserved connection, held open and idle.
+            reserved = socket.create_connection(("127.0.0.1", port), timeout=30, source_address=("127.0.0.4", 0))
+            socks.append(reserved)
+            time.sleep(0.5)
+            second = raw_get_full(port, "/healthz", source="127.0.0.5")
+            for sock in socks:
+                sock.close()
+            rc, err = running.stop()
+        self.assertEqual(second[0], 503, err[-3000:])
+        self.assertEqual(rc, 0, err[-3000:])
+
+
 class ChurchClosedAtShutdownTests(unittest.TestCase):
-    """S3c: SIGTERM closes the church connection, then the process exits 0."""
+    """S3c: the stop path closes the church connection, then returns (exit 0).
+
+    No signal is sent here: ``_STOP["requested"]`` stands in for a SIGTERM that
+    arrived before serving. The real signalled child is in the serve tests."""
 
     def test_the_church_connection_is_closed_at_shutdown(self) -> None:
         class Conn:
