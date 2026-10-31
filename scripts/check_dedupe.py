@@ -16,7 +16,6 @@ Usage: uv run --group bench scripts/check_dedupe.py
 from __future__ import annotations
 
 import argparse
-import sqlite3
 import statistics
 import sys
 from pathlib import Path
@@ -33,6 +32,7 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, questions_path  # noqa: E402
 from preached.search import SEARCH_POOL, Searcher, dedupe_adjacent, ranked  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 
 EXTRA = ("catholic spirit", "worry", "How do I stop worrying?", '"')
 API_MODES = ("bm25", "dense", "hybrid")
@@ -72,8 +72,7 @@ def main() -> None:
     from bench import PROBES
 
     queries = [q["query"] for q in read_jsonl(questions_path())] + list(PROBES) + list(EXTRA)
-    connection = sqlite3.connect(f"file:{args.index}?mode=ro", uri=True, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
+    connection = open_readonly_or_exit(args.index, check_same_thread=False)
     print(f"{len(queries)} queries, k={K}, pool={SEARCH_POOL}, index {args.index}")
     totals = {"lists": 0, "pair_lists": 0, "pairs": 0, "non_idempotent": 0}
     for key in args.models:

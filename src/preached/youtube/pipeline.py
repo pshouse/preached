@@ -27,7 +27,7 @@ from preached.youtube import privacy
 from preached.youtube.coverage import Unchecked, check_coverage, clip_to_window, stated_duration
 from preached.skip import propose
 from preached.youtube.chunking import chunk_words
-from preached.youtube.library import imported_ok, index_video, mark_video, open_library
+from preached.youtube.library import imported_ok, index_video, leave_delete_mode, mark_video, open_library
 from preached.youtube.listing import Video, creative_commons, parse_date, watch_url
 from preached.youtube.sermon import is_sung, load_windows, sermon_span, speech_runs, words_in_span
 from preached.youtube.words import Word
@@ -303,6 +303,10 @@ def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], confi
 
     ``config`` is the privacy config in effect now (``--privacy`` or
     ``PREACHED_PRIVACY``); it must hash the same as the one the import used.
+
+    The file is then left in DELETE journal mode (``leave_delete_mode``). When
+    that fails a warning is printed and the approvals stand; the server does
+    not search the file until it is in DELETE mode.
     """
     config = default_config() if config is None else config
     privacy_sha = config_sha256(config)
@@ -321,6 +325,12 @@ def acknowledge(index_path: Path, review_root: Path, video_ids: list[str], confi
                 failures += 1
             else:
                 print(f"approved {video_id}; a running server serves it from its next request", file=sys.stderr)
+        try:
+            # Published: leave DELETE mode so the server's read-only open makes no -wal/-shm.
+            leave_delete_mode(connection)
+        except RuntimeError as exc:
+            # The approvals stand; only serving waits for DELETE mode.
+            print(f"warning: {exc}", file=sys.stderr)
     finally:
         connection.close()
     return 1 if failures else 0

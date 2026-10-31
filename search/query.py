@@ -25,7 +25,9 @@ from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.library import (  # noqa: E402
     CHURCH_EMPTY,
+    ChurchRefused,
     classic_church_refusal,
+    open_church_readonly,
     classic_heading,
     church_heading,
 )
@@ -337,8 +339,8 @@ def search_index(
 
     ``church=True`` does not apply that floor. Church confidence is unrated
     until a floor is fitted on a church library (``abstain.church_confidence``).
-    The CLI does not call this for the church side until PR #12's gate is on
-    main; the flag is the rule that side will use.
+    ``print_side`` calls this for the church side. With ``fallback_bm25``,
+    church vectors that are missing (``RuntimeError``) fall back the same way.
 
     Every Searcher here goes through #12's publish gate (``search.Searcher``
     ``gated``/``library``): ``church_searcher`` or ``classic_searcher``.
@@ -350,7 +352,11 @@ def search_index(
 
     def build(model: str | None = None) -> Searcher:
         if church:
-            return church_searcher(connection, model)
+            searcher = church_searcher(connection, model)
+            if model:
+                # Same fp32 pairing rule as the classic side; a mismatch is keyword search.
+                check_query_variant(connection, model, variant)
+            return searcher
         return classic_searcher(connection, library, model)
 
     used_vector = vector
@@ -376,8 +382,8 @@ def search_index(
                     rrf_k=args.rrf_k,
                     dense_weight=args.dense_weight,
                 )
-    except EmbeddingMismatch:
-        if not fallback_bm25:
+    except (EmbeddingMismatch, RuntimeError) as exc:
+        if not fallback_bm25 or (isinstance(exc, RuntimeError) and not church):
             raise
         searcher = build()
         hits = searcher.bm25(args.query, args.k)
@@ -428,18 +434,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--side",
         action="store_true",
-        help="Print the classic library, then an empty church section (not searched until the publish gate is wired)",
+        help="Print the classic library, then your church (approved sermons only, through the publish gate)",
     )
     parser.add_argument(
         "--church-index",
         type=Path,
         default=None,
-        help="SQLite file for your church. Accepted and checked (never a classic); not opened",
+        help="SQLite file for your church (with --side). Never a classic. Read-only, approved sermons only; "
+        "needs $PREACHED_PRIVACY",
     )
     parser.add_argument(
         "--church-library",
         default=None,
-        help="Your church's library slug. Accepted and checked (never a classic); not opened",
+        help="Your church's library slug (/cache/index/<slug>.sqlite, with --side). Never a classic. Read-only, "
+        "approved sermons only; needs $PREACHED_PRIVACY",
     )
     args = parser.parse_args(argv)
     try:
@@ -555,27 +563,54 @@ def print_side(
     variant: str | None = None,
     policy: str = "none",
 ) -> None:
-    """Classic section, then an empty church section.
+    """Classic section, then the church section.
 
-    The church file is not opened. Until PR #12's gate is on main the section
-    matches a missing church file: ``Nothing from your church yet.`` and no
-    confidence line. ``backend`` and ``variant`` are kept for the post-#12
-    call to ``search_index(..., church=True)``, which rates that side unrated.
+    With no church named, the church section is ``Nothing from your church
+    yet.`` with no confidence line. A named church file is opened read-only
+    by ``library.open_church_readonly`` (privacy config, sidecars, church
+    shape, gate columns) and searched only through ``search_index(...,
+    church=True)``: #12's publish gate, unrated confidence. A refusal is one
+    ``church side refused:`` line on stderr and the same empty section.
     """
-    del backend, variant, vector
     # --library spurgeon/edwards is the classic column. --index defaults to
     # the Wesley file when it is omitted (open_index treats None that way).
     if args.library:
         classic_slug = args.library
     else:
         classic_slug = connection_slug(args.index if args.index is not None else INDEX_PATH, "wesley")
-    # TODO(post-#12): open the church file and search_index(..., church=True)
-    # under #12's gate. Do not print hits before that. Confidence is unrated.
     church_hits: list = []
     church_confidence = None
     church_note = None
     church_mode = None
     church_title = church_heading(None, None)
+    church_connection = None
+    church_path = args.church_index
+    if church_path is None and args.church_library:
+        church_path = INDEX_DIR / f"{args.church_library}.sqlite"
+    if church_path is not None:
+        try:
+            church_connection, _identity = open_church_readonly(
+                church_path, classic=args.index if args.index is not None else INDEX_PATH
+            )
+        except ChurchRefused as exc:
+            print(f"church side refused: {clean(exc)}", file=sys.stderr)
+    if church_connection is not None:
+        try:
+            church_hits, church_confidence, church_mode, _model, church_note = search_index(
+                church_connection,
+                args,
+                vector,
+                model_name,
+                fallback_bm25=True,
+                backend=backend,
+                variant=variant,
+                church=True,
+            )
+            church_title = church_heading(church_connection, args.church_library or Path(church_path).stem)
+        except Exception as exc:
+            print(f"church side refused: the search failed ({clean(exc)})", file=sys.stderr)
+            church_hits, church_confidence, church_note, church_mode = [], None, None, None
+            church_title = church_heading(None, None)
     print(f"query: {clean(args.query)}")
     print(f"mode: {mode_label}" + (f"  model: {model_name}" if model_name else ""))
     print()
@@ -596,16 +631,22 @@ def print_side(
         mode_note = church_note
     elif church_mode is not None and church_mode != args.mode:
         mode_note = f"mode: {church_mode}"
-    print(
-        format_side_section(
-            church_title,
-            church_hits,
-            church_confidence,
-            hide_low=args.hide_low_confidence,
-            empty_message=CHURCH_EMPTY,
-            mode_note=mode_note,
+    try:
+        print(
+            format_side_section(
+                church_title,
+                church_hits,
+                church_confidence,
+                hide_low=args.hide_low_confidence,
+                empty_message=CHURCH_EMPTY,
+                mode_note=mode_note,
+                policy=policy,
+                connection=church_connection,
+            )
         )
-    )
+    finally:
+        if church_connection is not None:
+            church_connection.close()
 
 
 def connection_slug(path: Path, default: str) -> str:

@@ -131,6 +131,17 @@ def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -
     return connection
 
 
+def open_readonly_or_exit(path: Path | None = None, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    """``open_readonly`` for command-line scripts: a missing index or an
+    unsafe sidecar exits with one error line instead of a traceback."""
+    try:
+        return open_readonly(path, check_same_thread=check_same_thread)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    except UnsafeSidecar as exc:
+        raise SystemExit(str(exc)) from exc
+
+
 # Every column replace_chunks writes. The legacy-index check below compares
 # all of them, so a timing-only change (W1-C alignment) is never dropped.
 CHUNK_COLUMNS = (
