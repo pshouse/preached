@@ -1122,17 +1122,24 @@ class ChurchGateTripwireTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_every_searcher_built_near_church_code_passes_the_gate(self) -> None:
-        """Source scan: a function that mentions church and builds a Searcher must pass ``gated``."""
+    def test_every_searcher_passes_the_gate_or_is_a_named_classic_builder(self) -> None:
+        """Source scan: every ``Searcher`` built in the server and the CLI passes ``gated=True``.
+
+        The only exceptions are ``CLASSIC_BUILDERS``, and those may not
+        mention church at all.
+        """
         repo = Path(__file__).resolve().parents[1]
         offenders = []
         for rel in ("app/server.py", "search/query.py"):
             offenders += _ungated_searchers((repo / rel).read_text(), rel)
         self.assertEqual(offenders, [])
 
-    def test_source_scan_does_not_take_any_double_star_as_the_gate(self) -> None:
-        """``**kwargs`` (or a dict built elsewhere) is not proof of ``gated``."""
+    def test_source_scan_requires_the_constant_true(self) -> None:
+        """CTO round 1 on PR #27, should-fix 3: each of these used to pass."""
         source = """
+import app.server as server
+from preached.search import Searcher as Finder
+
 def church_param(connection, **kwargs):
     return Searcher(connection, **kwargs)
 
@@ -1148,14 +1155,79 @@ def church_reassigned(connection, other):
     gate = other
     return Searcher(connection, **gate)
 
-def church_ok(connection, flag):
+def church_false_keyword(connection):
+    return Searcher(connection, gated=False)
+
+def church_false_dict(connection):
+    return Searcher(connection, **{"gated": False})
+
+def church_either(connection, flag):
     gate = {"gated": True, "library": None} if flag else {"gated": False, "library": "wesley"}
+    return Searcher(connection, **gate)
+
+def church_updated(connection):
+    gate = {"gated": True, "library": None}
+    gate.update(gated=False)
+    return Searcher(connection, **gate)
+
+def church_item(connection):
+    gate = {"gated": True, "library": None}
+    gate["gated"] = False
+    return Searcher(connection, **gate)
+
+def church_variable(connection, flag):
+    return Searcher(connection, gated=flag)
+
+def church_positional(connection):
+    return Searcher(connection, None, None, False)
+
+def builder(connection):
+    return server.Searcher(connection)
+
+def aliased(connection):
+    make = Searcher
+    return make(connection)
+
+def imported_alias(connection):
+    return Finder(connection)
+
+def passed_around(connection):
+    return functools.partial(Searcher, connection)()
+
+def load_search(connection):
+    church = None
+    return Searcher(connection)
+
+class Holder:
+    def build(self):
+        return Searcher(self.connection, gated=self.gated)
+
+def ok(connection, flag):
+    gate = {"gated": True, "library": None}
     if flag:
         gate = {"gated": True, "library": None}
-    return Searcher(connection, **gate), Searcher(connection, gated=True)
+    return (
+        Searcher(connection, **gate),
+        Searcher(connection, gated=True),
+        server.Searcher(connection, model="m", gated=True),
+        Finder(connection, None, None, True),
+        Searcher(connection, **{"gated": True}),
+    )
+
+def load_search(connection):
+    return Searcher(connection)
 """
-        flagged = [entry.split(" in ")[1] for entry in _ungated_searchers(source, "x.py")]
-        self.assertEqual(flagged, ["church_param", "church_call", "church_dict_without_gate", "church_reassigned"])
+        flagged = [entry.split(" in ")[1] for entry in _ungated_searchers(source, "x.py", classic_builders={"load_search"})]
+        self.assertEqual(
+            flagged,
+            [
+                "church_param", "church_call", "church_dict_without_gate", "church_reassigned",
+                "church_false_keyword", "church_false_dict", "church_either", "church_updated",
+                "church_item", "church_variable", "church_positional", "builder", "aliased",
+                "imported_alias", "passed_around", "load_search (a classic builder that mentions church)",
+                "Holder.build",
+            ],
+        )
 
     def test_app_does_not_keep_an_ungated_church_searcher(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1186,57 +1258,173 @@ def church_ok(connection, flag):
                 church.close()
 
 
-def _ungated_searchers(source: str, rel: str) -> list[str]:
-    """``Searcher(...)`` calls in church code that do not show a ``gated`` argument.
+# Functions that build a classic-library Searcher, whose gate depends on the
+# slug (App.gated, query.classic_searcher). None of them may mention church.
+CLASSIC_BUILDERS = {
+    "app/server.py": {"default_loader", "load_search", "App._searcher"},
+    "search/query.py": {"classic_searcher"},
+}
 
-    A call passes when it has a ``gated=`` keyword, or ``**name`` where every
-    assignment to ``name`` in that function is a dict literal (or a
-    conditional of dict literals) with a ``"gated"`` key. ``**kwargs`` from a
-    parameter, a call, or any other expression does not pass.
+
+def _ungated_searchers(source: str, rel: str, classic_builders: set[str] | None = None) -> list[str]:
+    """``Searcher`` uses that do not pass the constant ``gated=True``.
+
+    A ``Searcher`` is the name, any alias of it (``import ... as X``,
+    ``X = Searcher``), or any ``<module>.Searcher``. A call passes with a
+    ``gated=True`` keyword, a fourth positional ``True``, ``**{"gated": True}``,
+    or ``**name`` where ``name`` is not a parameter, is never mutated
+    (``.update``, ``name[...] = ``, ``|=``), and every assignment to it in
+    that function is a dict literal whose ``"gated"`` is the constant True.
+    Any other use (``gated=flag``, ``partial(Searcher, ...)``) is flagged,
+    except inside ``classic_builders`` (default ``CLASSIC_BUILDERS[rel]``),
+    and a classic builder that mentions church is flagged too.
     """
     import ast
 
-    def gated_dict(node) -> bool:
-        if isinstance(node, ast.IfExp):
-            return gated_dict(node.body) and gated_dict(node.orelse)
-        return isinstance(node, ast.Dict) and any(
-            isinstance(key, ast.Constant) and key.value == "gated" for key in node.keys
-        )
+    builders = CLASSIC_BUILDERS.get(rel, set()) if classic_builders is None else classic_builders
+    tree = ast.parse(source)
+    aliases = {"Searcher"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            aliases |= {alias.asname for alias in node.names if alias.name == "Searcher" and alias.asname}
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and _is_searcher(node.value, aliases):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id not in aliases:
+                        aliases.add(target.id)
+                        changed = True
+
+    def true_gate_dict(node) -> bool:
+        if not isinstance(node, ast.Dict):
+            return False
+        values = [v for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant) and k.value == "gated"]
+        return len(values) == 1 and None not in node.keys and _is_true(values[0])
+
+    def gated_true(call, func) -> bool:
+        assigned: dict[str, list] = {}
+        mutated: set[str] = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assigned.setdefault(target.id, []).append(node.value)
+                    elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+                        mutated.add(target.value.id)
+                    else:
+                        mutated |= {leaf.id for leaf in ast.walk(target) if isinstance(leaf, ast.Name)}
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                target = node.target
+                if isinstance(target, ast.Subscript):
+                    target = target.value
+                if isinstance(target, ast.Name):
+                    mutated.add(target.id)
+            elif isinstance(node, ast.Delete):
+                mutated |= {leaf.id for leaf in ast.walk(node) if isinstance(leaf, ast.Name)}
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                mutated.add(node.func.value.id)
+        params = {arg.arg for arg in ast.walk(func.args) if isinstance(arg, ast.arg)} if func is not tree else set()
+        if len(call.args) > 3 and _is_true(call.args[3]):
+            return True
+        for kw in call.keywords:
+            if kw.arg == "gated" and _is_true(kw.value):
+                return True
+            if kw.arg is None and true_gate_dict(kw.value):
+                return True
+            if kw.arg is None and isinstance(kw.value, ast.Name):
+                name = kw.value.id
+                values = assigned.get(name, [])
+                if name not in params and name not in mutated and values and all(true_gate_dict(v) for v in values):
+                    return True
+        return False
+
+    def mentions_church(func) -> bool:
+        names = {func.name}
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.arg):
+                names.add(node.arg)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.keyword) and node.arg:
+                names.add(node.arg)
+        return any("church" in name.casefold() for name in names)
 
     offenders = []
-    tree = ast.parse(source)
-    for func in ast.walk(tree):
-        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        names = {node.id for node in ast.walk(func) if isinstance(node, ast.Name)}
-        names |= {node.arg for node in ast.walk(func) if isinstance(node, ast.arg)}
-        names |= {node.attr for node in ast.walk(func) if isinstance(node, ast.Attribute)}
-        if not any("church" in name for name in names) and "church" not in func.name:
-            continue
-        assigned: dict[str, list] = {}
-        for node in ast.walk(func):
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                for target in targets:
-                    for leaf in ast.walk(target):
-                        if isinstance(leaf, ast.Name):
-                            assigned.setdefault(leaf.id, []).append(
-                                node.value if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
-                            )
-        params = {arg.arg for arg in ast.walk(func.args) if isinstance(arg, ast.arg)}
-        for call in ast.walk(func):
-            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Searcher"):
+    reported = set()
+
+    def visit(node, qualname: str, func) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = f"{qualname}.{child.name}" if qualname else child.name
+                if isinstance(child, ast.ClassDef):
+                    visit(child, name, func)
+                    continue
+                if name in builders and mentions_church(child):
+                    offenders.append(f"{rel}:{child.lineno} in {name} (a classic builder that mentions church)")
+                    continue
+                visit(child, name, child)
                 continue
-            ok = False
-            for kw in call.keywords:
-                if kw.arg == "gated":
-                    ok = True
-                elif kw.arg is None and isinstance(kw.value, ast.Name) and kw.value.id not in params:
-                    values = assigned.get(kw.value.id, [])
-                    ok = ok or (bool(values) and all(v is not None and gated_dict(v) for v in values))
-            if not ok:
-                offenders.append(f"{rel}:{call.lineno} in {func.name}")
-    return offenders
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                continue
+            if isinstance(child, ast.Assign) and _is_searcher(child.value, aliases):
+                continue
+            if isinstance(child, ast.Call) and _is_searcher(child.func, aliases):
+                if qualname not in builders and not gated_true(child, func or tree):
+                    offenders.append(f"{rel}:{child.lineno} in {qualname or '<module>'}")
+                reported.add(id(child.func))
+                for part in [*child.args, *child.keywords]:
+                    visit(part, qualname, func)
+                continue
+            if _is_searcher(child, aliases) and id(child) not in reported and not _in_annotation(child, tree):
+                if qualname not in builders:
+                    offenders.append(f"{rel}:{child.lineno} in {qualname or '<module>'}")
+                continue
+            visit(child, qualname, func)
+
+    visit(tree, "", None)
+    seen = set()
+    unique = []
+    for entry in offenders:
+        if entry not in seen:
+            seen.add(entry)
+            unique.append(entry)
+    return unique
+
+
+def _is_true(node) -> bool:
+    import ast
+
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _is_searcher(node, aliases: set[str]) -> bool:
+    import ast
+
+    if isinstance(node, ast.Name):
+        return node.id in aliases
+    return isinstance(node, ast.Attribute) and node.attr == "Searcher"
+
+
+def _in_annotation(node, tree) -> bool:
+    """True when ``node`` sits in a type annotation (``-> Searcher``, ``x: Searcher``)."""
+    import ast
+
+    for parent in ast.walk(tree):
+        annotations = []
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            annotations.append(parent.returns)
+        elif isinstance(parent, ast.arg):
+            annotations.append(parent.annotation)
+        elif isinstance(parent, ast.AnnAssign):
+            annotations.append(parent.annotation)
+        for annotation in annotations:
+            if annotation is not None and any(sub is node for sub in ast.walk(annotation)):
+                return True
+    return False
 
 
 def _plain_marked(path: Path, *, church_import: bool = False) -> None:

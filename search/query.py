@@ -294,6 +294,18 @@ def format_side_section(
     return "\n".join(lines)
 
 
+def church_searcher(connection, model: str | None = None) -> Searcher:
+    """A church library: always #12's publish gate, with no slug, so the
+    public-domain exemption never applies."""
+    return Searcher(connection, model=model, gated=True, library=None)
+
+
+def classic_searcher(connection, library: str | None, model: str | None = None) -> Searcher:
+    """A classic library: gated unless it is wesley or a public-domain
+    library's own file (``store.public_domain_file``), as in the server."""
+    return Searcher(connection, model=model, gated=library not in (None, "wesley"), library=library)
+
+
 def search_index(
     connection,
     args,
@@ -318,27 +330,30 @@ def search_index(
     main; the flag is the rule that side will use.
 
     Every Searcher here goes through #12's publish gate (``search.Searcher``
-    ``gated``/``library``). ``church=True`` is always gated, with no slug, so
+    ``gated``/``library``): ``church_searcher`` or ``classic_searcher``.
+    ``church=True`` is always gated, with no slug, so
     an approved-sermon check applies even if the file was named like a
     classic. A classic is gated unless it is wesley or a public-domain
     library's own file, as in ``main``.
     """
-    if church:
-        gate = {"gated": True, "library": None}
-    else:
-        gate = {"gated": library not in (None, "wesley"), "library": library}
+
+    def build(model: str | None = None) -> Searcher:
+        if church:
+            return church_searcher(connection, model)
+        return classic_searcher(connection, library, model)
+
     used_vector = vector
     used_model = model_name
     used_mode = args.mode
     note = None
     try:
         if args.mode == "bm25":
-            searcher = Searcher(connection, **gate)
+            searcher = build()
             hits = searcher.bm25(args.query, args.k)
             used_vector = None
             used_model = None
         else:
-            searcher = Searcher(connection, model=model_name, **gate)
+            searcher = build(model_name)
             if args.mode == "dense":
                 hits = searcher.dense(vector, args.k)
             else:
@@ -353,7 +368,7 @@ def search_index(
     except EmbeddingMismatch:
         if not fallback_bm25:
             raise
-        searcher = Searcher(connection, **gate)
+        searcher = build()
         hits = searcher.bm25(args.query, args.k)
         used_vector = None
         used_model = None
@@ -432,15 +447,14 @@ def main(argv: list[str] | None = None) -> None:
     # matches the aligned index on ids and text; syncing it would null every
     # start_s, end_s, audio_url, and reader).
     connection = open_index(args.index, args.library)
-    # Same gate as the server: any --library but wesley is gated unless it is an
-    # allow-listed public-domain library's own file (store.public_domain_file).
-    gate = {"gated": args.library not in (None, "wesley"), "library": args.library}
+    # Same gate as the server (classic_searcher): any --library but wesley is
+    # gated unless it is an allow-listed public-domain library's own file.
     model_name = None
     embedder = None
     vector = None
     try:
         if args.mode == "bm25":
-            searcher = Searcher(connection, **gate)
+            searcher = classic_searcher(connection, args.library)
             hits = searcher.bm25(args.query, args.k)
         else:
             model_name = args.model
@@ -466,7 +480,7 @@ def main(argv: list[str] | None = None) -> None:
                 raise SystemExit(1) from exc
             vector = embedder.encode_queries([args.query])[0]
             try:
-                searcher = Searcher(connection, model=model_name, **gate)
+                searcher = classic_searcher(connection, args.library, model_name)
             except EmbeddingMismatch as exc:
                 raise SystemExit(f"error: {exc}\nOr search without vectors: --mode bm25") from exc
             if args.mode == "dense":
