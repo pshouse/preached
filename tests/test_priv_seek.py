@@ -37,6 +37,7 @@ from preached.store import open_readonly  # noqa: E402
 from preached.youtube.cli import main as youtube_main  # noqa: E402
 from test_privacy_wire import FILLER, ID_A, Base, embedder, words_for  # noqa: E402
 from test_privacy_wire_fix import LiveServer  # noqa: E402
+from coverage_stub import stub_audio
 
 # CTO's numbers: the name spoken at 378.86-379.22 s, the next chunk's first word
 # at 379.9 s, so its pre-roll seek is 379.15 s (audio) and t=379 (YouTube).
@@ -210,7 +211,7 @@ class AsrBackToBackTests(unittest.TestCase):
         self.index = root / "church.sqlite"
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(transcript), "--out", str(root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(toml), "--index", str(self.index)], embedder=embedder, coverage=lambda *_a, **_k: [])
+                             "--privacy", str(toml), "--index", str(self.index), *stub_audio(transcript)], embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)], index_dir=root)
         self.assertEqual(code, 0)
 

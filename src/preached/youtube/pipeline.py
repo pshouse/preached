@@ -24,7 +24,7 @@ from preached.corpus import load_chunk_config
 from preached.exclusions import approve, base_sha256, boundary_flags, carried_stretches, excluded_indexes, kept_runs, merge_flag, previous_excludes, review_lines, word_rows, words_file, words_file_lines
 from preached.privacy import Config, ReviewList, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
-from preached.youtube.coverage import check_coverage, clip_to_window
+from preached.youtube.coverage import Unchecked, check_coverage, clip_to_window
 from preached.skip import propose
 from preached.youtube.chunking import chunk_words
 from preached.youtube.library import imported_ok, index_video, mark_video, open_library
@@ -477,8 +477,14 @@ def _import_one(
     if not words:
         raise RuntimeError("transcript was empty")
     # Sound with no word in it is a stretch the ASR dropped: approval refuses while it is open.
-    gaps = clip_to_window(coverage(audio_path, words, duration_s=video.duration_s), windows.get(video.id))
-    for gap in gaps:
+    # The whole file is checked against the stated duration; the window only limits which spans count.
+    try:
+        gaps = clip_to_window(coverage(audio_path, words, duration_s=video.duration_s), windows.get(video.id))
+    except Unchecked as exc:
+        # Fail closed: NULL coverage, so approval is refused and the sermon is never served.
+        gaps = None
+        print(f"coverage {video.id}: NOT checked ({exc}); approval is blocked", file=sys.stderr, flush=True)
+    for gap in gaps or []:
         print(f"coverage {video.id}: no transcript for sound at {gap.start_s:.1f}-{gap.end_s:.1f}s", file=sys.stderr, flush=True)
     if not SAFE_ID.fullmatch(video.id):
         raise RuntimeError("video id is not usable as a file name")
@@ -487,7 +493,9 @@ def _import_one(
     records, items = plan.records, plan.items
     flagged = sum(1 for record in records if record["flag_end_s"] is not None)
     header = metadata_review_lines(video.title, description, original_title or video.title, original_description, config)
-    header.extend({"field": "coverage", "gap_start_s": gap.start_s, "gap_end_s": gap.end_s} for gap in gaps)
+    if gaps is None:
+        header.append({"field": "coverage", "unchecked": True})
+    header.extend({"field": "coverage", "gap_start_s": gap.start_s, "gap_end_s": gap.end_s} for gap in gaps or [])
     # The kept words (already redacted) let approval rebuild the chunks when the
     # reviewer widens or adds an excluded stretch; excluded words are not in it.
     _, words_sha = write_private_review(words_file_lines("youtube", plan.meta, plan.rows, plan.excluded), words_file(review_file))
@@ -510,7 +518,7 @@ def _import_one(
         matrix=matrix,
         review_sha256=review_sha,
         privacy_sha256=config_sha256(config),
-        coverage_gaps=[(gap.start_s, gap.end_s) for gap in gaps],
+        coverage_gaps=None if gaps is None else [(gap.start_s, gap.end_s) for gap in gaps],
         review_base_sha256=base_sha256(lines),
     )
     index_s = time.perf_counter() - index_started
@@ -528,8 +536,9 @@ def _import_one(
     print(
         f"imported {video.id} in {time.perf_counter() - started:.1f}s; UNPUBLISHED until its review file is "
         f"acknowledged ({len(items)} review items, {flagged} flagged chunks, "
-        f"{len(plan.stretches)} excluded stretches of {len(plan.excluded)} words, {len(gaps)} coverage gaps"
-        f"{': approval is blocked' if gaps else ''})",
+        f"{len(plan.stretches)} excluded stretches of {len(plan.excluded)} words, "
+        f"{'coverage NOT checked' if gaps is None else f'{len(gaps)} coverage gaps'}"
+        f"{': approval is blocked' if gaps is None or gaps else ''})",
         file=sys.stderr,
         flush=True,
     )

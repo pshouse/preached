@@ -37,6 +37,7 @@ from preached.youtube.listing import Video
 
 from test_privacy_wire import CHANNEL, FILLER, ID_A, ID_B, OPENING_A, OPENING_B, Base, embedder, transcript, words_for
 from test_privacy_wire import REPO_ROOT, videos
+from coverage_stub import stub_audio
 
 ID_C = "wirevideo03"
 NAMES = ("Fenwick", "Gerald", "Okonkwo", "Thistlewood", "Brenda", "Townsend", "Kowalczyk", "Liam")
@@ -441,7 +442,7 @@ class AsrGateTests(unittest.TestCase):
         code = 0
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                self.module.main([str(self.transcript_path), "--out", str(self.out), *argv], **{"coverage": lambda *_a, **_k: [], **kwargs})
+                self.module.main([str(self.transcript_path), "--out", str(self.out), *argv, *stub_audio(self.transcript_path)], **{"coverage": lambda *_a, **_k: [], **kwargs})
             except SystemExit as exc:
                 code = exc.code if isinstance(exc.code, int) else 2
         return code, out.getvalue(), err.getvalue()

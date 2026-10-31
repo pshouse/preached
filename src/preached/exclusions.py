@@ -71,6 +71,13 @@ HOW = (
     "end_word, or the start_s/end_s times), or add a line {\"field\": \"exclude\", \"start_s\": S, \"end_s\": E}. "
     "A proposed stretch cannot be narrowed or removed. Change nothing else. Editing after approval is refused."
 )
+# How a coverage span is cleared (preached.youtube.coverage): re-import, per path.
+REIMPORT = (
+    "YouTube import: re-run with --redo, after re-transcribing, or with a --windows entry for the video "
+    "that leaves out music before or after the sermon. Church transcript: fix the transcript or set its "
+    "searchable_start/searchable_end around the sermon, then re-run align/asr_chunks.py with --index and "
+    "--audio-dir (<sermon id>.<ext>, the whole recording)"
+)
 # CTO ruling (2026-10-30): word recall 0.870 means the cues are not enough alone.
 REVIEWER_MUST = (
     "Listen through the whole recording, start to end, before approving. The proposed stretches are a "
@@ -325,13 +332,16 @@ def approve(
         raise Refused(f"{video_id}: not imported")
     # Sound with no transcript is a stretch the ASR dropped: a name in it was never flagged or redacted.
     if row[5] is None:
-        raise Refused(f"{video_id}: ASR coverage was never checked; re-import with --redo")
+        raise Refused(
+            f"{video_id}: ASR coverage was never checked (no audio, undecodable, or shorter than the transcript). "
+            f"{REIMPORT}"
+        )
     gaps = json.loads(row[5])
     if gaps:
         shown = ", ".join(f"{a:.0f}-{b:.0f}s" for a, b in gaps[:6])
         raise Refused(
-            f"{video_id}: {len(gaps)} stretch(es) of sound have no transcript ({shown}). Listen, then "
-            "re-import with --redo (a --windows entry limits the check to the sermon)"
+            f"{video_id}: {len(gaps)} stretch(es) of sound are not covered by the transcript ({shown}). "
+            f"Listen to each, then: {REIMPORT}"
         )
     try:
         data = read_private_file(review_file)
@@ -492,7 +502,7 @@ def _rebuild(connection, video_id, info, remaining, data, digest, base, token, e
         review_sha256=digest,
         privacy_sha256=connection.execute("SELECT privacy_sha256 FROM videos WHERE video_id = ?", (video_id,)).fetchone()[0],
         review_base_sha256=base,
-        coverage_gaps=json.loads(coverage_gaps) if coverage_gaps else [],
+        coverage_gaps=None if coverage_gaps is None else json.loads(coverage_gaps),
         reader=old[2] if old else None,
         sermon_number=old[0] if old else None,
         librivox_id=old[1] if old else None,

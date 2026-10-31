@@ -22,6 +22,7 @@ from preached.store import open_readonly
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_privacy_wire import CHANNEL, FILLER, ID_A, Base, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -169,7 +170,7 @@ class ImportTests(Base):
         self.assertTrue([line for line in self.lines() if line.get("field") == "coverage"])  # and an open span
         code, _out, err = self.ack(embedder=_no_embedder)
         self.assertEqual(code, 1)
-        self.assertIn("no transcript", err)
+        self.assertIn("not covered by the transcript", err)
         self.assertEqual(self.approved(), None)
         # The reviewer widening a stretch does not clear the coverage gate.
         index = next(i for i, w in enumerate(self.words) if w.text == "velvetlantern")
@@ -179,7 +180,7 @@ class ImportTests(Base):
         self.write_lines(lines)
         code, _out, err = self.ack(embedder=embedder)
         self.assertEqual(code, 1)
-        self.assertIn("no transcript", err)
+        self.assertIn("not covered by the transcript", err)
         self.assertEqual(self.approved(), None)
         # Resolved (re-import finds no gap): the skip rules still apply and approval goes through.
         code, _out, err = self.run_import(["--redo"])
@@ -190,6 +191,28 @@ class ImportTests(Base):
         raw = self.raw_index()
         for marker in MARKERS:
             self.assertNotIn(marker.encode(), raw)
+
+    def test_rebuild_keeps_an_unchecked_coverage_null(self) -> None:
+        # S5: the rebuild passes NULL through as NULL ('is None'), and '[]' as '[]'.
+        import hashlib
+
+        from preached.exclusions import _rebuild, _split
+        from preached.privacy import TOKEN, read_private_file
+        from preached.youtube.library import open_library
+
+        code, _out, err = self.run_import()
+        self.assertEqual(code, 0, err)
+        data = read_private_file(self.review_file(ID_A))
+        base, _excludes, _header = _split(data)
+        lines = [json.loads(x) for x in read_private_file(words_file(self.review_file(ID_A))).splitlines()]
+        info, kept = lines[0], lines[1:]
+        connection = open_library(self.index)
+        self.addCleanup(connection.close)
+        for stored in (None, "[]", "[[100.0, 130.0]]"):
+            with self.subTest(coverage_gaps=stored):
+                _rebuild(connection, ID_A, info, kept[:-3], data, hashlib.sha256(data).hexdigest(),
+                         hashlib.sha256(base).hexdigest(), TOKEN, embedder, stored)
+                self.assertEqual(connection.execute("SELECT coverage_gaps FROM videos WHERE video_id = ?", (ID_A,)).fetchone()[0], stored)
 
     def approved(self):
         connection = open_readonly(self.index)
@@ -350,7 +373,7 @@ class AsrPathTests(unittest.TestCase):
     def main(self, argv):
         out, err = StringIO(), StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            self.module.main([str(self.path), "--out", str(self.root / "c.jsonl"), *argv], embedder=embedder, coverage=lambda *_a, **_k: [])
+            self.module.main([str(self.path), "--out", str(self.root / "c.jsonl"), *argv, *stub_audio(self.path)], embedder=embedder, coverage=lambda *_a, **_k: [])
         return out.getvalue() + err.getvalue()
 
     def test_church_asr_excludes_and_reviewer_additions_apply(self) -> None:

@@ -42,6 +42,7 @@ from preached.youtube.cli import main as youtube_main  # noqa: E402
 from preached.youtube.listing import Video  # noqa: E402
 from test_priv_skip import MARKERS, SERVICE  # noqa: E402
 from test_privacy_wire import CHANNEL, FILLER, ID_A, Base, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 CANARY = "velvetlantern"
 FAST = {"CHECKPOINT_WAITS": (0.01, 0.02), "CHECKPOINT_BUSY_MS": 10}
@@ -362,7 +363,7 @@ class AsrOutTests(unittest.TestCase):
     def test_out_file_drops_newly_excluded_words_and_keeps_other_sermons(self) -> None:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([*map(str, self.paths), "--out", str(self.out), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index)], embedder=embedder, coverage=lambda *_a, **_k: [])
+                             "--privacy", str(self.toml), "--index", str(self.index), *stub_audio(*self.paths)], embedder=embedder, coverage=lambda *_a, **_k: [])
         before = [json.loads(x) for x in self.out.read_text().splitlines()]
         self.assertIn(CANARY, " ".join(r["text"] for r in before if r["sermon_id"] == "church-1"))
         review = self.root / "church" / "review" / "church-1.review.jsonl"
@@ -386,7 +387,7 @@ class AsrOutTests(unittest.TestCase):
         self.assertEqual(stored, [r["text"] for r in after if r["sermon_id"] == "church-1"])
 
     def test_rerun_keeps_reviewer_stretches(self) -> None:
-        argv = [str(self.paths[0]), "--out", str(self.out), "--library", "church", "--privacy", str(self.toml), "--index", str(self.index)]
+        argv = [str(self.paths[0]), "--out", str(self.out), "--library", "church", "--privacy", str(self.toml), "--index", str(self.index), *stub_audio(*self.paths)]
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main(argv, embedder=embedder, coverage=lambda *_a, **_k: [])
         review = self.root / "church" / "review" / "church-1.review.jsonl"

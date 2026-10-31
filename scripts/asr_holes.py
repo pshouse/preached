@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import preached.env  # noqa: F401
+from preached.cpu_guard import avoid_amx
 from preached.youtube import transcribe as T
 from preached.youtube.coverage import check_coverage, decode_audio, sound_spans
 from preached.youtube.words import Word
@@ -57,6 +58,7 @@ def main():
     p.add_argument("--variant", action="append", default=[])
     p.add_argument("--out", type=Path)
     a = p.parse_args()
+    avoid_amx()
     if a.device == "cuda":
         T._preload_cuda_libs()
     from faster_whisper import WhisperModel
