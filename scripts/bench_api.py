@@ -1,8 +1,15 @@
-"""End-to-end /api/search latency on the 40 eval questions.
+"""End-to-end /api/search latency on every question in eval/questions.jsonl.
 
 Starts the server, waits until the model is loaded, warms one query, then
-times the eval set. Prints JSON: p50_ms, p95_ms, rss_bytes, cold_start_s.
-The percentile matches search/bench.py (nearest rank, 1-based).
+times the eval set. The query set is read from the eval file (no fixed count);
+it must parse cleanly with unique ids and non-empty queries, and the summary
+records n_queries and queries_sha256 so runs can be compared.
+Prints JSON: p50_ms, p95_ms, rss_bytes_after_model_load, rss_bytes_after_queries,
+rss_peak_bytes (VmHWM), cold_start_s. The percentile matches search/bench.py
+(nearest rank, 1-based).
+
+Command used for the RSS / latency numbers in PR #26 and the PR #18 smoke
+(foreground, CPU only; the script also blanks CUDA_VISIBLE_DEVICES itself):
 
   CUDA_VISIBLE_DEVICES="" uv run python scripts/bench_api.py
   CUDA_VISIBLE_DEVICES="" uv run python scripts/bench_api.py --repeats 3 --ort-threads 2
@@ -11,6 +18,7 @@ The percentile matches search/bench.py (nearest rank, 1-based).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -44,14 +52,38 @@ def rss_of(pid: int) -> int | None:
     return None
 
 
-def queries() -> list[str]:
-    found = []
-    for line in QUESTIONS.read_text().splitlines():
-        if line.strip():
-            found.append(json.loads(line)["query"])
-    if len(found) != 40:
-        raise SystemExit(f"expected 40 eval queries, found {len(found)}")
+def peak_rss_of(pid: int) -> int | None:
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) * 1024
+    except OSError:
+        return None
+    return None
+
+
+def queries(path: Path = QUESTIONS) -> list[str]:
+    """Every query in the eval file, in order. Fails if any line is unusable."""
+    found: list[str] = []
+    ids: set[str] = set()
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        query = row.get("query")
+        if not isinstance(query, str) or not query.strip():
+            raise SystemExit(f"{path}:{number}: missing or empty query")
+        if row.get("id") in ids:
+            raise SystemExit(f"{path}:{number}: duplicate id {row.get('id')!r}")
+        ids.add(row.get("id"))
+        found.append(query)
+    if not found:
+        raise SystemExit(f"no eval queries in {path}")
     return found
+
+
+def queries_sha256(found: list[str]) -> str:
+    return hashlib.sha256("\n".join(found).encode()).hexdigest()
 
 
 def main() -> None:
@@ -153,6 +185,9 @@ def main() -> None:
             "max_ms": max(samples),
             "rss_bytes_after_model_load": rss_at_listen,
             "rss_bytes_after_queries": rss_of(proc.pid),
+            "rss_peak_bytes": peak_rss_of(proc.pid),
+            "n_queries": len(found),
+            "queries_sha256": queries_sha256(found),
             "chunks": health.get("chunks"),
             "cold_start_s": round(cold_start_s, 3),
         }
