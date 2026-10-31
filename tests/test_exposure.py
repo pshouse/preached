@@ -217,7 +217,8 @@ class ClientKeyTests(unittest.TestCase):
     def test_mapped_ipv6_and_ipv6(self) -> None:
         trusted = _nets("10.0.0.1/32", "2001:db8::/64")
         self.assertEqual(client_key("::ffff:10.0.0.1", ["198.51.100.7"], trusted), "198.51.100.7")
-        self.assertEqual(client_key("2001:db8::5", ["2001:db8:1::9"], trusted), "2001:db8:1::9")
+        # An IPv6 client is keyed by its /64 (M4).
+        self.assertEqual(client_key("2001:db8::5", ["2001:db8:1::9"], trusted), "2001:db8:1::/64")
         self.assertEqual(client_key("::ffff:192.0.2.9", ["203.0.113.5"], trusted), "192.0.2.9")
 
     def test_trusted_list_parsing_fails_closed(self) -> None:
@@ -336,9 +337,10 @@ class SlotFairnessTests(_Served):
         self.assertTrue(_wait(lambda: server._conn_total == 8))
         for n in range(6, 10):
             with self.subTest(newcomer=n):
-                status, _, body = _get(port, "/healthz", source=f"127.0.0.{n}")
+                # A search, so the reserved /healthz connection cannot stand in.
+                status, _, body = _get(port, "/api/search?q=grace", source=f"127.0.0.{n}")
                 self.assertEqual(status, 200)
-                self.assertTrue(json.loads(body)["ok"])
+                self.assertIn("results", json.loads(body))
         closed = [sock for sock in held if _is_closed(sock, 0.5)]
         self.assertGreaterEqual(len(closed), 1)
         # A hog peer keeps at least one connection: only idle surplus goes.
@@ -367,7 +369,7 @@ class SlotFairnessTests(_Served):
                 drips.append(sock)
                 self.addCleanup(sock.close)
         self.assertTrue(_wait(lambda: server._conn_total == 4))
-        self.assertEqual(_get(port, "/healthz", source="127.0.0.4")[0], 200)
+        self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.4")[0], 200)
         self.assertTrue(any(_is_closed(sock, 0.5) for sock in drips))
 
     def test_requests_in_flight_are_never_closed(self) -> None:
@@ -382,8 +384,11 @@ class SlotFairnessTests(_Served):
                 self.addCleanup(sock.close)
         for _ in busy:
             self.assertTrue(entered.acquire(timeout=3))
-        status, _, _ = _get(port, "/healthz", source="127.0.0.4")
-        self.assertEqual(status, 503)
+        # Nothing can be closed: a search is refused, /healthz gets the reserve.
+        self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.4")[0], 503)
+        status, headers, _ = _get(port, "/healthz", source="127.0.0.4")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["connection"], "close")
         release.set()
         for sock in busy:
             self.assertEqual(_read_response(sock)[0], 200)
@@ -395,7 +400,7 @@ class SlotFairnessTests(_Served):
         for n in range(2, 6):
             held += self._hold_idle(port, f"127.0.0.{n}", 1, server)
         self.assertTrue(_wait(lambda: server._conn_total == 4))
-        self.assertEqual(_get(port, "/healthz", source="127.0.0.6")[0], 503)
+        self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.6")[0], 503)
         self.assertFalse(any(_is_closed(sock, 0.2) for sock in held))
 
     def test_keep_alive_idle_is_bounded_when_scarce(self) -> None:
@@ -520,6 +525,301 @@ class HealthBucketTests(_Served):
         # From an untrusted peer the header is ignored.
         self.assertEqual(_get(port, "/healthz", source="127.0.0.2", headers={"X-Forwarded-For": "198.51.100.3"})[0], 200)
         self.assertEqual(_get(port, "/healthz", source="127.0.0.2", headers={"X-Forwarded-For": "198.51.100.4"})[0], 429)
+
+
+# Round 1 of the PR #29 review.
+
+
+class _FakeRequest:
+    """Stands in for an accepted socket in the server's bookkeeping."""
+
+    def __init__(self) -> None:
+        self.shut = False
+
+    def shutdown(self, how) -> None:
+        self.shut = True
+
+
+class EvictionOrderTests(_Served):
+    """M1: a connection still receiving its headers is not taken for a newcomer."""
+
+    def _hold_idle(self, port: int, source: str, count: int) -> list[socket.socket]:
+        held = []
+        for _ in range(count):
+            sock = _connect(port, source)
+            _send(sock, "/healthz")
+            self.assertEqual(_read_response(sock)[0], 200)
+            held.append(sock)
+            self.addCleanup(sock.close)
+            # Distinct idle times, so "oldest" is well defined.
+            time.sleep(0.02)
+        return held
+
+    def test_half_sent_request_gets_a_response(self) -> None:
+        # The CTO's pD.py: 4 slots, 127.0.0.5 holds 3, 127.0.0.6 holds 1.
+        port, _app, server = self._serve(max_connections=4, header_deadline_s=10, scarce_idle_s=10)
+        five = self._hold_idle(port, "127.0.0.5", 3)
+        six = self._hold_idle(port, "127.0.0.6", 1)
+        self.assertTrue(_wait(lambda: server._conn_total == 4))
+        # 127.0.0.5 starts a request on its oldest connection and stops mid-headers.
+        five[0].sendall(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+        self.assertTrue(_wait(lambda: any(c.reading for c in server._conns.values())))
+        status, _, _ = _get(port, "/api/search?q=grace", source="127.0.0.9")
+        self.assertEqual(status, 200)
+        # The half-sent request completes and is answered.
+        five[0].sendall(b"\r\n")
+        self.assertEqual(_read_response(five[0])[0], 200)
+        # Its oldest idle connection was the one closed.
+        self.assertTrue(_is_closed(five[1], 1.0))
+        _send(five[2], "/healthz")
+        self.assertEqual(_read_response(five[2])[0], 200)
+        _send(six[0], "/healthz")
+        self.assertEqual(_read_response(six[0])[0], 200)
+
+    def test_the_oldest_idle_connection_is_the_one_closed(self) -> None:
+        port, _app, server = self._serve(max_connections=4, header_deadline_s=10, scarce_idle_s=10)
+        two = self._hold_idle(port, "127.0.0.2", 3)
+        self._hold_idle(port, "127.0.0.3", 1)
+        self.assertTrue(_wait(lambda: server._conn_total == 4))
+        self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.9")[0], 200)
+        self.assertTrue(_is_closed(two[0], 1.0))
+        for sock in two[1:]:
+            _send(sock, "/healthz")
+            self.assertEqual(_read_response(sock)[0], 200)
+
+    def _bookkeeping(self, max_connections: int):
+        _port, _app, server = self._serve(max_connections=max_connections, max_per_client=8)
+        server.health_reserved = 0
+        return server
+
+    def test_mark_busy_is_false_after_a_hand_over(self) -> None:
+        server = self._bookkeeping(2)
+        a, b, c = _FakeRequest(), _FakeRequest(), _FakeRequest()
+        self.assertTrue(server._acquire_connection(a, "127.0.0.2"))
+        time.sleep(0.01)
+        self.assertTrue(server._acquire_connection(b, "127.0.0.2"))
+        self.assertTrue(server._acquire_connection(c, "127.0.0.3"))
+        self.assertTrue(a.shut)
+        self.assertFalse(b.shut)
+        # The victim's handler finishes its headers too late: it must stop.
+        self.assertFalse(server.mark_busy(a))
+        self.assertTrue(server.mark_busy(b))
+
+    def test_reading_is_taken_only_when_no_idle_one_is_left(self) -> None:
+        server = self._bookkeeping(3)
+        a, b, c = _FakeRequest(), _FakeRequest(), _FakeRequest()
+        for request in (a, b, c):
+            self.assertTrue(server._acquire_connection(request, "127.0.0.2"))
+            time.sleep(0.01)
+        # a and b are receiving headers (a started first); c is idle and newest.
+        server.mark_reading(a)
+        time.sleep(0.01)
+        server.mark_reading(b)
+        first = _FakeRequest()
+        self.assertTrue(server._acquire_connection(first, "127.0.0.3"))
+        self.assertEqual([a.shut, b.shut, c.shut], [False, False, True])
+        # No idle one left: the longest-reading connection goes.
+        second = _FakeRequest()
+        self.assertTrue(server._acquire_connection(second, "127.0.0.4"))
+        self.assertEqual([a.shut, b.shut], [True, False])
+        # mark_idle clears reading.
+        server.mark_idle(b)
+        self.assertFalse(server._conns[b].reading)
+
+
+class AuditLogTests(_Served):
+    """M2: the log names the client key, and every refusal class is logged."""
+
+    def test_proxied_request_logs_the_forwarded_key(self) -> None:
+        port, _app, _server = self._serve(trusted_proxies=_nets("127.0.0.9/32"))
+        with self.assertLogs(level="INFO") as logs:
+            status, _, _ = _get(port, "/healthz?x=1", source="127.0.0.9", headers={"X-Forwarded-For": "198.51.100.7"})
+            self.assertEqual(status, 200)
+            self.assertTrue(_wait(lambda: any("GET /healthz" in line for line in logs.output)))
+        line = next(line for line in logs.output if "GET /healthz" in line)
+        self.assertTrue(line.endswith("127.0.0.9 198.51.100.7 GET /healthz 200"), line)
+
+    def test_direct_request_logs_peer_twice_and_ipv6_keys_by_64(self) -> None:
+        port, app, _server = self._serve()
+        with self.assertLogs(level="INFO") as logs:
+            _get(port, "/healthz", source="127.0.0.4")
+            self.assertTrue(_wait(lambda: any("GET /healthz" in line for line in logs.output)))
+        self.assertTrue(any(line.endswith("127.0.0.4 127.0.0.4 GET /healthz 200") for line in logs.output))
+        self.assertEqual(app.client_key("2001:db8::1", None), "2001:db8::/64")
+
+    def test_each_429_class_is_logged(self) -> None:
+        port, _app, _server = self._serve(
+            rate_limit=1, global_rate_limit=2, health_rate_limit=1, health_global_rate_limit=2
+        )
+        with self.assertLogs(level="WARNING") as logs:
+            statuses = [
+                _get(port, "/api/search?q=grace", source="127.0.0.2")[0],
+                _get(port, "/api/search?q=grace", source="127.0.0.2")[0],  # client
+                _get(port, "/api/search?q=grace", source="127.0.0.3")[0],
+                _get(port, "/api/search?q=grace", source="127.0.0.4")[0],  # global
+                _get(port, "/healthz", source="127.0.0.2")[0],
+                _get(port, "/healthz", source="127.0.0.2")[0],  # health
+                _get(port, "/healthz", source="127.0.0.3")[0],
+                _get(port, "/healthz", source="127.0.0.4")[0],  # health-global
+            ]
+        self.assertEqual(statuses, [200, 429, 200, 429] * 2)
+        text = "\n".join(logs.output)
+        self.assertIn("refused 429-client 127.0.0.2 127.0.0.2 /api/search suppressed=0", text)
+        self.assertIn("refused 429-global 127.0.0.4 127.0.0.4 /api/search suppressed=0", text)
+        self.assertIn("refused 429-health 127.0.0.2 127.0.0.2 /healthz suppressed=0", text)
+        self.assertIn("refused 429-health-global 127.0.0.4 127.0.0.4 /healthz suppressed=0", text)
+
+    def test_over_cap_and_eviction_are_logged(self) -> None:
+        port, _app, server = self._serve(max_connections=3, max_per_client=2, header_deadline_s=10, scarce_idle_s=10)
+        server.health_reserved = 0
+        held = []
+        for _ in range(2):
+            sock = _connect(port, "127.0.0.2")
+            _send(sock, "/healthz")
+            self.assertEqual(_read_response(sock)[0], 200)
+            held.append(sock)
+            self.addCleanup(sock.close)
+        with self.assertLogs(level="WARNING") as logs:
+            # Per-peer cap: 127.0.0.2 already holds 2.
+            self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 503)
+            third = _connect(port, "127.0.0.3")
+            self.addCleanup(third.close)
+            _send(third, "/healthz")
+            self.assertEqual(_read_response(third)[0], 200)
+            # Full: 127.0.0.4 takes one of 127.0.0.2's idle connections.
+            self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.4")[0], 200)
+        text = "\n".join(logs.output)
+        self.assertIn("refused over-cap peer=127.0.0.2 suppressed=0", text)
+        self.assertIn("refused evict 127.0.0.2->127.0.0.4 suppressed=0", text)
+
+    def test_refusal_lines_are_rate_limited_with_a_count(self) -> None:
+        from app.server import RefusalLog
+
+        log = RefusalLog(interval_s=1.0)
+        with self.assertLogs(level="WARNING") as logs:
+            self.assertTrue(log.note("429-client", "a", now=10.0))
+            self.assertFalse(log.note("429-client", "b", now=10.2))
+            self.assertFalse(log.note("429-client", "c", now=10.9))
+            # Another class has its own interval.
+            self.assertTrue(log.note("over-cap", "d", now=10.5))
+            self.assertTrue(log.note("429-client", "e", now=11.0))
+        self.assertEqual(
+            [line.split(":", 2)[2] for line in logs.output],
+            [
+                "refused 429-client a suppressed=0",
+                "refused over-cap d suppressed=0",
+                "refused 429-client e suppressed=2",
+            ],
+        )
+
+
+class Ipv6KeyTests(_Served):
+    """M4: IPv6 clients are keyed by /64."""
+
+    def test_client_key_uses_the_64(self) -> None:
+        self.assertEqual(client_key("2001:db8:0:0:1::1", None, ()), "2001:db8::/64")
+        self.assertEqual(client_key("2001:db8::ffff", None, ()), "2001:db8::/64")
+        self.assertEqual(client_key("2001:db8:0:1::1", None, ()), "2001:db8:0:1::/64")
+        # IPv4 and IPv4-mapped stay per address.
+        self.assertEqual(client_key("192.0.2.1", None, ()), "192.0.2.1")
+        self.assertEqual(client_key("::ffff:192.0.2.1", None, ()), "192.0.2.1")
+        # Behind a trusted proxy, the forwarded IPv6 hop is keyed by its /64 too.
+        trusted = _nets("127.0.0.1/32")
+        self.assertEqual(client_key("127.0.0.1", ["2001:db8::7"], trusted), "2001:db8::/64")
+        self.assertEqual(client_key("127.0.0.1", ["2001:db8::8"], trusted), "2001:db8::/64")
+
+    def test_addresses_in_one_64_share_a_rate_bucket(self) -> None:
+        app = App(None, None, None, None, None, {"x"}, STATIC_DIR, rate_limit=2, trusted_proxies=())
+        keys = [app.client_key(peer, None) for peer in ("2001:db8::1", "2001:db8::2", "2001:db8::3")]
+        results = [app.allow(key, health=False) for key in keys]
+        self.assertEqual(results[:2], [None, None])
+        self.assertIs(results[2], app.rate_limiter)
+        self.assertIsNone(app.allow(app.client_key("2001:db8:0:1::1", None), health=False))
+
+    def test_addresses_in_one_64_share_the_connection_cap(self) -> None:
+        _port, _app, server = self._serve(max_connections=16, max_per_client=2)
+        requests = [_FakeRequest() for _ in range(4)]
+        self.assertTrue(server._acquire_connection(requests[0], "2001:db8::1"))
+        self.assertTrue(server._acquire_connection(requests[1], "2001:db8::2"))
+        self.assertFalse(server._acquire_connection(requests[2], "2001:db8::3"))
+        self.assertTrue(server._acquire_connection(requests[3], "2001:db8:0:1::1"))
+        self.assertEqual(server._conn_by_ip["2001:db8::/64"], 2)
+
+
+class RefundAndHealthSlotTests(_Served):
+    """Should-fix 1-3: backstop refunds, the reserved /healthz connection, health slots."""
+
+    def test_a_global_refusal_does_not_spend_the_client_bucket(self) -> None:
+        from app.server import RateLimiter
+
+        app = App(None, None, None, None, None, {"x"}, STATIC_DIR, rate_limit=2, global_rate_limit=1, trusted_proxies=())
+        self.assertIsNone(app.allow("b", health=False))
+        for _ in range(3):
+            self.assertIs(app.allow("a", health=False), app.global_limiter)
+        # The backstop recovers: "a" still has its whole budget.
+        app.global_limiter = RateLimiter(100, 60, max_keys=1, name="global")
+        self.assertEqual(
+            [app.allow("a", health=False) for _ in range(3)], [None, None, app.rate_limiter]
+        )
+        # The same for /healthz.
+        app = App(None, None, None, None, None, {"x"}, STATIC_DIR, health_rate_limit=1, health_global_rate_limit=1, trusted_proxies=())
+        self.assertIsNone(app.allow("b", health=True))
+        self.assertIs(app.allow("a", health=True), app.health_global_limiter)
+        app.health_global_limiter = RateLimiter(100, 60, max_keys=1, name="health-global")
+        self.assertIsNone(app.allow("a", health=True))
+
+    def test_reserved_connection_serves_healthz_once_and_only_healthz(self) -> None:
+        port, app, server = self._serve(max_connections=2, max_per_client=4, header_deadline_s=10)
+        release, entered = self._block_search(app)
+        busy = []
+        for n in (2, 3):
+            sock = _connect(port, f"127.0.0.{n}")
+            _send(sock, "/api/search?q=hold")
+            busy.append(sock)
+            self.addCleanup(sock.close)
+        for _ in busy:
+            self.assertTrue(entered.acquire(timeout=3))
+        # Keep-alive /healthz on the reserve: answered, then closed.
+        sock = _connect(port, "127.0.0.4")
+        self.addCleanup(sock.close)
+        _send(sock, "/healthz")
+        status, headers, body = _read_response(sock)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["ok"])
+        self.assertEqual(headers["connection"], "close")
+        self.assertTrue(_is_closed(sock, 1.0))
+        # While the one reserve is held, the next newcomer is refused at accept.
+        holder = _connect(port, "127.0.0.5")
+        self.addCleanup(holder.close)
+        self.assertTrue(_wait(lambda: server._reserved_total == 1))
+        self.assertEqual(_get(port, "/healthz", source="127.0.0.6")[0], 503)
+        # The held reserve is for /healthz only.
+        _send(holder, "/api/search?q=grace")
+        status, headers, _ = _read_response(holder)
+        self.assertEqual(status, 503)
+        self.assertEqual(headers["connection"], "close")
+        self.assertTrue(_wait(lambda: server._reserved_total == 0))
+        release.set()
+        for sock in busy:
+            self.assertEqual(_read_response(sock)[0], 200)
+
+    def test_own_healthz_while_own_searches_fill_the_request_slots(self) -> None:
+        port, app, server = self._serve(max_connections=16, max_per_client=4, max_requests=2, header_deadline_s=10)
+        release, entered = self._block_search(app)
+        socks = []
+        for _ in range(2):
+            sock = _connect(port, "127.0.0.2")
+            _send(sock, "/api/search?q=hold")
+            socks.append(sock)
+            self.addCleanup(sock.close)
+        for _ in socks:
+            self.assertTrue(entered.acquire(timeout=3))
+        self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.2")[0], 503)
+        self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 200)
+        release.set()
+        for sock in socks:
+            self.assertEqual(_read_response(sock)[0], 200)
+        self.assertTrue(_wait(lambda: server._slots_by_key == {} and server._health_slots_by_key == {}))
 
 
 class DocAndScriptTests(unittest.TestCase):
