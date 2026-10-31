@@ -229,7 +229,7 @@ verify_tar() {
   VERIFY=
 }
 
-# Likely cause of exit 1: the box's snapshot daemon creating and deleting
+# Likely cause of exit 1: the Grok Bot box's snapshot daemon creating and deleting
 # *.box-store-snap-* files next to the index and model while tar reads them.
 # Three attempts, each still gated by verify_tar below.
 attempt=1
