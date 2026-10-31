@@ -19,7 +19,7 @@ Many of the original questions named the expected sermon's title ("What did Wesl
 
 | group | n | what it is |
 | --- | --- | --- |
-| `plain` | 25 | Everyday-language questions that share no content word (or listed synonym) with the expected sermon's title, avoid its signature term, and share no two-word phrase with the grade-2 quote or the sermon's key scripture. 23 are `-plain` rewrites of `names-topic` items (same `relevant` list as the original, `rewrite_of` points back). `q-prayer` and `q-forgiveness` were clean from the start. |
+| `plain` | 25 | Everyday-language questions that share no content word (or listed synonym) with the expected sermon's title, avoid its signature term, and share no two-word phrase with the grade-2 quote or the sermon's key scripture. 23 are `-plain` rewrites of `names-topic` items (same `relevant` list as the original, `rewrite_of` points back); the rewrites were written by an LLM agent, not by a person. `q-prayer` and `q-forgiveness` were clean from the start. |
 | `plain-blind` | 30 | Written by an LLM agent (Grok) before it read the corpus (`plain_candidates.jsonl`, EVAL-PLAINQ; `provenance` is `llm-written:grok`). Wording is frozen. Unconfirmed by a human. All labels were proposed by an LLM agent (Claude) and are unconfirmed by a human (EVAL-GRADE). Items judged unanswerable have `type: "unanswerable"` and an `unanswerable_reason`. |
 | `names-topic` | 23 | Original conceptual questions that name the topic or title, or (`q-worry`, `q-assurance`, `q-faith-works`, moved in EVAL-GRADE) borrow a phrase from the gold quote or key scripture. Unchanged apart from `group`. |
 | `title-keyword` | 3 | Keyword queries equal to a title: `k-christian-perfection`, `k-means-of-grace`, `k-witness-of-the-spirit`. |
