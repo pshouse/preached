@@ -819,6 +819,41 @@ class AuditLogTests(_Served):
         with self.assertNoLogs(level="WARNING"):
             server.refusals.flush()
 
+    def test_suppressed_counts_are_flushed_when_a_handler_is_stuck(self) -> None:
+        # Exit 1 path: drain gives up on a handler. The counts must be logged
+        # before exit, without waiting for that handler (a SIGKILL follows).
+        from unittest import mock
+
+        import app.server as app_server
+
+        port, app, server = self._serve()
+        release, entered = self._block_search(app)
+        sock = _connect(port)
+        self.addCleanup(sock.close)
+        _send(sock, "/api/search?q=hold", close=True)
+        self.assertTrue(entered.acquire(timeout=3))
+        server.refusals.note("429-client", "a", now=10.0)
+        for _ in range(13):
+            server.refusals.note("429-client", "b", now=10.2)
+            server.refusals.note("busy", "c", now=10.2)
+        server.shutdown()  # the serve loop has stopped, as after SIGTERM
+        server.drain = lambda: app_server.PreachedServer.drain(server, timeout_s=0.3)
+        connection = mock.Mock()
+        app.close_embedder = mock.Mock()
+        with mock.patch.dict(app_server._STOP, {"requested": True, "server": None, "stopping": False}):
+            with self.assertLogs(level="WARNING") as logs, self.assertRaises(SystemExit) as raised:
+                app_server.serve_until_stopped(server, app, connection)
+        self.assertEqual(raised.exception.code, 1)
+        stuck = [thread for thread in vars(server)["_threads"] if thread.is_alive()]
+        self.assertEqual(len(stuck), 1, "the handler must still be stuck when the counts are logged")
+        lines = [line.split(":", 2)[2] for line in logs.output]
+        self.assertIn("refused 429-client flush suppressed=13", lines)
+        self.assertIn("refused busy flush suppressed=12", lines)
+        # Neither the index nor the session is closed under the stuck handler.
+        connection.close.assert_not_called()
+        app.close_embedder.assert_not_called()
+        release.set()
+
 
 class Ipv6KeyTests(_Served):
     """M4: IPv6 clients are keyed by /64."""

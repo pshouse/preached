@@ -2750,6 +2750,11 @@ def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
             # Closing the index or the session now could crash the process.
             # Leave both open; interpreter exit waits for these threads.
             logging.error("%d handler thread(s) still running after %.0fs; index left open", len(stuck), DRAIN_TIMEOUT_S)
+            # Log the suppressed refusal counts now: server_close would join
+            # the stuck thread first, and a SIGKILL then loses them.
+            refusals = getattr(server, "refusals", None)
+            if refusals is not None:
+                refusals.flush()
         else:
             server.server_close()
             connection.close()
