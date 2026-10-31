@@ -1,12 +1,12 @@
 # W3-FUSION-PREREG: pre-registration for proposal #1 (query-shape-aware fusion weight)
 
-Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `reports/W3-RETRIEVAL-DIAG.md` (PR #42). **This note has no results. It changes no search code, no index, no `eval/questions.jsonl`, no grades, and no abstain settings.** It is committed before any run of the test below.
+Branch `docs/w3-prereg-align` (PR #47; first written on `docs/w3-label-sheet`, PR #43). Date: 2026-10-31. Source: §7 proposal 1 of `reports/W3-RETRIEVAL-DIAG.md` (PR #42). **This note has no results. It changes no search code, no index, no `eval/questions.jsonl`, no grades, and no abstain settings.** It is committed before any run of the test below.
 
 ## Disclosures
 
 - **The author of the hypothesis has seen the blind failures.** The idea came from reading the `plain-blind` misses and from EVAL-GRADE's dense-vs-hybrid result on those same questions. `plain-blind` is therefore not held out for any variant (the author read every blind failure, and the OR-shape rule is close to a long-question detector). It may be reported only as an in-sample check. The confirmatory test is the fresh blind set below, which is required before any accuracy claim, not only before shipping.
 - The exploratory numbers in the diag report (V10, V11) are scratch results from the same questions and are not evidence for any accuracy claim.
-- The `plain-blind` questions were LLM-written (Grok, `llm-written:grok`), and every `plain-blind` label was proposed by an LLM (Claude) and is unconfirmed by a person. The same holds for all grade-1 labels in `eval/questions.jsonl`.
+- **Every question and every label used here, selection groups included, is LLM-written or LLM-chosen and unconfirmed by a person** until `eval/review/review-2026-10-30.csv` is filled in (`eval/README.md`, "Human review: pending"). The original 40 questions and their labels, including every grade-2 label in the selection groups that decide `w` and the 12 grade-1 `-p2` labels with no `found_by`, were chosen by the Grok CLI agent (W1-B). The 23 `-plain` rewrites were written by Claude (20 in EVAL-DELEAK, 3 in EVAL-GRADE), and every `status: proposed` label (`llm-proposed:claude`) was proposed by Claude. The 30 `plain-blind` questions were written by Grok (`llm-written:grok`).
 
 ## Labels are re-frozen after Patrick's pass
 
@@ -39,7 +39,7 @@ Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `repor
 
 ## Fresh-blind-set confirmation (before any accuracy claim)
 
-Write 20 to 30 new questions, by a person or by an LLM that has not seen the corpus or this repo's questions. The set is confirmatory and is required before any accuracy claim, not only before shipping. Freeze the wording and the labels and commit them before any ranker runs on the set; no ranker may have been run on them. Labelling is done by someone who has not seen the baseline or weighted rankings for them. Then run baseline and the chosen `w` once.
+Write 20 to 30 new questions, by a person or by an LLM that has not seen the corpus or this repo's questions. The writer must not be a model from a PRC-based developer (AGENTS.md §3), and must not have seen `reports/W3-RETRIEVAL-DIAG.md` or this prereg. The set is confirmatory and is required before any accuracy claim, not only before shipping. Freeze the wording and the labels and commit them before any ranker runs on the set; no ranker may have been run on them. Labelling is done by someone who has not seen the baseline or weighted rankings for them. Relevant passages are found before any ranker runs, by reading the sermons and by plain text search (grep) of the corpus, as in W1-B. FTS5/BM25 and dense search are rankers and may not be used to find them. Then run baseline and the chosen `w` once.
 
 Each question carries a provenance field (for example `person-written` or `llm-written:<model>`). If an LLM writes the set, the report discloses it as LLM-written, and says whether the labels were confirmed by a person.
 
@@ -49,10 +49,14 @@ Any of the following:
 
 1. The chosen `w` has a negative paired hit@10 difference on the pooled selection groups.
 2. It loses more than one question in any one selection group, or any in `title-keyword` or `scripture-keyword` (those must be unchanged by construction; a change means the rule is wrong).
-3. On the fresh blind set, the paired difference is not positive, or its 95% CI includes zero together with a loss.
+3. On the fresh blind set, the 95% paired-bootstrap CI (10,000 resamples, seed recorded) of the paired hit@10 difference includes zero and at least one fresh-set question is lost. The CI is the percentile interval from `preached.stats.paired_bootstrap` (default seed 20261030). A question is lost when a relevant passage is in the top 10 under the baseline and none is in the top 10 under the chosen `w`.
 4. On the fresh blind set, the chosen `w` does not beat baseline in hit@10.
 5. The abstain behaviour or `--dedupe` results degrade versus baseline (more false answers on unanswerable items, or lower hit@10 with `--dedupe`).
 
 `plain-blind` is in-sample and gates nothing; a loss there is reported as a warning.
 
 A mixed result is reported as mixed. It is not rescued by adding a third weight, changing the rule, or editing labels.
+
+## Amendments
+
+- 2026-10-31, PR #47: plain-blind made in-sample only with the fresh blind set confirmatory (CTO #42 r1), labeller exposure answer recorded (CTO #43 S2), and rule 3, label provenance and fresh-set rules made precise (CTO #47 r1); all made before any run of the frozen test.
