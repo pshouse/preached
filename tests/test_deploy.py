@@ -191,9 +191,10 @@ class RateAndKillTests(unittest.TestCase):
         return server.server_address[1], app, server
 
     def test_per_ip_limit_ignores_forwarded_for(self) -> None:
+        # /healthz has its own bucket now, so the first two are searches.
         port, _app, _server = self._serve(rate_limit=2, rate_window_s=60)
-        first, _, _ = _request(port, "/healthz")
-        second, _, _ = _request(port, "/healthz")
+        first, _, _ = _request(port, "/api/search?q=grace")
+        second, _, _ = _request(port, "/api/search?q=grace", headers={"X-Forwarded-For": "198.51.100.1"})
         third, headers, body = _request(
             port,
             "/api/search?q=secretquery",
@@ -277,9 +278,11 @@ class RateAndKillTests(unittest.TestCase):
         self.assertTrue(limiter.allow("a", now=1))
         self.assertFalse(limiter.allow("a", now=1))
 
-    def test_healthz_uses_the_same_bucket(self) -> None:
-        port, _app, _server = self._serve(rate_limit=1, rate_window_s=60)
+    def test_healthz_has_its_own_bucket(self) -> None:
+        # W3-EXPOSURE-HARDEN item 3 replaced "same bucket" with its own one.
+        port, _app, _server = self._serve(rate_limit=1, health_rate_limit=1, rate_window_s=60)
         self.assertEqual(_request(port, "/healthz")[0], 200)
+        self.assertEqual(_request(port, "/api/search?q=grace")[0], 200)
         status, _, body = _request(port, "/healthz")
         self.assertEqual(status, 429)
         self.assertEqual(json.loads(body), {"error": "too many requests"})
