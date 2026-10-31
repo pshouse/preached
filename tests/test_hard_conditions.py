@@ -236,6 +236,21 @@ SQLITE3_SAFE = frozenset({
 })
 
 
+def _tracked_module_use(name: ast.Name, parent: ast.AST | None, *, getattr_counted: bool) -> bool:
+    """True when a module name is used in a form ``scan_sqlite_use`` follows:
+    ``module.attr``, ``alias = module`` (plain names only) or, when the scan
+    counts it already (``getattr_counted``), ``getattr(module, ...)`` /
+    ``vars(module)``."""
+    if isinstance(parent, ast.Attribute):
+        return parent.value is name
+    if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is name:
+        targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+        return all(isinstance(target, ast.Name) for target in targets)
+    if getattr_counted and isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) and parent.func.id in ("getattr", "vars"):
+        return bool(parent.args) and parent.args[0] is name
+    return False
+
+
 def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     """``(imports sqlite3, raw opens, store.connect uses, unknown)`` for one file's source.
 
@@ -251,9 +266,13 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     import connect``, ``from preached import store``, ``from . import
     store``, ``import preached.store`` (dotted ``preached.store.connect``),
     ``getattr(store, ...)``, and a module rebound to another name
-    (``db = sqlite3``, ``s = store``; PR #37 r2 C). A regression guard, not
-    a sandbox: ``exec``, star imports and ``import_module`` of
-    ``preached.store`` are not followed.
+    (``db = sqlite3``, ``s = store``; PR #37 r2 C). A module name used any
+    other way than ``module.attr``, a plain ``name = module`` rebinding or
+    ``getattr``'s first argument (a walrus, tuple unpacking, a default
+    argument, a container, a loop, a call argument) counts as an open,
+    and so does a dunder on it (``store.__dict__``; PR #37 r3 nit). A
+    regression guard, not a sandbox: ``exec``, star imports and
+    ``import_module`` of ``preached.store`` are not followed.
     """
     tree = ast.parse(source)
     imports = False
@@ -323,20 +342,33 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                     bound |= names
                     changed = True
     writer = 0
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     for node in ast.walk(tree):
         if (
-            isinstance(node, ast.Attribute) and node.attr == "connect"
+            isinstance(node, ast.Attribute) and (node.attr == "connect" or node.attr.startswith("__"))
             and isinstance(node.value, ast.Attribute) and node.value.attr == "store"
             and isinstance(node.value.value, ast.Name) and node.value.value.id in packages
         ):
-            writer += 1  # preached.store.connect
+            writer += 1  # preached.store.connect, preached.store.__dict__
         elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
             if node.value.id in modules:
-                if node.attr in ("connect", "dbapi2"):
+                if node.attr in ("connect", "dbapi2") or node.attr.startswith("__"):
                     raw += 1
                 elif node.attr not in SQLITE3_SAFE:
                     unknown.append(node.attr)
-            elif node.value.id in store_modules and node.attr == "connect":
+            elif node.value.id in store_modules and (node.attr == "connect" or node.attr.startswith("__")):
+                writer += 1
+            elif node.value.id in packages and node.attr.startswith("__"):
+                writer += 1  # preached.__dict__["store"]
+        elif (
+            isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+            and node.id in modules | store_modules | packages
+            and not _tracked_module_use(node, parents.get(node), getattr_counted=node.id not in packages)
+        ):
+            # The module itself escapes into a value the scan cannot follow.
+            if node.id in modules:
+                raw += 1
+            else:
                 writer += 1
         elif isinstance(node, ast.Call):
             func = node.func
@@ -434,6 +466,29 @@ class RawConnectGuardTests(unittest.TestCase):
             "from .. import store as s\ns.connect('x')": (False, 0, 1),
             "from .store import connect\nconnect('x')": (False, 0, 1),
             "import preached.store\npreached.store.open_readonly('x')": (False, 0, 0),
+            # PR #37 r3 nit: walrus, tuple unpacking, default args, containers, loops, __dict__.
+            "import sqlite3\n(db := sqlite3).connect('x')": (True, 1, 0),
+            "import sqlite3\nif (db := sqlite3):\n    db.connect('x')": (True, 2, 0),
+            "import sqlite3\ndb, n = sqlite3, 1\ndb.connect('x')": (True, 1, 0),
+            "import sqlite3\n(db,) = (sqlite3,)\n": (True, 1, 0),
+            "import sqlite3\ndef f(db=sqlite3):\n    return db.connect('x')\n": (True, 1, 0),
+            "import sqlite3\nmods = [sqlite3]\nmods[0].connect('x')": (True, 1, 0),
+            "import sqlite3\nmods = {'m': sqlite3}\n": (True, 1, 0),
+            "import sqlite3\nfor db in (sqlite3,):\n    db.connect('x')": (True, 1, 0),
+            "import sqlite3\nsqlite3.__dict__['connect']('x')": (True, 1, 0),
+            "import sqlite3\ndef f(m):\n    return m.connect('x')\nf(sqlite3)\n": (True, 1, 0),
+            "from preached import store\n(s := store).connect('x')": (False, 0, 1),
+            "from preached import store\ns, n = store, 1\ns.connect('x')": (False, 0, 1),
+            "from preached import store\ndef f(s=store):\n    return s.connect('x')\n": (False, 0, 1),
+            "from preached import store\nmods = [store]\nmods[0].connect('x')": (False, 0, 1),
+            "from preached import store\nfor s in (store,):\n    s.connect('x')": (False, 0, 1),
+            "from preached import store\nstore.__dict__['connect']('x')": (False, 0, 1),
+            "import preached.store\npreached.store.__dict__['connect']('x')": (False, 0, 1),
+            "import preached\nvars(preached)['store'].connect('x')": (False, 0, 1),
+            "import preached\nmods = [preached]\n": (False, 0, 1),
+            # Still not counted: what the scan follows stays exact.
+            "from preached import store\ns = store\ns.open_readonly('x')": (False, 0, 0),
+            "import sqlite3\nexcept_ = (sqlite3.Error, sqlite3.OperationalError)\n": (True, 0, 0),
         }
         for source, want in cases.items():
             with self.subTest(source=source):
