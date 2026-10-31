@@ -98,14 +98,17 @@ class VerifiedArtifacts:
 
     ``files`` holds ``tokenizer.json`` and ``pooling.json``; callers build
     the tokenizer from those bytes so the file cannot change between the
-    hash and the read. The graph is hashed by streaming and its bytes are
-    not kept: the loader re-hashes the fd ORT reads
+    hash and the read. ``digests`` are the sha256 hex of those same bytes.
+    The graph is hashed by streaming and its bytes are not kept: with
+    ``hash_graph=False`` it has no entry in ``digests`` either, and the
+    loader records the digest of the fd ORT reads
     (``onnx_embed._open_hashed_graph``).
     """
 
     manifest: dict
     variant: str
     files: dict[str, bytes]
+    digests: dict[str, str]
 
 
 def required_filenames(variant: str) -> list[str]:
@@ -148,6 +151,7 @@ def verify_manifest(
     manifest = load_manifest(folder)
     chosen = resolve_variant(manifest, variant)
     verified: dict[str, bytes] = {}
+    digests: dict[str, str] = {}
     graph_name = VARIANT_FILES[chosen]
     for name in required_filenames(chosen):
         if not isinstance(name, str) or "/" in name or "\\" in name or name.startswith("."):
@@ -173,13 +177,16 @@ def verify_manifest(
             raise ArtifactError(f"ONNX sha256 for {name} is not the pinned digest")
         if data is not None:
             verified[name] = data
+        digests[name] = actual
     try:
         pooling = json.loads(verified["pooling.json"])
     except json.JSONDecodeError as exc:
         raise ArtifactError("pooling.json is not JSON") from exc
     if not isinstance(pooling, dict) or pooling.get("pooling") != "cls":
         raise ArtifactError(f"pooling.json pooling {pooling.get('pooling')!r} is not cls")
-    return VerifiedArtifacts(manifest=manifest, variant=chosen, files=verified)
+    return VerifiedArtifacts(
+        manifest=manifest, variant=chosen, files=verified, digests=digests
+    )
 
 
 def resolve_variant(manifest: dict, requested: str | None = None) -> str:

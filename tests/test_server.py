@@ -331,6 +331,13 @@ class ServerTests(unittest.TestCase):
         self.assertGreater(health["chunks"], 0)
         self.assertTrue(health["dense"])
         self.assertFalse(health["fallback"])
+        self.assertIn("index_version", health)
+        self.assertIn("model_sha256", health)
+        for value in health.values():
+            if isinstance(value, str):
+                self.assertNotIn("/", value)
+                self.assertNotIn("\\", value)
+                self.assertNotIn(".sqlite", value)
 
         status, headers, body = self.get("/")
         self.assertEqual(status, 200)

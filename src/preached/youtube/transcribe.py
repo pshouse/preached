@@ -19,12 +19,14 @@ import sys
 from pathlib import Path
 
 from preached import env as _env  # noqa: F401  (HF_HOME=/cache before weights download)
+from preached.cpu_guard import avoid_amx
 from preached.youtube.words import Word
 
 # More than this much GPU memory already in use means leave the card alone.
 GPU_BUSY_MIB = 6 * 1024
 GPU_MODEL = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 CPU_MODEL = "tiny.en"
+INITIAL_PROMPT = "English speech, with punctuation."
 
 
 def gpu_used_mib() -> int | None:
@@ -110,6 +112,8 @@ def _preload_cuda_libs() -> None:
 
 
 def _run(audio_path: Path, *, device: str, compute_type: str, model_name: str) -> list[Word]:
+    # Before ctranslate2 loads: MKL's AMX int8 kernels corrupt the output (preached.cpu_guard).
+    avoid_amx()
     if device == "cuda":
         _preload_cuda_libs()
     try:
@@ -130,7 +134,7 @@ def _run(audio_path: Path, *, device: str, compute_type: str, model_name: str) -
             condition_on_previous_text=False,
             # A short punctuated prompt. Batched mode is not used here.
             # W1-A found batched decoding without a prompt drops punctuation.
-            initial_prompt="English speech, with punctuation.",
+            initial_prompt=INITIAL_PROMPT,
         )
         words: list[Word] = []
         for segment in segments:

@@ -723,6 +723,8 @@ class RealOnnxTests(unittest.TestCase):
             (folder / "manifest.json").write_text(json.dumps(manifest))
             embedder = OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1, batch_size=1)
             self.assertEqual(embedder.variant, "fp32")
+            self.assertEqual(embedder.model_sha256, FP32_ONNX_SHA256)
+            self.assertNotIn("/", embedder.model_sha256)
             vectors = embedder.encode_queries(["What did Wesley say about worry?"])
             self.assertEqual(vectors.shape, (1, 768))
             self.assertTrue(np.allclose(np.linalg.norm(vectors, axis=1), 1.0, atol=1e-5))
@@ -961,6 +963,52 @@ class FdLoadTests(unittest.TestCase):
             self.assertFalse(_uses_external_data(fd))
         finally:
             os.close(fd)
+
+    def test_load_reports_the_sha256_of_the_graph_it_loaded(self) -> None:
+        # Hermetic: a tiny graph pinned for this test and a stand-in ORT
+        # session, so it runs without the model in /cache. load() skips the
+        # graph hash in verify_manifest, so model_sha256 (what /healthz
+        # reports) must come from the fd hash in _open_hashed_graph.
+        import hashlib
+        from types import SimpleNamespace
+        from unittest import mock
+
+        import onnxruntime
+
+        from preached import artifacts
+        from preached.onnx_embed import OnnxEmbedder
+
+        class FakeSession:
+            def __init__(self, path, sess_options=None, providers=None):
+                self.path = path
+
+            def get_inputs(self):
+                return [SimpleNamespace(name="input_ids"), SimpleNamespace(name="attention_mask")]
+
+            def get_outputs(self):
+                return [SimpleNamespace(name="last_hidden_state")]
+
+            def get_providers(self):
+                return ["CPUExecutionProvider"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            path, digest = self._graph(folder)
+            _tiny_tokenizer().save(str(folder / "tokenizer.json"))
+            (folder / "pooling.json").write_bytes(b'{"pooling": "cls"}\n')
+            files = {
+                name: {"sha256": sha256_file(folder / name)}
+                for name in ("model.fp32.onnx", "tokenizer.json", "pooling.json")
+            }
+            _manifest(folder, files)
+            with (
+                mock.patch.dict(artifacts.VARIANT_SHA256, {"fp32": digest}),
+                mock.patch.dict(artifacts.PINNED_SHA256, {}, clear=True),
+                mock.patch.object(onnxruntime, "InferenceSession", FakeSession),
+            ):
+                embedder = OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1)
+            self.assertEqual(embedder.model_sha256, hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertEqual(embedder.model_sha256, digest)
 
     def test_load_refuses_a_symlinked_graph(self) -> None:
         source = artifact_dir()

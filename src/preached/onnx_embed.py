@@ -38,8 +38,9 @@ log = logging.getLogger(__name__)
 def _open_hashed_graph(path: Path, expected: str, pinned: str) -> tuple[int, str]:
     """Open ``path`` without following a symlink; check and hash it through that fd.
 
-    Returns the open fd. The caller hands ``/proc/self/fd/N`` to ORT, so ORT
-    reopens the inode that was hashed here. Nobody but root or this euid may
+    Returns the open fd and the sha256 hex of the bytes read through it
+    (the digest ``OnnxEmbedder.model_sha256`` reports). The caller hands
+    ``/proc/self/fd/N`` to ORT, so ORT reopens the inode that was hashed here. Nobody but root or this euid may
     be able to change that inode or the directory entry pointing at it: the
     directory and the file are owned by root or the euid with no group or
     world write, and the file is a regular file with one link (the
@@ -250,7 +251,7 @@ class OnnxEmbedder:
         # verify_manifest skipped the graph hash; the manifest digest and
         # the pin are checked here, on the fd ORT loads.
         expected = verified.manifest["files"][filename]["sha256"]
-        fd, _ = _open_hashed_graph(folder / filename, expected, VARIANT_SHA256[chosen])
+        fd, graph_sha = _open_hashed_graph(folder / filename, expected, VARIANT_SHA256[chosen])
         try:
             session = ort.InferenceSession(
                 f"/proc/self/fd/{fd}",
@@ -280,6 +281,8 @@ class OnnxEmbedder:
             threads=threads,
         )
         embedder.output_name = session.get_outputs()[0].name
+        # Hex digest of the graph bytes hashed on the fd ORT loaded. No path.
+        embedder.model_sha256 = graph_sha
         return embedder
 
     def encode_queries(self, queries: list[str]) -> np.ndarray:

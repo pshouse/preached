@@ -28,6 +28,7 @@ import asr_chunks  # noqa: E402
 from preached.privacy import _open_private_dir, read_private_file  # noqa: E402
 from preached.youtube.pipeline import write_private_review  # noqa: E402
 from test_privacy_wire import FILLER, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 ITEMS = [{"text": "Invented Person", "reason": "test"}]
 
@@ -42,6 +43,11 @@ class Victim:
         self.file = self.dir / "victim.txt"
         self.file.write_text("keep me\n")
         os.chmod(self.file, 0o644)
+        # ext4's coarse clock lets a same-tick write keep the recorded mtime, so
+        # pin both to a fixed past value: any later write is then visible.
+        past = 1_000_000_000 * 10**9
+        for path in (self.file, self.dir):
+            os.utime(path, ns=(past, past))
         self.mtimes = (self.file.stat().st_mtime_ns, self.dir.stat().st_mtime_ns)
 
     def untouched(self, case: unittest.TestCase) -> None:
@@ -180,8 +186,8 @@ class AsrChunksSymlinkTests(unittest.TestCase):
     def run_asr(self) -> None:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(self.transcript), "--out", str(self.root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite")],
-                            embedder=embedder)
+                             "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite"), *stub_audio(self.transcript)],
+                            embedder=embedder, coverage=lambda *_a, **_k: [])
 
     def test_symlink_at_the_review_file(self) -> None:
         review = self.index_dir / "church" / "review"
@@ -271,7 +277,7 @@ class MkdirRaceTests(unittest.TestCase):
 
     def test_directory_removed_between_eexist_and_retry_fails_closed_without_looping(self) -> None:
         real_mkdir, real_open = os.mkdir, os.open
-        mkdirs = []
+        mkdirs, opens = [], []
 
         def mkdir(path, mode=0o777, *, dir_fd=None):
             if path == "race":
@@ -284,6 +290,8 @@ class MkdirRaceTests(unittest.TestCase):
             return real_mkdir(path, mode, dir_fd=dir_fd)
 
         def opener(path, flags, *args, **kwargs):
+            if path == "race":
+                opens.append(path)
             if path == "race" and mkdirs and (self.root / "race").exists():
                 (self.root / "race").rmdir()  # the rival removes it before the retry
             return real_open(path, flags, *args, **kwargs)
@@ -292,6 +300,8 @@ class MkdirRaceTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 _open_private_dir(self.root / "race")
         self.assertEqual(len(mkdirs), 1)
+        # the first open (missing), then one retry after EEXIST; never a third
+        self.assertEqual(len(opens), 2, opens)
 
     def test_intermediate_component_swapped_fails_closed(self) -> None:
         for create in (True, False):
