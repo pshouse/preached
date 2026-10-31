@@ -351,3 +351,54 @@ Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/chec
 - The same text was updated in `eval/pool/pool-2026-10-30.jsonl` and `eval/review/review-2026-10-30.csv`. `reports/EVAL-DELEAK.md` still quotes the old wording as history.
 
 **Tests.** `uv run python -m unittest discover -s tests`: 529 tests, 0 failures. `uv lock --check`: `Resolved 79 packages`, exit 0.
+
+## EVAL-NITS-FIX (CTO round 1 on PR #22)
+
+Docs and eval data only. `origin/main` (`9e5c054`) was merged first (merge commit `966d142`). No rebase, no force-push, no new dependency, no model change.
+
+| Item | Commit |
+| --- | --- |
+| Must-fix 1: `scripts/check_title_leak.py` docstring now says "3 or more letters" (the EVAL-NITS edit had not landed); the EVAL-NITS note above is corrected | `0f46d25`, `c3ea000` |
+| Must-fix 2: `adb419ec` and `73d86bda` are sha256 hashes, not git blobs. Current `search/abstain.toml`: sha256 `adb419ec`, git blob `38e5d4bc`, bytes unchanged. `73d86bda` is the previous version (blob `8d51609c`, commit `86ec71a`). Reworded at the top-level finding and in the CTO cross-check table; the shipped calibration did not change | `c3ea000` |
+| Must-fix 3: `q-satan` family re-pooled with the final `q-satan-plain` wording; the 62 chunks that were newly pooled were read and judged; 4 grade-1 labels added; bench rerun; review CSV rows regenerated | `7a0d7dc` |
+| Should-fix 1: `q-satan-plain` reworded (below). `check_title_leak.py`: 25 plain checked, 0 leaking | `0f46d25` |
+| Should-fix 2: synonym test now covers `enemy`, `enemies`, `trick`, `tricked`, `deceive`, `deception`; `deceive` and `deception` added to the `wesley-042` synonyms | `0f46d25`, `7a0d7dc` |
+| Should-fix 3: `eval/timestamps.py` uses `open_readonly` | `0f46d25` |
+| Should-fix 4: `eval/README.md` says the `-plain` rewrites were written by an LLM agent | `c3ea000` |
+| Nit: stale "PR not opened" line removed from this report | `c3ea000` |
+| Nit: `eval/pool.py` exits with `pool.py: missing index PATH. Build the index first ...` instead of a traceback. It also gains `--family ID ...`, which re-pools only those families and replaces their records in place | `0f46d25` |
+
+**Wording.** Now: "Something keeps pulling me away from God and wearing me down until I want to give up. How do I stand firm?" The intermediate wording ("... and the wrong choices look so good ...") is gone from the pool file and the CSV; its text never sits next to rankings from another wording. Pool record `q-satan` now holds rankers for the final text of both `q-satan` and `q-satan-plain`.
+
+**Re-pool.** `uv run --group bench eval/pool.py --family q-satan`. The `q-satan` ranker lists were identical to the old pool (deterministic); the `q-satan-plain` lists changed. The family's pool stayed at 150 chunks, but 62 of them were not in the old pool and had never been judged. I read all 62 and proposed 4 grade-1 labels, each with a quote and a reason, like the other labels. The other 58 got no label (off-topic, a different device, or already covered by an existing label such as `wesley-072-c0053`). Two commands applied them: `eval/apply_grades.py --check` (no problems), then `eval/apply_grades.py --pool eval/pool/pool-2026-10-30.jsonl /cache/eval-pool/2026-10-30/grades`. Only `q-satan` and `q-satan-plain` changed in `eval/questions.jsonl` (same 19 grade-1 labels on both). `eval/validate.py`: all graded quotes match.
+
+New labels (all `status: "proposed"`, `found_by: "llm-proposed:claude"`; an LLM judged them and **Patrick has not confirmed them**):
+
+| passage_id | chunk | note |
+| --- | --- | --- |
+| `q-satan-g1-16` | `wesley-042-c0019` | Satan wears down peace and joy with fear; keep your eye on Christ |
+| `q-satan-g1-17` | `wesley-078-c0043` | cry to the Strong for strength against the world and powers of darkness |
+| `q-satan-g1-18` | `wesley-078-c0048` | fight the good fight of faith, stand fast in liberty |
+| `q-satan-g1-19` | `wesley-019-c0055` | watch and pray always so inward sin does not regain dominion |
+
+**Bench, `q-satan-plain` alone** (`--questions` with only that item, `--allow-cached`; strict = grade 2 only is 0.000 for every row both times; lenient adds grade-1; `hit@10_lenient` is 1.000 in both runs except where noted):
+
+| model | mode | before: R@5 / MRR@10 / nDCG@10 (lenient) | after: R@5 / MRR@10 / nDCG@10 (lenient) |
+| --- | --- | --- | --- |
+| granite-english-r2 (default) | hybrid_rrf | 0.000 / 0.143 / 0.051 | 0.000 / 0.167 / 0.054 |
+| granite-english-r2 | dense | 0.062 / 0.333 / 0.076 | 0.100 / 0.500 / 0.210 |
+| granite-english-r2 | hybrid_weighted | 0.062 / 0.250 / 0.066 | 0.050 / 0.333 / 0.179 |
+| embeddinggemma-2 | dense | 0.062 / 0.250 / 0.066 | 0.050 / 0.333 / 0.076 |
+| embeddinggemma-2 | hybrid_rrf | 0.000 / 0.143 / 0.051 | 0.000 / 0.125 / 0.048 |
+| embeddinggemma-2 | hybrid_weighted | 0.062 / 0.200 / 0.059 | 0.000 / 0.125 / 0.048 |
+| arctic-embed-l | dense | 0.062 / 0.200 / 0.059 | 0.100 / 1.000 / 0.256 |
+| arctic-embed-l | hybrid_rrf | 0.000 / 0.000 / 0.000 (hit@10 0) | 0.000 / 0.100 / 0.044 |
+| arctic-embed-l | hybrid_weighted | 0.000 / 0.125 / 0.048 | 0.050 / 0.500 / 0.141 |
+
+"Before" is the head `632dca4` wording with its labels; "after" is the final wording with the 4 new labels. One question is one data point, not a trend. Full runs: `eval/results/2026-10-30-nits.{json,md}` and `eval/results/2026-10-30-abstain-nits.{json,md}`. `search/abstain.toml` was not written (no `--write-calibration`); the shipped Granite floor is unchanged at 0.8129.
+
+**Tests and lock.** `uv run python -m unittest discover -s tests`: 559 tests, 0 failures (the count includes tests that came in with the `origin/main` merge). `uv lock --check`: `Resolved 79 packages`, exit 0.
+
+**Review CSV.** `eval/review/review-2026-10-30.csv` was regenerated in full; only the `q-satan` (#17) and `q-satan-plain` (#18) rows differ from before. Those two rows alone are in `eval/review/review-2026-10-30-q-satan-rows.csv` (with the comment line and header) so the sheet can be updated by pasting. The four new proposals appear in the "proposed grade-1 passages" cell of both rows.
+
+**Head.** The head SHA is the commit that adds this section (`git log -1` on `feat/eval-nits`).
