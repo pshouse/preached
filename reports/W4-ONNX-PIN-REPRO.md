@@ -667,3 +667,54 @@ On 2026-10-31 at 16:29 ET, during a mutant run, a test removed and rewrote the s
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ````
+
+## r3d. Main-side hunks of #72, #69 and #75 in DEPLOY.md and test_deploy_alerts.py (99-WB)
+
+Question: did resolving merge conflicts with `git checkout --ours` (in 99-W7Z) drop main-side hunks from #72, #69 or #75 in `docs/DEPLOY.md` or `tests/test_deploy_alerts.py`? **No. Every hunk is present in HEAD (`92c38fb` before this section), so nothing was re-applied and no cite moved.** This commit adds only this section.
+
+Method. `origin/main` (`a6a27bb`) is an ancestor of HEAD (0 behind), so a main-side line that was dropped would show up as a `-` line in `git diff origin/main..HEAD`. In both files, every `-` line there is one of two things. Either it is a cite whose only change is its line numbers (the branch adds 23 lines to `app/server.py`), or it is one of two rewrites made by this branch: the D2 row and the D1/D2 traceback sentence (`9af1484`, `5d6284d`, missing-graph form), and the tree-naming sentence. I also checked each PR on its own. For each one I took `git diff <merge>^1..<merge> -- <file>` (#72: `abdada3..f75bbcb`, #69: `f75bbcb..ebffabb`, #75: `ebffabb..a6a27bb`) and looked up every `+` line of every hunk in the HEAD file. A hunk counts as "exact" when its line is unchanged, "re-pinned" when it matches with only digits changed (the cite moved with `app/server.py` and is checked by `tests.test_deploy_alerts`), and "superseded" when the branch rewrote it, in which case the text is quoted below. In `CITED`, all 46 of main's `app/server.py` pin strings are in HEAD, and the branch adds 5 more (`:300`, `:306-312`, `:868`, `:869`, `:1348-1349`).
+
+| PR | File | Hunk (main side) | Summary | In HEAD |
+|---|---|---|---|---|
+| #72 | DEPLOY.md | -178,2 | `TimeoutStopSec`: `DRAIN_TIMEOUT_S` / `REQUEST_TIMEOUT_S` cites | 178-179 (re-pinned `:244`, `:238`) |
+| #72 | DEPLOY.md | -193,2 | stuck-stop range, church close, `stopped cleanly` cites | 193-194 (re-pinned) |
+| #72 | DEPLOY.md | -580 | **Connections row: keep-alive hand-over** (peer at cap takes its oldest idle keep-alive after 1 s, NAT/IPv6 /64 note) | 580 (exact) |
+| #72 | DEPLOY.md | -653, -655 | writer-lock item: `church side paused` cite, retry backoff `CHURCH_RETRY_*` | 653, 655 (re-pinned) |
+| #72 | DEPLOY.md | -719,2 / -723 / -728 / -730 | church refusal cites, searcher-build refusal and lock, paused | 719-720, 723, 728, 730 (re-pinned) |
+| #72 | DEPLOY.md | -734 / -736,2 / -740,2 / -743,2 / -746 | `start` closure, failed-start cites, pause ended/cleared | 734, 736-737, 740-741, 743-744, 746 (re-pinned) |
+| #72 | DEPLOY.md | -751,2 | `log_startup_pause` and its call site | 751-752 (re-pinned) |
+| #72 | DEPLOY.md | -786 | `logging.basicConfig` cite | 786 (re-pinned) |
+| #72 | DEPLOY.md | -791 | **Infra yaml sha `42dd7e7c762a…4d24`** (25 rules) | 791 (exact) |
+| #72 | DEPLOY.md | -794,4 | tree sentence "main after the R4-COND re-pin, plus the keep-alive hand-over" | superseded at 794-796 ("main with the keep-alive hand-over (#72), the port-busy hard fail (#69) and the regex pins (#75), plus the ONNX pin fix") |
+| #72 | DEPLOY.md | -803,6 / -859,2 | church alert table rows 1-7 cites | 802-807, 858-859 (re-pinned) |
+| #72 | DEPLOY.md | -877,9 | D1, D2, D2b, D3-D7, stamp rows | 876-885: re-pinned, plus a D2 row superseded by the branch's two-form row (its "with a traceback" became "in two forms…"; every other sentence kept) and a new "D2 detail" row |
+| #72 | DEPLOY.md | -892 / -894,2 | D4 refusal; D1/D2b reload cites | 892, 894-895 (re-pinned) |
+| #72 | DEPLOY.md | -897,2 | "D2 (`:853`) fires only at startup. D1 and D2 at startup still carry a traceback" | 897-899: re-pinned, and the branch adds "except D2's missing-graph form (`:868`), which has none" |
+| #72 | DEPLOY.md | -900 / -905,2 / -910 / -914,3 / -918,6 | stamp outage, `stopped cleanly`, "Other lines" table | 901, 906-907, 911 (exact), 915-917, 919-924 (re-pinned) |
+| #72 | test_deploy_alerts.py | -67,46 | `CITED` server.py pins (46) | 67-117: all 46 strings present, re-pinned |
+| #69 | DEPLOY.md | -193,2 | **port-busy `server_close` guard**: +3 on the stuck-stop range `:3255-3273`, `:3269`, `:3271` | 193-194 (re-pinned `:3278-3296`, `:3292`, `:3294`) |
+| #69 | DEPLOY.md | -719,2 / -736 | church refusal cites +3 (`:2889`, `:2896`, `:2907`) | 719-720, 736 (re-pinned `:2912`, `:2919`, `:2930`) |
+| #69 | DEPLOY.md | -752 | `log_startup_pause` call site `:2821` | 752 (re-pinned `:2844`) |
+| #69 | DEPLOY.md | -786 | `basicConfig` `:3076` | 786 (re-pinned `:3099`) |
+| #69 | DEPLOY.md | -795,2 | tree sentence "…plus the keep-alive hand-over (#72) and the port-busy hard fail (#69)" | superseded at 795-796 (names #72, #69, #75; tree-relative, no sha) |
+| #69 | DEPLOY.md | -802 / -881 | church row 1 cites; D5 stuck-stop `:3259` / `:3254` | 802, 882 (re-pinned `:3282` / `:3277`) |
+| #69 | DEPLOY.md | -904,2 / -913 / -917,4 | `stopped cleanly`, `church-opened`, `listening on` and the rest of "Other lines" | 906-907, 915, 919-922 (re-pinned) |
+| #69 | test_deploy_alerts.py | -101,12 | `CITED` pins `2817`-`3271` (+3) | 106-117 (re-pinned) |
+| #75 | DEPLOY.md | -821 | **regex marker `<!-- regex: side-access -->`** on the `/api/side` candidate regex | 821 (exact) |
+| #75 | test_deploy_alerts.py | none | #75 made no change to this file | n/a |
+
+Re-applied in commit: none, since no hunk was missing. #75's own test, `tests/test_deploy_regex.py`, is not one of the two files in scope. Its only `-` line against `a6a27bb` is `EXPECTED_PATTERNS`, which this branch widened to add `D2` (line 41), so that is not a drop either.
+
+Cites (rule 4): no file cited in DEPLOY.md changed in r3d, so there was nothing to re-pin. `tests.test_deploy_alerts tests.test_deploy_regex` (scratch caches, `PREACHED_REQUIRE_DENO=1`): `Ran 17 tests`, `OK (skipped=1)` (the skip is the infra yaml, which is absent).
+
+Full suite: `PREACHED_REQUIRE_DENO=1` with `PREACHED_CACHE`, `HF_HOME`, `PREACHED_ONNX_DIR`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR` and `TORCH_HOME` all under `/tmp/r3d/suite.mT0u/`, and `/cache` mounted read-only (`unshare -rm` + ro bind, mapped back to uid 1000) → **`Ran 1053 tests in 232.617s`, `OK (skipped=10)`**. That is 0 failures and 0 errors, so 0 `test_every_cited_file_line_holds_its_string` failures. The 10 skips:
+- 6 in `test_embed_backend`: there are no granite ONNX artifacts in the scratch dir.
+- 1 in `test_eval_leak`: the scratch cache has no chunked corpus.
+- 2 in `test_onnx_pin_repro`: `ExportIsByteIdenticalTests` and `MutantGraphTests`, with no real artifacts in the scratch cache.
+- 1 in `test_deploy_regex`: the infra yaml is absent.
+
+r3c had 11 skips. The difference is `test_shutdown.LoadedSigtermTests`, which skipped in r3c because its scratch `PREACHED_ONNX_DIR` was never created. This time the directory was created (empty), so both of its tests ran and passed. `uv lock --check` (scratch `UV_CACHE_DIR`): `Resolved 79 packages`, OK.
+
+Cache snapshot: `find /cache -printf '%p\t%s\t%T@\n' | sort`, taken before the suite and after the last command. Both listings have 132604 entries. sha256 before `7d38bb40…96b4`, after `a366776c…c754`. Paths: no change. Sizes: the only changes are three deno WAL files that grew (`/cache/xdg/deno/{dep_analysis,v8_code}_cache_v2-wal`; `node_analysis_cache_v2` kept its size). Mtimes changed on `/cache/index/cc-speech.sqlite-shm`, the `/cache/models` directory (same single entry, `granite-english-r2-onnx`; nothing under it is newer than the first snapshot), `/cache/xdg/Microsoft/DeveloperTools/.onnxruntime/onnxruntime.db-{shm,wal}` and `/cache/xdg/deno/*_cache_v2{,-shm,-wal}`. None of this came from this run. The suite ran with `/cache` read-only (`touch /cache/models/.r3d-probe` inside the same wrapper fails with `Read-only file system`) and with every cache env var pointed at scratch. The writes are other agents that share `/cache` (SQLite shm/WAL, deno and onnxruntime caches). No model, index or ONNX file changed.
+
+Branch state after this commit: 0 behind, 33 ahead of `origin/main` (`a6a27bb`). In-scope diff stat below.
