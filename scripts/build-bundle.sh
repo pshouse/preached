@@ -30,6 +30,18 @@ if [ -z "$OUT" ] || [ "$#" -gt 1 ]; then
   echo "usage: scripts/build-bundle.sh OUT_DIR" >&2
   exit 2
 fi
+case "$OUT" in
+  */)
+    echo "OUT_DIR must not end with a slash (the tar name is OUT_DIR.tar.gz)" >&2
+    exit 2
+    ;;
+esac
+
+# A tar from an earlier build is not this build's tar. Every failure below
+# must leave no tar.gz, so remove it before any check can fail. Temp files
+# from killed builds go too (exact name: TAR.partial.<pid>).
+TAR="${OUT}.tar.gz"
+rm -f -- "$TAR" "$TAR".partial.[0-9]*
 
 LIBRARY=${PREACHED_LIBRARY:-wesley}
 INDEX=${PREACHED_INDEX:-/cache/index/${LIBRARY}.sqlite}
@@ -181,18 +193,13 @@ VERIFY=
 cleanup() {
   rm -rf "$SNAP" "$TAR_TMP" ${VERIFY:+"$VERIFY"}
 }
-TAR="${OUT}.tar.gz"
 TAR_TMP="${TAR}.partial.$$"
 trap cleanup EXIT
 cp -a --reflink=never "$OUT/." "$SNAP/"
 
-# A tar from an earlier build is not this build's tar. A failed build must
-# leave no tar.gz at all, so remove it before trying.
-rm -f "$TAR"
-
 # GNU tar can exit 1 ("file changed as we read it") even on a static
 # snapshot, and gzip then leaves a complete-looking file. So: write to a
-# temp name, retry once on exit 1, check the archive against
+# temp name, retry on exit 1 (three attempts), check the archive against
 # MANIFEST.sha256, and only then rename it into place.
 make_tar() {
   local status
@@ -212,20 +219,26 @@ verify_tar() {
   VERIFY=$(mktemp -d)
   tar -xzf "$TAR_TMP" -C "$VERIFY" || return 1
   (cd "$VERIFY" && sha256sum --check --strict --quiet MANIFEST.sha256) || return 1
+  cmp -s "$VERIFY/MANIFEST.sha256" "$OUT/MANIFEST.sha256" || return 1
   # Nothing in the archive beyond the manifest and the files it lists.
   local listed archived
   listed=$( (cut -c 67- "$VERIFY/MANIFEST.sha256"; echo MANIFEST.sha256) | LC_ALL=C sort)
-  archived=$(cd "$VERIFY" && find . -type f -printf '%P\n' | LC_ALL=C sort)
+  archived=$(cd "$VERIFY" && find . ! -type d -printf '%P\n' | LC_ALL=C sort)
   [ "$listed" = "$archived" ] || return 1
   rm -rf "$VERIFY"
   VERIFY=
 }
 
+# Likely cause of exit 1: the box's snapshot daemon creating and deleting
+# *.box-store-snap-* files next to the index and model while tar reads them.
+# Three attempts, each still gated by verify_tar below.
+attempt=1
 make_tar
-if [ "$TAR_STATUS" -eq 1 ] && [ "$GZIP_STATUS" -eq 0 ]; then
-  echo "tar exited 1 (file changed as we read it?); retrying once" >&2
+while [ "$TAR_STATUS" -eq 1 ] && [ "$GZIP_STATUS" -eq 0 ] && [ "$attempt" -lt 3 ]; do
+  attempt=$((attempt + 1))
+  echo "tar exited 1 (file changed as we read it?); attempt ${attempt} of 3" >&2
   make_tar
-fi
+done
 if [ "$TAR_STATUS" -ne 0 ] || [ "$GZIP_STATUS" -ne 0 ]; then
   echo "tar failed (tar ${TAR_STATUS}, gzip ${GZIP_STATUS}); no archive written" >&2
   exit 1

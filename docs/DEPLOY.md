@@ -98,11 +98,17 @@ sorted. The tar is taken from a private copy of the directory (not a reflink
 of the live index or model), ustar, owner 0, mtime `2026-10-30 00:00:00` UTC,
 and `gzip -n`. The same index, model bytes, and source tree produce the same
 manifest and the same tar. GNU tar sometimes exits 1 ("file changed as we
-read it") even on that private copy, so the script retries the tar once on
-exit 1, checks the archive against `MANIFEST.sha256`, and only then renames
-it into place. A failed build exits non-zero and leaves no `.tar.gz` (it also
-removes one from an earlier build). If `/tmp/preached-bundle.tar.gz` exists,
-the build succeeded. Check it with:
+read it") even on that private copy. The likely cause is this box's own
+snapshot daemon, which creates and deletes `*.box-store-snap-*` files next to
+the index and model files while tar reads them (5 of 10 real Wesley builds
+hit it; one retry recovered each). The script makes up to three tar attempts
+on exit 1, checks each archive against `MANIFEST.sha256`, and only then
+renames it into place. If it prints `tar failed`, rerun the build; do not
+investigate. The script removes any `.tar.gz` (and leftover
+`.tar.gz.partial.<pid>` files) from an earlier build before it checks
+anything, so a failed build exits non-zero and leaves no `.tar.gz`. If
+`/tmp/preached-bundle.tar.gz` exists, the build succeeded. Pass the output
+directory without a trailing slash. Check it with:
 
 ```bash
 cd /tmp/preached-bundle && sha256sum -c MANIFEST.sha256
