@@ -14,4 +14,4 @@ SIGTERM at imports (existing, now rc 0), between mkdtemp and handler, inside mai
 
 Full suite: 705 tests, OK. gitleaks: not installed on this machine, NOT run.
 No new dependencies.
-PR: see the PR head SHA below.
+PR: not opened (`gh` is not installed here); branch `chore/w3-deploy-sigterm-nits` pushed. Head SHA of the code commit: e3d7abd85e0ea1373cc92c5442a88486abe5da67 (the report commit follows it).
