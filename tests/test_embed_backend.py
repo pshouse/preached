@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -193,8 +195,8 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(verified.manifest["revision"], GRANITE_REVISION)
             self.assertEqual(verified.manifest["pooling"], "cls")
             self.assertEqual(verified.variant, "fp32")
-            self.assertIn("model.fp32.onnx", verified.files)
-            self.assertNotIn("model.int8.onnx", verified.files)
+            # The graph is hashed by streaming; only the small files are kept.
+            self.assertEqual(set(verified.files), {"tokenizer.json", "pooling.json"})
 
     def test_fp32_without_int8_verifies(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -202,7 +204,7 @@ class ManifestTests(unittest.TestCase):
             self._write(folder, corrupt=False, include_int8=False)
             verified = verify_manifest(folder, variant="fp32", enforce_pins=False)
             self.assertEqual(verified.variant, "fp32")
-            self.assertEqual(set(verified.files), {"model.fp32.onnx", "tokenizer.json", "pooling.json"})
+            self.assertEqual(set(verified.files), {"tokenizer.json", "pooling.json"})
 
     def test_listed_int8_is_not_required_for_fp32(self) -> None:
         # The on-disk manifest names int8. A Sprite that only copied fp32
@@ -249,6 +251,17 @@ class ManifestTests(unittest.TestCase):
             self._write(folder, corrupt=True)
             with self.assertRaises(ArtifactError):
                 verify_manifest(folder)
+
+    def test_hash_graph_false_skips_only_the_graph_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self._write(folder, corrupt=True)
+            verified = verify_manifest(folder, enforce_pins=False, hash_graph=False)
+            self.assertEqual(set(verified.files), {"tokenizer.json", "pooling.json"})
+            (folder / "model.fp32.onnx").unlink()
+            with self.assertRaises(ArtifactError) as ctx:
+                verify_manifest(folder, enforce_pins=False, hash_graph=False)
+            self.assertIn("model.fp32.onnx", str(ctx.exception))
 
     def test_missing_file_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -698,10 +711,11 @@ class RealOnnxTests(unittest.TestCase):
             self.skipTest("granite onnx artifacts are not in /cache")
         from preached.onnx_embed import OnnxEmbedder
 
-        # The graph is opened with O_NOFOLLOW, so hard-link it (same filesystem).
-        with tempfile.TemporaryDirectory(dir=source.parent) as tmp:
+        # The graph is opened with O_NOFOLLOW and must have one link, so copy
+        # it. The temp folder sits outside the ONNX root, on disk (not tmpfs).
+        with tempfile.TemporaryDirectory(dir=source.parent.parent) as tmp:
             folder = Path(tmp)
-            os.link(source / "model.fp32.onnx", folder / "model.fp32.onnx")
+            shutil.copyfile(source / "model.fp32.onnx", folder / "model.fp32.onnx")
             for name in ("tokenizer.json", "pooling.json"):
                 (folder / name).symlink_to(source / name)
             manifest = json.loads((source / "manifest.json").read_text())
@@ -730,17 +744,68 @@ class RealOnnxTests(unittest.TestCase):
         self.assertTrue(np.isfinite(vectors).all())
 
 
-if __name__ == "__main__":
-    unittest.main()
+def _pb_varint(value: int) -> bytes:
+    out = bytearray()
+    while True:
+        byte = value & 0x7F
+        value >>= 7
+        if value:
+            out.append(byte | 0x80)
+        else:
+            out.append(byte)
+            return bytes(out)
+
+
+def _pb_bytes(field: int, payload: bytes) -> bytes:
+    return _pb_varint(field << 3 | 2) + _pb_varint(len(payload)) + payload
+
+
+def _pb_int(field: int, value: int) -> bytes:
+    return _pb_varint(field << 3) + _pb_varint(value)
+
+
+def _onnx_model(tensor: bytes | None = None, *, in_subgraph: bool = False) -> bytes:
+    """A minimal ModelProto: one initializer, raw data inline unless ``tensor`` is given."""
+    if tensor is None:
+        tensor = _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_bytes(9, b"\0" * 16)
+    graph = _pb_bytes(5, tensor)
+    if in_subgraph:
+        # An If node whose then_branch graph holds the tensor.
+        attribute = _pb_bytes(1, b"then_branch") + _pb_bytes(6, graph)
+        node = _pb_bytes(4, b"If") + _pb_bytes(5, attribute)
+        graph = _pb_bytes(1, node)
+    return _pb_int(1, 8) + _pb_bytes(7, graph)
+
+
+def _fd_count() -> int:
+    return len(os.listdir("/proc/self/fd"))
+
+
+def _with_uid(st: os.stat_result, uid: int) -> os.stat_result:
+    fields = list(st[:10])
+    fields[4] = uid
+    return os.stat_result(fields)
 
 
 class FdLoadTests(unittest.TestCase):
-    def _graph(self, folder: Path, data: bytes = b"graph bytes") -> tuple[Path, str]:
+    def _graph(self, folder: Path, data: bytes | None = None) -> tuple[Path, str]:
         import hashlib
 
+        data = _onnx_model() if data is None else data
+        folder.chmod(0o755)
         path = folder / "model.fp32.onnx"
         path.write_bytes(data)
+        path.chmod(0o644)
         return path, hashlib.sha256(data).hexdigest()
+
+    def _refused(self, path: Path, digest: str, needle: str) -> None:
+        from preached.onnx_embed import _open_hashed_graph
+
+        before = _fd_count()
+        with self.assertRaises(ArtifactError) as ctx:
+            _open_hashed_graph(path, digest, digest)
+        self.assertIn(needle, str(ctx.exception))
+        self.assertEqual(_fd_count(), before)
 
     def test_matching_file_returns_an_open_fd(self) -> None:
         from preached.onnx_embed import _open_hashed_graph
@@ -750,32 +815,131 @@ class FdLoadTests(unittest.TestCase):
             fd, actual = _open_hashed_graph(path, digest, digest)
             try:
                 self.assertEqual(actual, digest)
-                self.assertEqual(Path(f"/proc/self/fd/{fd}").read_bytes(), b"graph bytes")
+                self.assertEqual(Path(f"/proc/self/fd/{fd}").read_bytes(), _onnx_model())
             finally:
                 os.close(fd)
 
     def test_symlinked_graph_is_refused(self) -> None:
-        from preached.onnx_embed import _open_hashed_graph
-
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             real, digest = self._graph(folder)
             link = folder / "link.onnx"
             link.symlink_to(real)
-            with self.assertRaises(ArtifactError):
-                _open_hashed_graph(link, digest, digest)
+            self._refused(link, digest, "cannot be opened")
 
     def test_wrong_manifest_or_pin_digest_is_refused_and_fd_closed(self) -> None:
         from preached.onnx_embed import _open_hashed_graph
 
         with tempfile.TemporaryDirectory() as tmp:
             path, digest = self._graph(Path(tmp))
-            before = len(os.listdir("/proc/self/fd"))
+            before = _fd_count()
             with self.assertRaises(ArtifactError):
                 _open_hashed_graph(path, "0" * 64, digest)
             with self.assertRaises(ArtifactError):
                 _open_hashed_graph(path, digest, "0" * 64)
-            self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+            self.assertEqual(_fd_count(), before)
+
+    def test_group_or_world_writable_graph_is_refused(self) -> None:
+        for mode in (0o664, 0o646, 0o666):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as tmp:
+                path, digest = self._graph(Path(tmp))
+                path.chmod(mode)
+                self._refused(path, digest, "group- or world-writable")
+
+    def test_graph_owned_by_another_uid_is_refused(self) -> None:
+        from unittest import mock
+
+        from preached import onnx_embed
+
+        real_fstat = os.fstat
+
+        def fstat(fd):
+            st = real_fstat(fd)
+            if stat.S_ISDIR(st.st_mode):
+                return st
+            return _with_uid(st, os.geteuid() + 1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp))
+            with mock.patch.object(onnx_embed.os, "fstat", side_effect=fstat):
+                # The directory passes, so the refusal is the file's.
+                self._refused(path, digest, "is owned by uid")
+
+    def test_hard_linked_graph_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            path, digest = self._graph(folder)
+            os.link(path, folder / "elsewhere.onnx")
+            self._refused(path, digest, "2 hard links")
+
+    def test_fifo_at_the_graph_path_is_refused_without_hanging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            folder.chmod(0o755)
+            path = folder / "model.fp32.onnx"
+            os.mkfifo(path, 0o644)
+            self._refused(path, "0" * 64, "not a regular file")
+
+    def test_group_or_world_writable_directory_is_refused(self) -> None:
+        for mode in (0o775, 0o757, 0o777, 0o1777):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as tmp:
+                folder = Path(tmp)
+                path, digest = self._graph(folder)
+                folder.chmod(mode)
+                try:
+                    self._refused(path, digest, "ONNX directory")
+                finally:
+                    folder.chmod(0o700)
+
+    def test_directory_owned_by_another_uid_is_refused(self) -> None:
+        from unittest import mock
+
+        from preached import onnx_embed
+
+        real_fstat = os.fstat
+
+        def fstat(fd):
+            st = real_fstat(fd)
+            if stat.S_ISDIR(st.st_mode):
+                return _with_uid(st, os.geteuid() + 1)
+            return st
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp))
+            with mock.patch.object(onnx_embed.os, "fstat", side_effect=fstat):
+                self._refused(path, digest, "ONNX directory")
+
+    def test_missing_directory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self._refused(Path(tmp) / "gone" / "model.fp32.onnx", "0" * 64, "directory cannot be opened")
+
+    def test_external_data_is_refused(self) -> None:
+        location = _pb_bytes(1, b"location") + _pb_bytes(2, b"3")
+        cases = {
+            "data_location": _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_int(14, 1),
+            "external_data": _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_bytes(13, location),
+        }
+        for label, tensor in cases.items():
+            for in_subgraph in (False, True):
+                with self.subTest(case=label, in_subgraph=in_subgraph):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        data = _onnx_model(tensor, in_subgraph=in_subgraph)
+                        path, digest = self._graph(Path(tmp), data)
+                        self._refused(path, digest, "external data")
+
+    def test_inline_subgraph_tensor_is_accepted(self) -> None:
+        from preached.onnx_embed import _open_hashed_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp), _onnx_model(in_subgraph=True))
+            fd, _ = _open_hashed_graph(path, digest, digest)
+            os.close(fd)
+
+    def test_malformed_or_empty_graph_is_refused(self) -> None:
+        for data in (b"graph bytes", b"", _onnx_model()[:-3]):
+            with self.subTest(data=data[:12]), tempfile.TemporaryDirectory() as tmp:
+                path, digest = self._graph(Path(tmp), data)
+                self._refused(path, digest, "ONNX graph")
 
     def test_trim_heap_never_raises(self) -> None:
         from unittest import mock
@@ -785,6 +949,18 @@ class FdLoadTests(unittest.TestCase):
         self.assertIsInstance(onnx_embed.trim_heap(), bool)
         with mock.patch.object(onnx_embed.ctypes, "CDLL", side_effect=OSError):
             self.assertFalse(onnx_embed.trim_heap())
+
+    def test_real_graph_has_no_external_data(self) -> None:
+        from preached.onnx_embed import _uses_external_data
+
+        path = artifact_dir() / "model.fp32.onnx"
+        if not path.is_file():
+            self.skipTest("granite onnx artifacts are not in /cache")
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            self.assertFalse(_uses_external_data(fd))
+        finally:
+            os.close(fd)
 
     def test_load_refuses_a_symlinked_graph(self) -> None:
         source = artifact_dir()
@@ -801,3 +977,7 @@ class FdLoadTests(unittest.TestCase):
             # verify_manifest follows the symlink; the fd open must not.
             with self.assertRaises(ArtifactError):
                 OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1)
+
+
+if __name__ == "__main__":
+    unittest.main()

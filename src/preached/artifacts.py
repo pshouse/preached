@@ -94,10 +94,13 @@ def load_manifest(directory: Path | None = None) -> dict:
 
 @dataclass(frozen=True)
 class VerifiedArtifacts:
-    """Manifest plus the bytes of the files the selected variant needs.
+    """Manifest plus the bytes of the small files the selected variant needs.
 
-    Callers load the session and the tokenizer from ``files`` so a file
-    cannot change between the hash and the open.
+    ``files`` holds ``tokenizer.json`` and ``pooling.json``; callers build
+    the tokenizer from those bytes so the file cannot change between the
+    hash and the read. The graph is hashed by streaming and its bytes are
+    not kept: the loader re-hashes the fd ORT reads
+    (``onnx_embed._open_hashed_graph``).
     """
 
     manifest: dict
@@ -126,14 +129,20 @@ def verify_manifest(
     *,
     variant: str | None = None,
     enforce_pins: bool = True,
+    hash_graph: bool = True,
 ) -> VerifiedArtifacts:
-    """Check the files this variant needs and return their bytes.
+    """Check the files this variant needs; return the small files' bytes.
 
     Files for other graphs are not opened. ``enforce_pins`` (the runtime
     default) also requires the variant's graph and ``tokenizer.json`` to
     match the constants above. Tests of the manifest hash itself pass
     ``enforce_pins=False``. A manifest that points the variant at a
     different file name is refused either way.
+
+    The graph is hashed by streaming, never held. ``hash_graph=False``
+    skips that hash (the graph must still exist and have a manifest
+    digest): ``OnnxEmbedder.load`` hashes the graph on the fd ORT loads, so
+    hashing it here too would only add a second read.
     """
     folder = directory or artifact_dir()
     manifest = load_manifest(folder)
@@ -150,13 +159,20 @@ def verify_manifest(
         path = folder / name
         if not path.is_file():
             raise ArtifactError(f"ONNX artifact missing: {name}")
-        data, actual = _read_hashed(path)
+        if name == graph_name:
+            if not hash_graph:
+                continue
+            # Streamed: holding the graph here would double the load peak.
+            data, actual = None, sha256_file(path)
+        else:
+            data, actual = _read_hashed(path)
         if actual != expected:
             raise ArtifactError(f"ONNX sha256 mismatch for {name}")
         pinned = VARIANT_SHA256[chosen] if name == graph_name else PINNED_SHA256.get(name)
         if enforce_pins and pinned is not None and actual != pinned:
             raise ArtifactError(f"ONNX sha256 for {name} is not the pinned digest")
-        verified[name] = data
+        if data is not None:
+            verified[name] = data
     try:
         pooling = json.loads(verified["pooling.json"])
     except json.JSONDecodeError as exc:
