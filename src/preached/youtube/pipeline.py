@@ -124,7 +124,10 @@ def _apply_metadata(video: Video, meta: dict) -> Video:
     duration = meta.get("duration")
     duration_s = video.duration_s
     if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
-        duration_s = float(duration)
+        try:
+            duration_s = float(duration)
+        except OverflowError:  # an integer too large for a float: keep the listed duration
+            pass
     return replace(video, title=title, published=published, duration_s=duration_s)
 
 

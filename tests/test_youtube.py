@@ -625,18 +625,22 @@ class ImportTests(unittest.TestCase):
 
     def test_bad_stated_duration_is_unchecked(self) -> None:
         # A missing, zero, negative, non-numeric or non-finite duration stores NULL coverage (never approvable),
-        # as the church path does; a valid duration is the control.
+        # as the church path does; a valid duration is the control. True reaches Video.duration_s directly; a string
+        # or an integer too large for a float is only ever metadata (the Video keeps None), so those rows check the
+        # metadata is ignored rather than crashing the import.
         for duration, checked in (
             (None, False),
             (0, False),
             (-5, False),
             ("40", False),
+            (True, False),
+            (2**1024, False),
             (float("nan"), False),
             (float("inf"), False),
             (40, True),
         ):
             with self.subTest(duration=duration):
-                video = Video("samplevid01", "On Mercy", None if isinstance(duration, str) else duration, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
+                video = Video("samplevid01", "On Mercy", None if isinstance(duration, str) or duration == 2**1024 else duration, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
                 seen = []
 
                 def coverage(_path, _words, *, duration_s=None):
@@ -653,7 +657,7 @@ class ImportTests(unittest.TestCase):
                             "license": "Creative Commons Attribution license (reuse allowed)",
                             "upload_date": "20240602",
                             "title": "On Mercy",
-                            "duration": duration,
+                            "duration": duration if duration != 40 else None,
                         },
                         downloader=lambda _video, dest: dest / "samplevid01.m4a",
                         transcriber=lambda _path: sample_words(12.2),

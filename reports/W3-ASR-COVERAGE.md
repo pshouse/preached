@@ -288,7 +288,7 @@ uv lock --check
 
 ### Open issues and risks
 
-- **YouTube path without a duration:** `pipeline` passes `video.duration_s`, which can be None if yt-dlp metadata lacks it. A download cut short after the last word would then pass, the same hole S-d closed on the church path. Not changed here because S-d named only the church path. Recommended follow-up: treat a missing YouTube duration as `Unchecked` too.
+- ~~**YouTube path without a duration:** `pipeline` passes `video.duration_s`, which can be None if yt-dlp metadata lacks it. A download cut short after the last word would then pass, the same hole S-d closed on the church path. Not changed here because S-d named only the church path. Recommended follow-up: treat a missing YouTube duration as `Unchecked` too.~~ **Closed by PR #31.**
 - **c01.tiny.1t-b** is not available here. S-a is tested on a synthetic stretched word and on Wesley; please confirm on that run.
 - **AMX:** this box has no AMX, so N2 is tested with a fake `/proc/cpuinfo` only. The value list is the CTO's, from MKL verbose output on the AMX box.
 - **Visible-index memory:** a gated `Searcher` holds an in-memory FTS5 copy of the visible text plus a copy of the visible vectors. For a church library of a few hundred sermons that is tens of MB.
