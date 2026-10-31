@@ -15,7 +15,7 @@ Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `repor
 **Labeller access and limitations (CTO #43 r2).**
 
 - The labeller gets only `reports/W3-LABEL-SHEET.csv`, not the repo. `reports/W3-LABEL-SHEET-KEY-source.json` (renamed from `w3_label_sheet_source.json`) holds the withheld data and must not be opened by the labeller; git history (f3d2142, 3b9441b) still contains the earlier unblinded sheets.
-- Labeller exposure to earlier unblinded sheet: PENDING Patrick's answer. (If Patrick opened an earlier unblinded sheet, record it here as a limitation.)
+- Labeller exposure to earlier unblinded sheet: none. Patrick (the labeller) stated on 2026-10-31 that he did not open either earlier unblinded sheet (f3d2142, 3b9441b). Self-reported; not independently verifiable.
 - Style confound: 4 of the 10 blind-written (`plain-blind`) questions are all-lowercase, with no apostrophes, commas or question marks (a single period at most); none of the 8 plain questions is all-lowercase. A labeller can therefore tell some blind-written questions from plain ones by style. Counts verified from the KEY (groups `plain-blind` vs `plain`).
 
 ## Frozen change
