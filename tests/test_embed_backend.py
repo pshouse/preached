@@ -290,7 +290,7 @@ def _seed_granite(path: Path):
 
 class FallbackTests(unittest.TestCase):
     def test_missing_artifacts_serve_bm25(self) -> None:
-        from app.server import FALLBACK_NOTE, load_search
+        from app.server import MISSING_GRAPH_NOTE, load_search
 
         with tempfile.TemporaryDirectory() as tmp:
             previous = os.environ.get("PREACHED_ONNX_DIR")
@@ -306,7 +306,7 @@ class FallbackTests(unittest.TestCase):
                 else:
                     os.environ["PREACHED_ONNX_DIR"] = previous
             self.assertIsNone(encode)
-            self.assertEqual(note, FALLBACK_NOTE)
+            self.assertEqual(note, MISSING_GRAPH_NOTE)
 
     def test_bad_hash_serves_bm25(self) -> None:
         from app.server import FALLBACK_NOTE, load_search
