@@ -247,7 +247,7 @@ I rebuilt round-4 head `2eebe78` from `git archive` (so it is clean by construct
 
 ### Notes and limits
 
-- The first commit, `7623d48`, carries the whole new test file, so the S3 and S7 tests in it fail until `c9d0786`. Every later commit passes.
+- The first commit, `7623d48`, carries the whole new test file, so the S3 and S7 tests in it fail until `c9d0786`. The full suite was run at `c6a7056` (614 OK), not at each commit.
 - Importing `app.server` sets `sys.pycache_prefix` and `sys.dont_write_bytecode` for that whole process. That includes the unit tests. The round-4 bytecode test now computes the in-tree `.pyc` path directly, not with `importlib.util.cache_from_source`, which follows the prefix.
 - SIGTERM now exits 0 through the same path as Ctrl-C ("stopping", then the socket and index close), instead of dying on the signal.
 - A direct start still runs the bundle's `.py` files before checking them (see the DEPLOY subsection). `serve.sh` stays the launcher DEPLOY tells operators to use.
