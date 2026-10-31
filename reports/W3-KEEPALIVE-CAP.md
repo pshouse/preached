@@ -154,7 +154,7 @@ N3: a request that arrives on the idle socket at the moment of the hand-over is 
 
 S3: that row now describes the same-peer hand-over, and says that clients sharing a NAT or an IPv6 /64 can close each other's idle keep-alives, which is intended.
 
-`church-alerts.yaml` is not on this machine (`/workspace/infra-ops/preached/alerts/church-alerts.yaml` is absent). TODO for CoS: supply the full sha256 of Infra Ops' current yaml (the task names the prefix `42dd7e7c`, 25 rules, all `enabled: false`) and replace the guide's `447cd7e283cba91169e695feb6d39bdf7642522e3d1c587e959f879ef7ea4f29`. The guide is unchanged on that point.
+The guide now cites `42dd7e7c…4d24` (`42dd7e7c762a575a3333c676d6560b545dd0443da67c9cef4243df1487794d24`) as supplied by CoS, and that yaml has 25 rules, 0 `enabled: true`.
 
 `uv lock --check`: `Resolved 79 packages in 0.61ms`. No lockfile change.
 

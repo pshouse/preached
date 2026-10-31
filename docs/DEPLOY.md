@@ -788,7 +788,7 @@ message. Patterns are anchored to the start of the line. A
 `logging.exception` call adds a traceback on the following lines.
 
 Infra Ops' yaml is `church-alerts.yaml`, sha256
-`447cd7e283cba91169e695feb6d39bdf7642522e3d1c587e959f879ef7ea4f29`: 25 rules,
+`42dd7e7c762a575a3333c676d6560b545dd0443da67c9cef4243df1487794d24`: 25 rules,
 every one `enabled: false`. It supersedes the 21-rule file
 `c1841274aed5d778b9fa3b9b417a456c53a38555fb9403cb072deba68b676f0e` (pinned to
 main `76990e8`, drafted at `0f2b553`). The line numbers below are this
