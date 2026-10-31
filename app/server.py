@@ -1492,6 +1492,16 @@ def make_handler(app: App):
             if self._has_unread_body():
                 self.close_connection = True
 
+        def end_headers(self) -> None:
+            # Every body is built before its headers end. When this is the
+            # last response on the connection, free the slot before any of
+            # it is sent: a client that reads it and reconnects at once must
+            # not be refused for its own old slot.
+            closing = getattr(getattr(self, "server", None), "closing", None)
+            if self.close_connection and closing is not None:
+                closing(self.connection)
+            super().end_headers()
+
         def handle_one_request(self) -> None:
             # Headers share one deadline. The handler then runs under the
             # normal socket timeout, so a search is not cut off by the
@@ -2121,6 +2131,10 @@ class PreachedServer(ThreadingHTTPServer):
             self._forget(request)
             self._conns.pop(request, None)
 
+    def closing(self, request) -> None:
+        """The last response on this connection is about to be sent."""
+        self._release_connection(request)
+
     def mark_reading(self, request) -> None:
         """A request line arrived; its headers are still coming."""
         with self._conn_lock:
@@ -2191,6 +2205,12 @@ class PreachedServer(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self._release_connection(request)
+
+    def shutdown_request(self, request) -> None:
+        # Free the slot before the close, so a client that reconnects as soon
+        # as it sees the socket close is not refused for its own old slot.
+        self._release_connection(request)
+        super().shutdown_request(request)
 
     def _reject_over_cap(self, request) -> None:
         body = b'{"error":"unavailable"}'

@@ -146,6 +146,10 @@ class _Served(unittest.TestCase):
             **kwargs,
         )
         server = make_server(app, "127.0.0.1", 0)
+        # Joined by server_close, so no handler still uses the index when the
+        # connection below is closed.
+        server.daemon_threads = False
+        server.block_on_close = True
         if max_connections is not None:
             server.max_connections = max_connections
         if max_per_client is not None:
@@ -158,7 +162,8 @@ class _Served(unittest.TestCase):
             server.scarce_idle_s = scarce_idle_s
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        # Cleanups run last-in first-out: stop the server, then close the index.
+        # Cleanups run last-in first-out: stop the server, join its handler
+        # threads, then close the index.
         self.addCleanup(connection.close)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
@@ -386,12 +391,39 @@ class SlotFairnessTests(_Served):
             self.assertTrue(entered.acquire(timeout=3))
         # Nothing can be closed: a search is refused, /healthz gets the reserve.
         self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.4")[0], 503)
+        # The reserve was freed before that 503 was sent, not after the close.
+        self.assertEqual(server._reserved_total, 0)
         status, headers, _ = _get(port, "/healthz", source="127.0.0.4")
         self.assertEqual(status, 200)
         self.assertEqual(headers["connection"], "close")
         release.set()
         for sock in busy:
             self.assertEqual(_read_response(sock)[0], 200)
+
+    def test_slot_is_free_once_a_closing_response_is_read(self) -> None:
+        port, _app, server = self._serve(max_connections=4, max_per_client=1)
+        # Hold each handler after its response is written and before the
+        # socket is closed: the window a fast client reconnects in.
+        handler = server.RequestHandlerClass
+        real_finish = handler.finish
+
+        def slow_finish(self) -> None:
+            time.sleep(0.3)
+            real_finish(self)
+
+        handler.finish = slow_finish
+        self.addCleanup(setattr, handler, "finish", real_finish)
+        for path in ("/healthz", "/api/search?q=grace", "/nope"):
+            with self.subTest(path=path):
+                sock = _connect(port, "127.0.0.2")
+                self.addCleanup(sock.close)
+                _send(sock, path, close=True)
+                self.assertIsNotNone(_read_response(sock)[0])
+                # No wait: the slot went before the first byte of the response.
+                self.assertEqual(server._conn_total, 0)
+                self.assertEqual(server._conn_by_ip, {})
+                # The same peer, at its cap of 1, gets straight back in.
+                self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 200)
 
     def test_no_churn_between_equal_clients(self) -> None:
         # Every peer holds one: a newcomer is refused, not swapped in.
@@ -855,9 +887,24 @@ class DocAndScriptTests(unittest.TestCase):
             start = text.index(heading)
             gate = text[start : text.index("\n## ", start + 1) if heading.startswith("## ") else text.index("\n## ", start)]
             sign_off = gate.index("CTO sign-off")
-            for item in ("RSS fix (#26)", "1.62 GB", "Audit logging (", "tailscale funnel", "/64 IPv6 keying ("):
+            for item in (
+                "RSS fix (#26)",
+                "`fallback: false`",
+                "group- or world-writable",
+                "Stale-bytecode drill",
+                "python -m app.server",
+                "Audit logging (",
+                "journald",
+                "tagged",
+                "1Password path",
+                "Fuzzing",
+                "secret scanning in CI",
+                "tailscale funnel",
+                "/64 IPv6 keying (",
+            ):
                 with self.subTest(heading=heading, item=item):
                     self.assertLess(gate.index(item), sign_off)
+            self.assertNotIn("1.62 GB", gate)
             self.assertIn("PREACHED_TRUSTED_PROXIES=127.0.0.1", gate)
             self.assertIn("direct", gate[gate.index("PREACHED_TRUSTED_PROXIES=127.0.0.1") - 200 :])
         start = text.index("### Known gaps")
@@ -866,6 +913,7 @@ class DocAndScriptTests(unittest.TestCase):
             with self.subTest(item=item):
                 self.assertIn(item, gaps)
         self.assertNotIn("keyed per address, not per /64", gaps)
+        self.assertIn("client IP (the real one behind a trusted proxy), the path and\n  the time are stored", text)
         logs = next(line for line in text.splitlines() if line.startswith("| Logs |"))
         self.assertIn("`peer key method path status`", logs)
         self.assertIn("suppressed=N", logs)
