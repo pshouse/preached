@@ -197,9 +197,36 @@ Kept, inside the one pre-registered sentence only: hit@10 51 vs 50, paired diffe
 
 ## 6. Diff scope
 
-`git merge origin/main` was already up to date (section opening). No files outside the task were edited: `README.md`, `src/preached/search.py`, `tests/test_api_path.py`, and this report.
+`git merge origin/main` was already up to date (opening). The four files of this task are the diff against the ONNX base. `origin/main..HEAD` also lists the ONNX PR, because this branch starts at that PR and `origin/main` does not contain it yet. **This PR must merge after the ONNX PR.** Open it with base `fix/w4-onnx-pin-repro` so the review diff is these four files.
 
-`git diff --stat origin/fix/w4-onnx-pin-repro..HEAD` is the in-scope check, because that commit is the branch base. `git diff --stat origin/main..HEAD` also lists the ONNX PR's files (`app/server.py`, `docs/adr/0001-onnx-export-determinism.md`, `reports/W4-ONNX-PIN-REPRO.md`, `scripts/export_onnx.py`, `src/preached/artifacts.py`, `tests/test_embed_backend.py`, `tests/test_onnx_pin_repro.py`). Those belong to the PR this one must follow. The stat blocks are filled in the commit that records them.
+`git diff --stat origin/fix/w4-onnx-pin-repro..HEAD` at `89e47ed` (the commit before this paragraph):
+
+```
+ README.md                       |  70 ++++++++++---
+ reports/W4-README-QUICKSTART.md | 214 ++++++++++++++++++++++++++++++++++++++++
+ src/preached/search.py          |  12 ++-
+ tests/test_api_path.py          |   9 ++
+ 4 files changed, 285 insertions(+), 20 deletions(-)
+```
+
+`git diff --stat origin/main..HEAD` at the same commit:
+
+```
+ README.md                                |  70 +++--
+ app/server.py                            |  23 ++
+ docs/adr/0001-onnx-export-determinism.md |  43 ++++
+ reports/W4-ONNX-PIN-REPRO.md             | 138 ++++++++++
+ reports/W4-README-QUICKSTART.md          | 214 ++++++++++++++++
+ scripts/export_onnx.py                   |  84 +++++-
+ src/preached/artifacts.py                |  21 +-
+ src/preached/search.py                   |  12 +-
+ tests/test_api_path.py                   |   9 +
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 427 +++++++++++++++++++++++++++++++
+ 11 files changed, 1017 insertions(+), 28 deletions(-)
+```
+
+The seven extra paths versus `origin/main` are the ONNX PR (`59b44fb`): `app/server.py`, `docs/adr/0001-onnx-export-determinism.md`, `reports/W4-ONNX-PIN-REPRO.md`, `scripts/export_onnx.py`, `src/preached/artifacts.py`, `tests/test_embed_backend.py`, `tests/test_onnx_pin_repro.py`. They are not edits made on this branch. The commit that adds this paragraph changes only this file's insertion count. The push-time stats are re-run and must still list only those paths.
 
 ## 7. Open issues
 
