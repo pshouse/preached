@@ -142,7 +142,18 @@ That writes `/tmp/preached-bundle/` and `/tmp/preached-bundle.tar.gz`.
 sorted. The tar is taken from a private copy of the directory (not a reflink
 of the live index or model), ustar, owner 0, mtime `2026-10-30 00:00:00` UTC,
 and `gzip -n`. The same index, model bytes, and source tree produce the same
-manifest and the same tar. Check it with:
+manifest and the same tar. GNU tar sometimes exits 1 ("file changed as we
+read it") even on that private copy. The likely cause is this box's own
+snapshot daemon, which creates and deletes `*.box-store-snap-*` files next to
+the index and model files while tar reads them (5 of 10 real Wesley builds
+hit it; one retry recovered each). The script makes up to three tar attempts
+on exit 1, checks each archive against `MANIFEST.sha256`, and only then
+renames it into place. If it prints `tar failed`, rerun the build; do not
+investigate. The script removes any `.tar.gz` (and leftover
+`.tar.gz.partial.<pid>` files) from an earlier build before it checks
+anything, so a failed build exits non-zero and leaves no `.tar.gz`. If
+`/tmp/preached-bundle.tar.gz` exists, the build succeeded. Pass the output
+directory without a trailing slash. Check it with:
 
 ```bash
 cd /tmp/preached-bundle && sha256sum -c MANIFEST.sha256
@@ -235,9 +246,32 @@ It does guarantee:
   and every `preached` module are compiled from their source files. A
   planted `__pycache__` (for example one that makes `bundle_problem` return
   None) is not read; `main` then finds it and refuses to start. The
-  directory is removed at exit. A SIGTERM handler is installed on the line
-  after the directory is made, so SIGTERM during start-up imports, and
-  later during serving, still removes it.
+  directory is removed at exit. When `app/server.py` runs as a script,
+  SIGTERM is blocked from before the directory is made until its atexit
+  hook and handler are installed, so a SIGTERM at any point removes it.
+  Importing the module installs no handler.
+- **Stop and exit codes.** SIGTERM is a requested stop. While serving it
+  stops in order: no new connections, wait for the handler threads (a
+  search in progress finishes; an idle keep-alive connection is closed),
+  close the index, release the ONNX session. The process then exits 0 with
+  no traceback and the bytecode directory removed. `tests/test_shutdown.py`
+  proves this with 16 clients searching (bm25 and hybrid), on an idle
+  server, and with an idle keep-alive connection open. A SIGTERM after the
+  handler is installed and before serving exits 0 and serves nothing in the
+  cases tested: during the imports, in `main`'s start-up checks, and during
+  an `onnxruntime` import that turns it into `ImportError` (the server
+  records the request and does not serve the BM25 fallback). Same file and
+  `tests/test_deploy.py`.
+  Not covered: a SIGTERM in the first moments of start, before the first
+  lines of `app/server.py` install the handler, kills the process by the
+  signal (status 143 to systemd). Add `SuccessExitStatus=143` if a unit may
+  be stopped that early. If a handler thread is still running 10 s after
+  the stop (`DRAIN_TIMEOUT_S`), the index is left open, the process waits
+  for that thread and exits 1.
+  Ctrl-C (SIGINT) while serving stops the same way and exits 0. During
+  `main`'s start-up checks it exits 130 with no traceback; during the
+  module imports before `main` it prints a traceback and dies by SIGINT.
+  A refusal (`error: ...`) exits 1.
 - `main` runs the whole bundle check (`bundle_problem`, then the model
   directory check) before it opens the index or binds the port.
 
@@ -381,14 +415,21 @@ In the process:
   stay mode `0444`, which is what the table above says. The owner of the
   tree has to already be the service user. A root-owned tree is not chmod'd
   by the start script.
-- The `model/` directory and every file in it must be owned by root or the
-  service uid, and the directory must be `0755` or stricter (no group or
-  world write); files must be `0444`/`0644` or stricter. `check_servable`
-  does not look at `model/`; the ONNX loader does, and it does not stop the
-  server. If it refuses, the reason is logged and the server serves BM25
-  only, with `/healthz` `dense: false`. The pre-cutover check is `/healthz`
-  showing `dense: true`. A real cause is `model/` copied with `rsync` or
-  `cp -r` from a checkout made under `umask 002`, which leaves it `0775`.
+- The `model/<revision>/` directory (the revision pinned in
+  `src/preached/artifacts.py`) and every file in it must be owned by root or
+  the service uid, and the directory must be `0755` or stricter (no group or
+  world write); files must be `0444`/`0644` or stricter. The loader checks
+  that one directory, not `model/` above it (files are pinned by hash, so a
+  loose `model/` does not let a file be swapped, but keep it `0755` anyway).
+  `check_servable` does not look at any of this; the ONNX loader does, and it
+  does not stop the server. If it refuses, the reason is logged and the
+  server serves BM25 only, with `/healthz` `dense: false`. The pre-cutover
+  check is `/healthz` showing `dense: true`. A real cause is `model/`
+  copied with `cp -r` or `rsync -r` from a checkout made under
+  `umask 002`: `cp -r` makes new directories `0775` under that umask. Copy
+  with `cp -a` or `rsync -a` from a tree whose directories are already `0755`,
+  which keeps the source modes, or run the `chmod` lines above
+  afterward.
   (A tar from `scripts/build-bundle.sh` stores `0755`/`0444`, and extraction
   under `umask 002`, `000`, or `022` all gave `755`/`755`/`444`, so the
   tar itself does not cause this.) Run the `chmod` lines above and check

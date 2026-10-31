@@ -35,6 +35,8 @@ Security choices:
   is not covered (docs/DEPLOY.md)
 - a bundle's index is frozen: a change after start is 503 until restart
 - a NUL or control character in the request line or a header value is a 400
+- SIGTERM drains the handler threads before the index and the ONNX session
+  close (serve_until_stopped); nothing is served after a SIGTERM
 """
 
 from __future__ import annotations
@@ -50,18 +52,58 @@ import tempfile
 # bundle_problem. An old __pycache__ in the tree can match a source file's
 # size and mtime and would run in place of that source. A fresh, private,
 # empty prefix means every one of those modules is compiled from source,
-# and nothing is written. Removed at exit; SIGTERM becomes an exit from here
-# on (main later turns it into a clean stop of the serve loop).
+# and nothing is written. Removed at exit. Run as a script, SIGTERM is a
+# requested stop from here on; it is blocked from before the directory
+# exists until the atexit hook and handler are in place, so no SIGTERM can
+# leak it. An importer (tests, scripts) gets the directory and atexit hook
+# but no signal handler.
+#
+# Before serving, the handler raises SystemExit(0). It also records the
+# request, because an import can swallow that exception (onnxruntime turns
+# it into ImportError and the server would fall back to BM25); main checks
+# the record before it serves. While serving, the handler raises nothing: it
+# asks the serve loop to stop from another thread, so the accept thread is
+# never interrupted half way through starting a handler thread, and main
+# drains the handlers before it closes the index (serve_until_stopped).
 sys.dont_write_bytecode = True
-sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
-atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
-signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(128 + signal.SIGTERM))
+_SCRIPT = __name__ == "__main__"
+_STOP: dict = {"requested": False, "server": None, "stopping": False}
+
+
+def _on_stop_signal(_signum, _frame) -> None:
+    _STOP["requested"] = True
+    server = _STOP["server"]
+    if server is None:
+        sys.exit(0)
+    if _STOP["stopping"]:
+        return
+    _STOP["stopping"] = True
+    import threading
+
+    try:
+        threading.Thread(target=server.shutdown, name="preached-stop", daemon=True).start()
+    except RuntimeError:  # interpreter already shutting down
+        pass
+
+
+if _SCRIPT and hasattr(signal, "pthread_sigmask"):
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+    if _SCRIPT:
+        signal.signal(signal.SIGTERM, _on_stop_signal)
+finally:
+    # Also when mkdtemp fails: SIGTERM must not stay blocked.
+    if _SCRIPT and hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 import argparse  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
+import socket  # noqa: E402
 import sqlite3  # noqa: E402
 import stat  # noqa: E402
 import threading  # noqa: E402
@@ -180,6 +222,9 @@ REQUEST_TIMEOUT_S = 15
 # One deadline for the request line and all headers together. A per-read
 # timeout let a client drip one header line at a time and hold a thread.
 HEADER_DEADLINE_S = 15.0
+# On stop, how long main waits for handler threads before it gives up
+# without closing the index (PreachedServer.drain).
+DRAIN_TIMEOUT_S = 10.0
 # Thread per connection. These caps are the backstop for that.
 DEFAULT_MAX_CONNECTIONS = 32
 DEFAULT_MAX_CLIENT_CONNECTIONS = 4
@@ -598,6 +643,7 @@ def default_loader(
     encode.variant = getattr(embedder, "variant", None)
     encode.threads = getattr(embedder, "threads", None)
     encode.model_sha256 = getattr(embedder, "model_sha256", None)
+    encode.close = getattr(embedder, "close", None)
     return searcher, encode
 
 
@@ -861,6 +907,16 @@ class App:
         self.backend = None
         self.floor = None
         self.fallback_note = note
+
+    def close_embedder(self) -> None:
+        """Release the query embedder (the ONNX session). Only after every
+        handler thread has stopped: nothing may be inside it."""
+        encode = self._encode
+        self._encode = None
+        self.encode = None
+        close = getattr(encode, "close", None)
+        if callable(close):
+            close()
 
     def _reload_cached_index(self) -> None:
         """Rebuild cached rows. fp32 pairing is checked again on this path."""
@@ -1853,7 +1909,11 @@ class PreachedServer(ThreadingHTTPServer):
     """
 
     allow_reuse_address = True
-    daemon_threads = True
+    # Handler threads are not daemons and are kept (block_on_close), so
+    # neither server_close nor interpreter exit runs while a handler still
+    # uses the index or the ONNX session. drain() stops them first.
+    daemon_threads = False
+    block_on_close = True
     max_connections = DEFAULT_MAX_CONNECTIONS
     max_connections_per_client = DEFAULT_MAX_CLIENT_CONNECTIONS
     header_deadline_s = HEADER_DEADLINE_S
@@ -1928,6 +1988,81 @@ class PreachedServer(ThreadingHTTPServer):
             request.sendall(message)
         except OSError:
             pass
+
+    def _live(self) -> dict:
+        """Sockets with a handler running, and whether drain has begun.
+
+        Created on first use (the way socketserver creates ``_threads``)."""
+        return vars(self).setdefault("_live_state", {"lock": threading.Lock(), "socks": set(), "draining": False})
+
+    def finish_request(self, request, client_address) -> None:
+        # Runs on the handler thread. After drain has begun a new handler
+        # serves nothing; process_request_thread still closes the socket.
+        live = self._live()
+        with live["lock"]:
+            if live["draining"]:
+                return
+            live["socks"].add(request)
+        try:
+            super().finish_request(request, client_address)
+        finally:
+            with live["lock"]:
+                live["socks"].discard(request)
+
+    def drain(self, timeout_s: float = DRAIN_TIMEOUT_S) -> list:
+        """Stop accepting and wait for every handler thread. Call after the
+        serve loop has stopped. Returns the threads still alive at the bound.
+
+        The listening socket closes first. A handler waiting for the next
+        request on a keep-alive connection is woken with SHUT_RD (it reads
+        EOF and ends); a search in progress finishes and sends its response.
+        At half the bound the remaining sockets are shut both ways.
+        """
+        try:
+            self.socket.close()
+        except OSError:
+            pass
+        live = self._live()
+        with live["lock"]:
+            live["draining"] = True
+            socks = list(live["socks"])
+        for sock in socks:
+            _shutdown_socket(sock, socket.SHUT_RD)
+        threads = vars(self).get("_threads")  # set on the first request
+        if threads is None:
+            return []
+        # A thread appended but never started (an exception on the accept
+        # thread between the two) cannot be joined; socketserver's own join
+        # would raise. Drop it here so server_close does not.
+        for thread in list(threads):
+            if thread.ident is None:
+                threads.remove(thread)
+                try:
+                    self.shutdown_request(thread._args[0])
+                except Exception:
+                    pass
+        deadline = time.monotonic() + timeout_s
+        forced = False
+        for thread in list(threads):
+            while thread.is_alive():
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                if not forced and left <= timeout_s / 2:
+                    forced = True
+                    with live["lock"]:
+                        socks = list(live["socks"])
+                    for sock in socks:
+                        _shutdown_socket(sock, socket.SHUT_RDWR)
+                thread.join(min(left, 0.1))
+        return [thread for thread in threads if thread.is_alive()]
+
+
+def _shutdown_socket(sock, how: int) -> None:
+    try:
+        sock.shutdown(how)
+    except OSError:
+        pass
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
@@ -2177,17 +2312,13 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
         raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
 
 
-def _stop_on_sigterm(_signum, _frame) -> None:
-    raise KeyboardInterrupt
-
-
 def main(argv: list[str] | None = None) -> None:
     # No PREACHED_ALLOW_ROOT. Root is refused here, not only in serve.sh.
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         raise SystemExit("refusing to serve as root")
-    # SIGTERM (systemd stop, serve.sh's parent) stops like Ctrl-C, so the
-    # socket and index close and atexit removes the bytecode prefix above.
-    signal.signal(signal.SIGTERM, _stop_on_sigterm)
+    # SIGTERM (systemd stop, serve.sh's parent) is handled at the top of this
+    # file as SystemExit(0) in every phase, so the socket and index close and
+    # atexit removes the bytecode prefix.
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -2344,16 +2475,47 @@ def main(argv: list[str] | None = None) -> None:
             getattr(app.encode, "threads", None),
         )
     server = make_server(app, args.host, args.port)
+    serve_until_stopped(server, app, connection)
+
+
+def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
+    """Serve until SIGTERM (or Ctrl-C), then stop in order: stop accepting,
+    wait for the handler threads (bounded), close the index, release the
+    ONNX session. Closing the index under a running handler segfaulted, and
+    finalising with a session mid-run aborted in ONNX Runtime.
+
+    Run as a script, SIGTERM and SIGINT stop the serve loop from another
+    thread (``_on_stop_signal``). A SIGTERM that arrived before this point,
+    even one an import swallowed, means nothing is served.
+    """
+    _STOP["server"] = server
+    if _SCRIPT and threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, _on_stop_signal)
     try:
-        serve_forever(server)
+        if not _STOP["requested"]:
+            serve_forever(server)
     except KeyboardInterrupt:
-        logging.info("stopping")
+        pass
     finally:
-        server.server_close()
-        connection.close()
-        if church_connection is not None:
-            church_connection.close()
+        _STOP["stopping"] = True  # a later SIGTERM changes nothing
+        logging.info("stopping")
+        stuck = server.drain()
+        if stuck:
+            # Closing the index or the session now could crash the process.
+            # Leave both open; interpreter exit waits for these threads.
+            logging.error("%d handler thread(s) still running after %.0fs; index left open", len(stuck), DRAIN_TIMEOUT_S)
+        else:
+            server.server_close()
+            connection.close()
+            if app.church_connection is not None:
+                app.church_connection.close()
+            app.close_embedder()
+    if stuck:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:  # Ctrl-C before serving: no traceback
+        sys.exit(130)

@@ -30,6 +30,18 @@ if [ -z "$OUT" ] || [ "$#" -gt 1 ]; then
   echo "usage: scripts/build-bundle.sh OUT_DIR" >&2
   exit 2
 fi
+case "$OUT" in
+  */)
+    echo "OUT_DIR must not end with a slash (the tar name is OUT_DIR.tar.gz)" >&2
+    exit 2
+    ;;
+esac
+
+# A tar from an earlier build is not this build's tar. Every failure below
+# must leave no tar.gz, so remove it before any check can fail. Temp files
+# from killed builds go too (exact name: TAR.partial.<pid>).
+TAR="${OUT}.tar.gz"
+rm -f -- "$TAR" "$TAR".partial.[0-9]*
 
 LIBRARY=${PREACHED_LIBRARY:-wesley}
 INDEX=${PREACHED_INDEX:-/cache/index/${LIBRARY}.sqlite}
@@ -48,7 +60,7 @@ fi
 
 # The serve gate is check_servable. This script has no library allow-list
 # and no path denylist of its own.
-PYTHONPATH="$SOURCE/src:$SOURCE" "$PY" - "$LIBRARY" "$INDEX" <<'PY'
+PYTHONPATH="$SOURCE/src:$SOURCE" "$PY" -P - "$LIBRARY" "$INDEX" <<'PY'
 import sqlite3
 import sys
 from pathlib import Path
@@ -137,10 +149,10 @@ if [ -e "$OUT/model/$REVISION/model.int8.onnx" ]; then
   echo "refusing to ship model.int8.onnx" >&2
   exit 2
 fi
-PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import strip_int8_manifest; strip_int8_manifest(Path(sys.argv[1]))' \
+PYTHONPATH="$SOURCE" "$PY" -P -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import strip_int8_manifest; strip_int8_manifest(Path(sys.argv[1]))' \
   "$OUT/model/$REVISION/manifest.json"
 
-PYTHONPATH="$SOURCE/src:$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
+PYTHONPATH="$SOURCE/src:$SOURCE" "$PY" -P -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
   "$INDEX" "$OUT/index/${LIBRARY}.sqlite"
 
 # The bundle must import on its own: run from the bundle with `python -I`
@@ -166,7 +178,7 @@ find "$OUT/model" -type f -exec chmod 0444 {} +
 # The build stamp marks this tree as a bundle (app/bundle.py). It is a
 # listed file, so deleting it or editing it fails the manifest check, and a
 # tree with no stamp and no .git is refused rather than run as a checkout.
-PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from app.bundle import BUILD_STAMP, stamp_text; Path(sys.argv[1], BUILD_STAMP).write_text(stamp_text(sys.argv[2], sys.argv[3]))' \
+PYTHONPATH="$SOURCE" "$PY" -P -c 'import sys; from pathlib import Path; from app.bundle import BUILD_STAMP, stamp_text; Path(sys.argv[1], BUILD_STAMP).write_text(stamp_text(sys.argv[2], sys.argv[3]))' \
   "$OUT" "$LIBRARY" "$REVISION"
 chmod 0644 "$OUT/PREACHED_BUNDLE"
 
@@ -177,17 +189,65 @@ chmod 0644 "$OUT/MANIFEST.sha256"
 # under GNU tar ("file changed as we read it", exit 1) when the source is
 # written. The snapshot is a full copy and this script does not touch it.
 SNAP=$(mktemp -d)
+VERIFY=
 cleanup() {
-  rm -rf "$SNAP"
+  rm -rf "$SNAP" "$TAR_TMP" ${VERIFY:+"$VERIFY"}
 }
+TAR_TMP="${TAR}.partial.$$"
 trap cleanup EXIT
 cp -a --reflink=never "$OUT/." "$SNAP/"
 
-TAR="${OUT}.tar.gz"
-TZ=UTC tar --format=ustar --sort=name \
-  --mtime='2026-10-30 00:00:00' \
-  --owner=0 --group=0 --numeric-owner \
-  -cf - -C "$SNAP" . | gzip -n > "$TAR"
+# GNU tar can exit 1 ("file changed as we read it") even on a static
+# snapshot, and gzip then leaves a complete-looking file. So: write to a
+# temp name, retry on exit 1 (three attempts), check the archive against
+# MANIFEST.sha256, and only then rename it into place.
+make_tar() {
+  local status
+  set +e
+  TZ=UTC tar --format=ustar --sort=name \
+    --mtime='2026-10-30 00:00:00' \
+    --owner=0 --group=0 --numeric-owner \
+    -cf - -C "$SNAP" . | gzip -n > "$TAR_TMP"
+  status=("${PIPESTATUS[@]}")
+  set -e
+  TAR_STATUS=${status[0]}
+  GZIP_STATUS=${status[1]}
+}
+
+verify_tar() {
+  gzip -t "$TAR_TMP" || return 1
+  VERIFY=$(mktemp -d)
+  tar -xzf "$TAR_TMP" -C "$VERIFY" || return 1
+  (cd "$VERIFY" && sha256sum --check --strict --quiet MANIFEST.sha256) || return 1
+  cmp -s "$VERIFY/MANIFEST.sha256" "$OUT/MANIFEST.sha256" || return 1
+  # Nothing in the archive beyond the manifest and the files it lists.
+  local listed archived
+  listed=$( (cut -c 67- "$VERIFY/MANIFEST.sha256"; echo MANIFEST.sha256) | LC_ALL=C sort)
+  archived=$(cd "$VERIFY" && find . ! -type d -printf '%P\n' | LC_ALL=C sort)
+  [ "$listed" = "$archived" ] || return 1
+  rm -rf "$VERIFY"
+  VERIFY=
+}
+
+# Likely cause of exit 1: the box's snapshot daemon creating and deleting
+# *.box-store-snap-* files next to the index and model while tar reads them.
+# Three attempts, each still gated by verify_tar below.
+attempt=1
+make_tar
+while [ "$TAR_STATUS" -eq 1 ] && [ "$GZIP_STATUS" -eq 0 ] && [ "$attempt" -lt 3 ]; do
+  attempt=$((attempt + 1))
+  echo "tar exited 1 (file changed as we read it?); attempt ${attempt} of 3" >&2
+  make_tar
+done
+if [ "$TAR_STATUS" -ne 0 ] || [ "$GZIP_STATUS" -ne 0 ]; then
+  echo "tar failed (tar ${TAR_STATUS}, gzip ${GZIP_STATUS}); no archive written" >&2
+  exit 1
+fi
+if ! verify_tar; then
+  echo "tar.gz does not match MANIFEST.sha256; no archive written" >&2
+  exit 1
+fi
+mv -- "$TAR_TMP" "$TAR"
 trap - EXIT
 rm -rf "$SNAP"
 
@@ -210,7 +270,7 @@ echo "input source ${SOURCE_REV}"
 echo "input index-file $(sha256sum "$INDEX" | awk '{print $1}')"
 echo "input index-bundled $(sha256sum "$OUT/index/${LIBRARY}.sqlite" | awk '{print $1}')"
 echo "input model-revision ${REVISION}"
-echo "input python $("$PY" -c 'import platform, sqlite3; print(platform.python_version(), "sqlite", sqlite3.sqlite_version)')"
+echo "input python $("$PY" -P -c 'import platform, sqlite3; print(platform.python_version(), "sqlite", sqlite3.sqlite_version)')"
 echo "input uv $(uv --version | awk '{print $2}')"
 echo "input tar $(tar --version | awk 'NR==1 {print $NF}')"
 echo "input gzip $(gzip --version | awk 'NR==1 {print $NF}')"
