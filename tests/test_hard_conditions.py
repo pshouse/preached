@@ -261,7 +261,10 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     ``import sqlite3.dbapi2``, ``from sqlite3 import ...``, ``from _sqlite3
     import ...``, ``from <module> import sqlite3 [as q]`` (S12), ``import
     _sqlite3``, and a ``"sqlite3"`` or ``"_sqlite3"`` string
-    (``__import__``, ``importlib.import_module``). Raw
+    (``__import__``, ``importlib.import_module``). A ``sqlite3`` or
+    ``_sqlite3`` string (also one starting ``sqlite3.`` or ``_sqlite3.``)
+    and the ``<name>.sqlite3`` attribute (``store.sqlite3``) each count as
+    one raw open, on top of the import. Raw
     opens: any reference to ``connect`` or ``dbapi2`` on a sqlite3 name, a
     call to ``Connection``, ``getattr`` on a sqlite3 name, and every name
     imported ``from sqlite3`` other than a safe one. ``unknown`` lists other
