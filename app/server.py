@@ -2452,7 +2452,12 @@ class PreachedServer(ThreadingHTTPServer):
 
     ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
     the cap, the connection is closed on the accept thread with a short 503
-    and no handler thread is started.
+    and no handler thread is started. A request whose Accept includes
+    text/html is a page navigation: that 503 is a static HTML page with a
+    meta refresh of the same delay, so the browser retries. Any other
+    request keeps the JSON body. Only bytes already buffered at accept are
+    read, without waiting; headers not yet arrived get JSON. Nothing from
+    the request is copied in.
 
     Fairness: when every slot is taken, a new connection may take one from a
     peer holding at least two more connections than the newcomer. The
@@ -2734,13 +2739,24 @@ class PreachedServer(ThreadingHTTPServer):
             refusals.flush()
 
     def _reject_over_cap(self, request) -> None:
-        body = b'{"error":"unavailable"}'
+        """503 on the accept thread. No handler is started.
+
+        A page navigation (Accept includes text/html) gets the static HTML
+        page. Everyone else gets the same JSON body as before. The page is
+        a constant: no request byte is copied into it.
+        """
+        if _accept_includes_html(_read_over_cap_headers(request)):
+            body = _OVER_CAP_HTML
+            content_type = b"text/html; charset=utf-8"
+        else:
+            body = b'{"error":"unavailable"}'
+            content_type = b"application/json; charset=utf-8"
         message = (
             b"HTTP/1.1 503 Service Unavailable\r\n"
-            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Content-Type: " + content_type + b"\r\n"
             b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
             b"Connection: close\r\n"
-            b"Retry-After: 1\r\n"
+            b"Retry-After: " + _OVER_CAP_RETRY + b"\r\n"
             b"Cache-Control: no-store\r\n"
             b"\r\n" + body
         )
@@ -2824,6 +2840,69 @@ def _shutdown_socket(sock, how: int) -> None:
         sock.shutdown(how)
     except OSError:
         pass
+
+
+# Retry-After and the meta refresh are this same delay. The page is built
+# from these constants only, so a request cannot change it.
+_OVER_CAP_RETRY = b"1"
+_OVER_CAP_HTML = (
+    b"<!DOCTYPE html><html lang=en><head><meta charset=utf-8>"
+    b'<meta http-equiv="refresh" content="' + _OVER_CAP_RETRY + b'">'
+    b"<title>Unavailable</title></head>"
+    b"<body><p>Unavailable. Retrying.</p></body></html>"
+)
+
+
+def _accept_includes_html(data: bytes) -> bool:
+    """True when a complete header block lists text/html with a nonzero q.
+
+    The type token is compared, not a substring, so ``text/htmlx`` and
+    ``Accept-Language`` do not count. ``text/html;q=0`` is not acceptable
+    (RFC 9110 12.4.2) and does not count either. Every Accept line is read.
+    ``*/*`` and ``text/*`` are not text/html: a client that names no HTML
+    type gets the JSON body. An incomplete block (no blank line yet) is
+    False. Nothing from the block is returned.
+    """
+    head, sep, _rest = data.partition(b"\r\n\r\n")
+    if not sep:
+        return False
+    for line in head.split(b"\r\n")[1:]:
+        if line[:1] in (b" ", b"\t"):
+            continue
+        name, colon, value = line.partition(b":")
+        if not colon or name.strip().lower() != b"accept":
+            continue
+        for part in value.split(b","):
+            media, *params = part.split(b";")
+            if media.strip().lower() != b"text/html":
+                continue
+            if any(_is_q_zero(param) for param in params):
+                continue
+            return True
+    return False
+
+
+_Q_ZERO = re.compile(rb"\s*q\s*=\s*0(\.0*)?\s*", re.IGNORECASE)
+
+
+def _is_q_zero(param: bytes) -> bool:
+    """``q=0``, ``Q=0.000``, `` q = 0. ``: weight zero, not acceptable."""
+    return _Q_ZERO.fullmatch(param) is not None
+
+
+def _read_over_cap_headers(request) -> bytes:
+    """The request bytes already buffered, up to the bound. Never waits.
+
+    One non-blocking recv on the accept thread: a client that has sent
+    nothing yet, or only part of its headers, gets the JSON 503 at once
+    and cannot hold the accept thread. The bytes are consumed rather than
+    peeked so the close after the 503 is a FIN, not a reset for unread data.
+    """
+    try:
+        request.setblocking(False)
+        return request.recv(65536 + MAX_HEADER_BYTES)
+    except OSError:
+        return b""
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
