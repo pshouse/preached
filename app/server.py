@@ -140,6 +140,7 @@ from app.bundle import (  # noqa: E402, F401
 )
 from preached import env  # noqa: E402, F401
 from preached.abstain import church_confidence, compute_signals, floor_for, search_with_confidence  # noqa: E402
+from preached.artifacts import ArtifactMissing  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.library import (  # noqa: E402
@@ -283,6 +284,9 @@ BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
 MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"
 UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"
+# Loud on purpose: a fresh clone without the export otherwise looks like a
+# working server that finds nothing.
+MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"
 INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 REFUSED_ERROR = "index unavailable"
@@ -838,6 +842,10 @@ def load_search(
         # Never pair new query vectors with old document vectors.
         logging.exception(MISMATCH_LOG)
         return Searcher(connection), None, STALE_NOTE
+    except ArtifactMissing as exc:
+        # exc names the missing path and EXPORT_COMMAND.
+        logging.error(MISSING_GRAPH_LOG, exc)
+        return Searcher(connection), None, FALLBACK_NOTE
     except Exception:
         logging.exception(UNAVAILABLE_LOG)
         return Searcher(connection), None, FALLBACK_NOTE

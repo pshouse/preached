@@ -23,7 +23,9 @@ GRANITE_HF_ID = "ibm-granite/granite-embedding-english-r2"
 GRANITE_REVISION = "47ea694b257b703fee9253d75c2b1f2985180498"
 GRANITE_MODEL_KEY = "granite-english-r2"
 
-# sha256 of the bytes under /cache, hashed 2026-10-30. The graph pin is
+# sha256 of the bytes under /cache, hashed 2026-10-30. EXPORT_COMMAND
+# rebuilds this graph byte for byte (it fixes PYTHONHASHSEED; see
+# scripts/export_onnx.py and reports/W4-ONNX-PIN-REPRO.md). The graph pin is
 # keyed by variant, not by whatever file name the manifest writes. A
 # rewritten manifest cannot aim fp32 at another graph.
 FP32_ONNX_SHA256 = "3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9"
@@ -40,6 +42,8 @@ VARIANT_ENV = "PREACHED_ONNX_VARIANT"
 THREADS_ENV = "PREACHED_ORT_INTRA_OP_THREADS"
 
 DEFAULT_ONNX_ROOT = Path("/cache/models/granite-english-r2-onnx")
+# The one step that builds and checks the graph, named in missing-graph errors.
+EXPORT_COMMAND = 'CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py'
 # One intra-op thread. A 1-vCPU Sprite with 4 threads was slower (134 ms
 # p50 vs 56 ms). Set PREACHED_ORT_INTRA_OP_THREADS=4 on a larger CPU.
 DEFAULT_ORT_THREADS = 1
@@ -48,6 +52,14 @@ VARIANTS = tuple(VARIANT_FILES)
 
 class ArtifactError(RuntimeError):
     """The ONNX directory is missing or does not match its manifest."""
+
+
+class ArtifactMissing(ArtifactError):
+    """The manifest or a needed file is absent: the export was never run.
+
+    A file that is present but wrong stays a plain ArtifactError; rebuilding
+    is not the advice for a tampered graph.
+    """
 
 
 def onnx_root() -> Path:
@@ -73,7 +85,7 @@ def load_manifest(directory: Path | None = None) -> dict:
     folder = directory or artifact_dir()
     path = folder / "manifest.json"
     if not path.is_file():
-        raise ArtifactError(f"missing ONNX manifest at {path}")
+        raise ArtifactMissing(f"missing ONNX manifest at {path}; build it with: {EXPORT_COMMAND}")
     try:
         manifest = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
@@ -158,7 +170,7 @@ def verify_manifest(
             raise ArtifactError(f"ONNX manifest sha256 for {name} is missing")
         path = folder / name
         if not path.is_file():
-            raise ArtifactError(f"ONNX artifact missing: {name}")
+            raise ArtifactMissing(f"ONNX artifact missing: {path}; build it with: {EXPORT_COMMAND}")
         if name == graph_name:
             if not hash_graph:
                 continue
