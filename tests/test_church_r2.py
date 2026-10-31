@@ -183,8 +183,13 @@ class ParentDirectorySwapTests(_Root):
         with self.lstat_as({sticky: root_owned}):
             self.assertIsNone(_ancestor_problem(church))
         with self.lstat_as({sticky: root_owned, sticky / "mine": {4: os.geteuid() + 4242}}):
-            # The next component is not ours: the sticky exception does not apply.
-            self.assertIn(f"directory {sticky} {ABOVE} (mode 1777)", _ancestor_problem(church) or "")
+            # The next component is not ours: the sticky exception does not
+            # apply, and the reason names that owner (PR #37 r3 nit).
+            self.assertIn(
+                f"directory {sticky / 'mine'} in sticky directory {sticky} is owned by uid {os.geteuid() + 4242}, "
+                "not the serving uid or root",
+                _ancestor_problem(church) or "",
+            )
         # Sticky but not root-owned (ours): refused.
         self.assertIn(f"directory {sticky} {ABOVE} (mode 1777)", _ancestor_problem(church) or "")
         # Root-owned but not sticky: refused.
@@ -214,7 +219,11 @@ class ParentDirectorySwapTests(_Root):
 
         with patch("preached.library.os.lstat", side_effect=lstat):
             problem = _ancestor_problem(church) or ""
-        self.assertIn(f"directory {sticky} {ABOVE} (mode 1777)", problem)
+        # The reason is the owner below the sticky directory, not its mode (PR #37 r3 nit).
+        self.assertEqual(
+            problem,
+            f"directory {sticky / 'theirs'} in sticky directory {sticky} is owned by uid {other}, not the serving uid or root",
+        )
 
     def test_the_per_request_check_sees_a_directory_made_writable_after_start(self) -> None:
         (self.root / "a" / "b").mkdir(parents=True)
@@ -429,38 +438,59 @@ class AlertStringTests(_Root):
 
 
 class ChurchSigtermTests(_Root):
-    """MF1: with a church side open, SIGTERM drains, closes both connections, and exits 0."""
+    """MF1, and PR #37 r3 S3: SIGTERM with a church search in flight drains it,
+    closes both connections, and exits 0, with no 'dropped' line and no traceback.
 
-    def test_church_server_exits_zero_on_sigterm(self) -> None:
-        import http.client
+    The in-flight search is held inside its church check (before any church
+    read), so a close moved ahead of the drain makes that check read a closed
+    database and log ``church side dropped``, which would page Infra Ops on
+    every restart.
+    """
+
+    def test_church_server_exits_zero_on_sigterm_with_a_church_search_in_flight(self) -> None:
         import json
 
         import test_shutdown
+        from test_church_harden import HOLD_CHURCH, raw_get
 
         index = test_shutdown._fixture_index(self.root / "wesley-fixture.sqlite", rows=20)
         church = self.root / "sample.sqlite"
         build_church(church)
+        mark = self.root / "in-flight"
         base_env = test_shutdown._env
         extra = {"PREACHED_PRIVACY": str(PRIVACY), **CHURCH_ON}
+        result: dict = {}
         with tempfile.TemporaryDirectory() as tmp, patch.object(
             test_shutdown, "_env", side_effect=lambda t: {**base_env(t), **extra}
         ):
             running = test_shutdown._Server(
-                tmp, ["--index", str(index), "--bm25-only", "--church-index", str(church), "--church-library", "sample"]
+                tmp,
+                ["--index", str(index), "--bm25-only", "--church-index", str(church), "--church-library", "sample"],
+                setup=f"HOLD_S = 1.5\nos.environ['MARK'] = {str(mark)!r}\n" + HOLD_CHURCH,
             )
             self.assertIsNotNone(running.port, "server did not start")
-            conn = http.client.HTTPConnection("127.0.0.1", running.port, timeout=10)
-            conn.request("GET", "/api/search?q=approvedtoken&mode=bm25&library=sample")
-            response = conn.getresponse()
-            body = json.loads(response.read())
-            conn.close()
+
+            def request() -> None:
+                status, body = raw_get(running.port, "/api/search?q=approvedtoken&mode=bm25&library=sample")
+                result.update(status=status, body=json.loads(body))
+
+            client = threading.Thread(target=request, daemon=True)
+            client.start()
+            deadline = time.monotonic() + 20
+            while not mark.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(mark.exists(), "the church search never started")
             rc, err = running.stop()
-        self.assertEqual(response.status, 200, err[-2000:])
-        self.assertTrue(body["results"], err[-2000:])
+            client.join(15)
+        self.assertEqual(result.get("status"), 200, err[-2000:])
+        self.assertTrue(result["body"]["results"], err[-2000:])
         self.assertEqual(rc, 0, err[-2000:])
         self.assertIn("church side: sample, read-only, through the publish gate", err)
-        self.assertIn("stopping", err)
+        lines = err.splitlines()
+        # In flight at the stop: its 200 is logged after the server's own "INFO stopping".
+        self.assertLess(lines.index("INFO stopping"), next(i for i, line in enumerate(lines) if "GET /api/search 200" in line))
         self.assertNotIn("Traceback", err)
+        self.assertNotIn("dropped", err)
         self.assertNotIn("church side refused", err)
 
 
