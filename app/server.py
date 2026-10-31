@@ -2429,7 +2429,10 @@ class PreachedServer(ThreadingHTTPServer):
 
     ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
     the cap, the connection is closed on the accept thread with a short 503
-    and no handler thread is started.
+    and no handler thread is started. A request whose Accept includes
+    text/html is a page navigation: that 503 is a static HTML page with a
+    meta refresh of the same delay, so the browser retries. Any other
+    request keeps the JSON body. Nothing from the request is copied in.
 
     Fairness: when every slot is taken, a new connection may take one from a
     peer holding at least two more connections than the newcomer. The
@@ -2711,13 +2714,24 @@ class PreachedServer(ThreadingHTTPServer):
             refusals.flush()
 
     def _reject_over_cap(self, request) -> None:
-        body = b'{"error":"unavailable"}'
+        """503 on the accept thread. No handler is started.
+
+        A page navigation (Accept includes text/html) gets the static HTML
+        page. Everyone else gets the same JSON body as before. The page is
+        a constant: no request byte is copied into it.
+        """
+        if _accept_includes_html(_read_over_cap_headers(request)):
+            body = _OVER_CAP_HTML
+            content_type = b"text/html; charset=utf-8"
+        else:
+            body = b'{"error":"unavailable"}'
+            content_type = b"application/json; charset=utf-8"
         message = (
             b"HTTP/1.1 503 Service Unavailable\r\n"
-            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Content-Type: " + content_type + b"\r\n"
             b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
             b"Connection: close\r\n"
-            b"Retry-After: 1\r\n"
+            b"Retry-After: " + _OVER_CAP_RETRY + b"\r\n"
             b"Cache-Control: no-store\r\n"
             b"\r\n" + body
         )
@@ -2801,6 +2815,64 @@ def _shutdown_socket(sock, how: int) -> None:
         sock.shutdown(how)
     except OSError:
         pass
+
+
+# Retry-After and the meta refresh are this same delay. The page is built
+# from these constants only, so a request cannot change it.
+_OVER_CAP_RETRY = b"1"
+_OVER_CAP_HTML = (
+    b"<!DOCTYPE html><html lang=en><head><meta charset=utf-8>"
+    b'<meta http-equiv="refresh" content="' + _OVER_CAP_RETRY + b'">'
+    b"<title>Unavailable</title></head>"
+    b"<body><p>Unavailable. Retrying.</p></body></html>"
+)
+
+
+def _accept_includes_html(data: bytes) -> bool:
+    """True when a complete header block lists the media type text/html.
+
+    The type token is compared, not a substring, so ``text/htmlfoo`` and
+    ``Accept-Language`` do not count. Nothing from the block is returned.
+    """
+    head, sep, _rest = data.partition(b"\r\n\r\n")
+    if not sep:
+        return False
+    for line in head.split(b"\r\n")[1:]:
+        if line[:1] in (b" ", b"\t"):
+            continue
+        name, colon, value = line.partition(b":")
+        if not colon or name.strip().lower() != b"accept":
+            continue
+        for part in value.split(b","):
+            media = part.split(b";", 1)[0].strip().lower()
+            if media == b"text/html":
+                return True
+    return False
+
+
+def _read_over_cap_headers(request) -> bytes:
+    """Headers already sent, or what arrives within one second.
+
+    One deadline for the whole read, so a drip does not reset it. Past the
+    header cap the read stops. A client that sends nothing is answered as
+    JSON once the second is up, and cannot hold the accept thread longer.
+    """
+    deadline = time.monotonic() + 1.0
+    data = bytearray()
+    limit = 65536 + MAX_HEADER_BYTES
+    try:
+        while b"\r\n\r\n" not in data and len(data) < limit:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            request.settimeout(remaining)
+            chunk = request.recv(min(4096, limit - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+    except OSError:
+        pass
+    return bytes(data)
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
