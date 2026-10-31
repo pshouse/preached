@@ -353,3 +353,65 @@ Exit 0. `Ran 1036 tests in 269.285s`, `OK`, no skip line. Zero `test_every_cited
  tests/test_api_path.py          |  25 +++
  4 files changed, 442 insertions(+), 20 deletions(-)
 ```
+
+## 11. R3 resync
+
+**Precondition.** After `git fetch`, `origin/fix/w4-onnx-pin-repro` is `1275223`. `reports/W4-ONNX-PIN-REPRO.md` on that head contains an `r3d` section (99-WB, main-side hunks of #72, #69 and #75). Not blocked.
+
+**Merges.** Merge commits only. No rebase and no force-push. Conflicts were edited to the merged text. No `git checkout --ours` or `--theirs`, and no whole-file pick of one side.
+
+- `1a52c0e` merges `origin/fix/w4-onnx-pin-repro` (`1275223`). Clean (`ort`). No conflicted files.
+- `7d326dd` merges `origin/main` (`97537ae`, PR #76, bench fail-closed). One conflicted file: `README.md`.
+
+**README conflict.** Kept this branch's quickstart, including the single `PREACHED_CACHE` knob and the `eval/validate.py` paragraph. Did not take main's sentence that weights use `HF_HOME=/cache/huggingface`. That sentence is the old workaround; Hugging Face files and the ONNX graph both live under `PREACHED_CACHE` (README line 7). Main's new sentence is the fail-closed behaviour. It replaces the interim note on this branch ("Until the bench fail-closed change lands… the bench exits 0"). The words are main's README line 14, now README line 20 here.
+
+**Pin and seed, read on the r3d tree** (`src/preached/artifacts.py` and `scripts/export_onnx.py` at `1275223`, unchanged by this resync). `FP32_ONNX_SHA256` is `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (`src/preached/artifacts.py:36`). The comment at `src/preached/artifacts.py:30-32` says the export fixes `ATEN_CPU_CAPABILITY=avx2` and `PYTHONHASHSEED=1`. `EXPORT_HASHSEED = "1"` is `scripts/export_onnx.py:94`. `_reexec_with_hashseed` sets that value and re-executes (`scripts/export_onnx.py:123-127`). `EXPORT_COMMAND` is `uv run --group bench python scripts/export_onnx.py` (`src/preached/artifacts.py:53`). The README export block (lines 25-27) is that command, with no `CUDA_VISIBLE_DEVICES`. The script itself assigns `os.environ["CUDA_VISIBLE_DEVICES"] = ""` at `scripts/export_onnx.py:52`, before torch. The README does not name `PREACHED_ONNX_DIR` or `HF_HOME`. `onnx_root()` still honours `PREACHED_ONNX_DIR` when set (`src/preached/artifacts.py:72-76`); the quickstart does not document that override.
+
+**Bench.** A GPU is recommended. A CPU-only bench takes about 9 minutes (541.9 s measured on 8 cores). README line 20. The fail-closed behaviour is what `search/bench.py` does on `97537ae`: the module docstring (`search/bench.py:37-41`) says exit 1 if any selected model fails to load or score, the report is still written, the model is marked `error`, or `skipped_gated` when the failure looks like a gated repo, and gated still fails. Under `--abstain` a gated failure is recorded as plain `error`. `--allow-bm25-only` turns that into a warning on stderr and exit 0. `run_abstain` always sets `entry["status"] = "error"` (`search/bench.py:880-882`). The plain loop sets `skipped_gated` only when `is_gated` matches (`search/bench.py:1067-1070`). Both paths write the json and markdown, then call `fail_closed` (`search/bench.py:1099-1102` and `889-896`). `fail_closed` (`search/bench.py:901-913`) exits 1 unless `--allow-bm25-only`, which prints the warning to stderr and returns.
+
+**CTO sentence.** One occurrence, byte-exact with `docs/SUBMISSION-DRAFT.md`, U+2212 in `−0.034` (code point U+2212, README line 52):
+
+`In a pre-registered evaluation (58 questions; relevance labels drafted with AI help, a subset confirmed blind by a human), the tuned fusion weight was statistically indistinguishable from the baseline (hit@10 51 vs 50; paired difference +0.017, 95% CI −0.034 to +0.086).`
+
+Checked absent from `README.md`: `0.629`, `0.614`, `0.506`, `0.558`, `0.497`, `0.546`, `0.285`, `0.219`, `0.246`, `0.297`, `0.241`, `0.265`. No other retrieval figure was added.
+
+**Finding 17.** Not edited. `git diff 3252baa HEAD -- src/preached/search.py tests/test_api_path.py` is empty. The two tests stay in `tests/test_api_path.py`: `test_roman_numeral_after_a_verse_is_hidden` (lines 123-130) and `test_paragraph_number_after_matt_5_13_16_is_hidden` (lines 132-137). `Rom. 8:16 I. 1. None who believe` becomes `Rom. 8:16 None who believe`. `Matt. 5:13-16 1. The beauty of holiness` becomes `Matt. 5:13-16 The beauty of holiness`.
+
+**Cites.** This resync does not edit `app/server.py` or any file cited in `docs/DEPLOY.md`. After both merges, `git diff origin/fix/w4-onnx-pin-repro -- app/server.py docs/DEPLOY.md tests/test_deploy_alerts.py` is empty, so nothing was re-pinned. The suite below has zero `test_every_cited_file_line_holds_its_string` failures.
+
+**Suite.** Cache safety: `PREACHED_CACHE`, `PREACHED_ONNX_DIR` and `HF_HOME` pointed at `/tmp/w4-r3-suite/` (under `tempfile.gettempdir()`), not at `/cache`. `/cache` was bind-mounted read-only (`unshare -rm`, then `unshare --user --map-user=1000 --map-group=1000` so `geteuid()` stayed 1000). A touch of `/cache/.w4-r3-probe` inside that wrapper failed with `Read-only file system`. Also under the scratch dir: `HF_HUB_CACHE`, `HUGGINGFACE_HUB_CACHE`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR`, `TORCH_HOME`. `PREACHED_ONNX_DIR` was an empty directory. An earlier run that stayed at euid 0 was discarded: the server refused with `refusing to serve as root` (83 failures, 23 errors). It is not the result below.
+
+```bash
+PREACHED_REQUIRE_DENO=1 \
+PREACHED_CACHE=/tmp/w4-r3-suite/cache \
+PREACHED_ONNX_DIR=/tmp/w4-r3-suite/onnx \
+HF_HOME=/tmp/w4-r3-suite/hf \
+uv run python -m unittest discover -s tests
+```
+
+Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a scratch graph and no infra yaml:
+
+- 6 in `test_embed_backend` (`artifact_dir()` has no `model.fp32.onnx`): `test_youtube_embed_path_does_not_import_torch`, `test_cached_fp32_and_tokenizer_match_the_pins`, `test_fp32_directory_without_int8_loads`, `test_fp32_query_is_unit_normalized`, `test_real_graph_has_no_external_data`, `test_load_refuses_a_symlinked_graph`.
+- 1 in `test_onnx_pin_repro`: `MutantGraphTests.test_one_flipped_initializer_value_is_refused`.
+- 1 in `test_onnx_pin_repro`: `ExportIsByteIdenticalTests` (no `model.safetensors` under the scratch `PREACHED_CACHE`).
+- 1 in `test_eval_leak`: `test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk`.
+- 1 in `test_deploy_regex`: `test_infra_yaml_matches_when_the_file_is_present`.
+
+`uv lock --check` with the same scratch `UV_CACHE_DIR`: exit 0, `Resolved 79 packages in 0.52ms`.
+
+**Cache.** `find /cache -printf '%p\t%s\t%T@\n' | sort`, before the suite and after `uv lock --check`. Both listings have 132629 entries. sha256 both `9742ff943e45839c910c6d14434471c5130aefa7ecaf161a43dd7124bd112122`. Paths, sizes and mtimes: no difference. An empty writability probe `/cache/.r3-probe-w4` was created and removed before that before-snapshot. It is not in either listing.
+
+**Head.** `0000000000000000000000000000000000000000` is the R3 section commit, the parent of the pushed head. The pushed head only replaces those 40 hex digits. Ahead/behind at the pushed head: vs `origin/main`, 0 behind and 48 ahead; vs `origin/fix/w4-onnx-pin-repro`, 0 behind and 18 ahead.
+
+**Diff stat.** `git diff --stat origin/fix/w4-onnx-pin-repro...HEAD` at the pushed head. `1275223` is an ancestor, so `..` and `...` match. `src/preached/search.py` and `tests/test_api_path.py` are finding 17 from the first round. `search/bench.py`, `tests/test_bench_failclosed.py` and `reports/W5-BENCH-FAILCLOSED-R2.md` arrived with the merge of `origin/main` (`97537ae`, PR #76). They were not edited again here. Every path is in that set.
+
+```
+ README.md                         |  70 +++++--
+ reports/W4-README-QUICKSTART.md   | 417 ++++++++++++++++++++++++++++++++++++++
+ reports/W5-BENCH-FAILCLOSED-R2.md |  36 ++++
+ search/bench.py                   |  25 +++
+ src/preached/search.py            |  12 +-
+ tests/test_api_path.py            |  25 +++
+ tests/test_bench_failclosed.py    | 167 +++++++++++++++
+ 7 files changed, 732 insertions(+), 20 deletions(-)
+```
