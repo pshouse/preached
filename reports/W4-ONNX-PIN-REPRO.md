@@ -119,7 +119,22 @@ Run it from the repo root after the bench group can download the HF snapshot. It
 
 ## 8. Merge with origin/main and diff scope
 
-(Filled in at push time below.)
+`git fetch origin && git merge origin/main` immediately before push returned **Already up to date**. `origin/main` was still b224281, the branch base. Grok's 16-W3-KEEPALIVE-CAP had not merged yet, so the merge touched nothing: no merge commit, no change to `app/server.py`, no conflicts. If keep-alive lands first, the only overlap is the `load_search` except block, the constants block near line 284, and one import line.
+
+Re-run after the (no-op) merge: `uv lock --check` OK. `PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`: `Ran 1013 tests in 226.786s`, `FAILED (failures=52, skipped=1)`. These are the same 52 pre-existing `test_deploy_alerts` cite subtests (section 6) and the same gated skip.
+
+`git diff --stat origin/main..HEAD` (before this report edit; the final push adds only this file's lines):
+
+```
+ app/server.py                |   8 ++
+ reports/W4-ONNX-PIN-REPRO.md | 132 +++++++++++++++++++
+ scripts/export_onnx.py       |  54 +++++++-
+ src/preached/artifacts.py    |  18 ++-
+ tests/test_onnx_pin_repro.py | 302 +++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 509 insertions(+), 5 deletions(-)
+```
+
+All five are in scope. No README.md or docs/DEPLOY.md.
 
 ## Open issues
 
