@@ -30,7 +30,7 @@ Each walker-table entry removed from `_ONNX_SUBMESSAGES` in `src/preached/onnx_e
 | attribute loses `22` | attribute.sparse_tensor |
 | attribute loses `23` | attribute.sparse_tensors |
 
-All 7 entries are caught, each by its own row only. The S2 and decoy tests were also run against the old `build-bundle.sh` from main: 6 of the 10 new BundleTests tests fail there (decoy, mismatch, stale-tar removal, exit 1, retry, exit 2); the other four are positive-path tests that pass on both.
+All 7 entries are caught, each by its own row only. The S2 and decoy tests were also run against the old `build-bundle.sh` from main: 6 of the 7 new BundleTests tests fail there (decoy, mismatch, stale-tar removal, exit 1, retry, exit 2); the seventh, the success-path archive check, passes on both.
 
 ## 3. Real build runs
 
@@ -38,7 +38,7 @@ The model artifacts and `/cache/index/wesley.sqlite` are in the sandbox, so thes
 
 - 10 builds completed; 10 exit 0, 10 left a `.tar.gz`, 0 `.partial` files left behind.
 - 0 of 10 hit the tar exit 1 retry path. The flake did not show up in this run, so these counts say the happy path is stable; the fake-tar tests are what show the fail-safe works.
-- All 10 tars had the same sha256 (`9e9ad053...ddd8c`), checked on the 8 first builds still on disk when I compared (builds 1-4 deleted to free disk after checking, 5-10 kept to the end).
+- The tars had the same sha256 (`9e9ad053...ddd8c`): all 8 of builds 1-8 matched when compared, and builds 5-10 (6 tars) matched at the end. Builds 1-4 were deleted after that first comparison to free disk.
 - One extra loop iteration (the 9th of the first loop) was killed by the sandbox's 10-minute limit mid-build. It left no tar and no `.partial`, which is the intended interrupted-build behavior. It is not counted in the 10; builds 9 and 10 above were rerun.
 
 ## 4. Numbers
@@ -53,4 +53,4 @@ The model artifacts and `/cache/index/wesley.sqlite` are in the sandbox, so thes
 - A tar with a different failure mode that still verifies against the manifest is accepted by design: the manifest check is the contract.
 - The reference review file `/workspace/reports/preached-pr38-review.md` is not present in this sandbox; I worked from the task text.
 
-Head SHA: see the PR (the report is committed after this line was written).
+Head SHA: the commit that adds this file is the head of `fix/w3-bundle-tar` (`git rev-parse --short HEAD` after checkout; also shown on the PR).
