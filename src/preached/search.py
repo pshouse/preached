@@ -105,6 +105,8 @@ class Searcher:
         fingerprint: str | None = None,
         gated: bool = False,
         library: str | None = None,
+        *,
+        allow_eval_only: bool = False,
     ):
         """model: a key in search/models.toml. Its stored document vectors
         must carry the fingerprint the config gives now (or `fingerprint`,
@@ -116,7 +118,11 @@ class Searcher:
 
         library: the slug this file is served as. Only an allow-listed
         public-domain library's own file is exempt from the gate
-        (``store.public_domain_file``, re-checked per call)."""
+        (``store.public_domain_file``, re-checked per call).
+
+        allow_eval_only: only the evaluation harnesses (search/bench.py,
+        eval/pool.py, scripts/check_*.py) pass this, to score eval-only
+        models. The product never does."""
         self.connection = connection
         self.model = model
         self._gated = bool(gated)
@@ -128,13 +134,16 @@ class Searcher:
         self._visible_cache: Visible | None = None
         self._visible_key: tuple | None = None
         if model:
-            if fingerprint is None:
-                from preached.models import MODELS
+            from preached.models import MODELS
 
+            # An explicit fingerprint is for fixture models that are not in
+            # models.toml; a configured eval-only model is refused unless the
+            # evaluation harness opts in.
+            if not allow_eval_only and model in MODELS and MODELS[model].eval_only:
+                raise RuntimeError(f"model {model!r} is eval-only and cannot be used by the product")
+            if fingerprint is None:
                 if model not in MODELS:
                     raise RuntimeError(f"unknown model {model!r}; see search/models.toml")
-                if MODELS[model].eval_only:
-                    raise RuntimeError(f"model {model!r} is eval-only and cannot be used by the product")
                 self._fingerprint = MODELS[model].fingerprint()
             self._load_vectors()
         self._version = self._data_version()

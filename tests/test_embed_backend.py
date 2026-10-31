@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -711,6 +712,8 @@ class RealOnnxTests(unittest.TestCase):
             self.skipTest("granite onnx artifacts are not in /cache")
         from preached.onnx_embed import OnnxEmbedder
 
+        if not os.access(source.parent.parent, os.W_OK):
+            self.skipTest("model mount is read-only; the test copies the 597 MB graph beside it")
         # The graph is opened with O_NOFOLLOW and must have one link, so copy
         # it. The temp folder sits outside the ONNX root, on disk (not tmpfs).
         with tempfile.TemporaryDirectory(dir=source.parent.parent) as tmp:
@@ -880,7 +883,25 @@ class FdLoadTests(unittest.TestCase):
             folder.chmod(0o755)
             path = folder / "model.fp32.onnx"
             os.mkfifo(path, 0o644)
-            self._refused(path, "0" * 64, "not a regular file")
+            outcome: list[BaseException | None] = []
+
+            def attempt() -> None:
+                try:
+                    self._refused(path, "0" * 64, "not a regular file")
+                    outcome.append(None)
+                except BaseException as exc:  # reported on the main thread
+                    outcome.append(exc)
+
+            worker = threading.Thread(target=attempt, daemon=True)
+            worker.start()
+            worker.join(timeout=5)
+            if worker.is_alive():
+                # Release the blocked open so the thread can end.
+                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+                worker.join(timeout=5)
+                self.fail("opening a FIFO at the graph path blocked")
+            if outcome[0] is not None:
+                raise outcome[0]
 
     def test_group_or_world_writable_directory_is_refused(self) -> None:
         for mode in (0o775, 0o757, 0o777, 0o1777):
@@ -929,6 +950,70 @@ class FdLoadTests(unittest.TestCase):
                         path, digest = self._graph(Path(tmp), data)
                         self._refused(path, digest, "external data")
 
+    def _accepted_or_refused(self, data: bytes, needle: str | None) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp), data)
+            if needle is None:
+                from preached.onnx_embed import _open_hashed_graph
+
+                os.close(_open_hashed_graph(path, digest, digest)[0])
+            else:
+                self._refused(path, digest, needle)
+
+    def test_missing_proc_self_fd_is_refused(self) -> None:
+        from unittest import mock
+
+        from preached import onnx_embed
+
+        real_exists = os.path.exists
+
+        def exists(p):
+            return False if str(p).startswith("/proc/self/fd/") else real_exists(p)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp))
+            with mock.patch.object(onnx_embed.os.path, "exists", side_effect=exists):
+                self._refused(path, digest, "needs /proc/self/fd")
+
+    def test_nesting_past_the_limit_is_refused(self) -> None:
+        from preached.onnx_embed import _MAX_NESTING
+
+        def nested(levels: int) -> bytes:
+            graph = b""
+            for _ in range(levels):
+                attribute = _pb_bytes(6, graph)
+                graph = _pb_bytes(1, _pb_bytes(5, attribute))
+            return _pb_int(1, 8) + _pb_bytes(7, graph)
+
+        # model -> graph, then three message levels per subgraph.
+        self._accepted_or_refused(nested(5), None)
+        self._accepted_or_refused(nested(_MAX_NESTING), "nests too deeply")
+
+    def test_external_data_in_a_function_is_refused(self) -> None:
+        external = _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_int(14, 1)
+        attribute = _pb_bytes(5, external)
+        node = _pb_bytes(5, attribute)
+        # FunctionProto.node (7) and FunctionProto.attribute_proto (11).
+        for label, function in (("node", _pb_bytes(7, node)), ("attribute_proto", _pb_bytes(11, attribute))):
+            with self.subTest(field=label):
+                data = _pb_int(1, 8) + _pb_bytes(25, function)
+                self._accepted_or_refused(data, "external data")
+        clean = _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_bytes(9, b"\0" * 16)
+        self._accepted_or_refused(_pb_int(1, 8) + _pb_bytes(25, _pb_bytes(11, _pb_bytes(5, clean))), None)
+
+    def test_external_data_in_a_sparse_initializer_is_refused(self) -> None:
+        external = _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_int(14, 1)
+        for field in (1, 2):  # SparseTensorProto.values, .indices
+            with self.subTest(field=field):
+                graph = _pb_bytes(15, _pb_bytes(field, external))
+                self._accepted_or_refused(_pb_int(1, 8) + _pb_bytes(7, graph), "external data")
+
+    def test_trailing_partial_field_is_refused(self) -> None:
+        # A fixed64 key with only three of its eight bytes: the skip lands
+        # past the end of the message.
+        data = _onnx_model() + _pb_varint(2 << 3 | 1) + b"abc"
+        self._accepted_or_refused(data, "ONNX graph is not a valid protobuf")
+
     def test_inline_subgraph_tensor_is_accepted(self) -> None:
         from preached.onnx_embed import _open_hashed_graph
 
@@ -975,7 +1060,7 @@ class FdLoadTests(unittest.TestCase):
 
         import onnxruntime
 
-        from preached import artifacts
+        from preached import artifacts, onnx_embed
         from preached.onnx_embed import OnnxEmbedder
 
         class FakeSession:
@@ -1001,14 +1086,25 @@ class FdLoadTests(unittest.TestCase):
                 for name in ("model.fp32.onnx", "tokenizer.json", "pooling.json")
             }
             _manifest(folder, files)
+            sentinel = "5e" * 32
+            real_open = onnx_embed._open_hashed_graph
+
+            def open_with_sentinel(*args):
+                fd, _ = real_open(*args)
+                return fd, sentinel
+
             with (
                 mock.patch.dict(artifacts.VARIANT_SHA256, {"fp32": digest}),
                 mock.patch.dict(artifacts.PINNED_SHA256, {}, clear=True),
                 mock.patch.object(onnxruntime, "InferenceSession", FakeSession),
+                mock.patch.object(onnx_embed, "_open_hashed_graph", open_with_sentinel),
             ):
                 embedder = OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1)
-            self.assertEqual(embedder.model_sha256, hashlib.sha256(path.read_bytes()).hexdigest())
-            self.assertEqual(embedder.model_sha256, digest)
+            # Neither the file path nor the manifest digest: the value
+            # _open_hashed_graph returned for the fd it handed to ORT.
+            self.assertEqual(embedder.model_sha256, sentinel)
+            self.assertNotEqual(sentinel, digest)
+            self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest())
 
     def test_load_refuses_a_symlinked_graph(self) -> None:
         source = artifact_dir()

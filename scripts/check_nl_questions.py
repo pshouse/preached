@@ -47,7 +47,7 @@ def main() -> None:
     connection.row_factory = sqlite3.Row
     for key in args.models:
         floor = floor_for(key)
-        searcher = Searcher(connection, model=key)
+        searcher = Searcher(connection, model=key, allow_eval_only=True)
         loaded = load_model(MODELS[key], device="cpu", batch_size=1)
         rows = []
         try:

@@ -102,7 +102,7 @@ def _open_hashed_graph(path: Path, expected: str, pinned: str) -> tuple[int, str
 _ONNX_SUBMESSAGES = {
     "model": {7: "graph", 20: "training", 25: "function"},
     "training": {1: "graph", 2: "graph"},
-    "function": {7: "node"},
+    "function": {7: "node", 11: "attribute"},
     "graph": {1: "node", 5: "tensor", 15: "sparse"},
     "node": {5: "attribute"},
     "attribute": {5: "tensor", 6: "graph", 10: "tensor", 11: "graph", 22: "sparse", 23: "sparse"},
@@ -284,6 +284,11 @@ class OnnxEmbedder:
         # Hex digest of the graph bytes hashed on the fd ORT loaded. No path.
         embedder.model_sha256 = graph_sha
         return embedder
+
+    def close(self) -> None:
+        """Drop the ONNX Runtime session now, not during interpreter
+        finalisation. No call may be in ``encode_*`` when this runs."""
+        self.session = None
 
     def encode_queries(self, queries: list[str]) -> np.ndarray:
         texts = [prepare_query(self.spec, query) for query in queries]

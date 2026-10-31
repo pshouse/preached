@@ -1,0 +1,40 @@
+{
+ "slug": "wesley",
+ "creator": "John Wesley",
+ "title": "Sermons on Several Occasions",
+ "license_note": "LibriVox recording (First Series audio: CC0 1.0; Second and Third-Fifth Series: Public Domain Mark 1.0; LibriVox states public domain in the US); text by John Wesley (d. 1791) is public domain. Read by a volunteer LibriVox reader, NOT Wesley's voice.",
+ "text_source_url": "https://www.ccel.org/ccel/wesley/sermons",
+ "note": "Generated from ingest/manifest/wesley.jsonl (fields ia_identifier, ia_url, librivox_url, license_url, license_note, text_source_url). Per-item tracks and licenseurl are counted from that manifest (checked by tests/test_licenses.py).",
+ "ia_items": [
+  {
+   "ia_identifier": "sermonsfirstseries_1307_librivox",
+   "ia_url": "https://archive.org/details/sermonsfirstseries_1307_librivox",
+   "librivox_url": "https://librivox.org/sermons-on-several-occasions-first-series-by-john-wesley/",
+   "work": "Sermons on Several Occasions, First Series",
+   "series": "s1",
+   "licenseurl": "http://creativecommons.org/publicdomain/zero/1.0/",
+   "audio_format": "64Kbps MP3",
+   "tracks": 55
+  },
+  {
+   "ia_identifier": "sermonssecondseries_1503_librivox",
+   "ia_url": "https://archive.org/details/sermonssecondseries_1503_librivox",
+   "librivox_url": "https://librivox.org/sermons-on-several-occasions-second-series-by-john-wesley/",
+   "work": "Sermons on Several Occasions, Second Series",
+   "series": "s2",
+   "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/",
+   "audio_format": "64Kbps MP3",
+   "tracks": 55
+  },
+  {
+   "ia_identifier": "sermons3to5series_1511_librivox",
+   "ia_url": "https://archive.org/details/sermons3to5series_1511_librivox",
+   "librivox_url": "https://librivox.org/sermons-on-several-occasions-third-fifth-series-by-john-wesley/",
+   "work": "Sermons on Several Occasions, Third-Fifth Series",
+   "series": "s3to5",
+   "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/",
+   "audio_format": "64Kbps MP3",
+   "tracks": 33
+  }
+ ]
+}
