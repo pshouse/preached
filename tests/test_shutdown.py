@@ -270,6 +270,10 @@ class InFlightTests(unittest.TestCase):
         client.join(15)
         self.assertEqual(result, {"status": 200}, err[-2000:])
         self.assertEqual(rc, 0, err[-2000:])
+        # The search was still in flight when the stop began: its 200 is logged after "stopping".
+        self.assertIn("stopping", err)
+        self.assertIn("GET /api/search 200", err)
+        self.assertLess(err.index("stopping"), err.index("GET /api/search 200"), err[-2000:])
         self.assertNotIn("Traceback", err)
         self.assertEqual(list(Path(self.tmp).glob("preached-pycache-*")), [])
 
