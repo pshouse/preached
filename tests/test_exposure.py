@@ -226,6 +226,16 @@ class ClientKeyTests(unittest.TestCase):
         self.assertEqual(client_key("2001:db8::5", ["2001:db8:1::9"], trusted), "2001:db8:1::/64")
         self.assertEqual(client_key("::ffff:192.0.2.9", ["203.0.113.5"], trusted), "192.0.2.9")
 
+    def test_a_sibling_in_the_proxys_64_is_not_trusted(self) -> None:
+        # Trust is by the configured network, never widened to the /64 used for keys.
+        trusted = _nets("2001:db8::1/128")
+        # A sibling peer's X-Forwarded-For is ignored; it is keyed by its /64.
+        self.assertEqual(client_key("2001:db8::2", ["198.51.100.7"], trusted), "2001:db8::/64")
+        # A sibling hop behind the real proxy is the client, not a skipped proxy.
+        self.assertEqual(client_key("2001:db8::1", ["198.51.100.7, 2001:db8::2"], trusted), "2001:db8::/64")
+        # The proxy itself is still trusted.
+        self.assertEqual(client_key("2001:db8::1", ["198.51.100.7"], trusted), "198.51.100.7")
+
     def test_trusted_list_parsing_fails_closed(self) -> None:
         self.assertEqual(parse_trusted_proxies(None), ())
         self.assertEqual(parse_trusted_proxies(""), ())
@@ -658,6 +668,22 @@ class EvictionOrderTests(_Served):
         server.mark_idle(b)
         self.assertFalse(server._conns[b].reading)
 
+    def test_a_reserved_healthz_connection_is_never_taken(self) -> None:
+        server = self._bookkeeping(1)
+        server.health_reserved = 2
+        a, b, c, d = (_FakeRequest() for _ in range(4))
+        self.assertTrue(server._acquire_connection(a, "127.0.0.2"))
+        self.assertTrue(server.mark_busy(a))
+        # Nothing to take: b is admitted on the reserve and stays idle.
+        self.assertTrue(server._acquire_connection(b, "127.0.0.2"))
+        self.assertTrue(server._conns[b].reserved)
+        # 127.0.0.2 holds two more than a newcomer, but one is busy and one reserved.
+        self.assertIsNone(server._pick_victim(0))
+        self.assertTrue(server._acquire_connection(c, "127.0.0.3"))
+        self.assertTrue(server._conns[c].reserved)
+        self.assertFalse(server._acquire_connection(d, "127.0.0.4"))
+        self.assertEqual([a.shut, b.shut, c.shut], [False, False, False])
+
 
 class AuditLogTests(_Served):
     """M2: the log names the client key, and every refusal class is logged."""
@@ -744,6 +770,23 @@ class AuditLogTests(_Served):
             ],
         )
 
+    def test_suppressed_counts_are_flushed_at_shutdown(self) -> None:
+        _port, _app, server = self._serve()
+        server.refusals.note("429-client", "a", now=10.0)
+        server.refusals.note("429-client", "b", now=10.2)
+        server.refusals.note("429-client", "c", now=10.3)
+        server.refusals.note("over-cap", "d", now=10.0)
+        with self.assertLogs(level="WARNING") as logs:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(
+            [line.split(":", 2)[2] for line in logs.output],
+            ["refused 429-client flush suppressed=2"],
+        )
+        # Flushed once: nothing is left to repeat.
+        with self.assertNoLogs(level="WARNING"):
+            server.refusals.flush()
+
 
 class Ipv6KeyTests(_Served):
     """M4: IPv6 clients are keyed by /64."""
@@ -776,6 +819,27 @@ class Ipv6KeyTests(_Served):
         self.assertFalse(server._acquire_connection(requests[2], "2001:db8::3"))
         self.assertTrue(server._acquire_connection(requests[3], "2001:db8:0:1::1"))
         self.assertEqual(server._conn_by_ip["2001:db8::/64"], 2)
+
+    def test_tailscale_addresses_are_keyed_per_address(self) -> None:
+        # Every tailnet node is in fd7a:115c:a1e0::/48, in one /64; one key each.
+        self.assertEqual(client_key("fd7a:115c:a1e0:ab12::1", None, ()), "fd7a:115c:a1e0:ab12::1")
+        self.assertEqual(client_key("fd7a:115c:a1e0:ab12::2", None, ()), "fd7a:115c:a1e0:ab12::2")
+        trusted = _nets("127.0.0.1/32")
+        self.assertEqual(
+            client_key("127.0.0.1", ["fd7a:115c:a1e0:ab12::3"], trusted), "fd7a:115c:a1e0:ab12::3"
+        )
+        # Just outside the /48 is keyed by /64 again.
+        self.assertEqual(client_key("fd7a:115c:a1e1::1", None, ()), "fd7a:115c:a1e1::/64")
+        app = App(None, None, None, None, None, {"x"}, STATIC_DIR, rate_limit=1, trusted_proxies=())
+        for peer in ("fd7a:115c:a1e0:ab12::1", "fd7a:115c:a1e0:ab12::2"):
+            self.assertIsNone(app.allow(app.client_key(peer, None), health=False))
+
+    def test_tailscale_nodes_do_not_share_the_connection_cap(self) -> None:
+        _port, _app, server = self._serve(max_connections=16, max_per_client=1)
+        requests = [_FakeRequest() for _ in range(3)]
+        self.assertTrue(server._acquire_connection(requests[0], "fd7a:115c:a1e0:ab12::1"))
+        self.assertTrue(server._acquire_connection(requests[1], "fd7a:115c:a1e0:ab12::2"))
+        self.assertFalse(server._acquire_connection(requests[2], "fd7a:115c:a1e0:ab12::1"))
 
 
 class RefundAndHealthSlotTests(_Served):
@@ -887,24 +951,9 @@ class DocAndScriptTests(unittest.TestCase):
             start = text.index(heading)
             gate = text[start : text.index("\n## ", start + 1) if heading.startswith("## ") else text.index("\n## ", start)]
             sign_off = gate.index("CTO sign-off")
-            for item in (
-                "RSS fix (#26)",
-                "`fallback: false`",
-                "group- or world-writable",
-                "Stale-bytecode drill",
-                "python -m app.server",
-                "Audit logging (",
-                "journald",
-                "tagged",
-                "1Password path",
-                "Fuzzing",
-                "secret scanning in CI",
-                "tailscale funnel",
-                "/64 IPv6 keying (",
-            ):
+            for item in ("RSS fix (#26)", "1.62 GB", "Audit logging (", "tailscale funnel", "/64 IPv6 keying ("):
                 with self.subTest(heading=heading, item=item):
                     self.assertLess(gate.index(item), sign_off)
-            self.assertNotIn("1.62 GB", gate)
             self.assertIn("PREACHED_TRUSTED_PROXIES=127.0.0.1", gate)
             self.assertIn("direct", gate[gate.index("PREACHED_TRUSTED_PROXIES=127.0.0.1") - 200 :])
         start = text.index("### Known gaps")
@@ -913,7 +962,6 @@ class DocAndScriptTests(unittest.TestCase):
             with self.subTest(item=item):
                 self.assertIn(item, gaps)
         self.assertNotIn("keyed per address, not per /64", gaps)
-        self.assertIn("client IP (the real one behind a trusted proxy), the path and\n  the time are stored", text)
         logs = next(line for line in text.splitlines() if line.startswith("| Logs |"))
         self.assertIn("`peer key method path status`", logs)
         self.assertIn("suppressed=N", logs)

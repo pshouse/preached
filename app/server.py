@@ -202,6 +202,9 @@ DEFAULT_HEALTH_GLOBAL_RATE_LIMIT = 600
 MAX_FORWARDED_HOPS = 32
 # IPv6 clients are keyed by network, not address (address_key).
 IPV6_KEY_PREFIX = 64
+# Tailscale gives every node an address in this /48, all inside one /64, so
+# these are keyed per address. Any other IPv6 address is keyed by its /64.
+TAILSCALE_IPV6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 # Connections beyond the cap kept for /healthz alone. Admitted only when
 # nothing can be evicted; any other path on one gets 503 and a close.
 DEFAULT_HEALTH_RESERVED_CONNECTIONS = 1
@@ -414,6 +417,17 @@ class RefusalLog:
         logging.warning("refused %s %s suppressed=%d", kind, detail, suppressed)
         return True
 
+    def flush(self) -> None:
+        """Log the count still suppressed for each class, then forget it.
+
+        Called at shutdown, so a flood's tail is not lost with the process.
+        """
+        with self._lock:
+            pending = sorted(self._suppressed.items())
+            self._suppressed.clear()
+        for kind, suppressed in pending:
+            logging.warning("refused %s flush suppressed=%d", kind, suppressed)
+
 
 def parse_trusted_proxies(raw: str | None) -> tuple:
     """Networks from a comma- or space-separated list. Empty means none.
@@ -450,9 +464,11 @@ def address_key(address) -> str:
     """The key for one client address. IPv6 is keyed by its /64.
 
     One IPv6 host is usually handed a whole /64, so a per-address key would
-    give it 2**64 buckets. IPv4 (and IPv4-mapped IPv6) stays per address.
+    give it 2**64 buckets. IPv4 (and IPv4-mapped IPv6) stays per address, and
+    so does a Tailscale address (``TAILSCALE_IPV6``): the tailnet puts every
+    node in one /64, and each node has one address there.
     """
-    if address.version == 6:
+    if address.version == 6 and address not in TAILSCALE_IPV6:
         return str(ipaddress.ip_network((address, IPV6_KEY_PREFIX), strict=False))
     return str(address)
 
@@ -2205,6 +2221,10 @@ class PreachedServer(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self._release_connection(request)
+
+    def server_close(self) -> None:
+        super().server_close()
+        self.refusals.flush()
 
     def shutdown_request(self, request) -> None:
         # Free the slot before the close, so a client that reconnects as soon
