@@ -285,6 +285,11 @@ class OnnxEmbedder:
         embedder.model_sha256 = graph_sha
         return embedder
 
+    def close(self) -> None:
+        """Drop the ONNX Runtime session now, not during interpreter
+        finalisation. No call may be in ``encode_*`` when this runs."""
+        self.session = None
+
     def encode_queries(self, queries: list[str]) -> np.ndarray:
         texts = [prepare_query(self.spec, query) for query in queries]
         return self._encode(texts)

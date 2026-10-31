@@ -1364,8 +1364,57 @@ class BundleTests(unittest.TestCase):
             proc = subprocess.run(
                 [sys.executable, str(ROOT / "app" / "server.py")], cwd=root, env=env, capture_output=True, timeout=60
             )
-            self.assertEqual(proc.returncode, 143, proc.stderr[-2000:])
+            self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
             self.assertEqual(list(scratch.glob("preached-pycache-*")), [])
+
+    def _run_as_script(self, setup: str) -> tuple[subprocess.CompletedProcess, list[Path]]:
+        """Run app/server.py as __main__ (runpy) after ``setup`` has patched
+        something; (process, temp bytecode dirs left behind)."""
+        code = (
+            "import os, runpy, signal, sys, time\n"
+            "sys.argv = ['server.py', '--index', '/nonexistent/x.sqlite', '--bm25-only']\n"
+            + setup
+            + f"runpy.run_path({str(ROOT / 'app' / 'server.py')!r}, run_name='__main__')\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"PATH": os.environ["PATH"], "TMPDIR": tmp, "PYTHONPATH": str(ROOT)}
+            proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, timeout=60)
+            return proc, list(Path(tmp).glob("preached-pycache-*"))
+
+    def test_sigterm_between_temp_dir_and_handler_leaks_nothing(self) -> None:
+        # atexit.register runs after mkdtemp and before the handler line.
+        proc, leaked = self._run_as_script(
+            "import atexit\n_reg = atexit.register\n"
+            "def _reg2(*a, **k):\n    _reg(*a, **k)\n    os.kill(os.getpid(), signal.SIGTERM)\n    time.sleep(0.2)\n"
+            "atexit.register = _reg2\n"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        self.assertNotIn(b"Traceback", proc.stderr)
+        self.assertEqual(leaked, [])
+
+    def test_sigterm_inside_main_before_listening_exits_zero_clean(self) -> None:
+        proc, leaked = self._run_as_script(
+            "import app.bundle\n"
+            "app.bundle.bundle_problem = lambda *a, **k: (os.kill(os.getpid(), signal.SIGTERM), time.sleep(30))\n"
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        self.assertNotIn(b"Traceback", proc.stderr)
+        self.assertEqual(leaked, [])
+
+    def test_ctrl_c_inside_main_before_listening_has_no_traceback(self) -> None:
+        proc, leaked = self._run_as_script(
+            "import app.bundle\n"
+            "def _boom(*a, **k):\n    raise KeyboardInterrupt\n"
+            "app.bundle.bundle_problem = _boom\n"
+        )
+        self.assertEqual(proc.returncode, 130, proc.stderr[-2000:])
+        self.assertNotIn(b"Traceback", proc.stderr)
+        self.assertEqual(leaked, [])
+
+    def test_import_installs_no_sigterm_handler(self) -> None:
+        code = "import signal, sys; sys.path.insert(0, %r); import app.server; print(signal.getsignal(signal.SIGTERM) is signal.SIG_DFL)" % str(ROOT)
+        proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, timeout=60)
+        self.assertEqual(proc.stdout.strip(), b"True", proc.stderr[-2000:])
 
     def test_direct_start_ignores_planted_bundle_bytecode(self) -> None:
         # Bytecode for app/bundle.py whose bundle_problem returns None. A
