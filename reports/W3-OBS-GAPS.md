@@ -19,6 +19,8 @@ CTO #51 r1 fixes: the reload status-read failure no longer reuses the "embedding
 
 ## 2. Tests (6 new, +2 in FIX1)
 
+The 2 FIX1 tests: `Bm25OnlyStatusReadTests.test_a_status_read_failure_logs_no_d1_or_d2_line_and_healthz_recovers` and `ReloadFallbackLogTests.test_the_stamp_traceback_is_logged_once_per_outage`.
+
 - `tests/test_obs_gaps.py`: `test_stored_vectors_that_no_longer_match_log_one_error_line` (3 requests, exactly one line), `test_an_unreadable_index_status_logs_one_error_line_per_transition` (also relogs after recovery then a new failure), `test_the_clean_stop_ends_with_stopped_cleanly`, `test_the_stuck_stop_does_not_say_it`.
 - SF1: `tests/test_church_harden.py` `StartupPauseTests.test_a_pause_after_startup_is_logged_even_in_the_deferred_mode`.
 - SF2: `tests/test_church_harden.py` `ReserveUpperBoundServeTests.test_a_second_over_cap_connection_is_refused_while_the_reserve_is_held` (real server, cap 2, reserve 1; the reserve held idle, a second /healthz is 503).

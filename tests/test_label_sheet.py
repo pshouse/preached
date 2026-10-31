@@ -22,7 +22,7 @@ TEXT_COLUMNS = {"question", "chunk text"}
 # Literal pins: a regenerated-from-itself sheet cannot hide a changed seed, shuffle or column set.
 PINNED_SEED = 20261031
 PINNED_SHEET_SHA256 = "6141beaaed326f48a12813b95cb812cccd14f8e4eea55632ca063100f5369b12"
-PINNED_KEY_SHA256 = "892207b6a9c126ec4478488804ef42a8153808c53eb1b69d665b39cafdae3d21"
+PINNED_KEY_SHA256 = "892207b6a9c126ec4478488804ef42a8153808c53eb1b69d665b39cafdae3d21"  # gitleaks:allow
 PINNED_HEADER = ["row id", "question id", "question", "chunk id", "chunk text", "verdict", "notes"]
 
 

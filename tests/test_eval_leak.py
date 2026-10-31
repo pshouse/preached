@@ -46,7 +46,7 @@ def load_chunk_texts() -> list[dict] | None:
     if not index.is_file():
         return None
     # immutable=1 never touches -wal/-shm or the file itself; the private index is not written or copied.
-    conn = sqlite3.connect(f"file:{index}?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(index.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
     try:
         return [{"chunk_id": cid, "text": text}
                 for cid, text in conn.execute("SELECT chunk_id, text FROM chunks ORDER BY rowid")]
