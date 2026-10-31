@@ -111,6 +111,15 @@ class DisplayExcerptTests(unittest.TestCase):
         ):
             self.assertEqual(display_excerpt(text), text)
 
+    def test_paragraph_number_after_a_verse_reference_is_hidden(self) -> None:
+        # CCEL puts the paragraph number right after the verse, with no
+        # sentence-ending period between them: "Rom. 8:16 1. How many".
+        self.assertEqual(display_excerpt("Rom. 8:16 1. How many"), "Rom. 8:16 How many")
+        # A real number stays. The comma is an inline list, not a paragraph
+        # number, and the verse's own chapter and verse stay too.
+        kept = "See Rom. 8:16, 1. That the Spirit witnesses"
+        self.assertEqual(display_excerpt(kept), kept)
+
 
 if __name__ == "__main__":
     unittest.main()
