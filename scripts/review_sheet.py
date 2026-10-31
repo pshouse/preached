@@ -15,7 +15,6 @@ import argparse
 import csv
 import datetime as dt
 import re
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -24,6 +23,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from preached.corpus import read_jsonl  # noqa: E402
 from preached.paths import INDEX_PATH, questions_path  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 
 COLUMNS = ["#", "question id", "group", "rewrite_of", "question", "original question", "expected sermon",
            "grade-2 passage", "proposed grade-1 passages", "answerable?", "Verdict", "Notes"]
@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
     args = parser.parse_args()
     out = args.out or ROOT / "eval" / "review" / f"review-{dt.date.today().isoformat()}.csv"
-    connection = sqlite3.connect(f"file:{args.index}?mode=ro", uri=True)
+    connection = open_readonly_or_exit(args.index)
     text = dict(connection.execute("SELECT chunk_id, text FROM chunks"))
     questions = read_jsonl(questions_path())
     by_id = {q["id"]: q for q in questions}

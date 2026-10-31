@@ -1,0 +1,50 @@
+# 44-W3-NITS-BATCH: CTO follow-ups from #25 r2, #35, #34, #36 r2
+
+Branch `chore/w3-nits-batch` from origin/main f9f7551. Merge commits only. No new dependencies.
+The review files under /workspace/reports were not on this machine; the items below are from the task text.
+
+## 1. Item -> commit / test map
+
+| Item | Commit | Test / evidence |
+|---|---|---|
+| #25 (1) README Spurgeon/Edwards licence wording (retired CC Public Domain Certification) | 2c57f16 | README.md licence section |
+| #25 (2) drift guard compares every generated field (ia_url, librivox_url, work, series, licenseurl, audio_format, tracks, text_source_url) | 2c57f16 | `tests/test_licenses.py` (`test_every_generated_field_matches_the_manifest`, `test_guard_catches_each_field`) |
+| #25 (3) provenance note: `license_note` is hand-written, not generated | 2c57f16 | `wesley.provenance.json` note; `test_note_does_not_claim_the_license_note_is_generated` |
+| #25 (4) `abstain_rows` must pass `allow_eval_only=True` | e928eb2 | `tests/test_eval_only.py::test_abstain_rows_passes_the_flag` |
+| #25 nit: build_app tests fail on TypeError | e928eb2 | `tests/test_search.py` passes a real `static_dir` |
+| #25 nit: HOUSEKEEPING.md "left as is" | 2c57f16 | reports/HOUSEKEEPING.md |
+| #35 S1 overflowing metadata duration keeps the listed one | 150199a | `tests/test_youtube.py::test_huge_metadata_duration_keeps_the_listed_one` (listed 60 -> seen == [60.0]; listed None -> unchecked) |
+| #35 S2 gitleaks clean | e3b2992 | reports/38-W3-YT-DURATION-NITS.md |
+| #35 nits: one float conversion; huge-int rows de-duplicated | 150199a | `stated_duration`; the 2**1024 row moved out of `test_bad_stated_duration_is_unchecked`. The "rejects bool" commit message is history and is left. |
+| #34 S6 README 0.42 s / 0.76 s figures | 2c57f16 | README.md:25 now quotes no timing figure |
+| #36 S2 loaded test is probabilistic | b07a618, 96d8090 | Deterministic `InFlightTests.test_search_in_flight_at_sigterm_finishes_before_the_index_closes`; DEPLOY names the 30-run real-index loaded run as the gate |
+| #36 S3 stuck path (rc 1) and Ctrl-C while serving (rc 0) | 96d8090 | `test_stuck_handler_exits_one_leaves_the_index_open_and_ignores_a_second_ctrl_c`, `test_ctrl_c_while_serving_exits_zero` |
+| #36 S4 draining gate (M9) | 96d8090 | `DrainingGateTests` |
+| #36 S5 "143" only on the uv run path | b07a618 | docs/DEPLOY.md |
+| #36 S6 second Ctrl-C does not force an exit | b07a618 | docs/DEPLOY.md; also asserted in the stuck-path test |
+
+Not done: the stuck-path RefusalLog flush (belongs to #29; it is not on main).
+
+## 2. Mutation results (each reverted afterwards)
+
+| Mutant | Result |
+|---|---|
+| (4) drop `allow_eval_only=True` from `abstain_rows` (bench.py:632) | `test_abstain_rows_passes_the_flag` errors (RuntimeError: eval-only) |
+| build_app guard removed (`if False:`) | both `test_build_app_*` fail with `AssertionError: ValueError not raised` (were TypeError) |
+| (2) append "x" to each of ia_url, librivox_url, work, series, licenseurl, audio_format, tracks, text_source_url | `test_guard_catches_each_field` asserts each raises |
+| #35 S1 pipeline sets `duration_s = None` on overflow | `test_huge_metadata_duration_keeps_the_listed_one` fails (listed=60) |
+| #35 pipeline `except OverflowError` replaced | same test fails (listed=60 and None) |
+| #35 `stated_duration` `except OverflowError` replaced | 6 errors in `test_coverage` |
+| #36 S4 / M9: remove the `draining` gate in `finish_request` | `DrainingGateTests` fails |
+| #36 stuck path exits 0 instead of 1 | stuck-path test fails |
+| #36 drain removed and handler threads daemon / not joined (the pre-#36 state) | in-flight test fails (client gets no response) |
+| #36 drain call removed alone | stuck-path and idle keep-alive tests fail; in-flight test still passes, because `server_close` joins non-daemon threads, so it does not guard that single line |
+
+## 3. Results
+
+- `uv lock --check`: ok.
+- `uv run python -m unittest discover -s tests`: 766 tests, OK (was 694+ before this batch; this adds 8 shutdown/licence/youtube tests and moves rows).
+- Not run: the real-index 30-run loaded shutdown check (no `/cache` index with the pinned model on this machine).
+- `gh` is not installed here, so no PR was opened. Title to use: "W3: nits batch (CTO #25 r2, #35, #34, #36)".
+
+Head SHA: the commit that adds this report (see the push); last code commit 96d8090.

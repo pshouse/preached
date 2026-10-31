@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import dataclasses
@@ -174,7 +175,7 @@ class ModelConfigTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "unknown model"):
             build_app(sqlite3.connect(":memory:"), model_key="granite-english-r3",
-                      bm25_only=False, hosts={"127.0.0.1"}, static_dir=None)
+                      bm25_only=False, hosts={"127.0.0.1"}, static_dir=Path("."))
 
     def test_build_app_rejects_eval_only_model(self) -> None:
         import sqlite3
@@ -185,7 +186,7 @@ class ModelConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "eval-only"):
                 build_app(
                     sqlite3.connect(":memory:"), model_key="arctic-embed-l",
-                    bm25_only=bm25_only, hosts={"127.0.0.1"}, static_dir=None,
+                    bm25_only=bm25_only, hosts={"127.0.0.1"}, static_dir=Path("."),
                 )
 
     def test_server_rejects_eval_only_model(self) -> None:

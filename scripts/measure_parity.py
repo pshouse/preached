@@ -48,6 +48,7 @@ from preached.embed import document_title  # noqa: E402
 from preached.models import MODELS  # noqa: E402
 from preached.paths import questions_path  # noqa: E402
 from preached.pooling import HIDDEN_SIZE, MAX_SEQ_LENGTH  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 
 # The shipped index. Never open this for writing.
 SHIPPED_INDEX = Path("/cache/index/wesley.sqlite")
@@ -57,17 +58,8 @@ CACHE = Path("/cache/w3-cpu")
 INDEX_DIR = Path("/cache/index")
 
 
-def _connect(path: Path) -> sqlite3.Connection:
-    if path.resolve() == SHIPPED_INDEX.resolve():
-        raise SystemExit(f"refusing to open the shipped index {path}")
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
 def load_rows() -> list[sqlite3.Row]:
-    connection = sqlite3.connect(f"file:{TORCH_INDEX}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
+    connection = open_readonly_or_exit(TORCH_INDEX)
     rows = list(
         connection.execute(
             "SELECT rowid, sermon_title, scripture, text FROM chunks ORDER BY rowid"
@@ -78,7 +70,7 @@ def load_rows() -> list[sqlite3.Row]:
 
 
 def load_torch_docs(rowids: list[int]) -> np.ndarray:
-    connection = sqlite3.connect(f"file:{TORCH_INDEX}?mode=ro", uri=True)
+    connection = open_readonly_or_exit(TORCH_INDEX)
     matrix = np.zeros((len(rowids), HIDDEN_SIZE), dtype=np.float32)
     for index, rowid in enumerate(rowids):
         blob, dim = connection.execute(
@@ -145,7 +137,7 @@ def step_spotcheck(batch_size: int) -> None:
     rows = load_rows()
     rowids = [int(row["rowid"]) for row in rows]
     stored = load_torch_docs(rowids)
-    shipped = sqlite3.connect(f"file:{SHIPPED_INDEX}?mode=ro", uri=True)
+    shipped = open_readonly_or_exit(SHIPPED_INDEX)
     cuda_sample = []
     for rowid in rowids[:8]:
         blob = shipped.execute(
@@ -315,7 +307,7 @@ def _copy_index(source: Path, dest: Path) -> None:
         raise SystemExit("refusing to overwrite the shipped index")
     if dest.exists():
         dest.unlink()
-    src = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
+    src = open_readonly_or_exit(source)
     dst = sqlite3.connect(dest)
     src.backup(dst)
     dst.commit()

@@ -152,7 +152,7 @@ fi
 PYTHONPATH="$SOURCE" "$PY" -P -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import strip_int8_manifest; strip_int8_manifest(Path(sys.argv[1]))' \
   "$OUT/model/$REVISION/manifest.json"
 
-PYTHONPATH="$SOURCE" "$PY" -P -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
+PYTHONPATH="$SOURCE/src:$SOURCE" "$PY" -P -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
   "$INDEX" "$OUT/index/${LIBRARY}.sqlite"
 
 # The bundle must import on its own: run from the bundle with `python -I`
@@ -229,7 +229,7 @@ verify_tar() {
   VERIFY=
 }
 
-# Likely cause of exit 1: the box's snapshot daemon creating and deleting
+# Likely cause of exit 1: the Grok Bot box's snapshot daemon creating and deleting
 # *.box-store-snap-* files next to the index and model while tar reads them.
 # Three attempts, each still gated by verify_tar below.
 attempt=1

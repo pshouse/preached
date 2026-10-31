@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -58,16 +59,21 @@ def copy_index(source: Path, dest: Path) -> None:
     ``-wal`` or ``-shm`` beside it. Two copies of an unchanged source match.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
+    # lexists: a dangling symlink is removed too, or the connect below would
+    # follow it and create its target.
+    if os.path.lexists(dest):
         dest.unlink()
     for suffix in ("-wal", "-shm", "-journal"):
         extra = Path(str(dest) + suffix)
-        if extra.exists():
+        if os.path.lexists(extra):
             extra.unlink()
-    # mode=ro so the backup cannot checkpoint or write the live index.
-    # A WAL source still needs a writable directory for the -shm file.
-    uri = source.resolve().as_uri() + "?mode=ro"
-    src = sqlite3.connect(uri, uri=True)
+    # Read-only (store.open_readonly: mode=ro, query_only, sidecars checked)
+    # so the backup cannot checkpoint or write the live index, or Wesley
+    # through a -shm hardlinked to it. A WAL source still needs a writable
+    # directory for the -shm file. Imported here: the manifest is stdlib only.
+    from preached.store import open_readonly_or_exit
+
+    src = open_readonly_or_exit(source)
     try:
         dst = sqlite3.connect(dest)
         try:

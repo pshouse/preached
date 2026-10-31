@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -38,13 +37,13 @@ sys.path.insert(0, str(ROOT / "src"))
 from preached.corpus import read_jsonl  # noqa: E402
 from preached.metrics import contains_quote  # noqa: E402
 from preached.paths import INDEX_PATH, questions_path  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 
 CANDIDATES = ROOT / "eval" / "plain_candidates.jsonl"
 
 
 def load_chunks(index: Path) -> dict[str, dict]:
-    connection = sqlite3.connect(f"file:{index}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
+    connection = open_readonly_or_exit(index)
     rows = connection.execute(
         "SELECT chunk_id, sermon_id, sermon_number, sermon_title, source_url, text FROM chunks ORDER BY rowid")
     return {r["chunk_id"]: dict(r) for r in rows}
