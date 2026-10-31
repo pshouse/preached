@@ -63,6 +63,9 @@ def _env(tmp: str) -> dict:
         "PREACHED_RATE_LIMIT": "1000000",
         "PREACHED_MAX_CONNECTIONS": "64",
         "PREACHED_MAX_CLIENT_CONNECTIONS": "64",
+        # PR #29's in-flight cap per client (ignored before it lands): all 16
+        # clients share 127.0.0.1 and must be searching, not refused.
+        "PREACHED_MAX_CLIENT_REQUESTS": "64",
         **({"PREACHED_ONNX_DIR": os.environ["PREACHED_ONNX_DIR"]} if "PREACHED_ONNX_DIR" in os.environ else {}),
     }
 
