@@ -770,9 +770,9 @@ class App:
         # library's own file (store.public_domain_file, keyed on the slug).
         # The gate is checked per request in SQL (preached.store.visible_sql),
         # so an import, --redo or approval made while this process runs
-        # applies to the next request.
-        self.gated = library != LIBRARY
-        if self.gated and hasattr(searcher, "gate_on"):
+        # applies to the next request. Fixed here: ``gated`` is read-only.
+        self._gated = library != LIBRARY
+        if self._gated and hasattr(searcher, "gate_on"):
             searcher.gate_on()
         if hasattr(searcher, "library"):
             searcher.library = library
@@ -789,6 +789,13 @@ class App:
         # A failed read must not let the next success adopt a stamp without
         # reloading. Init counts: the searcher was built before this read.
         self._status_failed = self._stamp is None
+
+    @property
+    def gated(self) -> bool:
+        """Read-only, set once from the slug in ``__init__``: ``app.gated = False``
+        and ``setattr`` raise AttributeError. It drives ``visible_sql``,
+        ``visible_count`` and every Searcher ``_searcher`` builds on reload."""
+        return self._gated
 
     def _read_data_version(self):
         try:
