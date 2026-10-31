@@ -817,7 +817,7 @@ On row 5: Infra Ops' prepared rule (`church-alerts.yaml`, state machine
   `ERROR church side refused:` or `ERROR church side dropped:` line, and by
   the restart marker `INFO listening on http://`. A cleared pause raises
   nothing.
-- Candidates are access lines matching `^INFO \S+ \S+ GET /api/side 200$`
+- Candidates are access lines matching `^INFO \S+ \S+ GET /api/side 200$` <!-- regex: side-access -->
   logged after the 15-minute window while the side is still paused. Lines
   inside the window are not candidates.
 - It raises the page `church-paused-stuck` only on a second candidate
