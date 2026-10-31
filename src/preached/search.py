@@ -188,7 +188,13 @@ class Searcher:
 
     def bm25(self, query: str, limit: int) -> list[Hit]:
         where = self._where()
-        return self._pack(self._lexical(query, limit, where), limit, where)
+        scored = self._lexical(query, limit, where)
+        if where is not None:
+            # SQLite's bm25() weighs each term over every indexed row, hidden
+            # ones included, so its value would show whether an unpublished
+            # sermon uses a word. A gated file reports 1/rank instead.
+            scored = [(rowid, 1.0 / rank) for rank, (rowid, _) in enumerate(scored, 1)]
+        return self._pack(scored, limit, where)
 
     def visible_count(self) -> int:
         return visible_count(self.connection, gated=self.gated, library=self.library)

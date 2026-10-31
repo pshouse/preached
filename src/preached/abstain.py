@@ -54,7 +54,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from preached.paths import repo_root
-from preached.rank import dense_hits, dense_scores
 from preached.store import bm25_search
 
 log = logging.getLogger(__name__)
@@ -117,12 +116,17 @@ def compute_signals(searcher, query: str, vector, shown) -> Signals:
     BM25 and dense are run again at ``CANDIDATES``. That is a few
     milliseconds and leaves the ranking code untouched. With no vector
     (BM25-only search) ``dense_top`` is None and agreement is False.
+
+    Both run through the publish gate (``searcher._where()``), the same as
+    the results: a chunk the reader may not see never adds a BM25 hit,
+    raises ``dense_top`` or makes agreement. Otherwise ``bm25_hits`` would
+    tell anyone whether a word occurs in an unpublished sermon.
     """
-    lexical = bm25_search(searcher.connection, query, CANDIDATES)
+    where = searcher._where()
+    lexical = bm25_search(searcher.connection, query, CANDIDATES, where)
     if vector is None or searcher._matrix is None:
         return Signals(bm25_hits=len(lexical), dense_top=None, agreement=False)
-    scores = dense_scores(vector, searcher._matrix)
-    semantic = dense_hits(searcher._rowids, scores, CANDIDATES)
+    semantic = searcher._semantic(vector, CANDIDATES, where)
     both = {rowid for rowid, _ in lexical} & {rowid for rowid, _ in semantic}
     dense_top = float(semantic[0][1]) if semantic else None
     return Signals(
