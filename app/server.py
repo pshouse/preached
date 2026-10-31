@@ -185,6 +185,9 @@ from preached.store import (  # noqa: E402
 )
 from preached.youtube.listing import chunk_video_id, policy_watch_url, public_audio_url  # noqa: E402
 
+# Longest question /api/search accepts, in code points. app/static/app.js mirrors it.
+MAX_QUERY = 300
+
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 PAGE_FILE = STATIC_DIR / "index.html"
@@ -623,8 +626,8 @@ def parse_search_args(
     query = raw_q.strip()
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in query):
         raise BadRequest("q has unsupported characters")
-    if not query or len(query) > 300:
-        raise BadRequest("q must be 1 to 300 characters")
+    if not query or len(query) > MAX_QUERY:
+        raise BadRequest(f"q must be 1 to {MAX_QUERY} characters")
 
     raw_k = _first(args, "k")
     if raw_k is None or raw_k.strip() == "":

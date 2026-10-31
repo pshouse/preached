@@ -288,6 +288,16 @@ function renderCard(hit) {
 /* Longest question the server accepts. Same as the input's maxlength. */
 var MAX_QUERY = 300;
 
+/* The server counts code points, so cap by code point: slice() counts UTF-16
+   units and can cut an emoji into U+FFFD. */
+function capQuery(text) {
+  return Array.from(text).slice(0, MAX_QUERY).join("");
+}
+
+function isTouchScreen() {
+  return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+}
+
 /* Page copy for each search state. Plain words; inserted with textContent. */
 var MESSAGES = {
   loading: "Searching the sermons.",
@@ -612,8 +622,9 @@ function init() {
       input.focus();
       return;
     }
-    /* Close the phone keyboard so the results are not hidden behind it. */
-    if (document.activeElement === input) input.blur();
+    /* Close the phone keyboard so the results are not hidden behind it.
+       Touch screens only: on desktop the caret stays in the box. */
+    if (isTouchScreen() && document.activeElement === input) input.blur();
     runSearch(query);
   });
 
@@ -640,7 +651,7 @@ function init() {
   if (viewEl && initialParams.get("view") === "side") viewEl.value = "side";
   var initial = initialParams.get("q");
   if (initial && initial.trim()) {
-    input.value = initial.trim().slice(0, MAX_QUERY);
+    input.value = capQuery(initial.trim());
     runSearch(input.value);
   }
 }

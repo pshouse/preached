@@ -4,7 +4,7 @@ Branch `fix/w3-mobile-ux` from `origin/main` (`bbdb1ba`). Frontend only: `app/st
 
 ## 1. What was done
 
-Audited the page as a first-time visitor on a 375 × 812 phone screen, fixed six problems, deferred five low ones (listed below), and pinned the fixes with 8 new tests.
+Audited the page as a first-time visitor on a 375 × 812 phone screen, fixed eight problems, deferred four low ones (listed below), and pinned the fixes with 8 new tests.
 
 **How the audit ran.** `uv run app/server.py --port 8765` (loopback, default `/cache/index/wesley.sqlite`, ONNX hybrid) drove headless Chromium through the DevTools protocol. A throwaway Deno script, kept outside the repo, set up the browser:
 
@@ -130,3 +130,26 @@ uv run app/server.py --port 8765                       # then open http://127.0.
 ## 5. Dependencies added
 
 None. The audit used the Chromium and Deno already on this machine, through a throwaway script outside the repo. The tests are stdlib `unittest` plus the existing optional Deno runner.
+
+## 6. Follow-up: CTO should-fixes on PR #53 (`fix/w3-mobile-ux-2`)
+
+Scope: `app/static/app.js`, `tests/test_mobile_ux.py`, this report, and the `MAX_QUERY` constant in `app/server.py`.
+
+- **N1:** the summary said "fixed six, deferred five". The table has 8 fixed and 4 deferred (plus 1 info, not changed). Corrected in section 1.
+- **S1:** the submit handler blurs the input only when `matchMedia("(pointer: coarse)")` matches (`isTouchScreen()`). On desktop the caret stays.
+- **S2:** the deep-link cap is `capQuery()`: `Array.from(s).slice(0, MAX_QUERY).join("")`, by code point like the server, so an emoji is never cut into U+FFFD. `app/server.py` has a named `MAX_QUERY = 300`, used at the existing check and in its message. The pin test reads the constant from `server.py`, compares it with `app.js` and the input's `maxlength`, and requires `len(query) > MAX_QUERY`.
+- **S3:** the Deno test dumps the whole withheld card (text, `href`, `src`, class, every attribute name and value, every `data-*`) for two hits (archive.org and YouTube `audio_url`). The only URL allowed is the hit's text `source_url`; the `audio_url`, `archive.org`, `youtube`, `.mp3` and `audio_url` must not appear anywhere. If `deno` is missing the behaviour class is skipped with the reason "SKIPPED, deno not installed: the withheld-card URL scan, the touch-only blur and the code-point query cap were NOT exercised". **A run without Deno does not test S1, S2 or S3.** This run had Deno.
+- **S4:** behavioural tests in the Deno fake DOM run `init()`: submit blurs on a coarse pointer, does not blur on a fine pointer or without `matchMedia`; a 360-character ASCII link and a 360-emoji link are capped at 300 code points with no U+FFFD and no split pair; a short link is untouched.
+
+### Mutant proofs (each applied alone, `tests.test_mobile_ux` run, then reverted)
+
+| Mutant | Result |
+|---|---|
+| S1: drop `isTouchScreen() &&` (always blur) | FAIL: "desktop: input keeps focus on submit: got 1, want 0" |
+| S2: `capQuery` uses `text.slice(0, MAX_QUERY)` | FAIL: "emoji link capped by code point: got 150, want 300" |
+| S2: deep link not capped at all | FAIL: "ascii link capped: got 360, want 300" |
+| S2: server check back to literal `len(query) > 300` | FAIL: pin test, `len(query) > MAX_QUERY` not found |
+| S3: `card.dataset.src = hit.audio_url` on the withheld card | FAIL: "flagged: only the text source URL is on the card" |
+| S3: `card.setAttribute("data-a", hit.audio_url)` on the withheld card | FAIL: same |
+
+The S1, S2 and S3 Deno checks are in one test method (`test_cards_player_and_scroll`), so a failure is identified by its message, not by a separate test name.

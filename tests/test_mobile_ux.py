@@ -113,7 +113,11 @@ class PhonePageStaticTests(unittest.TestCase):
         match = re.search(r"var MAX_QUERY = (\d+);", APP_JS.read_text())
         self.assertIsNotNone(match)
         self.assertEqual(query.get("maxlength"), match.group(1))
-        self.assertIn(f"len(query) > {match.group(1)}", SERVER.read_text())
+        server = SERVER.read_text()
+        constant = re.search(r"^MAX_QUERY = (\d+)$", server, re.MULTILINE)
+        self.assertIsNotNone(constant)
+        self.assertEqual(constant.group(1), match.group(1))
+        self.assertIn("len(query) > MAX_QUERY", server)
 
     def test_copy_does_not_speak_for_the_preacher(self) -> None:
         html = INDEX.read_text()
@@ -129,7 +133,7 @@ function FakeNode(tag) {
   this.tagName = tag; this.children = []; this.textContent = ""; this.hidden = false;
   this.attrs = {}; this.dataset = {}; this.className = ""; this.listeners = {};
   this.href = ""; this.type = ""; this.rel = ""; this.target = "";
-  this.scrolled = null; this.top = 0;
+  this.scrolled = null; this.top = 0; this.value = ""; this.blurs = 0;
   var classes = new Set();
   this.classList = {
     add: function (c) { classes.add(c); }, remove: function (c) { classes.delete(c); },
@@ -141,18 +145,31 @@ FakeNode.prototype.appendChild = function (n) { this.children.push(n); return n;
 FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = String(v); };
 FakeNode.prototype.addEventListener = function (k, f) { this.listeners[k] = f; };
 FakeNode.prototype.getBoundingClientRect = function () { return { top: this.top }; };
+FakeNode.prototype.blur = function () { this.blurs += 1; };
+FakeNode.prototype.focus = function () {};
+FakeNode.prototype.replaceChildren = function () { this.children = []; };
+FakeNode.prototype.requestSubmit = function () {};
+FakeNode.prototype.getAttribute = function (k) { return this.attrs[k] === undefined ? null : this.attrs[k]; };
 FakeNode.prototype.scrollIntoView = function (opts) { this.scrolled = opts; };
 var nodes = {};
-["results-section", "player-bar", "now-playing"].forEach(function (id) { nodes[id] = new FakeNode("x"); });
+["results-section", "player-bar", "now-playing", "search-form", "q", "hide-low", "retry", "view",
+ "status", "mode", "results", "note", "confidence"].forEach(function (id) { nodes[id] = new FakeNode("x"); });
 nodes["player-bar"].hidden = true;
 var audio = new FakeNode("audio");
 audio.readyState = 0; audio.currentTime = 0;
 audio.load = function () {};
 audio.play = function () { return Promise.reject(new Error("held")); };
 nodes.player = audio;
-globalThis.window = { location: { origin: "http://127.0.0.1:8000" }, innerHeight: 812 };
+nodes.mode.value = "hybrid";
+nodes.view.value = "classic";
+globalThis.fetch = function () { return new Promise(function () {}); };
+globalThis.window = {
+  location: { origin: "http://127.0.0.1:8000", search: "" }, innerHeight: 812,
+  matchMedia: function () { return { matches: false }; },
+};
 globalThis.document = {
   addEventListener() {},
+  activeElement: null,
   getElementById(id) { return nodes[id] || null; },
   createElement(tag) { return new FakeNode(tag); },
   querySelector() { return null; },
@@ -197,6 +214,25 @@ eq(flaggedNodes.filter(function (n) { return n.tagName === "button"; }).length, 
 eq(flaggedNodes.filter(function (n) { return n.tagName === "a" && n.href.indexOf("archive.org") !== -1; }).length, 0,
    "flagged: no recording link");
 eq(text(flaggedCard).indexOf("0:01:32"), -1, "flagged: no time");
+// No URL anywhere on a withheld card: text, attributes, data-*, href, src.
+function everything(node) {
+  return walk(node, []).map(function (n) {
+    var parts = [n.textContent || "", n.href || "", n.src || "", n.className || ""];
+    Object.keys(n.attrs).forEach(function (k) { parts.push(k, n.attrs[k]); });
+    Object.keys(n.dataset).forEach(function (k) { parts.push(k, String(n.dataset[k])); });
+    return parts.join("\n");
+  }).join("\n");
+}
+[flagged, Object.assign({}, flagged, { audio_url: "https://www.youtube.com/watch?v=samplevid01&t=11s" })].forEach(function (hit) {
+  var dump = everything(renderCard(hit));
+  // The only URL allowed is the text source (CCEL); nothing that reaches the recording.
+  (dump.match(/[a-z]+:\/\/[^\s"']*/g) || []).forEach(function (url) {
+    eq(url, hit.source_url, "flagged: only the text source URL is on the card");
+  });
+  [hit.audio_url, "archive.org", "youtube", ".mp3", "audio_url"].forEach(function (needle) {
+    eq(dump.indexOf(needle), -1, "flagged: no '" + needle + "' anywhere on the card");
+  });
+});
 eq(text(flaggedCard).indexOf("audio is withheld") >= 0, true, "flagged: says why");
 eq(text(flaggedCard).indexOf("Wandering Thoughts") >= 0, true, "flagged: still names the sermon");
 var flaggedYoutube = Object.assign({}, flagged, { audio_url: "https://www.youtube.com/watch?v=samplevid01&t=11s" });
@@ -227,6 +263,36 @@ eq(nodes["results-section"].scrolled, null, "no scroll when already on screen");
 eq(MESSAGES.network.indexOf("connection") >= 0, true, "network copy");
 eq(MESSAGES.enter, "Enter a question.", "empty copy");
 
+// Submit closes the keyboard on a touch screen only; the caret stays on desktop.
+function submitFrom(coarse) {
+  var q = nodes.q;
+  q.value = "worry"; q.blurs = 0;
+  window.matchMedia = function (query) { return { matches: coarse && query === "(pointer: coarse)" }; };
+  document.activeElement = q;
+  init();
+  nodes["search-form"].listeners.submit({ preventDefault() {} });
+  return q.blurs;
+}
+eq(submitFrom(true), 1, "touch: input blurred on submit");
+eq(submitFrom(false), 0, "desktop: input keeps focus on submit");
+delete window.matchMedia;
+eq(submitFrom(false), 0, "no matchMedia: input keeps focus on submit");
+
+// A deep link is capped at 300 code points without splitting an emoji.
+function deepLink(q) {
+  window.location.search = "?q=" + encodeURIComponent(q);
+  nodes.q.value = "";
+  init();
+  return nodes.q.value;
+}
+eq(Array.from(deepLink("a".repeat(360))).length, 300, "ascii link capped");
+var emoji = deepLink("\u{1F64F}".repeat(360));
+eq(Array.from(emoji).length, 300, "emoji link capped by code point");
+eq(emoji.indexOf("\uFFFD"), -1, "no replacement character");
+eq(emoji.length, 600, "no emoji split");
+eq(deepLink("short one"), "short one", "short link untouched");
+window.location.search = "";
+
 // Held-audio caption reads as two sentences.
 setTimeout(function () {
   eq(nodes["now-playing"].textContent,
@@ -236,7 +302,11 @@ setTimeout(function () {
 """
 
 
-@unittest.skipUnless(shutil.which("deno"), "deno not installed")
+@unittest.skipUnless(
+    shutil.which("deno"),
+    "SKIPPED, deno not installed: the withheld-card URL scan, the touch-only blur "
+    "and the code-point query cap were NOT exercised",
+)
 class PhonePageBehaviourTests(unittest.TestCase):
     def test_cards_player_and_scroll(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
