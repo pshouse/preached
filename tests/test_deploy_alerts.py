@@ -7,6 +7,7 @@ Every church file here is a synthetic fixture. No real church data is used.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 import unittest
@@ -46,36 +47,100 @@ DOCUMENTED = (
     "ERROR refusing to serve:",
     "ERROR <n> handler thread(s) still running after 10s; index left open",
     "ERROR request failed:",
+    "ERROR abstain calibration unusable; abstain floor disabled",
     "INFO listening on http://",
     "church-paused-stuck",
     "church-paused-unverified",
     "%(levelname)s %(message)s",
 )
 
-# (file, line, text on that line of the file). The runbook's tables cite each
-# as file:line; PR #46 refreshes the numbers and this table with them.
+# (file, cite, text). Every `file:line` docs/DEPLOY.md cites, with the text
+# that line holds; a range `a-b` gives the text of its first and last line.
+# A bare `:n` in the runbook is read against the file named before it in the
+# same table row, bullet or paragraph.
+REFUSED = 'logging.error("church side refused: %s", '
+LOCKED = 'raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc'
 CITED = (
-    ("app/server.py", 833, "stored vectors do not match search/models.toml; serving BM25 only"),
-    ("app/server.py", 836, "embedding model unavailable; serving BM25 only"),
-    ("app/server.py", 860, "church vectors do not match search/models.toml; that side is BM25 only"),
-    ("app/server.py", 865, "church vectors unavailable; that side is BM25 only"),
-    ("app/server.py", 886, "church side refused: its searcher could not be built"),
-    ("app/server.py", 1102, "refusing to serve after reload:"),
-    ("app/server.py", 1179, "refusing to serve:"),
-    ("app/server.py", 1381, "church side refused: %s"),
-    ("app/server.py", 1386, "church side refused:"),
-    ("app/server.py", 1419, "church side refused: the church file could not be opened"),
-    ("app/server.py", 1455, "church side dropped:"),
-    ("app/server.py", 1463, "church side paused:"),
-    ("app/server.py", 1522, "church side resumed"),
-    ("app/server.py", 1525, "church search failed; that side is empty"),
-    ("app/server.py", 2719, "listening on http://"),
-    ("app/server.py", 2787, "church side refused:"),
-    ("app/server.py", 2794, "church side refused:"),
-    ("app/server.py", 2805, "church side refused:"),
-    ("app/server.py", 3156, "handler thread(s) still running after"),
-    *(("app/server.py", n, "request failed:") for n in (1952, 1957, 2002, 2004, 2064, 2304, 2325)),
+    ("app/server.py", "231", "REQUEST_TIMEOUT_S = 15"),
+    ("app/server.py", "237", "DRAIN_TIMEOUT_S = 10.0"),
+    ("app/server.py", "270-271", ("CHURCH_RETRY_FIRST_S = 1.0", "CHURCH_RETRY_MAX_S = 30.0")),
+    ("app/server.py", "476", 'logging.warning("refused %s %s suppressed=%d", kind, detail, suppressed)'),
+    ("app/server.py", "488", 'logging.warning("refused %s flush suppressed=%d", kind, suppressed)'),
+    ("app/server.py", "833", 'logging.exception("stored vectors do not match search/models.toml; serving BM25 only")'),
+    ("app/server.py", "836", 'logging.exception("embedding model unavailable; serving BM25 only")'),
+    ("app/server.py", "860", '"church vectors do not match search/models.toml; that side is BM25 only"'),
+    ("app/server.py", "865", 'logging.exception("church vectors unavailable; that side is BM25 only")'),
+    ("app/server.py", "883", LOCKED),
+    ("app/server.py", "886", '"church side refused: its searcher could not be built (%s: %s)"'),
+    ("app/server.py", "1102", "refusing to serve after reload:"),
+    ("app/server.py", "1179", "refusing to serve:"),
+    ("app/server.py", "1381", 'logging.error("church side refused: %s", problem)'),
+    ("app/server.py", "1386", 'logging.error("church side refused: the publish gate did not turn on")'),
+    ("app/server.py", "1419", '"church side refused: the church file could not be opened (%s)", exc)'),
+    ("app/server.py", "1423", "self._church_paused = False"),
+    ("app/server.py", "1425", "self._church_paused = False"),
+    ("app/server.py", "1455", 'logging.error("church side dropped: %s", problem)'),
+    ("app/server.py", "1463", 'logging.info("church side paused: %s", reason)'),
+    ("app/server.py", "1522", 'logging.info("church side resumed")'),
+    ("app/server.py", "1525", 'logging.exception("church search failed; that side is empty")'),
+    ("app/server.py", "1530", 'self._church_pause(f"the church file is locked by a writer ({exc})")'),
+    ("app/server.py", "1730", 'logging.exception("abstain calibration unusable; abstain floor disabled")'),
+    ("app/server.py", "1736", "def start():"),
+    *(("app/server.py", str(n), 'logging.error("request failed: %s", ') for n in (1952, 1957, 2002, 2004, 2064, 2304, 2325)),
+    ("app/server.py", "2719", 'logging.info("listening on http://%s:%s", host, port)'),
+    ("app/server.py", "2787", REFUSED + "problem)"),
+    ("app/server.py", "2794", REFUSED + "exc)"),
+    ("app/server.py", "2805", REFUSED + "problem)"),
+    ("app/server.py", "2812", 'logging.info("church side: %s, read-only, through the publish gate", slug)'),
+    ("app/server.py", "2974", 'logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")'),
+    ("app/server.py", "3151", 'logging.info("stopping")'),
+    ("app/server.py", "3152-3169", ("stuck = server.drain()", "raise SystemExit(1)")),
+    ("app/server.py", "3156", '"%d handler thread(s) still running after %.0fs; index left open"'),
+    ("app/server.py", "3166", "app.church_connection.close()"),
+    ("scripts/build-bundle.sh", "239", 'echo "tar exited 1 (file changed as we read it?); attempt ${attempt} of 3" >&2'),
+    ("scripts/build-bundle.sh", "243", 'echo "tar failed (tar ${TAR_STATUS}, gzip ${GZIP_STATUS}); no archive written" >&2'),
+    ("scripts/build-bundle.sh", "247", 'echo "tar.gz does not match MANIFEST.sha256; no archive written" >&2'),
+    ("src/preached/library.py", "468", LOCKED),
+    (
+        "src/preached/library.py",
+        "883-884",
+        ('f"{path.name} is in WAL journal mode; run --ack-review', 'f"{path.name} is in WAL journal mode",'),
+    ),
+    (
+        "src/preached/library.py",
+        "895-896",
+        (
+            'reason = f"the church file is locked by a writer ({exc})"',
+            'raise ChurchStartPaused(f"{reason}; it is not opened", reason) from exc',
+        ),
+    ),
+    ("src/preached/library.py", "915", 'problem, paused = f"{exc}; it is not opened", str(exc)'),
+    (
+        "src/preached/library.py",
+        "921-922",
+        ('paused = f"the church file is locked by a writer ({exc})"', 'problem = f"{paused}; it is not opened"'),
+    ),
+    ("src/preached/library.py", "962", 'raise ChurchPaused(f"{path.name} is in WAL journal mode")'),
+    ("src/preached/youtube/library.py", "157", 'f"the church file is still in {mode} journal mode'),
+    ("src/preached/youtube/pipeline.py", "333", 'print(f"warning: {exc}", file=sys.stderr)'),
 )
+CITE = re.compile(r"`((?:[\w./-]+\.(?:py|sh))?):(\d+(?:-\d+)?)`")
+
+
+def runbook_cites(text: str) -> set[tuple[str | None, str]]:
+    """(file, cite) for every `file:n` and bare `:n` in the runbook.
+
+    Each table row, list item and paragraph is read on its own: a bare `:n`
+    belongs to the last file named before it there, or to None.
+    """
+    cites = set()
+    for paragraph in text.split("\n\n"):
+        for block in re.split(r"\n(?=\s*(?:- |\d+\. |\|))", paragraph):
+            name = None
+            for match in CITE.finditer(block):
+                name = match.group(1) or name
+                cites.add((name, match.group(2)))
+    return cites
 
 
 class AlertLineTests(_Root):
@@ -142,12 +207,20 @@ class RunbookTests(unittest.TestCase):
                 self.assertIn(line, text)
 
     def test_every_cited_file_line_holds_its_string(self) -> None:
-        text = DEPLOY.read_text(encoding="utf-8")
-        for name, number, needle in CITED:
-            with self.subTest(file=name, line=number):
+        for name, cite, needle in CITED:
+            with self.subTest(file=name, cite=cite):
                 lines = (ROOT / name).read_text(encoding="utf-8").splitlines()
-                self.assertIn(needle, lines[number - 1])
-                self.assertRegex(text, rf"`{name}:{number}`|`:{number}`")
+                first, _, last = cite.partition("-")
+                needles = (needle,) if isinstance(needle, str) else needle
+                for number, text in zip((first, last or first), needles):
+                    self.assertIn(text, lines[int(number) - 1])
+
+    def test_the_runbook_cites_exactly_the_pinned_lines(self) -> None:
+        cites = runbook_cites(DEPLOY.read_text(encoding="utf-8"))
+        pinned = {(name, cite) for name, cite, _ in CITED}
+        self.assertEqual(len(pinned), len(CITED), "a cite is pinned twice")
+        self.assertEqual(cites - pinned, set(), "cited in docs/DEPLOY.md but not pinned here")
+        self.assertEqual(pinned - cites, set(), "pinned here but not cited in its row of docs/DEPLOY.md")
 
 
 if __name__ == "__main__":
