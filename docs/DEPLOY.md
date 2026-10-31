@@ -125,20 +125,61 @@ and a short list of non-Python files. After the copy, the build re-imports
 the server from the bundle with `python -I` and fails unless every loaded
 `app`/`preached` module comes from inside the bundle.
 
-When `app/server.py` runs from a bundle (its root has `MANIFEST.sha256`,
-`index/`, `model/` or `requirements-serve.txt`), it checks the bundle once at
-start and refuses to start unless all of these hold:
+The build also fails if any shipped module uses `importlib` or
+`__import__`. An import by string is invisible to the import scan above, so
+it is not allowed in serve code at all.
 
-- `MANIFEST.sha256` exists and every line is `<sha256>  <relative path>`,
-  sorted, with no comments, blank lines or repeats;
+The build writes a stamp, `PREACHED_BUNDLE` (format line, library, model
+revision), and lists it in `MANIFEST.sha256`. The tree is classified
+explicitly (`app/bundle.py`):
+
+- **bundle**: `PREACHED_BUNDLE` exists. Every check below applies.
+- **checkout**: no stamp, a `.git` entry at the root, and none of
+  `MANIFEST.sha256`, `index/`, `model/`, `requirements-serve.txt`. Nothing is
+  hashed.
+- anything else is refused at start. A bundle with its stamp (or every
+  marker) deleted does not fall back to checkout mode.
+
+From a bundle the server refuses to start unless all of these hold:
+
+- `MANIFEST.sha256` exists, every line is `<sha256>  <relative path>`,
+  sorted, with no comments, blank lines or repeats, and it lists
+  `PREACHED_BUNDLE`;
 - every listed file is a regular file with that sha256;
-- no other file is in the tree (only `.venv/`, `__pycache__/`, `*.pyc` and
-  the kill file `KILL` are allowed beside it);
+- no other file is in the tree. Only `.venv/` and the kill file `KILL` are
+  allowed beside it. Any `__pycache__/` or `*.pyc` is refused: every release
+  tar has the same mtime, so a leftover `.pyc` whose source size matches
+  would otherwise be loaded in place of the hashed source;
 - the index (`PREACHED_INDEX` or the default) resolves to a listed file
-  under the bundle's own `index/`. An index outside the bundle is refused.
+  under the bundle's own `index/`. An index outside the bundle is refused;
+- `PREACHED_ONNX_DIR` is unset or is the bundle's own `model/`. Another
+  directory (an older revision, or an empty one that drops search to BM25)
+  is refused. The embed backend must be `onnx`; torch is not shipped.
 
-Hashing the bundle (index plus fp32 model) adds a few seconds to start.
-A source checkout has none of those root entries and skips this check.
+`scripts/serve.sh` runs this check as `python -I -B app/bundle.py ROOT INDEX`
+before anything imports bundle code. `app/bundle.py` uses the standard
+library only. `app/server.py` repeats it in `main` for any other launcher.
+`serve.sh` also sets `PYTHONPYCACHEPREFIX` to a fresh empty directory, so
+in-tree bytecode is never read, in a checkout as well.
+
+While serving, a bundle's index is frozen. If the open index changes after
+start (chunks, vectors, any commit from another connection, or a status
+read that fails), every request gets `503` until the process is restarted.
+It is not reloaded. A checkout still reloads in place.
+
+Hashing the bundle (index plus fp32 model) adds a few seconds to start, and
+`serve.sh` hashes it twice (the stdlib check, then `main`).
+
+### `.venv` is a trust boundary
+
+`.venv/` is outside the manifest. Nothing in it is hashed: the interpreter,
+the third-party packages, and any `sitecustomize.py` or `.pth` file in its
+`site-packages` run before, and with the same rights as, the manifest check.
+Whoever can write `.venv/` can run code in the server. Create it with
+`uv sync --frozen --no-dev --no-default-groups` as the service user, keep it
+owned by that user and not group- or world-writable, and recreate it (do not
+patch it) on every update. The manifest check proves the bundle's own files;
+it says nothing about `.venv/`.
 
 ## Run it locally
 
@@ -178,6 +219,7 @@ In the process:
 | --- | --- |
 | Read-only index | SQLite `mode=ro` and `query_only`. The bundled file is `journal_mode=DELETE` and mode `0444`. |
 | Read-only model | Bundle copies are mode `0444`. The loader does not download. |
+| Control characters | A NUL or any other control character in the request line (apart from its CRLF ending), or in a header value (HTAB is allowed, RFC 9110 5.5), is a `400` and the connection is closed. The line is not logged. |
 | Request size | Path at most 2048 bytes, headers at most 8192, body at most 4096. No chunked bodies. A 405, or any earlier error, that leaves a body unread closes the connection, so those bytes are not parsed as a second request. |
 | Header deadline | 15 seconds for the request line and all headers together. A slow byte does not reset the clock. |
 | Connections | At most 32 concurrent connections, and at most 4 from one socket IP. Over the cap the accept thread returns 503 and does not start a handler thread. `PREACHED_MAX_CONNECTIONS` and `PREACHED_MAX_CLIENT_CONNECTIONS` override the numbers. |
@@ -326,3 +368,23 @@ The secret is the Sprite admin credential.
 
 Do not put a Hugging Face token on the Sprite. The server is offline and the
 weights are already in the bundle.
+
+## Release notes (W3 deploy prep, PR #18)
+
+Behaviour changes for anyone already running `app/server.py`:
+
+- **Rate limit on by default.** `app/server.py` now limits each socket IP to
+  **120 requests per 60 seconds** (`DEFAULT_RATE_LIMIT`,
+  `DEFAULT_RATE_WINDOW_S`), even when started directly. Before this there
+  was no limit. `scripts/serve.sh` sets 60 per 60 seconds. Override with
+  `PREACHED_RATE_LIMIT` and `PREACHED_RATE_WINDOW_S`. `/healthz` counts
+  toward the same bucket. Over the limit is `429` with `Retry-After`.
+- **New `/healthz` fields.** `disabled` (false while serving),
+  `index_version` (the index's `chunks_sha256`, 64 hex, or null) and
+  `model_sha256` (sha256 of the loaded ONNX graph, or null). No paths. With
+  the kill switch on, `/healthz` is `503` with `{"ok": false, "disabled":
+  true}`. A refused index, or a bundle's index changed after start, is `503`.
+- A control character or NUL in the request line or a header value is a
+  `400` and closes the connection.
+- From a bundle: the start-up checks above (build stamp, manifest, no
+  bytecode, own index, own `model/`, onnx only).

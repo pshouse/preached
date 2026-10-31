@@ -21,8 +21,13 @@ Security choices:
 - a 405, or any earlier error, that leaves a body unread closes the connection
 - any Transfer-Encoding, or a repeated or non-digit Content-Length, is refused
   and the connection closed
-- from a bundle, MANIFEST.sha256 must parse and match and the index must be
-  the bundle's own, or the server does not start
+- from a bundle (build stamp PREACHED_BUNDLE), MANIFEST.sha256 must parse,
+  list the stamp and match, no bytecode may sit in the tree, and the index
+  and model/ must be the bundle's own, or the server does not start
+  (app/bundle.py). A tree that is neither a bundle nor a .git checkout is
+  refused
+- a bundle's index is frozen: a change after start is 503 until restart
+- a NUL or control character in the request line or a header value is a 400
 """
 
 from __future__ import annotations
