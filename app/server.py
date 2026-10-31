@@ -10,9 +10,15 @@ Security choices:
 - request target, header, and body size are limited; the socket times out
 - clients never receive a traceback
 - /healthz reports the index version and the model sha256, never a path
-- each client IP has a request cap; X-Forwarded-For is ignored
-- /healthz shares that cap; a full client table refuses new clients
-- concurrent connections are capped globally and per client
+- each client key has a request cap. The key is the socket peer, unless the
+  peer is in PREACHED_TRUSTED_PROXIES (default: none); then it is the
+  right-most X-Forwarded-For hop that is not a trusted proxy
+- a global backstop caps requests across all clients
+- /healthz has its own per-client and global buckets; it never spends the
+  search budget and search never starves it. A full table refuses new clients
+- concurrent connections are capped globally and per peer, and in-flight
+  requests per client key. A full server closes the longest-idle connection
+  of the client holding the most, and bounds keep-alive idle time when scarce
 - the whole header block has one deadline, not a timeout per read
 - a regular kill file stops and resumes serving on the next request
 - anything unexpected at the kill path is treated as killed
@@ -99,6 +105,7 @@ finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 import argparse  # noqa: E402
+import ipaddress  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
@@ -221,9 +228,32 @@ DRAIN_TIMEOUT_S = 10.0
 # Thread per connection. These caps are the backstop for that.
 DEFAULT_MAX_CONNECTIONS = 32
 DEFAULT_MAX_CLIENT_CONNECTIONS = 4
+# In-flight requests per client key. Through a trusted proxy many clients
+# share one peer, so this is the per-client cap there.
+DEFAULT_MAX_CLIENT_REQUESTS = 4
+# Once a quarter of the connection slots or fewer are free, a connection
+# waiting for its next request line gets this long, not the full deadline.
+SCARCE_IDLE_S = 2.0
 # A shared test process issues well under this. serve.sh sets a tighter cap.
 DEFAULT_RATE_LIMIT = 120
 DEFAULT_RATE_WINDOW_S = 60.0
+# Backstop across all clients, so many keys cannot add up to unbounded load.
+DEFAULT_GLOBAL_RATE_LIMIT = 1200
+# /healthz has its own buckets, per client and global.
+DEFAULT_HEALTH_RATE_LIMIT = 60
+DEFAULT_HEALTH_GLOBAL_RATE_LIMIT = 600
+# X-Forwarded-For hops looked at, right to left.
+MAX_FORWARDED_HOPS = 32
+# IPv6 clients are keyed by network, not address (address_key).
+IPV6_KEY_PREFIX = 64
+# Tailscale gives every node an address in this /48, all inside one /64, so
+# these are keyed per address. Any other IPv6 address is keyed by its /64.
+TAILSCALE_IPV6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
+# Connections beyond the cap kept for /healthz alone. Admitted only when
+# nothing can be evicted; any other path on one gets 503 and a close.
+DEFAULT_HEALTH_RESERVED_CONNECTIONS = 1
+# At most one refusal line per class per this many seconds (RefusalLog).
+REFUSAL_LOG_INTERVAL_S = 1.0
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 # Wesley ids are lowercase slugs (wesley-001), at most 64 characters. A
 # YouTube video id is 11 characters and case-sensitive. Dots and slashes are
@@ -353,14 +383,16 @@ class RateLimiter:
     current window are dropped before a new key is added. When the table
     is still full, a new key is refused and an existing key is left alone.
     That is fail closed: an unknown client gets no service until some key
-    goes idle. ``/healthz`` uses this same window. It is not exempt and it
-    does not have its own bucket.
+    goes idle. The global backstop is one of these with a single key.
+    ``/healthz`` has its own limiters (see ``App``).
     """
 
-    def __init__(self, limit: int, window_s: float, max_keys: int = 4096) -> None:
+    def __init__(self, limit: int, window_s: float, max_keys: int = 4096, name: str = "client") -> None:
         self.limit = limit
         self.window_s = window_s
         self.max_keys = max_keys
+        # The refusal class written to the log: client, global, health, health-global.
+        self.name = name
         self.retry_after = max(1, int(window_s))
         self._hits: dict[str, deque] = {}
         self._lock = threading.Lock()
@@ -387,11 +419,128 @@ class RateLimiter:
             hits.append(moment)
             return True
 
+    def refund(self, key: str) -> None:
+        """Take back the latest hit for ``key``, when a later check refused the request."""
+        with self._lock:
+            hits = self._hits.get(key)
+            if hits:
+                hits.pop()
+
     def _evict(self, now: float) -> None:
         cutoff = now - self.window_s
         stale = [key for key, hits in self._hits.items() if not hits or hits[-1] <= cutoff]
         for key in stale:
             del self._hits[key]
+
+
+class RefusalLog:
+    """One warning line per refusal class per interval, with a suppressed count.
+
+    Classes: ``over-cap`` (503 at accept), ``evict`` (holder->newcomer),
+    ``busy`` (503, per-key request slots), and ``429-<limiter>`` for each
+    limiter (client, global, health, health-global). A flood writes one line
+    per class per second, not one per request. Callers escape the detail.
+    """
+
+    def __init__(self, interval_s: float = REFUSAL_LOG_INTERVAL_S) -> None:
+        self.interval_s = interval_s
+        self._lock = threading.Lock()
+        self._last: dict[str, float] = {}
+        self._suppressed: dict[str, int] = {}
+
+    def note(self, kind: str, detail: str, now: float | None = None) -> bool:
+        """Log one refusal unless this class logged within the interval."""
+        moment = time.monotonic() if now is None else now
+        with self._lock:
+            last = self._last.get(kind)
+            if last is not None and moment - last < self.interval_s:
+                self._suppressed[kind] = self._suppressed.get(kind, 0) + 1
+                return False
+            self._last[kind] = moment
+            suppressed = self._suppressed.pop(kind, 0)
+        logging.warning("refused %s %s suppressed=%d", kind, detail, suppressed)
+        return True
+
+    def flush(self) -> None:
+        """Log the count still suppressed for each class, then forget it.
+
+        Called at shutdown, so a flood's tail is not lost with the process.
+        """
+        with self._lock:
+            pending = sorted(self._suppressed.items())
+            self._suppressed.clear()
+        for kind, suppressed in pending:
+            logging.warning("refused %s flush suppressed=%d", kind, suppressed)
+
+
+def parse_trusted_proxies(raw: str | None) -> tuple:
+    """Networks from a comma- or space-separated list. Empty means none.
+
+    A typo must not widen trust, so any entry that is not an address or a
+    network with no host bits set stops the server.
+    """
+    networks = []
+    for entry in re.split(r"[,\s]+", raw or ""):
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=True))
+        except ValueError:
+            raise SystemExit(f"PREACHED_TRUSTED_PROXIES: not an address or network: {entry!r}")
+    return tuple(networks)
+
+
+def _address(value: str):
+    """An IP address, IPv4-mapped IPv6 folded to IPv4, or None."""
+    try:
+        address = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped if mapped is not None else address
+
+
+def _trusted(address, trusted) -> bool:
+    return any(address.version == net.version and address in net for net in trusted)
+
+
+def address_key(address) -> str:
+    """The key for one client address. IPv6 is keyed by its /64.
+
+    One IPv6 host is usually handed a whole /64, so a per-address key would
+    give it 2**64 buckets. IPv4 (and IPv4-mapped IPv6) stays per address, and
+    so does a Tailscale address (``TAILSCALE_IPV6``): the tailnet puts every
+    node in one /64, and each node has one address there.
+    """
+    if address.version == 6 and address not in TAILSCALE_IPV6:
+        return str(ipaddress.ip_network((address, IPV6_KEY_PREFIX), strict=False))
+    return str(address)
+
+
+def client_key(peer: str, forwarded: list[str] | None, trusted) -> str:
+    """The rate and slot key for one request.
+
+    An untrusted peer is the key, and X-Forwarded-For is ignored. From a
+    trusted peer, hops are read right to left: each trusted hop is skipped
+    and the first untrusted one is the client. Anything to its left was
+    written by the client and is never read. A hop that does not parse was
+    written by a trusted proxy, so the nearest trusted address is the key.
+    An IPv6 key is the address's /64 (``address_key``).
+    """
+    address = _address(peer)
+    if address is None:
+        return peer
+    if not trusted or not forwarded or not _trusted(address, trusted):
+        return address_key(address)
+    hops = [part for value in forwarded for part in value.split(",")]
+    for hop in reversed(hops[-MAX_FORWARDED_HOPS:]):
+        hop_address = _address(hop)
+        if hop_address is None:
+            break
+        if not _trusted(hop_address, trusted):
+            return address_key(hop_address)
+        address = hop_address
+    return address_key(address)
 
 
 def rss_bytes() -> int | None:
@@ -710,6 +859,10 @@ class App:
         rate_window_s: float | None = None,
         kill_file: Path | None = None,
         servable=None,
+        global_rate_limit: int | None = None,
+        health_rate_limit: int | None = None,
+        health_global_rate_limit: int | None = None,
+        trusted_proxies=None,
         church_connection=None,
         church_searcher=None,
         church_library: str | None = None,
@@ -753,7 +906,30 @@ class App:
             rate_window_s = _positive_float(
                 os.environ.get("PREACHED_RATE_WINDOW_S"), DEFAULT_RATE_WINDOW_S
             )
-        self.rate_limiter = RateLimiter(rate_limit, rate_window_s)
+        if global_rate_limit is None:
+            global_rate_limit = _positive_int(
+                os.environ.get("PREACHED_GLOBAL_RATE_LIMIT"), DEFAULT_GLOBAL_RATE_LIMIT
+            )
+        if health_rate_limit is None:
+            health_rate_limit = _positive_int(
+                os.environ.get("PREACHED_HEALTH_RATE_LIMIT"), DEFAULT_HEALTH_RATE_LIMIT
+            )
+        if health_global_rate_limit is None:
+            health_global_rate_limit = _positive_int(
+                os.environ.get("PREACHED_HEALTH_GLOBAL_RATE_LIMIT"),
+                DEFAULT_HEALTH_GLOBAL_RATE_LIMIT,
+            )
+        if trusted_proxies is None:
+            trusted_proxies = parse_trusted_proxies(os.environ.get("PREACHED_TRUSTED_PROXIES"))
+        self.trusted_proxies = tuple(trusted_proxies)
+        self.rate_limiter = RateLimiter(rate_limit, rate_window_s, name="client")
+        self.global_limiter = RateLimiter(global_rate_limit, rate_window_s, max_keys=1, name="global")
+        # /healthz: separate tables, so a search flood cannot starve health
+        # checks and a health flood cannot spend the search budget.
+        self.health_limiter = RateLimiter(health_rate_limit, rate_window_s, name="health")
+        self.health_global_limiter = RateLimiter(
+            health_global_rate_limit, rate_window_s, max_keys=1, name="health-global"
+        )
         self.kill_file = Path(kill_file) if kill_file else None
         self.classic_label = classic_label or read_label(connection) or (
             CLASSIC_LABEL if library == LIBRARY else library
@@ -939,6 +1115,28 @@ class App:
     def _check_refused(self) -> None:
         if self.refused is not None:
             raise BadRequest(REFUSED_ERROR, 503)
+
+    def client_key(self, peer: str, forwarded: list[str] | None) -> str:
+        return client_key(peer, forwarded, self.trusted_proxies)
+
+    def allow(self, key: str, *, health: bool) -> RateLimiter | None:
+        """None when the request may run, else the limiter that refused it.
+
+        The per-client bucket is checked first, so a client already over its
+        own cap does not spend the global backstop. A request the backstop
+        refuses gives its hit back to the client's own bucket.
+        """
+        own, shared = (
+            (self.health_limiter, self.health_global_limiter)
+            if health
+            else (self.rate_limiter, self.global_limiter)
+        )
+        if not own.allow(key):
+            return own
+        if not shared.allow("*"):
+            own.refund(key)
+            return shared
+        return None
 
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
@@ -1370,13 +1568,35 @@ def make_handler(app: App):
             if self._has_unread_body():
                 self.close_connection = True
 
+        def finish(self) -> None:
+            # The last response is flushed; the socket is not closed yet.
+            # Free the slot now, so a client that reconnects as soon as it
+            # sees the close is not refused for its own old slot. Not
+            # earlier: a slow reader stays inside the caps until its body is
+            # out, and an interim 100 Continue is not the last response.
+            try:
+                super().finish()
+            finally:
+                closing = getattr(getattr(self, "server", None), "closing", None)
+                if closing is not None:
+                    closing(self.connection)
+
         def handle_one_request(self) -> None:
             # Headers share one deadline. The handler then runs under the
             # normal socket timeout, so a search is not cut off by the
             # header budget.
-            deadline = time.monotonic() + self._header_deadline_s()
+            budget = self._header_deadline_s()
+            server = getattr(self, "server", None)
+            scarce = getattr(server, "scarce", None)
+            if scarce is not None and scarce():
+                budget = min(budget, server.scarce_idle_s)
+            deadline = time.monotonic() + budget
             raw = None
             parsed = False
+            # Per request: a proxy may carry several clients on one connection,
+            # and a failed parse must not log the previous request's key.
+            self._client_key = None
+            self.headers = None
             try:
                 raw = self._install_header_deadline(deadline)
                 self.raw_requestline = self.rfile.readline(65537)
@@ -1389,6 +1609,11 @@ def make_handler(app: App):
                 if not self.raw_requestline:
                     self.close_connection = True
                     return
+                # A request has started: an eviction takes an idle
+                # connection before this one.
+                mark_reading = getattr(server, "mark_reading", None)
+                if mark_reading is not None:
+                    mark_reading(self.connection)
                 line = self.raw_requestline
                 line = line[:-2] if line.endswith(b"\r\n") else line.rstrip(b"\n")
                 if REQUEST_LINE_BAD.search(line):
@@ -1423,6 +1648,20 @@ def make_handler(app: App):
                     pass
             if not parsed:
                 return
+            # Headers are in: this connection is busy and is no longer one a
+            # full server may close. Already closed for a newcomer: stop.
+            mark_busy = getattr(server, "mark_busy", None)
+            if mark_busy is not None and not mark_busy(self.connection):
+                self.close_connection = True
+                return
+            try:
+                self._handle_parsed()
+            finally:
+                mark_idle = getattr(server, "mark_idle", None)
+                if mark_idle is not None:
+                    mark_idle(self.connection)
+
+        def _handle_parsed(self) -> None:
             # Refuse ambiguous body framing before any route runs. The
             # connection closes, so bytes after the headers are never parsed
             # as a second request.
@@ -1464,14 +1703,31 @@ def make_handler(app: App):
                 escape_controls(text),
             )
 
+        def _log_key(self) -> str:
+            """The client key for the log: the rate key once known, else from the headers."""
+            key = getattr(self, "_client_key", None)
+            if key is not None:
+                return key
+            headers = getattr(self, "headers", None)
+            forwarded = None
+            if headers is not None:
+                try:
+                    forwarded = headers.get_all("X-Forwarded-For")
+                except Exception:
+                    forwarded = None
+            return app.client_key(self.client_address[0], forwarded)
+
         def log_request(self, code="-", size="-"):
+            # peer key method path status. The key is the client behind a
+            # trusted proxy (the socket peer otherwise); both are escaped.
             raw_path = getattr(self, "path", None) or "/"
             path = raw_path.split("?", 1)[0] or "/"
             command = getattr(self, "command", None) or "-"
             status = getattr(code, "value", code)
             logging.info(
-                "%s %s %s %s",
+                "%s %s %s %s %s",
                 escape_controls(self.client_address[0]),
+                escape_controls(self._log_key()),
                 escape_controls(command),
                 escape_controls(path),
                 status,
@@ -1528,6 +1784,9 @@ def make_handler(app: App):
             if self._has_unread_body():
                 self.close_connection = True
                 self.send_header("Connection", "close")
+            elif getattr(self, "_reserved", False) and not (extra_headers and "Connection" in extra_headers):
+                # A reserved /healthz connection serves one request, then closes.
+                self.send_header("Connection", "close")
             self.end_headers()
             if include_body:
                 self.wfile.write(body)
@@ -1566,8 +1825,8 @@ def make_handler(app: App):
             if len(hosts) != 1 or not app.host_allowed(hosts[0]):
                 raise BadRequest("host not allowed", 421)
 
-        def _limited_headers(self) -> dict:
-            return {"Retry-After": str(app.rate_limiter.retry_after)}
+        def _limited_headers(self, limiter: RateLimiter | None = None) -> dict:
+            return {"Retry-After": str((limiter or app.rate_limiter).retry_after)}
 
         def _blocked(self, include_body: bool) -> str | None:
             """Size and host checks, then the kill switch, then the rate cap.
@@ -1577,24 +1836,66 @@ def make_handler(app: App):
             self._limits_and_host()
             parsed = urlsplit(self.path)
             path = parsed.path or "/"
+            server = getattr(self, "server", None)
+            is_reserved = getattr(server, "is_reserved", None)
+            if is_reserved is not None and is_reserved(self.connection):
+                # Admitted over the cap for /healthz only: one request, then close.
+                self._reserved = True
+                self.close_connection = True
             if app.disabled():
                 if path == "/healthz":
                     self._send_json(503, {"ok": False, "disabled": True}, include_body)
                 else:
                     self._send_json(503, {"error": "unavailable"}, include_body)
                 return "disabled"
-            # The socket peer, never X-Forwarded-For. /healthz uses this same
-            # bucket. A proxy in front shares one bucket until a trusted-proxy
-            # mode exists; that is not this process.
-            if not app.rate_limiter.allow(self.client_address[0]):
+            health = path == "/healthz"
+            refusals = getattr(server, "refusals", None)
+            # The socket peer, unless it is a trusted proxy (client_key).
+            key = app.client_key(self.client_address[0], self.headers.get_all("X-Forwarded-For"))
+            self._client_key = key
+            if getattr(self, "_reserved", False) and not health:
+                self._note_refusal(refusals, "busy", key, path)
+                self._send_json(
+                    503,
+                    {"error": "unavailable"},
+                    include_body,
+                    extra_headers={"Retry-After": "1", "Connection": "close"},
+                )
+                return "busy"
+            refused = app.allow(key, health=health)
+            if refused is not None:
+                self._note_refusal(refusals, "429-" + refused.name, key, path)
                 self._send_json(
                     429,
                     {"error": "too many requests"},
                     include_body,
-                    extra_headers=self._limited_headers(),
+                    extra_headers=self._limited_headers(refused),
                 )
                 return "limited"
+            acquire = getattr(server, "acquire_slot", None)
+            if acquire is not None:
+                if not acquire(key, health=health):
+                    self._note_refusal(refusals, "busy", key, path)
+                    self.close_connection = True
+                    self._send_json(
+                        503,
+                        {"error": "unavailable"},
+                        include_body,
+                        extra_headers={"Retry-After": "1", "Connection": "close"},
+                    )
+                    return "busy"
+                self._slot_key = key
+                self._slot_health = health
             return None
+
+        def _note_refusal(self, refusals, kind: str, key: str, path: str) -> None:
+            if refusals is None:
+                return
+            refusals.note(
+                kind,
+                "%s %s %s"
+                % (escape_controls(self.client_address[0]), escape_controls(key), escape_controls(path)),
+            )
 
         def _route(self, include_body: bool) -> None:
             if self._blocked(include_body):
@@ -1660,6 +1961,16 @@ def make_handler(app: App):
             self._send_json(200, meta, include_body)
 
         def _respond(self, include_body: bool) -> None:
+            self._slot_key = None
+            self._slot_health = False
+            try:
+                self._respond_inner(include_body)
+            finally:
+                if self._slot_key is not None:
+                    self.server.release_slot(self._slot_key, health=self._slot_health)
+                    self._slot_key = None
+
+        def _respond_inner(self, include_body: bool) -> None:
             try:
                 self._route(include_body)
             except BadRequest as exc:
@@ -1722,12 +2033,44 @@ def make_handler(app: App):
     return Handler
 
 
+class _Connection:
+    __slots__ = ("holder", "busy", "reading", "since", "closed", "reserved")
+
+    def __init__(self, holder: str, now: float, reserved: bool = False) -> None:
+        self.holder = holder
+        # busy: headers are in and the request is being handled.
+        # reading: a request line arrived and its headers are still coming.
+        self.busy = False
+        self.reading = False
+        self.since = now
+        self.closed = False
+        # Admitted over the cap for /healthz only (health_reserved).
+        self.reserved = reserved
+
+
 class PreachedServer(ThreadingHTTPServer):
     """Threaded server with a global cap and a per-client cap.
 
     ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
     the cap, the connection is closed on the accept thread with a short 503
     and no handler thread is started.
+
+    Fairness: when every slot is taken, a new connection may take one from a
+    peer holding at least two more connections than the newcomer. The
+    longest-idle connection of the peer holding the most is closed: one
+    waiting between requests. A connection whose request line arrived and
+    whose headers are still coming is closed only when that peer has no
+    idle one left. A request being handled is never closed. When slots are
+    scarce, a connection waiting for its next request gets ``scarce_idle_s``.
+
+    When nothing can be closed, up to ``health_reserved`` more connections
+    are admitted for ``/healthz`` alone: one request, then a close. Any
+    other path on one gets 503.
+
+    The per-peer connection cap does not apply to a trusted proxy, whose
+    clients are told apart only after the headers. In-flight requests are
+    capped per client key (``acquire_slot``) for every peer, with a separate
+    table for ``/healthz``. An IPv6 peer is held by its /64.
     """
 
     allow_reuse_address = True
@@ -1738,13 +2081,27 @@ class PreachedServer(ThreadingHTTPServer):
     block_on_close = True
     max_connections = DEFAULT_MAX_CONNECTIONS
     max_connections_per_client = DEFAULT_MAX_CLIENT_CONNECTIONS
+    max_requests_per_client = DEFAULT_MAX_CLIENT_REQUESTS
     header_deadline_s = HEADER_DEADLINE_S
+    scarce_idle_s = SCARCE_IDLE_S
+    health_reserved = DEFAULT_HEALTH_RESERVED_CONNECTIONS
+    trusted_proxies: tuple = ()
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._conn_lock = threading.Lock()
         self._conn_total = 0
+        self._reserved_total = 0
         self._conn_by_ip: dict[str, int] = {}
+        self._conns: dict[object, _Connection] = {}
+        self._slots_by_key: dict[str, int] = {}
+        self._health_slots_by_key: dict[str, int] = {}
+        self.refusals = RefusalLog()
+        try:
+            reserved = int(os.environ.get("PREACHED_HEALTH_RESERVED_CONNECTIONS", ""))
+        except ValueError:
+            reserved = DEFAULT_HEALTH_RESERVED_CONNECTIONS
+        self.health_reserved = reserved if reserved >= 0 else DEFAULT_HEALTH_RESERVED_CONNECTIONS
         self.max_connections = _positive_int(
             os.environ.get("PREACHED_MAX_CONNECTIONS"), DEFAULT_MAX_CONNECTIONS
         )
@@ -1752,47 +2109,189 @@ class PreachedServer(ThreadingHTTPServer):
             os.environ.get("PREACHED_MAX_CLIENT_CONNECTIONS"),
             DEFAULT_MAX_CLIENT_CONNECTIONS,
         )
+        self.max_requests_per_client = _positive_int(
+            os.environ.get("PREACHED_MAX_CLIENT_REQUESTS"),
+            DEFAULT_MAX_CLIENT_REQUESTS,
+        )
         self.header_deadline_s = _positive_float(
             os.environ.get("PREACHED_HEADER_DEADLINE_S"), HEADER_DEADLINE_S
         )
+        self.scarce_idle_s = _positive_float(os.environ.get("PREACHED_SCARCE_IDLE_S"), SCARCE_IDLE_S)
 
-    def _acquire_connection(self, ip: str) -> bool:
+    def _holder(self, ip: str) -> tuple[str, bool]:
+        """The peer's connection key (IPv6 by /64) and whether it is a trusted proxy."""
+        address = _address(ip)
+        if address is None:
+            return ip, False
+        return address_key(address), _trusted(address, self.trusted_proxies)
+
+    def scarce(self) -> bool:
+        """True when a quarter of the connection slots, or fewer, are free."""
+        free = self.max_connections - self._conn_total
+        return free <= max(1, self.max_connections // 4)
+
+    def _pick_victim(self, newcomer_holds: int):
+        """The connection to close for a newcomer, or None. Lock held.
+
+        Idle connections first. One still receiving its headers is taken
+        only when no eligible peer has an idle one left. Busy and reserved
+        connections are never taken.
+        """
+        counts: dict[str, int] = {}
+        for conn in self._conns.values():
+            if not conn.closed:
+                counts[conn.holder] = counts.get(conn.holder, 0) + 1
+        for take_reading in (False, True):
+            oldest: dict[str, tuple[float, object]] = {}
+            for request, conn in self._conns.items():
+                if conn.closed or conn.busy or conn.reserved:
+                    continue
+                if conn.reading and not take_reading:
+                    continue
+                best = oldest.get(conn.holder)
+                if best is None or conn.since < best[0]:
+                    oldest[conn.holder] = (conn.since, request)
+            candidates = [holder for holder in oldest if counts[holder] >= newcomer_holds + 2]
+            if candidates:
+                holder = max(candidates, key=lambda name: (counts[name], -oldest[name][0]))
+                return oldest[holder][1]
+        return None
+
+    def _forget(self, request) -> None:
+        """Drop a connection from the counts. Idempotent. Lock held."""
+        conn = self._conns.get(request)
+        if conn is None or conn.closed:
+            return
+        conn.closed = True
+        if conn.reserved:
+            self._reserved_total = max(0, self._reserved_total - 1)
+        else:
+            self._conn_total = max(0, self._conn_total - 1)
+        left = self._conn_by_ip.get(conn.holder, 0) - 1
+        if left <= 0:
+            self._conn_by_ip.pop(conn.holder, None)
+        else:
+            self._conn_by_ip[conn.holder] = left
+
+    def _acquire_connection(self, request, ip: str) -> bool:
+        holder, trusted = self._holder(ip)
+        victim = None
+        victim_holder = None
+        reserved = False
         with self._conn_lock:
+            held = self._conn_by_ip.get(holder, 0)
+            if held >= self.max_connections_per_client and not trusted:
+                return False
             if self._conn_total >= self.max_connections:
+                victim = self._pick_victim(held)
+                if victim is None:
+                    if self._reserved_total >= self.health_reserved:
+                        return False
+                    reserved = True
+                else:
+                    victim_holder = self._conns[victim].holder
+                    self._forget(victim)
+            if reserved:
+                self._reserved_total += 1
+            else:
+                self._conn_total += 1
+            self._conn_by_ip[holder] = held + 1
+            self._conns[request] = _Connection(holder, time.monotonic(), reserved)
+        if victim is not None:
+            self.refusals.note(
+                "evict", "%s->%s" % (escape_controls(victim_holder), escape_controls(holder))
+            )
+            # Wakes the victim's handler out of its read; it then exits. Its
+            # slot was already handed over above.
+            try:
+                victim.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        return True
+
+    def _release_connection(self, request) -> None:
+        with self._conn_lock:
+            self._forget(request)
+            self._conns.pop(request, None)
+
+    def closing(self, request) -> None:
+        """The handler is done and its last response flushed; the close is next."""
+        self._release_connection(request)
+
+    def mark_reading(self, request) -> None:
+        """A request line arrived; its headers are still coming."""
+        with self._conn_lock:
+            conn = self._conns.get(request)
+            if conn is not None and not conn.closed:
+                conn.reading = True
+                conn.since = time.monotonic()
+
+    def mark_busy(self, request) -> bool:
+        """Headers are in. False when a newcomer already took this slot."""
+        with self._conn_lock:
+            conn = self._conns.get(request)
+            if conn is None:
+                return True
+            if conn.closed:
                 return False
-            held = self._conn_by_ip.get(ip, 0)
-            if held >= self.max_connections_per_client:
-                return False
-            self._conn_total += 1
-            self._conn_by_ip[ip] = held + 1
+            conn.busy = True
+            conn.reading = False
             return True
 
-    def _release_connection(self, ip: str) -> None:
+    def mark_idle(self, request) -> None:
         with self._conn_lock:
-            self._conn_total = max(0, self._conn_total - 1)
-            left = self._conn_by_ip.get(ip, 0) - 1
+            conn = self._conns.get(request)
+            if conn is not None:
+                conn.busy = False
+                conn.reading = False
+                conn.since = time.monotonic()
+
+    def is_reserved(self, request) -> bool:
+        """True for a connection admitted over the cap for /healthz only."""
+        with self._conn_lock:
+            conn = self._conns.get(request)
+            return conn is not None and conn.reserved
+
+    def acquire_slot(self, key: str, *, health: bool = False) -> bool:
+        """One in-flight request for ``key``. /healthz has its own table."""
+        table = self._health_slots_by_key if health else self._slots_by_key
+        with self._conn_lock:
+            held = table.get(key, 0)
+            if held >= self.max_requests_per_client:
+                return False
+            table[key] = held + 1
+            return True
+
+    def release_slot(self, key: str, *, health: bool = False) -> None:
+        table = self._health_slots_by_key if health else self._slots_by_key
+        with self._conn_lock:
+            left = table.get(key, 0) - 1
             if left <= 0:
-                self._conn_by_ip.pop(ip, None)
+                table.pop(key, None)
             else:
-                self._conn_by_ip[ip] = left
+                table[key] = left
 
     def process_request(self, request, client_address) -> None:
-        ip = client_address[0]
-        if not self._acquire_connection(ip):
+        if not self._acquire_connection(request, client_address[0]):
+            self.refusals.note("over-cap", "peer=%s" % escape_controls(client_address[0]))
             self._reject_over_cap(request)
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
         except Exception:
-            self._release_connection(ip)
+            self._release_connection(request)
             raise
 
     def process_request_thread(self, request, client_address) -> None:
         try:
             super().process_request_thread(request, client_address)
         finally:
-            self._release_connection(client_address[0])
+            self._release_connection(request)
+
+    def server_close(self) -> None:
+        super().server_close()
+        self.refusals.flush()
 
     def _reject_over_cap(self, request) -> None:
         body = b'{"error":"unavailable"}'
@@ -1888,7 +2387,9 @@ def _shutdown_socket(sock, how: int) -> None:
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
-    return PreachedServer((host, port), make_handler(app))
+    server = PreachedServer((host, port), make_handler(app))
+    server.trusted_proxies = app.trusted_proxies
+    return server
 
 
 def serve_forever(server: PreachedServer) -> None:
@@ -2249,6 +2750,11 @@ def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
             # Closing the index or the session now could crash the process.
             # Leave both open; interpreter exit waits for these threads.
             logging.error("%d handler thread(s) still running after %.0fs; index left open", len(stuck), DRAIN_TIMEOUT_S)
+            # Log the suppressed refusal counts now: server_close would join
+            # the stuck thread first, and a SIGKILL then loses them.
+            refusals = getattr(server, "refusals", None)
+            if refusals is not None:
+                refusals.flush()
         else:
             server.server_close()
             connection.close()
