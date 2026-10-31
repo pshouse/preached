@@ -401,7 +401,7 @@ Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a sc
 
 **Cache.** `find /cache -printf '%p\t%s\t%T@\n' | sort`, before the suite and after `uv lock --check`. Both listings have 132629 entries. sha256 both `9742ff943e45839c910c6d14434471c5130aefa7ecaf161a43dd7124bd112122`. Paths, sizes and mtimes: no difference. An empty writability probe `/cache/.r3-probe-w4` was created and removed before that before-snapshot. It is not in either listing.
 
-**Head.** `0000000000000000000000000000000000000000` is the R3 section commit, the parent of the pushed head. The pushed head only replaces those 40 hex digits. Ahead/behind at the pushed head: vs `origin/main`, 0 behind and 48 ahead; vs `origin/fix/w4-onnx-pin-repro`, 0 behind and 18 ahead.
+**Head.** `8d22cb7297264b26d1784335b73a12fd82bf9370` is the R3 section commit, the parent of the pushed head. The pushed head only replaces those 40 hex digits. Ahead/behind at the pushed head: vs `origin/main`, 0 behind and 48 ahead; vs `origin/fix/w4-onnx-pin-repro`, 0 behind and 18 ahead.
 
 **Diff stat.** `git diff --stat origin/fix/w4-onnx-pin-repro...HEAD` at the pushed head. `1275223` is an ancestor, so `..` and `...` match. `src/preached/search.py` and `tests/test_api_path.py` are finding 17 from the first round. `search/bench.py`, `tests/test_bench_failclosed.py` and `reports/W5-BENCH-FAILCLOSED-R2.md` arrived with the merge of `origin/main` (`97537ae`, PR #76). They were not edited again here. Every path is in that set.
 
