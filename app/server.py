@@ -287,9 +287,18 @@ UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"
 # Loud on purpose: a fresh clone without the export otherwise looks like a
 # working server that finds nothing.
 MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"
+MISSING_GRAPH_NOTE = "The search model has not been built; results are BM25 only."
 INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 REFUSED_ERROR = "index unavailable"
+# /healthz search_mode_reason when search_mode is bm25. A code, never a path.
+SEARCH_MODE_REASONS = {
+    None: "bm25_only",
+    MISSING_GRAPH_NOTE: "onnx_graph_not_built",
+    FALLBACK_NOTE: "model_unavailable",
+    STALE_NOTE: "stale_vectors",
+    INDEX_READ_NOTE: "index_unreadable",
+}
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -843,9 +852,11 @@ def load_search(
         logging.exception(MISMATCH_LOG)
         return Searcher(connection), None, STALE_NOTE
     except ArtifactMissing as exc:
-        # exc names the missing path and EXPORT_COMMAND.
+        # The alert line first (it still pages), then exc: the missing path
+        # and EXPORT_COMMAND.
+        logging.error(UNAVAILABLE_LOG)
         logging.error(MISSING_GRAPH_LOG, exc)
-        return Searcher(connection), None, FALLBACK_NOTE
+        return Searcher(connection), None, MISSING_GRAPH_NOTE
     except Exception:
         logging.exception(UNAVAILABLE_LOG)
         return Searcher(connection), None, FALLBACK_NOTE
@@ -1311,8 +1322,10 @@ class App:
             pending = pending_review_count(self.connection) if gated else None
             index_version = self._index_version()
         model_sha = None
+        reason = SEARCH_MODE_REASONS.get(self.fallback_note, "fallback")
         if self.encode is not None:
             model_sha = public_sha256(getattr(self.encode, "model_sha256", None))
+            reason = None
         payload = {
             "ok": True,
             "disabled": False,
@@ -1321,6 +1334,8 @@ class App:
             "model": self.model_name,
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
+            "search_mode": "hybrid" if self.encode is not None else "bm25",
+            "search_mode_reason": reason,
             "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
             "index_version": index_version,

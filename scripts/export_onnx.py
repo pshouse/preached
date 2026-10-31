@@ -11,12 +11,17 @@ From the repo root (``uv run --group bench`` installs the bench group):
   CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
 
 The export is byte-reproducible and must write the graph pinned in
-``preached.artifacts.FP32_ONNX_SHA256``. Transformers' ModernBERT builds its
-two rotary tables in ``set(config.layer_types)`` order, which follows
-``PYTHONHASHSEED``; the two orders trace to two graphs with the same weights
-and outputs but different bytes. The script re-executes itself under
-``EXPORT_HASHSEED``, checks the trace order, and exits non-zero without a
-manifest if the graph does not match the pin.
+``preached.artifacts.FP32_ONNX_SHA256``. Two things move the bytes
+(docs/adr/0001-onnx-export-determinism.md):
+
+- torch's ATen CPU dispatch level. The script sets
+  ``ATEN_CPU_CAPABILITY=avx2`` before torch is imported and refuses a host
+  that is not x86-64 with AVX2.
+- The order of transformers' ModernBERT rotary tables, built in
+  ``set(config.layer_types)`` order, which follows ``PYTHONHASHSEED``. The
+  script re-executes itself under ``EXPORT_HASHSEED`` and checks the order.
+
+It exits non-zero without a manifest if the graph does not match the pin.
 
 Outputs under ``/cache/models/granite-english-r2-onnx/<revision>/``:
 
@@ -33,11 +38,15 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import sys
 from pathlib import Path
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
+# Before torch is imported: the dispatch level changes the exported bytes.
+EXPORT_CPU_CAPABILITY = "avx2"
+os.environ["ATEN_CPU_CAPABILITY"] = EXPORT_CPU_CAPABILITY
 os.environ.setdefault("HF_HOME", "/cache/huggingface")
 os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "/cache/huggingface/hub")
 
@@ -53,10 +62,27 @@ from preached.artifacts import (  # noqa: E402
 )
 from preached.pooling import HIDDEN_SIZE, MAX_SEQ_LENGTH  # noqa: E402
 
-# Under this seed CPython 3.12 iterates set(config.layer_types) as
-# sliding_attention, full_attention: the trace order of the pinned graph.
-EXPORT_HASHSEED = "1"
-PINNED_TRACE_ORDER = ["sliding_attention", "full_attention"]
+# Under this seed CPython 3.12 iterates set(config.layer_types) in sorted
+# order, the order an upstream sorted(set(...)) would pin: the pinned graph.
+EXPORT_HASHSEED = "0"
+PINNED_TRACE_ORDER = ["full_attention", "sliding_attention"]
+
+
+def _require_avx2(machine: str | None = None, cpuinfo: Path = Path("/proc/cpuinfo")) -> None:
+    """The pin is the avx2 export. Refuse a host that cannot run avx2 kernels."""
+    machine = machine or platform.machine()
+    if machine.lower() not in {"x86_64", "amd64"}:
+        raise SystemExit(
+            f"export needs an x86-64 host with AVX2 (the pinned graph is the "
+            f"ATEN_CPU_CAPABILITY=avx2 export); this host is {machine}"
+        )
+    try:
+        text = cpuinfo.read_text()
+    except OSError as exc:
+        raise SystemExit(f"export needs an x86-64 host with AVX2; cannot read {cpuinfo}: {exc}") from None
+    flags = next((line.split(":", 1)[1].split() for line in text.splitlines() if line.startswith("flags")), [])
+    if "avx2" not in flags:
+        raise SystemExit("export needs an x86-64 host with AVX2; this CPU does not report avx2")
 
 
 def _reexec_with_hashseed() -> None:
@@ -246,6 +272,9 @@ def main() -> None:
 
     if torch.cuda.is_available():
         raise SystemExit("CUDA is visible; export must run with CUDA_VISIBLE_DEVICES=''")
+    capability = torch.backends.cpu.get_cpu_capability()
+    if capability != EXPORT_CPU_CAPABILITY.upper():
+        raise SystemExit(f"torch CPU dispatch is {capability}, expected {EXPORT_CPU_CAPABILITY.upper()}")
     snapshot = Path(
         snapshot_download(
             GRANITE_HF_ID,
@@ -297,5 +326,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    _require_avx2()
     _reexec_with_hashseed()
     main()

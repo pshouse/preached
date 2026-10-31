@@ -1,17 +1,18 @@
 """The repo's export reproduces the pinned graph, and the pin still bites.
 
-reports/W4-ONNX-PIN-REPRO.md has the cause: ModernBERT traces its two
-rotary tables in ``set(config.layer_types)`` order, which follows
-PYTHONHASHSEED. The exporter fixes the seed.
+docs/adr/0001-onnx-export-determinism.md has the cause: the exported bytes
+follow torch's ATen CPU dispatch level and the order ModernBERT traces its
+two rotary tables (``set(config.layer_types)``, so PYTHONHASHSEED). The
+exporter fixes both: ATEN_CPU_CAPABILITY=avx2 and EXPORT_HASHSEED.
 
-The full export test is slow (two exports, about a minute each on CPU) and
-needs the bench group and the Hugging Face snapshot. Run it with:
-
-  PREACHED_TEST_EXPORT=1 uv run --group bench python -m unittest tests.test_onnx_pin_repro
+ExportIsByteIdenticalTests runs the real exporter twice (about a minute
+each on CPU). It skips only when the Granite weights are not in
+PREACHED_CACHE.
 """
 
 from __future__ import annotations
 
+import filecmp
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ from pathlib import Path
 
 from preached.artifacts import (
     EXPORT_COMMAND,
+    GRANITE_MODEL_KEY,
     FP32_ONNX_SHA256,
     GRANITE_HF_ID,
     GRANITE_REVISION,
@@ -103,12 +105,14 @@ class MissingGraphMessageTests(unittest.TestCase):
         return encode, note, "\n".join(logs.output)
 
     def test_missing_manifest_names_the_export_step(self) -> None:
-        from app.server import FALLBACK_NOTE
+        from app.server import MISSING_GRAPH_NOTE, UNAVAILABLE_LOG
 
         with tempfile.TemporaryDirectory() as tmp:
             encode, note, text = self._load(Path(tmp), Path(tmp) / "index.sqlite")
         self.assertIsNone(encode)
-        self.assertEqual(note, FALLBACK_NOTE)
+        self.assertEqual(note, MISSING_GRAPH_NOTE)
+        # The runbook's D2 page still matches.
+        self.assertIn(f"ERROR:root:{UNAVAILABLE_LOG}", text.splitlines())
         self.assertIn("ONNX GRAPH NOT BUILT", text)
         self.assertIn("Hybrid search is OFF", text)
         self.assertIn(EXPORT_COMMAND, text)
@@ -148,6 +152,114 @@ class MissingGraphMessageTests(unittest.TestCase):
                 verify_manifest(Path(tmp))
         self.assertIsInstance(ctx.exception, ArtifactError)
         self.assertIn(EXPORT_COMMAND, str(ctx.exception))
+
+
+class HealthzSearchModeTests(unittest.TestCase):
+    """/healthz says which search is live and, when it is BM25, why."""
+
+    def _app(self, *, loader=None, bm25_only=False):
+        from app.server import STATIC_DIR, build_app
+        from test_server import build_rich_index, reopen
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        index = Path(tmp.name) / "rich.sqlite"
+        build_rich_index(index)
+        app = build_app(
+            reopen(index),
+            model_key=GRANITE_MODEL_KEY,
+            bm25_only=bm25_only,
+            hosts={"127.0.0.1"},
+            static_dir=STATIC_DIR,
+            loader=loader,
+        )
+        self.addCleanup(app.connection.close)
+        return app
+
+    def test_a_missing_graph_shows_as_bm25_with_its_reason(self) -> None:
+        def loader(_connection, _model_key):
+            raise ArtifactMissing(f"missing ONNX manifest at /x/manifest.json; build it with: {EXPORT_COMMAND}")
+
+        with self.assertLogs(level="ERROR"):
+            health = self._app(loader=loader).health()
+        self.assertEqual(health["search_mode"], "bm25")
+        self.assertEqual(health["search_mode_reason"], "onnx_graph_not_built")
+        self.assertTrue(health["fallback"])
+        # A code, not the path or the command.
+        self.assertNotIn("/x/", json.dumps(health))
+
+    def test_another_load_failure_has_its_own_reason(self) -> None:
+        def loader(_connection, _model_key):
+            raise RuntimeError("boom")
+
+        with self.assertLogs(level="ERROR"):
+            health = self._app(loader=loader).health()
+        self.assertEqual((health["search_mode"], health["search_mode_reason"]), ("bm25", "model_unavailable"))
+
+    def test_bm25_by_request_and_hybrid(self) -> None:
+        from preached.search import Searcher
+        from test_server import FIXTURE_FP, encode_fixture
+
+        health = self._app(bm25_only=True).health()
+        self.assertEqual((health["search_mode"], health["search_mode_reason"]), ("bm25", "bm25_only"))
+
+        def loader(connection, _model_key):
+            return Searcher(connection, model="fixture", fingerprint=FIXTURE_FP), encode_fixture
+
+        health = self._app(loader=loader).health()
+        self.assertEqual((health["search_mode"], health["search_mode_reason"]), ("hybrid", None))
+
+
+def _load_exporter(name: str = "export_onnx_probe"):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / "export_onnx.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class Avx2GuardTests(unittest.TestCase):
+    """scripts/export_onnx.py pins the dispatch level and refuses hosts without it."""
+
+    def test_the_dispatch_level_is_set_before_torch_is_imported(self) -> None:
+        code = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'scripts')!r})\n"
+            "import export_onnx\n"
+            "print(os.environ['ATEN_CPU_CAPABILITY'], 'torch' in sys.modules)\n"
+        )
+        env = dict(os.environ, ATEN_CPU_CAPABILITY="default")
+        result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ["avx2", "False"])
+
+    def test_a_host_that_is_not_x86_64_is_refused(self) -> None:
+        exporter = _load_exporter()
+        with self.assertRaisesRegex(SystemExit, "x86-64 host with AVX2.*aarch64"):
+            exporter._require_avx2("aarch64")
+
+    def test_an_x86_64_cpu_without_avx2_is_refused(self) -> None:
+        exporter = _load_exporter()
+        with tempfile.TemporaryDirectory() as tmp:
+            cpuinfo = Path(tmp) / "cpuinfo"
+            cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu sse sse2 avx\n")
+            with self.assertRaisesRegex(SystemExit, "does not report avx2"):
+                exporter._require_avx2("x86_64", cpuinfo)
+            cpuinfo.write_text("processor\t: 0\nflags\t\t: fpu sse sse2 avx avx2\n")
+            exporter._require_avx2("x86_64", cpuinfo)
+            with self.assertRaisesRegex(SystemExit, "cannot read"):
+                exporter._require_avx2("x86_64", Path(tmp) / "missing")
+
+    def test_the_script_exits_non_zero_on_a_refused_host(self) -> None:
+        code = (
+            "import runpy, platform\n"
+            "platform.machine = lambda: 'arm64'\n"
+            f"runpy.run_path({str(ROOT / 'scripts' / 'export_onnx.py')!r}, run_name='__main__')\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("export needs an x86-64 host with AVX2", result.stderr)
 
 
 def _first_initializer_value(data: bytes | memoryview) -> int:
@@ -240,49 +352,60 @@ class TraceOrderTests(unittest.TestCase):
         )
 
     def test_the_export_seed_gives_the_pinned_order(self) -> None:
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("export_onnx_probe", ROOT / "scripts" / "export_onnx.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        result = self._check(module.EXPORT_HASHSEED)
+        exporter = _load_exporter()
+        # The order an upstream sorted(set(...)) would trace.
+        self.assertEqual(exporter.PINNED_TRACE_ORDER, sorted(set(LAYER_TYPES)))
+        result = self._check(exporter.EXPORT_HASHSEED)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ok", result.stdout)
 
     def test_another_seed_is_refused_before_export(self) -> None:
-        result = self._check("0")
+        # Seed 1 iterates sliding_attention first on CPython 3.12.
+        result = self._check("1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would not match the pinned graph", result.stderr)
 
+SNAPSHOT = (
+    CACHE / "huggingface" / "hub" / "models--ibm-granite--granite-embedding-english-r2" / "snapshots" / GRANITE_REVISION
+)
 
-def _bench_ready() -> str | None:
-    if os.environ.get("PREACHED_TEST_EXPORT") != "1":
-        return "slow (two full exports); set PREACHED_TEST_EXPORT=1 and use uv run --group bench"
+
+def _export_command() -> list[str]:
     try:
         import torch  # noqa: F401
         import transformers  # noqa: F401
     except ImportError:
-        return "bench group not installed; run under uv run --group bench"
-    return None
+        return ["uv", "run", "--group", "bench", "python"]
+    return [sys.executable]
 
 
-@unittest.skipIf(_bench_ready() is not None, _bench_ready() or "")
-class ExportReproducesThePinTests(unittest.TestCase):
-    def test_two_exports_under_different_seeds_match_each_other_and_the_pin(self) -> None:
-        CACHE.mkdir(parents=True, exist_ok=True)
+@unittest.skipUnless(
+    (SNAPSHOT / "model.safetensors").is_file(),
+    f"Granite weights are not in PREACHED_CACHE ({SNAPSHOT})",
+)
+class ExportIsByteIdenticalTests(unittest.TestCase):
+    def test_two_avx2_exports_are_byte_identical_and_are_the_pin(self) -> None:
         with tempfile.TemporaryDirectory(dir=CACHE, prefix="export-repro-") as tmp:
             manifests = []
-            # 0 and 3 traced the other order before the fix.
-            for seed in ("0", "3"):
-                out = Path(tmp) / f"seed{seed}"
+            # Each run starts under a seed and dispatch level that, unfixed,
+            # trace another graph (dispatch DEFAULT; seed 1 is the other
+            # rotary order). The script must override both.
+            for name, start in (("a", {"PYTHONHASHSEED": "1", "ATEN_CPU_CAPABILITY": "default"}), ("b", {"PYTHONHASHSEED": "3"})):
+                out = Path(tmp) / name
                 env = dict(
                     os.environ,
-                    PYTHONHASHSEED=seed,
                     PREACHED_ONNX_DIR=str(out),
                     CUDA_VISIBLE_DEVICES="",
+                    HF_HOME=str(CACHE / "huggingface"),
+                    HUGGINGFACE_HUB_CACHE=str(CACHE / "huggingface" / "hub"),
+                    HF_HUB_OFFLINE="1",
+                    **start,
                 )
+                if "ATEN_CPU_CAPABILITY" not in start:
+                    env.pop("ATEN_CPU_CAPABILITY", None)
                 result = subprocess.run(
-                    [sys.executable, str(ROOT / "scripts" / "export_onnx.py")],
+                    [*_export_command(), str(ROOT / "scripts" / "export_onnx.py")],
+                    cwd=ROOT,
                     env=env,
                     capture_output=True,
                     text=True,
@@ -290,12 +413,14 @@ class ExportReproducesThePinTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr[-4000:])
                 folder = out / GRANITE_REVISION
-                self.assertEqual(sha256_file(folder / "model.fp32.onnx"), FP32_ONNX_SHA256)
                 self.assertEqual(sha256_file(folder / "tokenizer.json"), TOKENIZER_SHA256)
                 verify_manifest(folder, variant="fp32")
                 manifests.append((folder / "manifest.json").read_text())
+            first, second = (Path(tmp) / name / GRANITE_REVISION / "model.fp32.onnx" for name in "ab")
+            self.assertTrue(filecmp.cmp(first, second, shallow=False), "two avx2 exports differ")
+            self.assertEqual(sha256_file(first), FP32_ONNX_SHA256)
+            # The manifest carries every file's sha256, int8 included.
             self.assertEqual(manifests[0], manifests[1])
-
 
 if __name__ == "__main__":
     logging.basicConfig()
