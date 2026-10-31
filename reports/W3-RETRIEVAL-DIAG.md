@@ -409,7 +409,7 @@ The run took about 1 minute per script on this box (24 cores, CPU query vectors,
   - No PRC-origin model was considered.
 - **Process notes:**
   - `sandbox.sh` and `gh` are not on this machine (as in W3-BUNDLE-TAR2). The branch was made with `git worktree add -b docs/w3-retrieval-diag ... origin/main`.
-  - The PR has to be opened by hand (link below).
+  - The PR has to be opened by hand: https://github.com/pshouse/preached/compare/main...docs/w3-retrieval-diag?expand=1 (title "W3: retrieval diagnosis (analysis only)").
 - **Dependencies added:** none.
 
 ## Appendix: sermon numbers in the tables
