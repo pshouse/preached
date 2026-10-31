@@ -2432,7 +2432,9 @@ class PreachedServer(ThreadingHTTPServer):
     and no handler thread is started. A request whose Accept includes
     text/html is a page navigation: that 503 is a static HTML page with a
     meta refresh of the same delay, so the browser retries. Any other
-    request keeps the JSON body. Nothing from the request is copied in.
+    request keeps the JSON body. Only bytes already buffered at accept are
+    read, without waiting; headers not yet arrived get JSON. Nothing from
+    the request is copied in.
 
     Fairness: when every slot is taken, a new connection may take one from a
     peer holding at least two more connections than the newcomer. The
@@ -2829,10 +2831,14 @@ _OVER_CAP_HTML = (
 
 
 def _accept_includes_html(data: bytes) -> bool:
-    """True when a complete header block lists the media type text/html.
+    """True when a complete header block lists text/html with a nonzero q.
 
-    The type token is compared, not a substring, so ``text/htmlfoo`` and
-    ``Accept-Language`` do not count. Nothing from the block is returned.
+    The type token is compared, not a substring, so ``text/htmlx`` and
+    ``Accept-Language`` do not count. ``text/html;q=0`` is not acceptable
+    (RFC 9110 12.4.2) and does not count either. Every Accept line is read.
+    ``*/*`` and ``text/*`` are not text/html: a client that names no HTML
+    type gets the JSON body. An incomplete block (no blank line yet) is
+    False. Nothing from the block is returned.
     """
     head, sep, _rest = data.partition(b"\r\n\r\n")
     if not sep:
@@ -2844,35 +2850,36 @@ def _accept_includes_html(data: bytes) -> bool:
         if not colon or name.strip().lower() != b"accept":
             continue
         for part in value.split(b","):
-            media = part.split(b";", 1)[0].strip().lower()
-            if media == b"text/html":
-                return True
+            media, *params = part.split(b";")
+            if media.strip().lower() != b"text/html":
+                continue
+            if any(_is_q_zero(param) for param in params):
+                continue
+            return True
     return False
 
 
-def _read_over_cap_headers(request) -> bytes:
-    """Headers already sent, or what arrives within one second.
+_Q_ZERO = re.compile(rb"\s*q\s*=\s*0(\.0*)?\s*", re.IGNORECASE)
 
-    One deadline for the whole read, so a drip does not reset it. Past the
-    header cap the read stops. A client that sends nothing is answered as
-    JSON once the second is up, and cannot hold the accept thread longer.
+
+def _is_q_zero(param: bytes) -> bool:
+    """``q=0``, ``Q=0.000``, `` q = 0. ``: weight zero, not acceptable."""
+    return _Q_ZERO.fullmatch(param) is not None
+
+
+def _read_over_cap_headers(request) -> bytes:
+    """The request bytes already buffered, up to the bound. Never waits.
+
+    One non-blocking recv on the accept thread: a client that has sent
+    nothing yet, or only part of its headers, gets the JSON 503 at once
+    and cannot hold the accept thread. The bytes are consumed rather than
+    peeked so the close after the 503 is a FIN, not a reset for unread data.
     """
-    deadline = time.monotonic() + 1.0
-    data = bytearray()
-    limit = 65536 + MAX_HEADER_BYTES
     try:
-        while b"\r\n\r\n" not in data and len(data) < limit:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            request.settimeout(remaining)
-            chunk = request.recv(min(4096, limit - len(data)))
-            if not chunk:
-                break
-            data.extend(chunk)
+        request.setblocking(False)
+        return request.recv(65536 + MAX_HEADER_BYTES)
     except OSError:
-        pass
-    return bytes(data)
+        return b""
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
