@@ -1658,7 +1658,7 @@ def make_handler(app: App):
                         503,
                         {"error": "unavailable"},
                         include_body,
-                        extra_headers={"Retry-After": "1"},
+                        extra_headers={"Retry-After": "1", "Connection": "close"},
                     )
                     return "busy"
                 self._slot_key = key
