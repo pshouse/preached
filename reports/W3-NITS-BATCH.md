@@ -80,10 +80,10 @@ Tests and reports only. Each item was checked against current main first.
 | #50 r3 S6 | Already on main, unchanged. `load_chunk_texts()` falls back to the index sqlite opened read-only (`immutable=1`). | `tests/test_eval_leak.py:47-60` |
 | #50 N2 | Already on main, unchanged. Literal `PINNED_KEY_SHA256`, asserted against `gen.KEY`. | `tests/test_label_sheet.py:25`, `:43` |
 | #50 N3 | Already on main, unchanged. `self.fail(f"mirror has no source line: {where}")`. | `tests/test_eval_leak.py:209` |
-| #42 r5 N1 | Already on main, unchanged. `from _sqlite3 import connect` and `__import__('_sqlite3')` cases. | `tests/test_hard_conditions.py:519-522` |
+| #42 r5 N1 | Already on main, unchanged. `from _sqlite3 import connect` and `__import__('_sqlite3')` cases. | `tests/test_hard_conditions.py:519-522`. #42 N1 landed without the `connect()` call; the CTO accepted that. |
 | #43 N2 | Already on main, unchanged. Recomputes `random.Random(PINNED_SEED).shuffle` and checks row order and the KEY `orig #` order. | `tests/test_label_sheet.py:105-117` |
 | #43 N3 | Already on main, unchanged. Last line says the chunk id column is now opaque (`C01`..). | `reports/W3-LABEL-SHEET-BLIND.md` (last line) |
-| #40 N1 | Already on main, unchanged. Duplicate `ia_items` and extra-key tests. | `tests/test_licenses.py:72-85` |
+| #40 N1 | Already on main, unchanged. Duplicate `ia_items` and extra-key tests. | `tests/test_licenses.py:72-85`. The optional creator-vs-author check from #40 N1 was not taken. |
 | #40 N4 | Already on main, unchanged. `DrainingGateTests` saves and restores `sys.path`, and asserts the restore. | `tests/test_shutdown.py:318-326` |
 | #40 N6 | Already on main, unchanged. 4301-digit int fails closed and the loop continues. | `tests/test_youtube.py:713` |
 
@@ -97,5 +97,5 @@ No item needed a non-test code change, so nothing is waiting on the CTO.
 
 ### Checks
 
-- Full suite with `PREACHED_CACHE=/cache`: Ran 997 tests, OK, 0 skips.
+- Full suite with `PREACHED_CACHE=/cache`: Ran 997 tests, OK, 0 skips. Correction (#66 N3): the count on main 1793b06 is 998, not 997. After the deno hard-fail and port-busy change (one new test) it is 999; see `reports/W3-DENO-HARDFAIL-PORTBUSY.md`.
 - `uv lock --check`: resolved 79 packages, clean.

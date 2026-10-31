@@ -243,8 +243,10 @@ class TimesTests(unittest.TestCase):
                 self.assertNotIn("100.0", out.getvalue())
                 self.assertNotIn("0:01:40", out.getvalue())
 
-    @unittest.skipUnless(shutil.which("deno"), "deno not installed")
     def test_page_shows_text_only_for_withheld_audio(self) -> None:
+        from test_app_js import need_deno
+
+        need_deno(self)
         dom = """
         function node(tag) {
           return { tag: tag, children: [], className: "", textContent: "", attrs: {},
