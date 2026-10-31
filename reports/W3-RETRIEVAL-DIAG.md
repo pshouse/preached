@@ -2,7 +2,7 @@
 
 Branch `docs/w3-retrieval-diag`, from origin/main `5779961`. Agent: Claude (Opus 5.5). Date: 2026-10-31.
 
-**This changes no search code, no index, no eval set, and no grades.** The only file added is this report. The scratch scripts and their outputs live in `/cache/w3-retrieval-diag/` (outside the repo) and are not committed. Every number marked *exploratory* below comes from those scratch scripts, not from shipped code.
+**This changes no search code, no index, no eval set, and no grades.** The only file added by the original report is this report; the scratch scripts behind it are now committed in `reports/w3-retrieval-diag/` (see §8). Large intermediate outputs stay in `/cache/w3-retrieval-diag/` (outside the repo). Every number marked *exploratory* below comes from those scratch scripts, not from shipped code.
 
 ## Bottom line
 
@@ -246,7 +246,7 @@ The blind 0.107 is therefore partly sparse labelling. **The ranking problem in �
 
 ## 6. Exploratory experiments (scratch only, NOT product code)
 
-Exploratory numbers, from `/cache/w3-retrieval-diag/scripts/experiments.py`:
+Exploratory numbers, from `reports/w3-retrieval-diag/experiments.py`:
 
 - Granite English R2 on CPU, raw ranker top 10, same labels and `bench.score` as `search/bench.py`.
 - Each cell is lenient hit@10 / lenient nDCG@10, with the paired Δ hit@10 against V0, its 95% CI, and wins/ties/losses.
@@ -362,34 +362,62 @@ The card says no prefix, and §6 shows prefixes hurt the blind questions (−0.0
 
 ## 8. How to rerun (exact commands)
 
-Run from a checkout of this branch. The scratch scripts are in `/cache/w3-retrieval-diag/scripts/`; they read `/cache` and import `src/` and `search/bench.py` from the working directory.
+The scripts behind every number here are committed in `reports/w3-retrieval-diag/` (added by W3-DIAG-SCRIPTS). They are scratch analysis, not product code: nothing under `src/`, `app/` or `tests/` imports them, and `unittest discover -s tests` does not collect them. They were copied from `/cache/w3-retrieval-diag/scripts/` with only two kinds of change: usage docstrings, and paths made configurable (`PREACHED_CACHE` for the index and corpus, which `preached.paths` already honours and which defaults to `/cache`; an optional chunks path and output path for `stats.py`; an optional work directory for `table.py`). The analysis logic is unchanged.
 
 ```sh
-cd /work/preached/.worktrees/docs/w3-retrieval-diag
+cd <checkout of this branch>
+W=/some/scratch/dir; mkdir -p $W
 # baseline, identical to the shipped bench (writes outside the repo)
 uv run --group bench search/bench.py --models granite-english-r2 \
-  --out /cache/w3-retrieval-diag/bench-raw.json --note "W3-RETRIEVAL-DIAG baseline, raw ranker"
+  --out $W/bench-raw.json --note "W3-RETRIEVAL-DIAG baseline, raw ranker"
 # per-question top 100 for bm25 / dense / hybrid on plain + plain-blind
-uv run --group bench python /cache/w3-retrieval-diag/scripts/diag.py /cache/w3-retrieval-diag/diag.json
+uv run --group bench python reports/w3-retrieval-diag/diag.py $W/diag.json
 # exploratory variants V0..V12 (prints per-group tables, writes JSON with per-question scores)
-uv run --group bench python /cache/w3-retrieval-diag/scripts/experiments.py /cache/w3-retrieval-diag/experiments.json
+uv run --group bench python reports/w3-retrieval-diag/experiments.py $W/experiments.json > $W/experiments.txt
 # Granite query-prefix probe (dense only)
-uv run --group bench python /cache/w3-retrieval-diag/scripts/prefixes.py
-# signals, then the per-question table (needs categories.json and flags.json, hand-written)
-cd /cache/w3-retrieval-diag
-python3 scripts/stats.py diag.json /cache/corpus/wesley/chunks.jsonl
-python3 scripts/table.py
+uv run --group bench python reports/w3-retrieval-diag/prefixes.py > $W/prefixes.txt
+# signals (chunks path and output path are optional), then the per-question table
+python3 reports/w3-retrieval-diag/stats.py $W/diag.json /cache/corpus/wesley/chunks.jsonl $W/stats.json
+cp reports/w3-retrieval-diag/categories.json reports/w3-retrieval-diag/flags.json $W/   # hand-written inputs
+python3 reports/w3-retrieval-diag/table.py $W
 ```
 
-Scratch script sha256 (first 12 hex):
+With another cache location, set `PREACHED_CACHE=/path` (it must hold `index/wesley.sqlite` and `corpus/wesley/chunks.jsonl`) and pass that chunks path to `stats.py`. The query vectors are computed on CPU from the model in `HF_HOME` (see `preached.env`).
 
-| script | sha256 |
+### Committed files and sha256
+
+| file | sha256 |
 | --- | --- |
-| `diag.py` | `9dfaeb558806` |
-| `experiments.py` | `120b33f3c765` |
-| `prefixes.py` | `1e10b254cfe7` |
-| `stats.py` | `e5d48880615c` |
-| `table.py` | `5b8f514960ee` |
+| `reports/w3-retrieval-diag/diag.py` | `5f8a30977dc391e65e6d31577a87f96ddd4da2b50dedd9734faae8ff8ff3d59b` |
+| `reports/w3-retrieval-diag/experiments.py` | `185ca95ceaafcbc9eb454f6752c79d0feea0200d2212ec401c1055fa90375ede` |
+| `reports/w3-retrieval-diag/prefixes.py` | `53de16cadc74792f451b64e9f4d5899d179cf4d28508af638457cd65cee4024e` |
+| `reports/w3-retrieval-diag/stats.py` | `3bf7e8173777181cda906b73bfc160a50a7ecdb46e6d926c0052459a23cf60a5` |
+| `reports/w3-retrieval-diag/table.py` | `1f1543ac03d051dc0f8ec95963ff5206c9fcd05f5d178d670c2d0493c71311d4` |
+| `reports/w3-retrieval-diag/categories.json` (hand-written, input to `table.py`) | `e320527e193fe3ddd635dd63c6d56a9ed5ba2585a4285aa22aa4c4485d051477` |
+| `reports/w3-retrieval-diag/flags.json` (hand-written, input to `table.py`) | `bbb39c2c1b1acd4ed6c5c6b328b919a710fe9e362d3bd2198cfec378c2b95823` |
+
+Small results are in `reports/w3-retrieval-diag/results/`: `experiments.txt` (the §6 tables), `prefixes.txt`, `stats.json` (the §2 signals), `bench-raw.md` (the baseline), `variants.md`. The large intermediates (`diag.json` 975 KB, `experiments.json` 818 KB, `bench-raw.json` 378 KB) are not committed; regenerate them with the commands above.
+
+### Inputs that come from `/cache` (not in the repo)
+
+| input | sha256 |
+| --- | --- |
+| `/cache/index/wesley.sqlite` | `909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b` |
+| `/cache/corpus/wesley/chunks.jsonl` (8,383 chunks) | `110dd51989a982c44bbeeb7db6025c8a07a635cfeaef9e360ecbd16dcede016f` |
+
+The eval set (`eval/questions.jsonl`) and the model revision (Granite English R2 `47ea694b`) are as in §1. A reviewer with their own copy of the index and chunks should check these two hashes first; if they differ, the numbers need not match.
+
+### Reproduction check (rerun from the committed scripts, 2026-10-31)
+
+Every script was rerun from `reports/w3-retrieval-diag/` against the inputs above, into a scratch directory, and compared with the original outputs in `/cache/w3-retrieval-diag/`:
+
+- `diag.py` -> `diag.json`: identical (parsed JSON equal).
+- `experiments.py` -> `experiments.json`: identical (parsed JSON equal); `experiments.txt` identical apart from a model-loading progress-bar line.
+- `prefixes.py` -> `prefixes.txt`: identical apart from the same progress-bar line.
+- `stats.py` -> `stats.json`: byte-identical. Printed headline: `plain-blind 28 lenient hit@10 bm25/dense/hybrid 3 11 3 fusion_loss 8 fusion_gain 0`; `plain 25 ... 8 17 18 fusion_loss 2 fusion_gain 3`. So dense 11/28 vs hybrid 3/28 reproduces exactly.
+- `table.py` -> `table.md`, `legend.md`: byte-identical (§2 and the Appendix); category counts as in §3.
+- V10 and the other variants (`experiments.txt`): identical to §6.
+- `search/bench.py` baseline: every score and CI identical. Only the timestamp, the commit hash in the header, and the latency columns (wall-clock, e.g. hybrid_rrf p50/p95 `115.6 / 138.0` vs `114.6 / 138.3` ms) differ between runs.
 
 The run took about 1 minute per script on this box (24 cores, CPU query vectors, cached document vectors).
 

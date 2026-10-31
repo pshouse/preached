@@ -1,0 +1,4 @@
+none (card)    plain: hit@10_len 0.680 ndcg_len 0.155 | plain-blind: hit@10_len 0.393 ndcg_len 0.073 | names-topic: hit@10_len 0.913 ndcg_len 0.338
+query:         plain: hit@10_len 0.720 ndcg_len 0.163 | plain-blind: hit@10_len 0.250 ndcg_len 0.039 | names-topic: hit@10_len 0.913 ndcg_len 0.345
+arctic-style   plain: hit@10_len 0.720 ndcg_len 0.181 | plain-blind: hit@10_len 0.107 ndcg_len 0.014 | names-topic: hit@10_len 0.913 ndcg_len 0.317
+question:      plain: hit@10_len 0.680 ndcg_len 0.165 | plain-blind: hit@10_len 0.321 ndcg_len 0.056 | names-topic: hit@10_len 0.913 ndcg_len 0.345
