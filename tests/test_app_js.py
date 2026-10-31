@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -424,6 +425,18 @@ console.log("ok");
 """
 
 
+# PREACHED_REQUIRE_DENO=1 turns a missing deno into a failure instead of a skip.
+REQUIRE_DENO = os.environ.get("PREACHED_REQUIRE_DENO") == "1"
+
+
+def need_deno(case: unittest.TestCase) -> None:
+    if shutil.which("deno"):
+        return
+    if REQUIRE_DENO:
+        case.fail("PREACHED_REQUIRE_DENO=1 but deno is not installed")
+    case.skipTest("deno not installed")
+
+
 def run_deno(source: str) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as tmp:
         script = Path(tmp) / "check.js"
@@ -436,8 +449,10 @@ def run_deno(source: str) -> subprocess.CompletedProcess:
         )
 
 
-@unittest.skipUnless(shutil.which("deno"), "deno not installed")
 class PageStateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        need_deno(self)
+
     def test_describe_response_and_failures(self) -> None:
         result = run_deno(PRELUDE + APP_JS.read_text() + STATE_CHECKS)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -615,8 +630,10 @@ console.log("ok");
 """
 
 
-@unittest.skipUnless(shutil.which("deno"), "deno not installed")
 class AppJsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        need_deno(self)
+
     def test_side_by_side_rendering(self) -> None:
         result = run_deno(PRELUDE + APP_JS.read_text() + SIDE_CHECKS)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
