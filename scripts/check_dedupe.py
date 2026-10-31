@@ -77,7 +77,7 @@ def main() -> None:
     print(f"{len(queries)} queries, k={K}, pool={SEARCH_POOL}, index {args.index}")
     totals = {"lists": 0, "pair_lists": 0, "pairs": 0, "non_idempotent": 0}
     for key in args.models:
-        searcher = Searcher(connection, model=key)
+        searcher = Searcher(connection, model=key, allow_eval_only=True)
         loaded = load_model(MODELS[key], device="cpu", batch_size=1)
         try:
             vectors = {q: encode_query(loaded, q) for q in queries}
