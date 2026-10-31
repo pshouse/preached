@@ -35,8 +35,10 @@ variant; other entries are left in place). Corpus vectors must already be
 embedded (run the plain bench first).
 
 Exit status: 1 if any selected model fails to load or score (the report is
-still written, with that model marked error). --allow-bm25-only turns that
-into a loud warning and exit 0.
+still written, with that model marked error, or skipped_gated when the
+failure looks like a gated repo; gated still fails. Under --abstain a gated
+failure is recorded as plain error). --allow-bm25-only turns that into a
+warning on stderr and exit 0.
 
 Every run also reports each metric per question group (the ``group`` field
 in eval/questions.jsonl: plain, names-topic, title-keyword,
@@ -904,7 +906,7 @@ def fail_closed(report: dict, allow_bm25_only: bool) -> None:
     names = ", ".join(f"{k} ({e.get('status')}: {e.get('error', 'no detail')})" for k, e in failed.items())
     if allow_bm25_only:
         print(f"WARNING: --allow-bm25-only: continuing without {names}. "
-              "Results for these models are missing; do not read this run as a model comparison.", flush=True)
+              "Results for these models are missing; do not read this run as a model comparison.", file=sys.stderr, flush=True)
         return
     print(f"error: model(s) did not load or score: {names}. "
           "Fix the cause, or pass --allow-bm25-only to accept a BM25-only run.", file=sys.stderr, flush=True)

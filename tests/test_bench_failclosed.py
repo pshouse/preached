@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sqlite3
 import sys
@@ -48,12 +49,14 @@ class BenchFailClosedTests(unittest.TestCase):
         connection.execute("INSERT INTO chunks VALUES ('t', 's', 'x')")
         return connection
 
-    def run_main(self, *extra: str, load_fails: bool) -> tuple[int, str]:
+    def run_main(self, *extra: str, load_fails: bool, error: Exception | None = None,
+                 abstain_fails: bool = False, calibration: Path | None = None) -> tuple[int, str, str]:
         b = self.bench
         stats = {k: {"mean": 0.5} for k in b.METRICS}
         result = {"cpu_dtype": "fp32", "per_query": {m: {} for m in b.MODES}, "negative_top1": {}}
         latency = {m: {"p50_ms": 1.0} for m in b.MODES}
-        embed = mock.Mock(side_effect=OSError("offline: cannot load model")) if load_fails else mock.Mock(return_value={})
+        failure = error or OSError("offline: cannot load model")
+        embed = mock.Mock(side_effect=failure) if load_fails else mock.Mock(return_value={})
         patches = [
             mock.patch.object(b, "connect", lambda _p: self.memory_index()),
             mock.patch.object(b, "ensure_chunks", lambda *_a, **_k: 3),
@@ -64,6 +67,7 @@ class BenchFailClosedTests(unittest.TestCase):
             mock.patch.object(b, "evaluate", lambda *_a, **_k: {"per_query": {"bm25": {}}, "negative_top1": {"bm25": {}}}),
             mock.patch.object(b, "by_group", lambda *_a: {}),
             mock.patch.object(b, "markdown", lambda _r: "md\n"),
+            mock.patch.object(b, "abstain_markdown", lambda _r: "md\n"),
             mock.patch.object(b, "describe_prompts", lambda _s: {}),
             mock.patch.object(b, "cache_matches", lambda *_a, **_k: False),
             mock.patch.object(b, "embed_corpus", embed),
@@ -73,6 +77,10 @@ class BenchFailClosedTests(unittest.TestCase):
             mock.patch.object(b.sys, "argv", ["bench.py", "--models", self.key, "--results-dir", str(self.tmp / "out"),
                                               "--out", str(self.tmp / "out" / "r.json"), *extra]),
         ]
+        if abstain_fails:
+            patches.append(mock.patch.object(b, "stored_fingerprint", mock.Mock(side_effect=failure)))
+        if calibration is not None:
+            patches.append(mock.patch.object(b.abstain, "calibration_path", lambda: calibration))
         (self.tmp / "out").mkdir()
         out, err = io.StringIO(), io.StringIO()
         code = 0
@@ -85,26 +93,74 @@ class BenchFailClosedTests(unittest.TestCase):
                 b.main()
             except SystemExit as exc:
                 code = exc.code if isinstance(exc.code, int) else 1
-        return code, out.getvalue() + err.getvalue()
+        return code, out.getvalue(), err.getvalue()
+
+    def report(self) -> dict:
+        return json.loads((self.tmp / "out" / "r.json").read_text())
 
     def test_model_load_failure_exits_nonzero(self) -> None:
-        code, text = self.run_main(load_fails=True)
+        code, out, err = self.run_main(load_fails=True)
         self.assertEqual(code, 1)
-        self.assertIn("cannot load model", text)
-        self.assertIn("--allow-bm25-only", text)
+        self.assertIn("cannot load model", err)
+        self.assertIn("--allow-bm25-only", err)
+        # The report is written before the exit, and records the model as not ok.
+        self.assertEqual(self.report()["models"][self.key]["status"], "error")
+
+    def test_gated_model_still_fails_closed(self) -> None:
+        code, out, err = self.run_main(load_fails=True, error=OSError("401 gated repo"))
+        self.assertEqual(code, 1)
+        self.assertIn("skipped_gated", err)
+        self.assertIn(self.key, err)
+        self.assertIn("--allow-bm25-only", err)
+        self.assertEqual(self.report()["models"][self.key]["status"], "skipped_gated")
 
     def test_allow_bm25_only_proceeds_with_loud_warning(self) -> None:
-        code, text = self.run_main("--allow-bm25-only", load_fails=True)
+        code, out, err = self.run_main("--allow-bm25-only", load_fails=True)
         self.assertEqual(code, 0)
-        self.assertIn("WARNING: --allow-bm25-only", text)
-        self.assertTrue((self.tmp / "out" / "r.json").exists())
+        self.assertIn("WARNING: --allow-bm25-only", err)
+        self.assertNotIn("WARNING", out)
+        self.assertNotEqual(self.report()["models"][self.key]["status"], "ok")
 
     def test_normal_path_exits_zero_without_warning(self) -> None:
-        code, text = self.run_main(load_fails=False)
+        code, out, err = self.run_main(load_fails=False)
         self.assertEqual(code, 0)
-        self.assertNotIn("WARNING", text)
-        self.assertNotIn("error:", text)
-        self.assertTrue((self.tmp / "out" / "r.json").exists())
+        self.assertNotIn("WARNING", out + err)
+        self.assertNotIn("error:", out + err)
+        self.assertEqual(self.report()["models"][self.key]["status"], "ok")
+
+    def test_abstain_failure_exits_nonzero_after_report(self) -> None:
+        code, out, err = self.run_main("--abstain", load_fails=False, abstain_fails=True)
+        self.assertEqual(code, 1)
+        self.assertIn(self.key, err)
+        self.assertIn("--allow-bm25-only", err)
+        self.assertEqual(self.report()["models"][self.key]["status"], "error")
+
+    def test_abstain_gated_is_plain_error_and_fails(self) -> None:
+        code, out, err = self.run_main("--abstain", load_fails=False, abstain_fails=True,
+                                       error=OSError("401 gated repo"))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.report()["models"][self.key]["status"], "error")
+        self.assertNotIn("skipped_gated", err)
+
+    def test_abstain_allow_bm25_only_warns_on_stderr(self) -> None:
+        code, out, err = self.run_main("--abstain", "--allow-bm25-only", load_fails=False, abstain_fails=True)
+        self.assertEqual(code, 0)
+        self.assertIn("WARNING: --allow-bm25-only", err)
+        self.assertNotIn("WARNING", out)
+        self.assertNotEqual(self.report()["models"][self.key]["status"], "ok")
+
+    def test_abstain_write_calibration_leaves_failed_model_entry_untouched(self) -> None:
+        b = self.bench
+        path = self.tmp / "abstain.toml"
+        entry = {"model": self.key, "backend": "torch", "variant": "fp32", "dense_floor": 0.4321,
+                 "fingerprint": "f" * 16, "query_fingerprint": "q" * 16, "fitted_on": "old", "results": "old.json"}
+        path.write_text(b.abstain.calibration_toml([entry]))
+        before = path.read_text()
+        code, out, err = self.run_main("--abstain", "--write-calibration", load_fails=False,
+                                       abstain_fails=True, calibration=path)
+        self.assertEqual(code, 1)
+        self.assertEqual(path.read_text(), before)
+        self.assertEqual(b.abstain.load_calibrations(path), [entry])
 
 
 if __name__ == "__main__":
