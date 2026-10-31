@@ -98,13 +98,16 @@ sorted. The tar is taken from a private copy of the directory (not a reflink
 of the live index or model), ustar, owner 0, mtime `2026-10-30 00:00:00` UTC,
 and `gzip -n`. The same index, model bytes, and source tree produce the same
 manifest and the same tar. GNU tar sometimes exits 1 ("file changed as we
-read it") even on that private copy. The likely cause is this box's own
+read it") even on that private copy. The likely cause is the Grok Bot box's
 snapshot daemon, which creates and deletes `*.box-store-snap-*` files next to
 the index and model files while tar reads them (5 of 10 real Wesley builds
 hit it; one retry recovered each). The script makes up to three tar attempts
 on exit 1, checks each archive against `MANIFEST.sha256`, and only then
-renames it into place. If it prints `tar failed`, rerun the build; do not
-investigate. The script removes any `.tar.gz` (and leftover
+renames it into place. If it prints `tar failed (tar 1, gzip 0)`, rerun the
+build; do not investigate. Any other non-zero exit (another tar or gzip
+status, a manifest mismatch, a refused input) is a real error: investigate it.
+If all 3 attempts fail closed, rerun once and report; the fallback is building
+off-box. The script removes any `.tar.gz` (and leftover
 `.tar.gz.partial.<pid>` files) from an earlier build before it checks
 anything, so a failed build exits non-zero and leaves no `.tar.gz`. If
 `/tmp/preached-bundle.tar.gz` exists, the build succeeded. Pass the output
