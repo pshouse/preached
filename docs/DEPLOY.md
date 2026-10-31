@@ -205,7 +205,7 @@ Wire that command as the systemd service. Unit settings:
 - `ok: true`, `library: wesley`
 - `dense: true`, `backend: onnx`, `model: granite-english-r2`
 - `model_sha256` equal to the fp32 pin
-  (`aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`)
+  (`3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`)
 - `index_version` equal to the bundled index's `chunks_sha256` meta value.
   Read it in the bundle root:
 
@@ -334,7 +334,7 @@ ONNX files, revision `47ea694b257b703fee9253d75c2b1f2985180498`:
 
 | File | sha256 |
 | --- | --- |
-| `model.fp32.onnx` | `aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78` |
+| `model.fp32.onnx` | `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` |
 | `tokenizer.json` | `6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30` |
 
 `pooling.json` rides along. The bundled `manifest.json` names fp32 only;

@@ -1,6 +1,6 @@
-# ADR 0001: The ONNX export is pinned at avx2 dispatch and a fixed hash seed
+# ADR 0001: The ONNX export fixes avx2 dispatch and PYTHONHASHSEED=1
 
-Status: accepted, 2026-10-31. Tasks 96-W4-ONNX-AVX2-PIN and 96-W4-ONNX-MATRIX. Evidence is in `reports/W4-ONNX-PIN-REPRO.md`.
+Status: accepted, 2026-10-31. Tasks 95, 96, and 96-W4-ONNX-SEED1-PIN (the CTO's seed 1 + avx2 ruling). Evidence is in `reports/W4-ONNX-PIN-REPRO.md`.
 
 ## Context
 
@@ -28,35 +28,25 @@ Host: i9-12900K (AVX2, no AVX512), CPython 3.12.16, torch 2.15.0, transformers 5
 
 The 12 cells that ran give four digests, one for each (order, dispatch) pair. The six `avx512` cells cannot run on this CPU. torch does not clamp the requested level to what the CPU supports. `get_cpu_capability()` reports `AVX512`, and the export dies with SIGILL (exit 132). The CTO measured AVX512 on another host. That case is not verified here.
 
-**Through `scripts/export_onnx.py`**, with the ambient environment set as in each cell: all **18 of 18** cells (avx512 included) exit 0 and write `aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`, with byte-identical manifests (so int8 matches too). The script's own settings yield a single, stable digest.
+The CTO's seeded exports agree with every cell above where they overlap: avx2 + seed 1 → `3861025a…` (the pin), avx2 + seed 0 → `aed7adba…`, default dispatch → `d99ba823…` or `44038d45…` by seed class. The CTO's AVX512 cells (seed 0 or 3 → `aed7adba…`, seed 1 → `3861025a…`) match the avx2 cells, so on those hosts AVX512 and avx2 dispatch gave the same bytes. They cannot be re-run here.
+
+**Through `scripts/export_onnx.py`**: see `reports/W4-ONNX-PIN-REPRO.md` §1b. Every ambient seed (unset, 0-5) and dispatch level writes `3861025a…`.
 
 ## Decision
 
-- **Dispatch.** `scripts/export_onnx.py` sets `ATEN_CPU_CAPABILITY=avx2` at module top, before torch is imported, and this overrides any ambient value. After the import it checks `torch.backends.cpu.get_cpu_capability() == "AVX2"`. It refuses to run on a host that is not x86-64 or whose CPU flags lack `avx2`, exiting non-zero with a message that names AVX2.
-- **Hash seed.** String hashing is fixed when the interpreter starts, so the seed cannot be set from inside the running process. The script therefore re-executes itself (`os.execv`) under `PYTHONHASHSEED=0` before it imports torch. It does this unless the seed is already `0` and hash randomization is off: `-R` keeps hashing random even under seed 0. Before tracing, it also refuses unless `set(config.layer_types)` iterates `["full_attention", "sliding_attention"]`. That is sorted order, the order an upstream `sorted(set(...))` fix would produce.
-- **Pin.** One value: `FP32_ONNX_SHA256 = aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`. It is set only after the matrix showed it is the single digest under the script's settings. The tokenizer pin is unchanged. The export exits non-zero, before it writes a manifest, if its graph is not the pin. `docs/DEPLOY.md` cites the same value.
-- **Tests.** `tests/test_onnx_pin_repro.py`:
-  - It runs the real exporter twice, varying the ambient environment. Run a uses `PYTHONHASHSEED=1` with `ATEN_CPU_CAPABILITY=default`. Unfixed, that traces `44038d45…`. Run b uses `PYTHONHASHSEED=3` with `ATEN_CPU_CAPABILITY=avx512`. The test asserts the two fp32 graphs are byte-identical, equal the pin, and have identical manifests. It skips only when the Granite weights are not in `PREACHED_CACHE`.
-  - `HashSeedReexecTests` checks that every other ambient seed restarts under seed 0: unset, `random`, 1-5, and `-R` with seed 0.
+- **Dispatch.** `scripts/export_onnx.py` sets `ATEN_CPU_CAPABILITY=avx2` at module top, before torch is imported, overriding any ambient value. After the import it checks `torch.backends.cpu.get_cpu_capability() == "AVX2"`. It refuses a host that is not x86-64 or whose CPU flags lack `avx2`, exiting non-zero with a message that names AVX2.
+- **Hash seed.** String hashing is fixed when the interpreter starts, so the seed cannot be set from inside the process. The script re-executes itself (`os.execv`) under `PYTHONHASHSEED=1` before it imports torch, unless `PYTHONHASHSEED` is already `1`. (It tests the variable, not `sys.flags.hash_randomization`, which reads 1 under every seed but 0; a numeric seed wins over `-R`.) Before tracing it also refuses unless `set(config.layer_types)` iterates `["sliding_attention", "full_attention"]`, the order seed 1 gives on CPython 3.12 and the order of the pinned graph.
+- **Pin.** Unchanged: `FP32_ONNX_SHA256 = 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. Seed 1 + avx2 reproduces it, so there is no re-pin and existing exports stay valid. The export exits non-zero, before it writes a manifest, if its graph is not the pin.
+- **Tests.** `tests/test_onnx_pin_repro.py` runs the real exporter three times under ambient `PYTHONHASHSEED` unset, 0 and 3 (and dispatch `default`, `avx2`, `avx512`) and asserts byte-identical fp32 graphs equal to the pin with identical manifests. `HashSeedReexecTests` checks that any ambient seed other than the export seed restarts. `TraceOrderTests` checks that seed 0 is refused.
 - No semantic digest, and no committed graph.
 
-## Equivalence of the new pin to the old
+## Equivalence
 
-Re-measured 2026-10-31 (`reports/W4-ONNX-PIN-REPRO.md` §4; output `/cache/w4-onnx-matrix/equiv.json`). It compares `3861025a…` (the 2026-10-30 graph in `/cache/models/granite-english-r2-onnx`) with `aed7adba…` (the matrix's avx2 / seed 0 export by the script):
-
-| Check | Result |
-| --- | --- |
-| Header (ir, opset, producer) | equal |
-| Initializers | 134 / 134 byte-identical |
-| Nodes | 3009 each; 6 differ (`rotary_emb/Constant_1`, `rotary_emb_1/Constant`, `layers.{0,1}/attn/Unsqueeze_{2,3}`) |
-| ORT CPU, 1 thread: all 93 `eval/questions.jsonl` queries, 21 corpus chunks (`rowid % 419 = 1`) | bitwise identical, max abs diff 0.0 |
-| `App.search(q, 10, "hybrid")` on `/cache/index/wesley.sqlite`, all 93 questions | top-10 identical 93 / 93; every hash below equal under both graphs |
-
-The CTO's harness reported `20bf48af596a4d4d` (responses) and `73463e64b1ce508a` (embeddings), unchanged across the two graphs. That harness and its hash definitions are not in the repo or `/cache`. I tried five definitions: responses as sorted-key JSON, the same compact, top-10 chunk ids, float32 query vectors, and query plus document vectors. Each is identical across the two graphs (for example `f66c732275af497f` and `29b07255a0733b1f`). None equals the CTO's literal values. So the claim "unchanged" is re-measured and holds. The literal hashes are not reproduced.
+Seed 1 + avx2 writes the existing pin, so nothing changes for the runtime. For reference, the other avx2 graph (`aed7adba…`, seed 0) was compared against the pin: header equal, 134 / 134 initializers byte-identical, 3009 nodes each with 6 differing (the two rotary Constants and four `Unsqueeze` inputs), ORT CPU outputs bitwise identical on all 93 `eval/questions.jsonl` queries and 21 corpus chunks, and `App.search(q, 10, "hybrid")` top-10 identical on 93 / 93 questions with equal response, chunk-id and vector hashes. The graphs are functionally identical; the export is pinned to one of them for byte reproducibility, not for behavior.
 
 ## Consequences
 
-- An existing `/cache` export of `3861025a…` is refused once this pin lands. The server starts BM25 only and says so in the log. `/healthz` then reports `search_mode: "bm25"` with `search_mode_reason: "model_unavailable"`, or `"onnx_graph_not_built"` if no graph is present. After merge, re-run `CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py` on every box. Stored passage vectors do not need rebuilding, because the outputs are bitwise identical.
-- Export hosts must be x86-64 with AVX2. ARM hosts can still *run* the server with a graph exported elsewhere.
-- The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 0 to another order, the export stops with a clear message instead of writing a wrong graph. The lasting fix is upstream `sorted(set(...))`.
+- An existing `/cache` export of `3861025a…` stays valid; no re-export is needed. A fresh clone's export now writes the same bytes.
+- Export hosts must be x86-64 with AVX2. ARM hosts can still run the server with a graph exported elsewhere.
+- The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 1 to another order, the export stops with a clear message instead of writing a wrong graph. The lasting fix is upstream `sorted(set(...))`.
 - A torch, transformers or onnx version other than the one in `uv.lock` may trace another graph. The export refuses it and never re-pins.

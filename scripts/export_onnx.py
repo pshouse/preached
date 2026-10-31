@@ -19,7 +19,7 @@ The export is byte-reproducible and must write the graph pinned in
   that is not x86-64 with AVX2.
 - The order of transformers' ModernBERT rotary tables, built in
   ``set(config.layer_types)`` order, which follows ``PYTHONHASHSEED``. The
-  script re-executes itself under ``EXPORT_HASHSEED`` and checks the order.
+  script re-executes itself under ``PYTHONHASHSEED=1`` and checks the order.
 
 It exits non-zero without a manifest if the graph does not match the pin.
 
@@ -62,10 +62,10 @@ from preached.artifacts import (  # noqa: E402
 )
 from preached.pooling import HIDDEN_SIZE, MAX_SEQ_LENGTH  # noqa: E402
 
-# Under this seed CPython 3.12 iterates set(config.layer_types) in sorted
-# order, the order an upstream sorted(set(...)) would pin: the pinned graph.
-EXPORT_HASHSEED = "0"
-PINNED_TRACE_ORDER = ["full_attention", "sliding_attention"]
+# Under this seed (with avx2 dispatch) CPython 3.12 iterates
+# set(config.layer_types) sliding first and the export is the pinned graph.
+EXPORT_HASHSEED = "1"
+PINNED_TRACE_ORDER = ["sliding_attention", "full_attention"]
 
 
 def _require_avx2(machine: str | None = None, cpuinfo: Path = Path("/proc/cpuinfo")) -> None:
@@ -89,10 +89,11 @@ def _reexec_with_hashseed() -> None:
     """String hashing is fixed at interpreter start, so set it and restart.
 
     The ambient seed (unset, random, or any other value) never reaches the
-    trace. ``-R`` keeps hashing random even under seed 0, so it is checked
-    too; the restart drops interpreter flags.
+    trace. A numeric PYTHONHASHSEED wins over ``-R``, so the variable alone
+    says whether the seed is fixed. (``sys.flags.hash_randomization`` reads 1
+    under any seed but 0, so testing it would restart forever.)
     """
-    if os.environ.get("PYTHONHASHSEED") == EXPORT_HASHSEED and not sys.flags.hash_randomization:
+    if os.environ.get("PYTHONHASHSEED") == EXPORT_HASHSEED:
         return
     os.environ["PYTHONHASHSEED"] = EXPORT_HASHSEED
     script = str(Path(__file__).resolve())

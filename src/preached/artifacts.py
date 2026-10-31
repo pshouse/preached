@@ -23,15 +23,13 @@ GRANITE_HF_ID = "ibm-granite/granite-embedding-english-r2"
 GRANITE_REVISION = "47ea694b257b703fee9253d75c2b1f2985180498"
 GRANITE_MODEL_KEY = "granite-english-r2"
 
-# sha256 of the ATEN_CPU_CAPABILITY=avx2 export, re-pinned 2026-10-31.
-# EXPORT_COMMAND rebuilds this graph byte for byte (it fixes the dispatch
-# level and PYTHONHASHSEED; see docs/adr/0001-onnx-export-determinism.md).
-# Run under every ambient PYTHONHASHSEED 0-5 x ATEN_CPU_CAPABILITY
-# default/avx2/avx512, it wrote only this digest.
-# The 2026-10-30 pin 3861025a… is the same weights and outputs. The graph pin is
+# sha256 of the bytes under /cache, hashed 2026-10-30. EXPORT_COMMAND
+# rebuilds this graph byte for byte: the export script fixes both
+# ATEN_CPU_CAPABILITY=avx2 and PYTHONHASHSEED=1 (see
+# docs/adr/0001-onnx-export-determinism.md). The graph pin is
 # keyed by variant, not by whatever file name the manifest writes. A
 # rewritten manifest cannot aim fp32 at another graph.
-FP32_ONNX_SHA256 = "aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78"
+FP32_ONNX_SHA256 = "3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9"
 TOKENIZER_SHA256 = "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
 # int8 is intentionally absent. The export may still leave model.int8.onnx
 # beside the fp32 graph; the server never opens it.

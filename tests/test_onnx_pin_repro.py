@@ -6,7 +6,7 @@ two rotary tables (``set(config.layer_types)``, so PYTHONHASHSEED). The
 exporter fixes both: ATEN_CPU_CAPABILITY=avx2 before torch is imported, and a
 restart under EXPORT_HASHSEED whatever the caller's seed.
 
-ExportIsByteIdenticalTests runs the real exporter twice (about a minute
+ExportIsByteIdenticalTests runs the real exporter three times (about a minute
 each on CPU). It skips only when the Granite weights are not in
 PREACHED_CACHE.
 """
@@ -354,15 +354,14 @@ class TraceOrderTests(unittest.TestCase):
 
     def test_the_export_seed_gives_the_pinned_order(self) -> None:
         exporter = _load_exporter()
-        # The order an upstream sorted(set(...)) would trace.
-        self.assertEqual(exporter.PINNED_TRACE_ORDER, sorted(set(LAYER_TYPES)))
+        self.assertEqual(exporter.PINNED_TRACE_ORDER, ["sliding_attention", "full_attention"])
         result = self._check(exporter.EXPORT_HASHSEED)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ok", result.stdout)
 
     def test_another_seed_is_refused_before_export(self) -> None:
-        # Seed 1 iterates sliding_attention first on CPython 3.12.
-        result = self._check("1")
+        # Seed 0 iterates full_attention first on CPython 3.12.
+        result = self._check("0")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would not match the pinned graph", result.stderr)
 
@@ -396,7 +395,7 @@ class HashSeedReexecTests(unittest.TestCase):
     def test_any_other_ambient_seed_restarts_under_the_export_seed(self) -> None:
         exporter = _load_exporter()
         script = str((ROOT / "scripts" / "export_onnx.py").resolve())
-        for ambient in (None, "random", "1", "2", "3", "4", "5"):
+        for ambient in (None, "random", "0", "2", "3", "4", "5"):
             with self.subTest(ambient=ambient):
                 out = self._reexec(ambient)
                 self.assertEqual(out[:3], ["EXEC", exporter.EXPORT_HASHSEED, "True"])
@@ -406,10 +405,12 @@ class HashSeedReexecTests(unittest.TestCase):
         exporter = _load_exporter()
         self.assertEqual(self._reexec(exporter.EXPORT_HASHSEED), ["NOEXEC", exporter.EXPORT_HASHSEED])
 
-    def test_dash_r_under_the_export_seed_still_restarts(self) -> None:
-        # -R randomizes hashing even under PYTHONHASHSEED=0.
+    def test_dash_r_under_the_export_seed_does_not_restart(self) -> None:
+        # A numeric PYTHONHASHSEED wins over -R, so the seed is still fixed.
+        # (sys.flags.hash_randomization reads 1 under seed 1: testing it
+        # would restart forever.)
         exporter = _load_exporter()
-        self.assertEqual(self._reexec(exporter.EXPORT_HASHSEED, "-R")[:2], ["EXEC", exporter.EXPORT_HASHSEED])
+        self.assertEqual(self._reexec(exporter.EXPORT_HASHSEED, "-R")[:2], ["NOEXEC", exporter.EXPORT_HASHSEED])
 
 SNAPSHOT = (
     CACHE / "huggingface" / "hub" / "models--ibm-granite--granite-embedding-english-r2" / "snapshots" / GRANITE_REVISION
@@ -430,22 +431,23 @@ def _export_command() -> list[str]:
     f"Granite weights are not in PREACHED_CACHE ({SNAPSHOT})",
 )
 class ExportIsByteIdenticalTests(unittest.TestCase):
-    def test_two_avx2_exports_are_byte_identical_and_are_the_pin(self) -> None:
+    def test_exports_under_any_ambient_seed_are_byte_identical_and_are_the_pin(self) -> None:
         with tempfile.TemporaryDirectory(dir=CACHE, prefix="export-repro-") as tmp:
             manifests = []
-            # The two runs start under different ambient hash seeds (1 and 3
-            # trace the two rotary orders) and dispatch levels. Unfixed, run a
-            # traces 44038d45..., and run b's avx512 is an AVX512 host's
-            # native level (on a CPU without AVX512 torch does not clamp it;
-            # the export dies with SIGILL). The script must override both
-            # and write the pin both times.
+            # The runs start under different ambient hash seeds (unset, 0, 3)
+            # and dispatch levels. Unfixed, seed 0 traces the other rotary
+            # order and default dispatch changes the bytes again; avx512 is an
+            # AVX512 host's native level (on a CPU without AVX512 torch does
+            # not clamp it; the export dies with SIGILL). The script must
+            # override both and write the pin every time.
             for name, start in (
-                ("a", {"PYTHONHASHSEED": "1", "ATEN_CPU_CAPABILITY": "default"}),
-                ("b", {"PYTHONHASHSEED": "3", "ATEN_CPU_CAPABILITY": "avx512"}),
+                ("a", {"ATEN_CPU_CAPABILITY": "default"}),
+                ("b", {"PYTHONHASHSEED": "0", "ATEN_CPU_CAPABILITY": "avx2"}),
+                ("c", {"PYTHONHASHSEED": "3", "ATEN_CPU_CAPABILITY": "avx512"}),
             ):
                 out = Path(tmp) / name
-                env = dict(
-                    os.environ,
+                env = {k: v for k, v in os.environ.items() if k != "PYTHONHASHSEED"}
+                env.update(
                     PREACHED_ONNX_DIR=str(out),
                     CUDA_VISIBLE_DEVICES="",
                     HF_HOME=str(CACHE / "huggingface"),
@@ -466,11 +468,13 @@ class ExportIsByteIdenticalTests(unittest.TestCase):
                 self.assertEqual(sha256_file(folder / "tokenizer.json"), TOKENIZER_SHA256)
                 verify_manifest(folder, variant="fp32")
                 manifests.append((folder / "manifest.json").read_text())
-            first, second = (Path(tmp) / name / GRANITE_REVISION / "model.fp32.onnx" for name in "ab")
-            self.assertTrue(filecmp.cmp(first, second, shallow=False), "two avx2 exports differ")
+            first, *rest = (Path(tmp) / name / GRANITE_REVISION / "model.fp32.onnx" for name in "abc")
+            for other in rest:
+                self.assertTrue(filecmp.cmp(first, other, shallow=False), f"{other.parent.parent.name} differs")
             self.assertEqual(sha256_file(first), FP32_ONNX_SHA256)
             # The manifest carries every file's sha256, int8 included.
             self.assertEqual(manifests[0], manifests[1])
+            self.assertEqual(manifests[0], manifests[2])
 
 if __name__ == "__main__":
     logging.basicConfig()
