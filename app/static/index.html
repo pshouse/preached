@@ -54,9 +54,11 @@
 
     <section id="results-section" class="results-section" aria-labelledby="results-heading" aria-busy="false">
       <h2 id="results-heading" class="visually-hidden">Results</h2>
-      <p id="note" class="note" hidden></p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
-      <p id="confidence" class="note note-weak" tabindex="-1" hidden></p>
+      <div class="notices" aria-live="polite">
+        <p id="note" class="note" hidden></p>
+        <p id="confidence" class="note note-weak" tabindex="-1" hidden></p>
+      </div>
       <div class="state-actions">
         <button type="button" id="hide-low" class="secondary" aria-pressed="false" hidden>Hide low-confidence results</button>
         <button type="button" id="retry" class="secondary" hidden>Try again</button>
@@ -76,7 +78,7 @@
     </footer>
   </div>
 
-  <div class="player" id="player-bar">
+  <div class="player" id="player-bar" hidden>
     <div class="player-inner">
       <p id="now-playing">Choose Play on a passage.</p>
       <audio id="player" controls preload="none"></audio>

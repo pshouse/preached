@@ -36,6 +36,9 @@ body {
   transform: translateY(-120%);
   background: var(--ink);
   color: var(--bg);
+  display: flex;
+  align-items: center;
+  min-height: 44px;
   padding: 0.5rem 0.75rem;
   z-index: 2;
 }
@@ -128,7 +131,10 @@ button:hover { background: #000; }
 
 .chips button:hover { background: var(--bg-raised); }
 
-.results-section { margin-top: 1.5rem; }
+.results-section {
+  margin-top: 1.5rem;
+  scroll-margin-top: 0.75rem;
+}
 
 .note,
 .status {
@@ -279,6 +285,13 @@ blockquote {
 .card a {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* Full-height tap target for the source link. */
+.card .text-link a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
 }
 
 .card a.play {
