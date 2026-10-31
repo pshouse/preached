@@ -26,4 +26,11 @@ CTO r1 on PR #76 (42f0f83) asked for changes. This round fixes MF1-MF4, S1 and S
 - The new tests only touch temp dirs. The abstain calibration path is patched to a temp file.
 
 ## Diff stat (base abdada3..HEAD, in-scope files only)
-Filled in below at commit time.
+```
+ README.md                         |   2 +
+ reports/W5-BENCH-FAILCLOSED-R2.md |  29 +++++++
+ search/bench.py                   |  25 ++++++
+ tests/test_bench_failclosed.py    | 167 ++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 223 insertions(+)
+```
+Head sha: see the PR (this report is part of the head commit).
