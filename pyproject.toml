@@ -3,6 +3,8 @@ name = "preached"
 version = "0.1.0"
 description = "Search a sermon archive and return the preacher's own words."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
     { name = "Patrick Shouse", email = "shouse.patrick@gmail.com" }
 ]
