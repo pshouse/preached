@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import app.server as server  # noqa: E402
 from app.server import STATIC_DIR, App, Searcher, build_app, load_church_searcher  # noqa: E402
-from preached.library import ChurchRefused, church_file_problem, open_church_readonly  # noqa: E402
+from preached.library import ChurchPaused, ChurchRefused, church_file_problem, open_church_readonly  # noqa: E402
 import preached.search as search_module  # noqa: E402
 import preached.store as store  # noqa: E402
 from preached.store import connect, save_embedding_info, write_embeddings  # noqa: E402
@@ -616,10 +616,18 @@ class ChurchRefusalAtOpenTests(unittest.TestCase):
     # PR #37 r1 should-fix 6: a WAL-mode church file is not opened.
 
     def test_wal_mode_church_file_is_refused_and_no_sidecar_appears(self) -> None:
+        # Not opened. The server's open_church now treats it as a pause
+        # (--ack-review may be running; CTO #37 r3 hard condition 1), logs
+        # nothing itself, and the App retries it later.
         with closing(sqlite3.connect(self.church)) as writer:
             self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
         before = sha(self.church)
-        self.assertIn("WAL journal mode", self.refused())
+        with self.assertRaises(ChurchRefused) as caught:
+            open_church_readonly(self.church, classic=self.wesley)
+        self.assertIn("WAL journal mode; run --ack-review", str(caught.exception))
+        with self.assertNoLogs(level="INFO"), self.assertRaises(ChurchPaused) as paused:
+            server.open_church(self.church, slug=None, classic_library="wesley", classic_index=self.wesley)
+        self.assertEqual(str(paused.exception), "mychurch.sqlite is in WAL journal mode")
         for suffix in ("-wal", "-shm"):
             self.assertFalse(Path(f"{self.church}{suffix}").exists(), suffix)
         self.assertEqual(sha(self.church), before)

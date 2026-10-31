@@ -105,6 +105,7 @@ finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 import argparse  # noqa: E402
+import functools  # noqa: E402
 import ipaddress  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
@@ -147,6 +148,7 @@ from preached.library import (  # noqa: E402
     CLASSIC_LABEL,
     ChurchPaused,
     ChurchRefused,
+    ChurchStartPaused,
     church_file_problem,
     classic_church_refusal,
     is_busy,
@@ -262,6 +264,11 @@ TAILSCALE_IPV6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 DEFAULT_HEALTH_RESERVED_CONNECTIONS = 1
 # At most one refusal line per class per this many seconds (RefusalLog).
 REFUSAL_LOG_INTERVAL_S = 1.0
+# A church file busy at startup (WAL mode or a writer's lock while
+# --ack-review runs) is retried no sooner than this, doubling up to the cap
+# (CTO #37 r3 hard condition 1). A retry runs on a request, never between.
+CHURCH_RETRY_FIRST_S = 1.0
+CHURCH_RETRY_MAX_S = 30.0
 SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 # Wesley ids are lowercase slugs (wesley-001), at most 64 characters. A
 # YouTube video id is 11 characters and case-sensitive. Dots and slashes are
@@ -852,9 +859,32 @@ def load_church_searcher(connection, model_key: str, *, bm25_only: bool, variant
     except EmbeddingMismatch:
         logging.exception("church vectors do not match search/models.toml; that side is BM25 only")
         return Searcher(connection, **gate), STALE_NOTE
-    except Exception:
+    except Exception as exc:
+        if is_busy(exc):
+            raise  # a writer's lock: a pause (build_church_searcher), not stale vectors
         logging.exception("church vectors unavailable; that side is BM25 only")
         return Searcher(connection, **gate), STALE_NOTE
+
+
+def build_church_searcher(connection, model_key: str, *, bm25_only: bool, variant: str | None, owned: bool):
+    """``load_church_searcher``, or None after one logged refusal line.
+
+    A failure closes the church connection (CTO #37 r3 S4) and logs one
+    line, no traceback (DEPLOY's alert reads one line). A writer's lock
+    raises ``ChurchPaused`` instead; the connection is closed then only when
+    it is ``owned`` (opened by the start, which opens a new one on retry).
+    """
+    try:
+        return load_church_searcher(connection, model_key, bm25_only=bm25_only, variant=variant)
+    except Exception as exc:
+        if is_busy(exc):
+            if owned:
+                connection.close()
+            raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc
+        connection.close()
+        reason = " ".join(str(exc).split())
+        logging.error("church side refused: its searcher could not be built (%s: %s)", exc.__class__.__name__, reason)
+        return None
 
 
 class App:
@@ -885,6 +915,8 @@ class App:
         church_sample: bool | None = None,
         church_note: str | None = None,
         church_check=None,
+        church_start=None,
+        defer_church_pause_log=False,
         classic_label: str | None = None,
         frozen: bool = False,
     ):
@@ -903,7 +935,15 @@ class App:
         returns why the church file may not be searched now, or None; main
         passes ``library.church_file_problem``. It runs before every church
         search, and a problem drops the church side until restart (fail
-        closed). None skips it (tests)."""
+        closed). None skips it (tests).
+
+        ``church_start()`` (build_app's, used when no church searcher is
+        given) opens the church side: it returns these church keyword
+        arguments, or None after a logged refusal, or raises
+        ``ChurchPaused`` when the file is busy (WAL mode or a writer's lock
+        while ``--ack-review`` runs). A pause is logged once and the start
+        is retried on a later request, after ``CHURCH_RETRY_FIRST_S``
+        doubling to ``CHURCH_RETRY_MAX_S``; no restart is needed."""
         self.connection = connection
         self._servable = servable
         # Why the index is refused, or None. While set, nothing is served.
@@ -971,29 +1011,27 @@ class App:
         self.church_note = None
         self._church_check = None
         self._church_paused = False  # logged once at pause start and once at its end
+        # main() sets this so a pause found while the App is built is logged by
+        # ``log_startup_pause`` after ``listening on``, not before it.
+        self._defer_pause_log = bool(defer_church_pause_log)
+        self._held_pause_log = None
+        self._church_start = None
+        self._church_retry_at = 0.0
+        self._church_backoff = CHURCH_RETRY_FIRST_S
         if church_searcher is not None or church_connection is not None or church_library is not None:
-            problem = None
-            if church_searcher is None or church_connection is None or not church_library:
-                problem = "church side needs a searcher, its connection and a slug"
-            elif church_library == library or is_classic_slug(church_library):
-                problem = f"{church_library!r} is a classic library and cannot be your church"
-            elif getattr(church_searcher, "connection", church_connection) is not church_connection:
-                problem = "church searcher is not on the church connection"
-            if problem is not None:
-                logging.error("church side refused: %s", problem)
-            else:
-                church_searcher.gate_on()
-                church_searcher.library = None
-                if church_searcher.gated is not True:
-                    logging.error("church side refused: the publish gate did not turn on")
-                else:
-                    self.church_connection = church_connection
-                    self.church_searcher = church_searcher
-                    self.church_library = church_library
-                    self.church_label = church_label or read_label(church_connection) or CHURCH_LABEL
-                    self.church_sample = bool(church_sample) or is_sample_library(church_library, church_connection)
-                    self.church_note = church_note
-                    self._church_check = church_check
+            self._install_church(
+                church_connection=church_connection,
+                church_searcher=church_searcher,
+                church_library=church_library,
+                church_label=church_label,
+                church_sample=church_sample,
+                church_note=church_note,
+                church_check=church_check,
+            )
+        elif church_start is not None:
+            self._church_start = church_start
+            with self.lock:
+                self._church_start_if_due()
         # Any library but wesley is gated, except an allow-listed public-domain
         # library's own file (store.public_domain_file, keyed on the slug).
         # The gate is checked per request in SQL (preached.store.visible_sql),
@@ -1280,6 +1318,8 @@ class App:
         """
         chosen = self.library if library is None else library
         if chosen != self.library:
+            with self.lock:
+                self._church_start_if_due()
             if self.church_library is not None and chosen == self.church_library:
                 # The process-wide refusal (classic index refused, frozen
                 # bundle changed) stops the church side too.
@@ -1323,6 +1363,76 @@ class App:
             "confidence": confidence.as_dict(),
         }
 
+    def _install_church(
+        self,
+        *,
+        church_connection,
+        church_searcher,
+        church_library,
+        church_label=None,
+        church_sample=None,
+        church_note=None,
+        church_check=None,
+    ) -> bool:
+        """Turn the church side on, or log ``church side refused:`` and return False."""
+        problem = None
+        if church_searcher is None or church_connection is None or not church_library:
+            problem = "church side needs a searcher, its connection and a slug"
+        elif church_library == self.library or is_classic_slug(church_library):
+            problem = f"{church_library!r} is a classic library and cannot be your church"
+        elif getattr(church_searcher, "connection", church_connection) is not church_connection:
+            problem = "church searcher is not on the church connection"
+        if problem is not None:
+            logging.error("church side refused: %s", problem)
+            return False
+        church_searcher.gate_on()
+        church_searcher.library = None
+        if church_searcher.gated is not True:
+            logging.error("church side refused: the publish gate did not turn on")
+            return False
+        self.church_connection = church_connection
+        self.church_searcher = church_searcher
+        self.church_library = church_library
+        self.church_label = church_label or read_label(church_connection) or CHURCH_LABEL
+        self.church_sample = bool(church_sample) or is_sample_library(church_library, church_connection)
+        self.church_note = church_note
+        self._church_check = church_check
+        return True
+
+    def _church_start_if_due(self) -> None:
+        """Open the church side when its start was paused and the backoff is over. Call with ``self.lock`` held.
+
+        A busy file (``ChurchPaused``) logs ``church side paused:`` once and
+        doubles the wait; ``church side resumed`` follows the first church
+        search that completes. A refusal is logged by the start and ends the
+        retries: the church side is off until restart, as at startup.
+        """
+        start = self._church_start
+        if start is None:
+            return
+        now = time.monotonic()
+        if now < self._church_retry_at:
+            return
+        try:
+            side = start()
+        except ChurchPaused as exc:
+            self._church_pause(exc)
+            self._church_retry_at = now + self._church_backoff
+            self._church_backoff = min(self._church_backoff * 2, CHURCH_RETRY_MAX_S)
+            return
+        except Exception as exc:
+            logging.error("church side refused: the church file could not be opened (%s)", exc)
+            side = None
+        self._church_start = None
+        refused = side is None or not self._install_church(**side)
+        if refused:
+            if self._church_paused:
+                # The refusal line itself was logged just above.
+                logging.info("church side pause ended: refused")
+            self._church_paused = False
+            if side is not None:
+                side["church_connection"].close()
+
     def _church_ready(self) -> bool:
         """True when the church side may be searched now. Call with ``self.lock`` held.
 
@@ -1335,7 +1445,9 @@ class App:
         ``_church_search``, when a church search next completes.
         """
         if self.church_searcher is None:
-            return False
+            self._church_start_if_due()
+            if self.church_searcher is None:
+                return False
         if self._church_check is None:
             return True
         try:
@@ -1356,7 +1468,18 @@ class App:
         """Log the start of a pause once, not once per skipped request. Call with ``self.lock`` held."""
         if not self._church_paused:
             self._church_paused = True
-            logging.info("church side paused: %s", reason)
+            if self._defer_pause_log:
+                self._held_pause_log = f"church side paused: {reason}"
+            else:
+                logging.info("church side paused: %s", reason)
+
+    def log_startup_pause(self) -> None:
+        """Log the pause found at startup, if any. ``serve_forever`` calls this right after ``listening on``."""
+        with self.lock:
+            self._defer_pause_log = False
+            held, self._held_pause_log = self._held_pause_log, None
+            if held is not None:
+                logging.info("%s", held)
 
     def _drop_church(self) -> None:
         self._church_paused = False
@@ -1581,7 +1704,9 @@ def build_app(
     church_label: str | None = None,
     church_sample: bool | None = None,
     church_check=None,
+    church_open=None,
     frozen: bool = False,
+    defer_church_pause_log: bool = False,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file.
 
@@ -1590,7 +1715,12 @@ def build_app(
     side on. Its searcher is built only by ``load_church_searcher`` (the
     publish gate), with the classic side's query embedder; it is keyword
     only when that embedder is not loaded. A failure here leaves the church
-    side empty and is logged; the classic side is unaffected."""
+    side empty and is logged; the classic side is unaffected.
+
+    ``church_open()`` (main's ``open_church``) opens the file instead: it
+    returns ``(connection, slug, check)``, or None after a logged refusal,
+    or raises ``ChurchPaused`` when the file is busy. A busy start, here or
+    in the searcher build, is retried by the App (``App._church_start_if_due``)."""
     if model_key not in RUNTIME_MODELS:
         # Same refusal as main(); never fall back to keyword search quietly,
         # whether the key is eval-only or a typo.
@@ -1619,19 +1749,34 @@ def build_app(
             # keeps any other surprise from stopping the server.
             logging.exception("abstain calibration unusable; abstain floor disabled")
             floor = None
-    church_searcher = None
-    church_note = None
-    if church_connection is not None:
-        try:
-            church_searcher, church_note = load_church_searcher(
-                church_connection,
+    start = None
+    if church_open is not None or church_connection is not None:
+        given = None if church_open is not None else (church_connection, church_library, church_check)
+
+        def start():
+            side = church_open() if given is None else given
+            if side is None:
+                return None
+            church, slug, check = side
+            built = build_church_searcher(
+                church,
                 model_key,
                 bm25_only=encode is None,
                 variant=getattr(encode, "variant", None),
+                owned=given is None,
             )
-        except Exception:
-            logging.exception("church side refused: its searcher could not be built")
-            church_searcher = None
+            if built is None:
+                return None
+            return {
+                "church_connection": church,
+                "church_searcher": built[0],
+                "church_library": slug,
+                "church_label": church_label,
+                "church_sample": church_sample,
+                "church_note": built[1],
+                "church_check": check,
+            }
+
     return App(
         floor=floor,
         connection=connection,
@@ -1646,13 +1791,8 @@ def build_app(
         rate_window_s=rate_window_s,
         kill_file=kill_file,
         servable=servable,
-        church_connection=church_connection if church_searcher is not None else None,
-        church_searcher=church_searcher,
-        church_library=church_library if church_searcher is not None else None,
-        church_label=church_label,
-        church_sample=church_sample,
-        church_note=church_note,
-        church_check=church_check,
+        church_start=start,
+        defer_church_pause_log=defer_church_pause_log,
         frozen=frozen,
     )
 
@@ -2590,6 +2730,7 @@ def _shutdown_socket(sock, how: int) -> None:
 def make_server(app: App, host: str, port: int) -> PreachedServer:
     server = PreachedServer((host, port), make_handler(app))
     server.trusted_proxies = app.trusted_proxies
+    server.app = app
     return server
 
 
@@ -2598,6 +2739,10 @@ def serve_forever(server: PreachedServer) -> None:
     print(f"PREACHED_RSS_BYTES {rss_bytes() or 0}", flush=True)
     print(f"PREACHED_LISTENING http://{host}:{port}", flush=True)
     logging.info("listening on http://%s:%s", host, port)
+    # After the line above: Infra's process-restart rule clears church-paused on it.
+    app = getattr(server, "app", None)
+    if app is not None:
+        app.log_startup_pause()
     server.serve_forever()
 
 
@@ -2646,6 +2791,11 @@ def church_path_for(church_index: Path | None, church_library: str | None) -> Pa
 def open_church(path: Path, *, slug: str | None, classic_library: str, classic_index: Path):
     """``(connection, slug, check)`` for the church side, or None after a logged refusal.
 
+    A file busy at startup (WAL mode or a writer's lock: ``--ack-review``
+    running) raises ``ChurchPaused`` with the pause reason, unlogged; the
+    App logs the pause and calls this again later (CTO #37 r3 hard
+    condition 1).
+
     Read-only through ``library.open_church_readonly`` (#33's sidecar-checked
     ``store.open_readonly``, privacy config required, church-shaped, publish-gate
     columns present, not a symlink, owner and mode of the real file and
@@ -2664,6 +2814,8 @@ def open_church(path: Path, *, slug: str | None, classic_library: str, classic_i
         return None
     try:
         connection, identity = open_church_readonly(path, classic=classic_index)
+    except ChurchStartPaused as exc:
+        raise ChurchPaused(exc.reason) from exc
     except ChurchRefused as exc:
         logging.error("church side refused: %s", exc)
         return None
@@ -2960,12 +3112,14 @@ def main(argv: list[str] | None = None) -> None:
         connection.close()
         raise
     # The church side, only when one was named. Any problem is logged and
-    # leaves that side empty; the classic side serves either way.
-    church_side = None
+    # leaves that side empty; the classic side serves either way. A busy
+    # file is a pause: the App opens it again later (open_church).
+    church_open = None
     church_path = church_path_for(args.church_index, church_library)
     if church_path is not None:
-        church_side = open_church(church_path, slug=church_library, classic_library=library, classic_index=index)
-    church_connection, church_slug, church_check = church_side if church_side is not None else (None, None, None)
+        church_open = functools.partial(
+            open_church, church_path, slug=church_library, classic_library=library, classic_index=index
+        )
     hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
     bound = args.host.strip().lower()
     if bound not in {"0.0.0.0", "::", ""}:
@@ -2981,10 +3135,9 @@ def main(argv: list[str] | None = None) -> None:
         variant=args.onnx_variant,
         library=library,
         servable=servable,
-        church_connection=church_connection,
-        church_library=church_slug,
-        church_check=church_check,
+        church_open=church_open,
         frozen=bundle,
+        defer_church_pause_log=True,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)

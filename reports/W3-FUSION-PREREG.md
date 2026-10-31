@@ -1,12 +1,12 @@
 # W3-FUSION-PREREG: pre-registration for proposal #1 (query-shape-aware fusion weight)
 
-Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `reports/W3-RETRIEVAL-DIAG.md` (PR #42). **This note has no results. It changes no search code, no index, no `eval/questions.jsonl`, no grades, and no abstain settings.** It is committed before any run of the test below.
+Branch `docs/w3-prereg-align` (PR #47; first written on `docs/w3-label-sheet`, PR #43). Date: 2026-10-31. Source: §7 proposal 1 of `reports/W3-RETRIEVAL-DIAG.md` (PR #42). **This note has no results. It changes no search code, no index, no `eval/questions.jsonl`, no grades, and no abstain settings.** It is committed before any run of the test below.
 
 ## Disclosures
 
-- **The author of the hypothesis has seen the blind failures.** The idea came from reading the `plain-blind` misses and from EVAL-GRADE's dense-vs-hybrid result on those same questions. `plain-blind` is therefore not a clean test of this hypothesis; the fresh-blind-set step below is.
-- The exploratory numbers in the diag report (V10, V11) are scratch results from the same questions and are not evidence for shipping.
-- The labels in `eval/questions.jsonl` for `plain-blind`, and all grade-1 labels, are LLM-proposed and unconfirmed by a human.
+- **The author of the hypothesis has seen the blind failures.** The idea came from reading the `plain-blind` misses and from EVAL-GRADE's dense-vs-hybrid result on those same questions. `plain-blind` is therefore not held out for any variant (the author read every blind failure, and the OR-shape rule is close to a long-question detector). It may be reported only as an in-sample check. The confirmatory test is the fresh blind set below, which is required before any accuracy claim, not only before shipping.
+- The exploratory numbers in the diag report (V10, V11) are scratch results from the same questions and are not evidence for any accuracy claim.
+- **Every question and every label used here, selection groups included, is LLM-written or LLM-chosen and unconfirmed by a person** until `eval/review/review-2026-10-30.csv` is filled in (`eval/README.md`, "Human review: pending"). The original 40 questions and their labels, including every grade-2 label in the selection groups that decide `w` and the 12 grade-1 `-p2` labels with no `found_by`, were chosen by the Grok CLI agent (W1-B). The 23 `-plain` rewrites were written by Claude (20 in EVAL-DELEAK, 3 in EVAL-GRADE), and every `status: proposed` label (`llm-proposed:claude`) was proposed by Claude. The 30 `plain-blind` questions were written by Grok (`llm-written:grok`).
 
 ## Labels are re-frozen after Patrick's pass
 
@@ -15,7 +15,7 @@ Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `repor
 **Labeller access and limitations (CTO #43 r2).**
 
 - The labeller gets only `reports/W3-LABEL-SHEET.csv`, not the repo. `reports/W3-LABEL-SHEET-KEY-source.json` (renamed from `w3_label_sheet_source.json`) holds the withheld data and must not be opened by the labeller; git history (f3d2142, 3b9441b) still contains the earlier unblinded sheets.
-- Labeller exposure to earlier unblinded sheet: PENDING Patrick's answer. (If Patrick opened an earlier unblinded sheet, record it here as a limitation.)
+- Labeller exposure to earlier unblinded sheet: none. Patrick (the labeller) stated on 2026-10-31 that he did not open either earlier unblinded sheet (f3d2142, 3b9441b). Self-reported; not independently verifiable.
 - Style confound: 4 of the 10 blind-written (`plain-blind`) questions are all-lowercase, with no apostrophes, commas or question marks (a single period at most); none of the 8 plain questions is all-lowercase. A labeller can therefore tell some blind-written questions from plain ones by style. Counts verified from the KEY (groups `plain-blind` vs `plain`).
 
 ## Frozen change
@@ -29,7 +29,7 @@ Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `repor
 - **Selection groups:** `plain` (25), `names-topic` (23), `title-keyword` (3), `scripture-keyword` (7). Unanswerable items are not scored.
 - Metric: lenient hit@10 on the raw ranker path (`search/bench.py` without `--dedupe`), `granite-english-r2`, with the re-frozen labels. Pick the `w` with the higher pooled hit@10 over the selection groups. **A tie goes to the milder weight (0.5).**
 - Both weights are also reported in full for every group, with the paired win/tie/loss counts against baseline.
-- **`plain-blind` is reported once, after `w` is chosen, as the held-out number.** It does not influence the choice, and it is not rerun after any other change.
+- **`plain-blind` is reported once, after `w` is chosen, as an in-sample check only.** It is not held out and not confirmatory. It does not influence the choice, and it is not rerun after any other change.
 
 ## Required reruns
 
@@ -37,9 +37,11 @@ Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `repor
 - `--dedupe` on baseline and chosen `w` for all groups.
 - The abstain floor in `search/abstain.toml` is **not refit**, and not on proposed labels.
 
-## Fresh-blind-set confirmation (before any ship)
+## Fresh-blind-set confirmation (before any accuracy claim)
 
-Write 20 to 30 new questions, by a person or by an LLM that has not seen the corpus or this repo's questions. No ranker may have been run on them. Freeze the wording and label them, with the labelling done by someone who has not seen the baseline or weighted rankings for them, then run baseline and the chosen `w` once.
+Write 20 to 30 new questions, by a person or by an LLM that has not seen the corpus or this repo's questions. The writer must not be a model from a PRC-based developer (AGENTS.md §3), and must not have seen `reports/W3-RETRIEVAL-DIAG.md` or this prereg. The set is confirmatory and is required before any accuracy claim, not only before shipping. Freeze the wording and the labels and commit them before any ranker runs on the set; no ranker may have been run on them. Labelling is done by someone who has not seen the baseline or weighted rankings for them. Relevant passages are found before any ranker runs, by reading the sermons and by plain text search (grep) of the corpus, as in W1-B. FTS5/BM25 and dense search are rankers and may not be used to find them. Then run baseline and the chosen `w` once.
+
+Each question carries a provenance field (for example `person-written` or `llm-written:<model>`). If an LLM writes the set, the report discloses it as LLM-written, and says whether the labels were confirmed by a person.
 
 ## What means "do not ship"
 
@@ -47,8 +49,14 @@ Any of the following:
 
 1. The chosen `w` has a negative paired hit@10 difference on the pooled selection groups.
 2. It loses more than one question in any one selection group, or any in `title-keyword` or `scripture-keyword` (those must be unchanged by construction; a change means the rule is wrong).
-3. On held-out `plain-blind`, the paired difference is not positive, or its 95% CI includes zero together with a loss on the fresh blind set.
+3. On the fresh blind set, the 95% paired-bootstrap CI (10,000 resamples, seed recorded) of the paired hit@10 difference includes zero and at least one fresh-set question is lost. The CI is the percentile interval from `preached.stats.paired_bootstrap` (default seed 20261030). A question is lost when a relevant passage is in the top 10 under the baseline and none is in the top 10 under the chosen `w`.
 4. On the fresh blind set, the chosen `w` does not beat baseline in hit@10.
 5. The abstain behaviour or `--dedupe` results degrade versus baseline (more false answers on unanswerable items, or lower hit@10 with `--dedupe`).
 
+`plain-blind` is in-sample and gates nothing; a loss there is reported as a warning.
+
 A mixed result is reported as mixed. It is not rescued by adding a third weight, changing the rule, or editing labels.
+
+## Amendments
+
+- 2026-10-31, PR #47: plain-blind made in-sample only with the fresh blind set confirmatory (CTO #42 r1), labeller exposure answer recorded (CTO #43 S2), and rule 3, label provenance and fresh-set rules made precise (CTO #47 r1); all made before any run of the frozen test.

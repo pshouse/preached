@@ -56,6 +56,13 @@ as with no church named, from a checkout or a bundle. A problem found while
 serving logs `ERROR church side dropped: <why>` once instead, and the church
 side stays off until restart. A pause logs `INFO church side paused: <why>`
 when it starts and `INFO church side resumed` when church results come back.
+A church file that is busy at start (a writer's lock, or WAL mode, while
+`--ack-review` runs) is a pause, not a refusal: the server logs the `paused`
+line, tries the open again on a later church request (after 1 s, doubling
+to 30 s), and the church side comes back with no restart (CTO #37 r3 hard
+condition 1). Every refusal is one line; the searcher-build refusal is
+`ERROR church side refused: its searcher could not be built (<type>: <why>)`
+with no traceback.
 
 The church slug (`--church-library`, or the file's stem) is chosen by the
 operator and hard to guess. It is not the church's public name: the slug is
@@ -80,9 +87,11 @@ what a client asks for in `library=`.
    restart.
 4. **DELETE journal mode.** `--ack-review` leaves the file in DELETE mode,
    so the read-only open creates no `-wal` or `-shm`. A WAL-mode church file
-   is refused at start. While `--ack-review` is writing (the file is briefly
+   is not opened. While `--ack-review` is writing (the file is briefly
    in WAL mode, or holds its write lock), each church search is skipped for
-   that request, and the side is not dropped. The church connection never
+   that request, and the side is not dropped; at start the open is retried
+   as above. A file left in WAL mode stays paused (one `paused` line) until
+   `--ack-review` leaves it in DELETE mode. The church connection never
    waits for a lock (`busy_timeout` 0), so a writer never stalls the
    server. If `--ack-review` prints
    `warning: the church file is still in wal journal mode`, close the other

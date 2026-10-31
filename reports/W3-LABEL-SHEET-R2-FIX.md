@@ -22,7 +22,7 @@ After reverting: `--check` "up to date", tests OK.
 
 ## Should-fixes
 - **S1:** `reports/w3_label_sheet_source.json` renamed to `reports/W3-LABEL-SHEET-KEY-source.json` (git mv); references updated; the KEY and prereg say do not open it, the labeller gets only the CSV not the repo, and f3d2142/3b9441b still hold unblinded sheets.
-- **S2:** prereg line "Labeller exposure to earlier unblinded sheet: PENDING Patrick's answer". Not guessed.
+- **S2:** prereg line "Labeller exposure to earlier unblinded sheet" was left unanswered, not guessed (answered 2026-10-31, see W3-PREREG-S2).
 - **S3:** verified from the source: 10 `plain-blind` questions, 4 all-lowercase (p-021, p-030, p-002, p-008); 8 `plain`, 0 all-lowercase. **Correction to the CTO wording:** those 4 are not punctuation-free, each has a period (no apostrophes, commas or question marks), so the prereg says that.
 - **S4:** new test checks every question/chunk cell exactly against the source and scans all cells for `<!--`, `-->`, tags and control/format/exotic-space characters.
 

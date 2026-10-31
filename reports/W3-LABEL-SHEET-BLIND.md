@@ -22,3 +22,4 @@ Branch `docs/w3-label-sheet` (PR #43). Docs/data only; no change to `src/`, the 
 - (b) Case-insensitive search for blind, held-out, heldout, split, grade, rank, hit, bm25, dense, hybrid: none in the header and none in any column other than question and chunk text (test passes).
 - Quotes: all 24 rows' quoted segments (split at ` ... `) appear in their own chunk text, 0 failures. The p-013 and p-030 explanations are in the KEY only. The quote column itself is not on the sheet.
 - Suite: `python3 -m unittest discover -s tests`: Ran 835 tests, OK.
+- Update: the chunk id column is now opaque (`C01`..), no longer the real `wesley-NNN-cNNNN` id; see `W3-LABEL-SHEET-OPAQUE.md`.
