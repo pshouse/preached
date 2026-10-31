@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -38,6 +39,11 @@ def load_partials() -> list[dict]:
     return [json.loads(line) for line in (ROOT / "eval" / "partial_verdicts.jsonl").read_text().splitlines() if line.strip()]
 
 
+def readonly_uri(index: Path) -> str:
+    """Percent-encoded read-only sqlite URI; an f-string would let '#', '?' or '%' in the path change the URI."""
+    return index.resolve().as_uri() + "?mode=ro&immutable=1"
+
+
 def load_chunk_texts() -> list[dict] | None:
     """Chunk id + text from chunks.jsonl, else from the index sqlite opened read-only; None if neither exists."""
     if validate.CHUNKS_JSONL.is_file():
@@ -46,7 +52,7 @@ def load_chunk_texts() -> list[dict] | None:
     if not index.is_file():
         return None
     # immutable=1 never touches -wal/-shm or the file itself; the private index is not written or copied.
-    conn = sqlite3.connect(index.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+    conn = sqlite3.connect(readonly_uri(index), uri=True)
     try:
         return [{"chunk_id": cid, "text": text}
                 for cid, text in conn.execute("SELECT chunk_id, text FROM chunks ORDER BY rowid")]
@@ -78,6 +84,40 @@ def confirmed_labels() -> list[dict]:
     """Every confirmed label: primary ones in questions.jsonl and the sensitivity-only partial file."""
     return ([p for q in load() for p in q["relevant"] if p.get("status") == "confirmed"]
             + [line["label"] for line in load_partials()])
+
+
+class ReadonlyUriTest(unittest.TestCase):
+    """The index URI must stay read-only whatever characters the path holds."""
+
+    NAMES = ("a b", "pct%41", "q?mode=rw", "h#frag", "all %?# x")
+
+    def test_odd_paths_open_read_only_and_leave_the_disk_untouched(self):
+        for name in self.NAMES:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                parent = Path(tmp)
+                folder = parent / name
+                folder.mkdir()
+                index = folder / "index.sqlite"
+                setup = sqlite3.connect(index)
+                setup.execute("CREATE TABLE chunks (chunk_id TEXT, text TEXT)")
+                setup.execute("INSERT INTO chunks VALUES ('c1', 'grace')")
+                setup.commit()
+                setup.close()
+
+                def snapshot():
+                    stat = index.stat()
+                    return (index.read_bytes(), stat.st_mtime_ns, sorted(p.name for p in folder.iterdir()),
+                            sorted(p.name for p in parent.iterdir()))
+
+                before = snapshot()
+                conn = sqlite3.connect(readonly_uri(index), uri=True)
+                try:
+                    self.assertEqual(conn.execute("SELECT chunk_id, text FROM chunks").fetchall(), [("c1", "grace")])
+                    with self.assertRaises(sqlite3.OperationalError):
+                        conn.execute("INSERT INTO chunks VALUES ('c2', 'x')")
+                finally:
+                    conn.close()
+                self.assertEqual(snapshot(), before)
 
 
 class TitleLeakTest(unittest.TestCase):
