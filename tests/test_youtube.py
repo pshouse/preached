@@ -626,21 +626,20 @@ class ImportTests(unittest.TestCase):
     def test_bad_stated_duration_is_unchecked(self) -> None:
         # A missing, zero, negative, non-numeric or non-finite duration stores NULL coverage (never approvable),
         # as the church path does; a valid duration is the control. True reaches Video.duration_s directly; a string
-        # or an integer too large for a float is only ever metadata (the Video keeps None), so those rows check the
-        # metadata is ignored rather than crashing the import.
+        # is only ever metadata (the Video keeps None), so that row checks the metadata is ignored rather than
+        # crashing the import. Integers too large for a float: test_huge_metadata_duration_keeps_the_listed_one.
         for duration, checked in (
             (None, False),
             (0, False),
             (-5, False),
             ("40", False),
             (True, False),
-            (2**1024, False),
             (float("nan"), False),
             (float("inf"), False),
             (40, True),
         ):
             with self.subTest(duration=duration):
-                video = Video("samplevid01", "On Mercy", None if isinstance(duration, str) or duration == 2**1024 else duration, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
+                video = Video("samplevid01", "On Mercy", None if isinstance(duration, str) else duration, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
                 seen = []
 
                 def coverage(_path, _words, *, duration_s=None):
@@ -680,6 +679,36 @@ class ImportTests(unittest.TestCase):
                         self.assertIn("NOT checked (no usable stated duration)", err)
                         code, _out, err = self._run(["--library", "sample", "--ack-review", "samplevid01"], root)
                         self.assertNotEqual(code, 0)
+
+    def test_huge_metadata_duration_keeps_the_listed_one(self) -> None:
+        # Metadata with an integer too large for a float must not abort the import or replace the listed duration.
+        for listed, checked in ((60, True), (None, False)):
+            with self.subTest(listed=listed):
+                video = Video("samplevid01", "On Mercy", listed, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
+                seen = []
+
+                def coverage(_path, _words, *, duration_s=None):
+                    seen.append(duration_s)
+                    return []
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    code, _out, err = self._run(
+                        ["https://www.youtube.com/watch?v=samplevid01", "--library", "sample"],
+                        Path(tmp),
+                        lister=lambda _url: [video],
+                        metadata=lambda _video: {
+                            "license": "Creative Commons Attribution license (reuse allowed)",
+                            "upload_date": "20240602",
+                            "title": "On Mercy",
+                            "duration": 2**1024,
+                        },
+                        downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                        transcriber=lambda _path: sample_words(12.2),
+                        coverage=coverage,
+                        embedder=embedder,
+                    )
+                    self.assertEqual(code, 0, err)
+                    self.assertEqual(seen, [60.0] if checked else [])
 
     def test_schema_matches_the_search_server(self) -> None:
         video = Video("samplevid01", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")

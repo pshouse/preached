@@ -354,13 +354,12 @@ def stated_duration(value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise Unchecked("no usable stated duration")
     try:
-        usable = math.isfinite(value) and value > 0
-        value = float(value)
+        seconds = float(value)
     except OverflowError:  # an integer too large for a float
-        usable = False
-    if not usable:
+        raise Unchecked("no usable stated duration") from None
+    if not (math.isfinite(seconds) and seconds > 0):
         raise Unchecked("no usable stated duration")
-    return float(value)
+    return seconds
 
 
 def check_coverage(
