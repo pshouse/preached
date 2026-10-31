@@ -53,4 +53,11 @@ Raise the listen backlog from socketserver's 5 to a named `LISTEN_BACKLOG = 128`
 
 Full suite: 1085 tests OK (skipped=11).
 
-DIFFSTAT
+`git diff --stat origin/main..HEAD`:
+
+     app/server.py                |  11 +++
+     docs/DEPLOY.md               |  34 +++----
+     reports/W3-LISTEN-BACKLOG.md |  56 ++++++++++++
+     tests/test_deploy_alerts.py  |  24 ++---
+     tests/test_listen_backlog.py | 208 +++++++++++++++++++++++++++++++++++++++++++
+     5 files changed, 304 insertions(+), 29 deletions(-)
