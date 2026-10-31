@@ -38,7 +38,7 @@
 "p-012": ["AMBIG", "one label only; top 5 are all from the grade-2 sermon 094 but about choosing a school; the answer is thin"],
 "p-013": ["GRADE", "049-c0011 holds the same Matt 18:15 text as the grade-2 quote, which begins \"First,\" and so matches only 049-c0013; dense 2, hybrid 5"],
 "p-014": ["VOCAB", "\"scared of dying\" vs \"fear of death\" (overlap 0); BM25 \"fall asleep\" noise; dense labelled at 9"],
-"p-015": ["GRADE", "dense 3 is 028-c0009 (\"how soon is our foolish heart darkened ... doubts and fears\"), which is labelled grade 1 for q-wilderness-plain but not here"],
+"p-015": ["LEX", "dense 3 is 028-c0009 (\"how soon is our foolish heart darkened ... doubts and fears\"), which is labelled grade 1 for q-wilderness-plain but not here; it is not in the hybrid top 10"],
 "p-016": ["AMBIG", "four words, so FTS ANDs them: BM25 returns 0 rows; dense finds a labelled chunk at 18"],
 "p-017": ["AMBIG", "\"he\" is unresolved; FTS ANDs \"wont\" and \"answer\", and \"wont\" matches archaic \"are wont to\" in A Call to Backsliders"],
 "p-018": ["THEME", "\"forgive\" pulls forgiving-others passages (Sermon on the Mount 6) instead of 006 \"not contrite enough\""],
@@ -53,5 +53,5 @@
 "p-027": ["GRADE", "dense 1 is 080-c0042: Wesley's marriage-to-an-unbeliever snare, unlabelled (080 holds a grade-1 label)"],
 "p-028": ["LEX", "dense has the grade-2 chunk at 4; BM25 \"fires\", \"floods\", \"lie awake\" pulls Earthquakes, Of Hell, Redeeming the Time"],
 "p-029": ["THEME", "\"job\" pulls The Use of Money employment passages, not 029 \"uneasy care\""],
-"p-030": ["LEX", "dense labelled at 10 plus 024 social-religion chunks at 1-2 (unlabelled); BM25 \"bed\", \"months\" noise"]
+"p-030": ["GRADE", "hybrid 6 is 024-c0012 (social religion, unlabelled); 024 social-religion chunks at dense 1-2 (unlabelled); dense labelled at 10; BM25 \"bed\", \"months\" noise"]
 }

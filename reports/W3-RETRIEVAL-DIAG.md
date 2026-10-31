@@ -2,15 +2,17 @@
 
 Branch `docs/w3-retrieval-diag`, from origin/main `5779961`. Agent: Claude (Opus 5.5). Date: 2026-10-31.
 
+Revised by W3-DIAG-FIX (CTO #42 r1): labelling, disclosure and caveats only. Every number is as computed; none was changed. Item-by-item map: `reports/W3-DIAG-FIX.md`.
+
 **This changes no search code, no index, no eval set, and no grades.** The only file added by the original report is this report; the scratch scripts behind it are now committed in `reports/w3-retrieval-diag/` (see §8). Large intermediate outputs stay in `/cache/w3-retrieval-diag/` (outside the repo). Every number marked *exploratory* below comes from those scratch scripts, not from shipped code.
 
 ## Bottom line
 
-- **On the questions written blind, the biggest single cause of misses is BM25 inside the fusion, not the embedding model.** Granite dense alone puts an acceptable passage in the top 10 for 11 of 28 blind questions. The shipped hybrid does it for 3 of 28. On 8 of the 28, dense has one in the top 10 and hybrid does not. Hybrid never rescues one that dense missed (0 of 28). On the 25 `plain` questions fusion is a wash (it loses 2, gains 3). Everyday questions are long and full of incidental words ("lie awake", "years ago", "drinking", "fires", "church"). The FTS query ORs all of them, BM25 finds Wesley passages that share those words but not the subject, and RRF at equal weight gives them as much say as the dense list.
-- **The second cause is vocabulary**: modern words with no 18th-century bridge, such as "scared of dying" vs "fear of death" and "jealous" vs "envy". Wesley's own "jealous over ourselves" means watchful, so it is a false friend. It is the primary cause for 4 of the 7 `plain` misses and 4 of the 25 blind misses.
-- **The blind score is also partly a measurement problem.** Blind questions have a median of 5 labels; `plain` questions have 17. On 6 of the 25 blind misses, the shipped top 10 already holds an unlabelled passage that, in my reading, plausibly answers the question. These are flagged for Patrick below and were **not** regraded. If Patrick confirmed all of them, blind hit@10 for the shipped default would go from 3/28 to 9/28. That is a what-if, not a result.
-- **Chunk size is not the problem.** The labelled chunks have a median of 123 words against a corpus median of 122. Context smoothing with neighbouring chunks did not help (exploratory: −0.04 on `plain`, +0.04 on blind, both inside noise).
-- **Recommended first intervention (zero dependencies, no RSS or latency cost):** give BM25 half weight in RRF only when the FTS query is the natural-language OR form, and keep full weight for AND/NEAR keyword and scripture queries. Exploratory: blind lenient hit@10 goes from 0.107 to 0.286 (+0.18 [+0.04, +0.32], 5 wins, 0 losses). `plain` goes from 0.72 to 0.76, and scripture and title keyword queries are unchanged. Overall it is +0.07 [+0.01, +0.14], with 7 wins and 1 loss (`q-worry`). It has to be tested honestly first (protocol in §7), and the abstain rule must be re-checked, before Patrick decides.
+- **On the questions written blind, the biggest single cause of misses is BM25 inside the fusion, not the embedding model.** ("Blind" is the `plain-blind` group: 30 questions written by an LLM agent, Grok, before it read the corpus, `provenance: llm-written:grok`. Every label on them was proposed by an LLM, Claude, and none is confirmed by a person.) Granite dense alone puts an acceptable passage in the top 10 for 11 of 28 blind questions. The shipped hybrid does it for 3 of 28. On 8 of the 28, dense has one in the top 10 and hybrid does not. Hybrid never rescues one that dense missed (0 of 28). All `plain-blind` numbers in this report are post-hoc, not held out (§5). On the 25 `plain` questions fusion is a wash (it loses 2, gains 3). Everyday questions are long and full of incidental words ("lie awake", "years ago", "drinking", "fires", "church"). The FTS query ORs all of them, BM25 finds Wesley passages that share those words but not the subject, and RRF at equal weight gives them as much say as the dense list.
+- **The second cause is vocabulary**: modern words with no 18th-century bridge, such as "scared of dying" vs "fear of death" and "jealous" vs "envy". Wesley's own "jealous over ourselves" means watchful, so it is a false friend. It is the primary cause for 4 of the 7 `plain` misses and 4 of the 25 blind misses (post-hoc, not held out).
+- **The blind score is also partly a measurement problem.** Blind questions have a median of 5 labels; `plain` questions have 17. On 6 of the 25 blind misses, the shipped top 10 already holds an unlabelled passage that, in my reading, plausibly answers the question. "My reading" is Claude's, the same model family that proposed every blind label. These are flagged for Patrick below and were **not** regraded. If Patrick confirmed all of them, blind hit@10 for the shipped default would go from 3/28 to 9/28 (post-hoc, not held out). That is a what-if, not a result.
+- **Chunk size is not the problem.** The labelled chunks have a median of 123 words against a corpus median of 122. Context smoothing with neighbouring chunks did not help (exploratory: −0.04 on `plain`, +0.04 on blind (post-hoc, not held out), both inside noise).
+- **Recommended first intervention (zero dependencies, no RSS or latency cost):** give BM25 half weight in RRF only when the FTS query is the natural-language OR form, and keep full weight for AND/NEAR keyword and scripture queries. Exploratory: blind lenient hit@10 goes from 0.107 to 0.286 (+0.18 [+0.04, +0.32], 5 wins, 0 losses; post-hoc, not held out). `plain` goes from 0.72 to 0.76, and scripture and title keyword queries are unchanged. Overall it is +0.07 [+0.01, +0.14], with 7 wins and 1 loss (`q-worry`). Multiplicity: V10 is the best of 12 variants compared with V0 across 6 groups, picked after the fact, and the intervals are not adjusted for that. On the blind questions V10 equals V3 by construction (§6). These numbers support no accuracy claim. The confirmatory test is a fresh blind set, frozen and committed before any ranker runs on it (§7 #1 step d). That test, and a re-check of the abstain rule, come before Patrick decides.
 
 ## 1. Method and settings
 
@@ -44,9 +46,11 @@ Branch `docs/w3-retrieval-diag`, from origin/main `5779961`. Agent: Claude (Opus
   - Query/label overlap: the best share of the question's content stems that appear in any labelled chunk.
   - Labelled chunk length.
   - Fusion loss or gain: dense hits in the top 10 and hybrid does not, or the reverse.
-- **Not human-reviewed.** The categories and flags are one LLM reader's judgment (me), with no second reader and no review by a person.
+- **Not human-reviewed.** The categories and flags are one LLM reader's judgment (me), with no second reader and no review by a person. The GRADE flags come from Claude, the same model family that proposed every `plain-blind` label (EVAL-GRADE, `found_by: llm-proposed:claude`).
 
 **Sources:** `eval/questions.jsonl` (labels as on main; the grade-1 and blind labels are proposed and unconfirmed), `/cache/corpus/wesley/chunks.jsonl` (8,383 chunks), `/cache/index/wesley.sqlite`, `search/models.toml`, `reports/EVAL-GRADE.md`, and `eval/README.md`.
+
+**Disclosure:** the 30 `plain-blind` questions were written by an LLM agent (Grok; `provenance: llm-written:grok`), and every label on them was proposed by an LLM (Claude; `status: proposed`, `found_by: llm-proposed:claude`). None is confirmed by a person. The GRADE flags in §4 also come from Claude.
 
 ## 2. Per-question table
 
@@ -101,7 +105,7 @@ The *expected* column gives the grade-2 sermon(s), then the number of grade-1 la
 | p-012 | my son is 15 and he wont talk to me. if i ask about school he shuts the door. i feel like im losing him | ²094 | 026·1 094·45† 031·38 026·22 031·39 | 133·40 094·32† 094·40† 096·23 096·50 | 094·40† 030·54 094·41† 094·45† 094·42† | –/–/– | AMBIG | one label only; top 5 are all from the grade-2 sermon 094 but about choosing a school; the answer is thin |
 | p-013 | Someone at church told people something about me that isn't true, and now half the room is weird with me. They still smile. Do I have to just let it go? | ²049 +3¹ (026 038 083) | 077·35 134·25 053·12 094·55 053·11 | 032·39 049·11⚑ 032·45 081·41 100·19 | 094·54 098·53 032·39 077·35 049·11⚑ | –/42/84 | GRADE | 049-c0011 holds the same Matt 18:15 text as the grade-2 quote, which begins "First," and so matches only 049-c0013; dense 2, hybrid 5 |
 | p-014 | im scared of dying. like actually scared, not just wondering. i think about it when i try to fall asleep | ²137 +4¹ (007 009 028 062) | 114·15 123·44 046·70 002·10 133·83 | 054·32 121·37 041·43 014·35 068·65 | 121·37 112·61 009·66 082·2 133·83 | –/9/22 | VOCAB | "scared of dying" vs "fear of death" (overlap 0); BM25 "fall asleep" noise; dense labelled at 9 |
-| p-015 | God feels far. I used to feel something when I prayed and now it's just quiet, and I don't know if I did something wrong. | ²046 +5¹ (046 077 138) | 120·29 076·9 043·41 014·7 014·15 | 045·33 026·27 028·9⚑ 089·24 087·60 | 045·33 016·79 014·15 045·32 077·55 | 93/–/– | GRADE | dense 3 is 028-c0009 ("how soon is our foolish heart darkened ... doubts and fears"), which is labelled grade 1 for q-wilderness-plain but not here |
+| p-015 | God feels far. I used to feel something when I prayed and now it's just quiet, and I don't know if I did something wrong. | ²046 +5¹ (046 077 138) | 120·29 076·9 043·41 014·7 014·15 | 045·33 026·27 028·9⚑ 089·24 087·60 | 045·33 016·79 014·15 045·32 077·55 | 93/–/– | LEX | dense 3 is 028-c0009 ("how soon is our foolish heart darkened ... doubts and fears"), which is labelled grade 1 for q-wilderness-plain but not here; it is not in the hybrid top 10 |
 | p-016 | help i messed up bad | ²006 +8¹ (006 008 021 024 059 086) | (no rows) | 124·15 087·65 099·53 134·59 107·60 | 124·15 087·65 099·53 134·59 107·60 | –/18/18 | AMBIG | four words, so FTS ANDs them: BM25 returns 0 rows; dense finds a labelled chunk at 18 |
 | p-017 | why wont he answer | ²030 +5¹ (016 030 047) | 086·26 086·25 | 082·48 014·60 053·72 101·18 101·41 | 082·48 086·26 014·60 086·25 053·72 | –/–/– | AMBIG | "he" is unresolved; FTS ANDs "wont" and "answer", and "wont" matches archaic "are wont to" in A Call to Backsliders |
 | p-018 | Can God forgive me if I don't feel sorry the way people say I should? I mostly just feel numb. | ²006 +4¹ (005 008 011 043) | 040·97 014·15 043·11 014·14 094·13 | 026·72 005·30 026·73 021·44 021·66 | 021·44 026·72 098·54 043·9 027·87 | –/32/66 | THEME | "forgive" pulls forgiving-others passages (Sermon on the Mount 6) instead of 006 "not contrite enough" |
@@ -116,7 +120,7 @@ The *expected* column gives the grade-2 sermon(s), then the number of grade-1 la
 | p-027 | I met a guy on a dating app and we might get serious. Is that a bad way to find someone to marry, or is it fine? | ²081 +3¹ (037 080) | 031·3 094·48 094·47 031·4 021·45 | 080·42⚑ 080·51 080·52 100·14 052·83 | 118·33 023·12 133·20 100·8 081·35† | –/40/81 | GRADE | dense 1 is 080-c0042: Wesley's marriage-to-an-unbeliever snare, unlabelled (080 holds a grade-1 label) |
 | p-028 | im scared about the climate and that my kids wont get a normal future. i lie awake thinking about fires and floods. what do i do with that | ²029 +4¹ (029 033 067) | 130·28 064·32 064·31 060·46 093·10 | 129·41 129·42 140·13 **029·63**² 129·39 | 129·39 093·10 003·4 129·48 073·18 | –/4/18 | LEX | dense has the grade-2 chunk at 4; BM25 "fires", "floods", "lie awake" pulls Earthquakes, Of Hell, Redeeming the Time |
 | p-029 | My company is replacing people with AI and I might not have a job next year. How do I stop panicking? | ²029 +4¹ (029 052) | 107·26 132·20 131·28 131·25 131·24 | 050·33 050·14 050·34 050·13 127·27 | 127·27 081·39 127·0 050·33 107·26 | –/47/95 | THEME | "job" pulls The Use of Money employment passages, not 029 "uneasy care" |
-| p-030 | is it ok if church is just me watching the livestream in bed. i havent actually gone in months and i kinda dont want to | ²025 +2¹ (024 048) | 122·31 013·69 084·48 122·32 027·18 | 024·12⚑ 024·13 093·22 081·59 027·76 | 115·30 093·22 025·73† 046·40 014·29 | –/10/23 | LEX | dense labelled at 10 plus 024 social-religion chunks at 1-2 (unlabelled); BM25 "bed", "months" noise |
+| p-030 | is it ok if church is just me watching the livestream in bed. i havent actually gone in months and i kinda dont want to | ²025 +2¹ (024 048) | 122·31 013·69 084·48 122·32 027·18 | 024·12⚑ 024·13 093·22 081·59 027·76 | 115·30 093·22 025·73† 046·40 014·29 | –/10/23 | GRADE | hybrid 6 is 024-c0012 (social religion, unlabelled); 024 social-religion chunks at dense 1-2 (unlabelled); dense labelled at 10; BM25 "bed", "months" noise |
 
 ## 3. Category counts (shipped hybrid, lenient)
 
@@ -149,7 +153,7 @@ The corpus median chunk length is 122 words.
 
 **Why LEX and fusion matter more on blind questions.**
 
-- The blind questions are written the way people type: lowercase, run-on, full of situational words.
+- The blind questions imitate how people type: an LLM (Grok) wrote them lowercase, run-on and full of situational words. That is an LLM's imitation of how people type, not questions typed by people.
 - `to_fts_query` ORs every non-stopword. That includes "keep", "get", "feel", "like", "still", "back", "years", and "ago", none of which are in `fts.STOP`.
 - BM25 then rewards Wesley's anecdotes and memoirs, which are full of exactly those words:
   - "years ago" leads to *The Late Work of God in North America* and the Whitefield and Fletcher memoirs.
@@ -179,7 +183,9 @@ These are AMBIG in the table; the AND rule itself is documented behaviour (`src/
 
 ## 4. Suspected grading gaps (for Patrick; NOT regraded)
 
-These unlabelled chunks are in a top 5 above and, in my reading, plausibly meet the bar in `eval/pool/BRIEF.md`. I have changed nothing. Each needs Patrick's call.
+These unlabelled chunks are in a top 5 above and, in my reading, plausibly meet the bar in `eval/pool/BRIEF.md`. I have changed nothing. Each needs Patrick's call. The flags are Claude's judgment, and Claude is the same model family that proposed every `plain-blind` label, so a flag and the label it questions are not independent readings. Only Patrick's verdicts are.
+
+The "why it looks acceptable" column and its leaning words ("weaker", "already grade N", "already a HIT") are for the director and CTO only. They stay out of anything the labeller sees; PR #43's blind sheet covers that. The #43 sheet `reports/W3-LABEL-SHEET.csv` at `8ee909f` has blank verdict and notes columns and none of these phrases. The only matches for "already" or "acceptable" are inside Wesley's own chunk text.
 
 | question | chunk | why it looks acceptable | where it ranks |
 | --- | --- | --- | --- |
@@ -189,8 +195,8 @@ These unlabelled chunks are in a top 5 above and, in my reading, plausibly meet 
 | p-013 (lied about at church) | `wesley-049-c0011` | Contains the same Matt 18:15 text as the grade-2 quote. The quote starts with `First, "If thy brother...`, so it only matches `049-c0013`. **This is a quote-matching artefact, not a judgment.** | dense 2, hybrid 5 |
 | p-015 (God feels far) | `wesley-028-c0009` | "how soon is our foolish heart darkened! ... Doubts and fears again overwhelm us". **Already grade 1 for `q-wilderness-plain`.** | dense 3 |
 | p-021 (praying for sister, worse) | `wesley-016-c0080` | "pour out his soul before God; 'always to pray and not to faint'". **Already grade 2 for `p-001`.** | hybrid 2 |
-| p-027 (dating app, marriage) | `wesley-080-c0042` | "the person I am about to marry is not a religious person ... This is a snare indeed!" | dense 1 |
-| p-030 (livestream instead of church) | `wesley-024-c0012` | social religion, as above | dense 1 |
+| p-027 (dating app, marriage) | `wesley-080-c0042` | "the person I am about to marry is not a religious person ... This is a snare indeed!" | dense 1, hybrid 7 |
+| p-030 (livestream instead of church) | `wesley-024-c0012` | social religion, as above | dense 1, hybrid 6 |
 | p-002 (mother died, crying) | `wesley-135-c0004`, `-c0007`, `-c0024` | *On Mourning for the Dead*. `c0024` is **already grade 1 for `q-mourning-plain`.** | dense 2–5 (question is already a HIT) |
 | p-008 (drinking relapse) | `wesley-065-c0036` | Wesley's Moorfields drunkard, "I believe he got drunk no more ... do not despise poor drunkards!" (weaker: addressed to the reprover) | dense 1 |
 | p-022 (church splitting) | `wesley-075-c0026` | "nothing can divide those whom love has united ... want of love is always the real cause" | dense 1 |
@@ -205,7 +211,7 @@ These unlabelled chunks are in a top 5 above and, in my reading, plausibly meet 
 
 **What-if, not a result.** Count every flagged chunk as acceptable and recompute lenient hit@10:
 
-| ranker | `plain-blind`, now → with flags | `plain`, now → with flags |
+| ranker | `plain-blind` (post-hoc, not held out), now → with flags | `plain`, now → with flags |
 | --- | --- | --- |
 | shipped hybrid | 3 → 9 of 28 | 18 → 19 of 25 |
 | dense | 11 → 17 of 28 | 17 → 18 of 25 |
@@ -224,7 +230,7 @@ The blind 0.107 is therefore partly sparse labelling. **The ranking problem in �
 
 ## 5. Eval-validity notes (Patrick's standard: test capability, not leak titles)
 
-- **No title leakage found in `plain-blind`.** The questions were written before the corpus was read. The one title word (`p-003` "money") was already noted in EVAL-GRADE.
+- **No title leakage found in `plain-blind`.** An LLM agent (Grok) wrote the questions before it read the corpus. The one title word (`p-003` "money") was already noted in EVAL-GRADE.
 - **`plain` rewrites: pooling bias, not author leakage.**
   - In 4 of the 23 rewrites, the question shares a two-word phrase with one of its *grade-1* quotes:
     - `q-communion-plain` "times a year" ~ `101-c0048/49` "three times a year".
@@ -242,7 +248,7 @@ The blind 0.107 is therefore partly sparse labelling. **The ranking problem in �
 
   Patrick may want to keep them but report them separately, or mark them `ambiguous`.
 - **Small n.** 28 blind and 25 `plain` questions: one question moves a group mean by 0.04. All differences below come with paired-bootstrap 95% intervals (`preached.stats.paired_bootstrap`, the bench's own).
-- **I read every blind failure before running the experiments.** So no blind number in §6 is fully held out. The protocol in §7 gives a clean test.
+- **I read every blind failure before designing the experiments.** So no `plain-blind` number in §6 is held out, for any variant: V3, V4, V10 and V11 as much as the starred V7 and V12. Every one is post-hoc. The OR-shape rule behind V10 and V11 is close to a "long question" detector, and the blind questions are the long ones (26 of 28 answerable ones take the OR form). From here on `plain-blind` can only serve as an in-sample check. The confirmatory test is a fresh blind set (§7 #1 step d).
 
 ## 6. Exploratory experiments (scratch only, NOT product code)
 
@@ -251,7 +257,8 @@ Exploratory numbers, from `reports/w3-retrieval-diag/experiments.py`:
 - Granite English R2 on CPU, raw ranker top 10, same labels and `bench.score` as `search/bench.py`.
 - Each cell is lenient hit@10 / lenient nDCG@10, with the paired Δ hit@10 against V0, its 95% CI, and wins/ties/losses.
 - V0 reproduces the bench exactly.
-- `*` marks a variant built after I read the questions; treat it as contaminated.
+- `*` marks a variant that uses a question-derived lexicon (V7, V12: the archaic map was written after reading the questions). This is separate from post-hoc. **Every** variant was designed after I had read every blind failure (§5), so every `plain-blind` cell below is post-hoc, not held out, starred or not.
+- Multiplicity: 12 variants (V1 to V12) compared with V0 across 6 groups, with the best picked afterwards. The 95% intervals are not adjusted for this.
 
 
 Variant definitions:
@@ -271,7 +278,7 @@ Variant definitions:
 
 Results table:
 
-| variant | plain (n=25) | plain-blind (n=28) | names-topic (n=23) | title-keyword (n=3) | scripture-keyword (n=7) | all (n=86) |
+| variant | plain (n=25) | plain-blind (n=28; post-hoc, not held out) | names-topic (n=23) | title-keyword (n=3) | scripture-keyword (n=7) | all (n=86) |
 | --- | --- | --- | --- | --- | --- | --- |
 | V0 hybrid_rrf (shipped) | 0.720 / 0.132 | 0.107 / 0.027 | 0.957 / 0.402 | 1.000 / 0.544 | 1.000 / 0.513 | 0.616 / 0.216 |
 | V1 dense only | 0.680 / 0.155 (-0.04 [-0.20, +0.12] 2/20/3) | 0.393 / 0.073 (+0.29 [+0.14, +0.46] 8/20/0) | 0.913 / 0.338 (-0.04 [-0.22, +0.09] 1/20/2) | 1.000 / 0.661 (+0.00 [+0.00, +0.00] 0/3/0) | 0.857 / 0.394 (-0.14 [-0.43, +0.00] 0/6/1) | 0.674 / 0.215 (+0.06 [-0.03, +0.15] 11/69/6) |
@@ -289,15 +296,15 @@ Results table:
 
 Readings:
 
-- **Fusion weight is the lever.** V3/V4 lift blind hit@10 by +0.18 or +0.25 with 0 losses. Applied to every query, they cost one scripture-keyword question (−1 of 7).
-  - V10/V11 apply the weight to the OR query shape only. They keep scripture and title keyword queries unchanged and give the same blind lift.
+- **Fusion weight is the lever.** V3/V4 lift blind hit@10 by +0.18 or +0.25 with 0 losses (post-hoc, not held out). Applied to every query, they cost one scripture-keyword question (−1 of 7).
+  - V10/V11 apply the weight to the OR query shape only. They keep scripture and title keyword queries unchanged and give the same blind lift. On the blind questions that is by construction: 26 of the 28 take the OR form, where V10 is V3. Of the other two, `p-016` gets no BM25 rows, and `p-017` (AND form) has identical top-10 scores under both. So every blind cell of V10 equals V3's, and V11's equals V4's. The same holds on `plain` and names-topic, where every query is OR-form.
   - V11 (0.25) costs 2 names-topic questions; V10 (0.5) is a 1/21/1 tie there.
   - V10 wins: q-money, q-mourning-plain, p-007, p-010, p-011, p-022, p-028. Loss: q-worry.
 - **Expansion adds little on top of reweighting.** Blind is 0.286 for both V10 and V12. Alone (V7) it helps less than reweighting, and its numbers are contaminated.
 - **Neighbour smoothing (V8/V9) and filler stopwords alone (V5) do not move anything outside noise.**
 - **Granite query prefixes (dense only, `prefixes.py`; the card says no prefix).**
 
-  | query prefix | `plain` lenient hit@10 | blind lenient hit@10 |
+  | query prefix | `plain` lenient hit@10 | blind lenient hit@10 (post-hoc, not held out) |
   | --- | --- | --- |
   | none | 0.68 | 0.393 |
   | `query: ` | 0.72 | 0.250 |
@@ -319,11 +326,11 @@ Prerequisite for all of them: Patrick's label pass on §4. Otherwise every compa
 | | |
 | --- | --- |
 | What | In `Searcher.hybrid`, pass `weights=[1.0, 0.5]` to `reciprocal_rank_fusion` when `to_fts_query(query)` is the OR form. AND and NEAR stay at `[1, 1]`. This is a few lines. `rank.reciprocal_rank_fusion` already takes `weights`. |
-| Expected effect | Exploratory: blind lenient hit@10 0.107→0.286 (+0.18 [+0.04, +0.32]); `plain` +0.04; names-topic tie; keyword groups unchanged; overall +0.07 [+0.01, +0.14], 7 wins and 1 loss. |
+| Expected effect | Exploratory: blind lenient hit@10 0.107→0.286 (+0.18 [+0.04, +0.32]; post-hoc, not held out); `plain` +0.04; names-topic tie; keyword groups unchanged; overall +0.07 [+0.01, +0.14], 7 wins and 1 loss. Best of 12 variants across 6 groups, no interval adjustment; on blind questions V10 equals V3 by construction. |
 | Cost | No dependencies, no RSS, no latency: the same two lists, different sums. |
-| Overfitting risk | Low to moderate. One parameter on a 2-point grid (0.5, 0.25), fixed before the run. But I had read the blind failures, and the hypothesis came from EVAL-GRADE's dense-vs-hybrid result on the same questions. |
+| Overfitting risk | Low to moderate. One parameter on a 2-point grid (0.5, 0.25), fixed before the run. But I had read the blind failures, and the hypothesis came from EVAL-GRADE's dense-vs-hybrid result on the same questions. The OR-shape rule is close to a long-question detector, and the blind questions are the long ones. |
 | Side effects to check | The abstain rule uses BM25/dense agreement and a dense floor (`search/abstain.toml`). Rerun `bench.py --abstain` on both paths, plus `--dedupe`. Do not refit the floor on proposed labels. |
-| Honest test | (a) Freeze the grid {0.5, 0.25} and the OR-shape rule in a committed note **before** running. (b) Select on `plain` + `names-topic` + keyword groups only, breaking ties toward the milder weight. On this data that gives 0.5. (c) Report `plain-blind` once as the held-out number. (d) Before shipping, confirm on a fresh blind set of 20–30 questions written by a person, or by an LLM that has not seen the corpus, that no ranker has been run on yet. |
+| Honest test | (a) Freeze the grid {0.5, 0.25} and the OR-shape rule in a committed note **before** running. This is the PR #43 pre-registration, `reports/W3-FUSION-PREREG.md`: grid and rule frozen in their own commit, and labels re-frozen after Patrick's pass and before any run. (b) Select on `plain` + `names-topic` + keyword groups only, breaking ties toward the milder weight. On this data that gives 0.5. (c) Report `plain-blind` only as an in-sample check. It is **not** a held-out number for V10 or any §6 variant: V10's blind result is already computed and published above, and I read every blind failure before designing the variants. (d) **The confirmatory test**, required before any accuracy claim and not only before shipping: a fresh blind set of 20–30 questions, frozen and committed before any ranker runs on it. It is written by a person or by an LLM that has not seen the corpus, and if an LLM writes it, it is disclosed as LLM-written (a `provenance` field, as on `plain-blind`). |
 
 **2. BM25 query hygiene and archaic expansion.**
 
@@ -333,14 +340,14 @@ Prerequisite for all of them: Patrick's label pass on §4. Otherwise every compa
 | Expected effect | Alone, small (V5 ≈ 0; V7\* blind +0.14). On top of #1, about +0.04 on `plain` and names-topic and nothing on blind (V12\*). It would mostly help BM25-only mode, which the page offers. |
 | Cost | Zero dependencies, microseconds. |
 | Overfitting risk | **High.** The map is trivially fitted to the eval questions, and false friends are real ("jealous", "wont"). |
-| Honest test | Build the map without the eval set: from a general modern/KJV glossary, or automatically, by mapping modern words that are frequent in questions but rare in the corpus to their nearest corpus words by Granite cosine. Have someone who has not read the questions freeze it. Evaluate once on blind. Rank below #1 because #1 gets the same blind lift with less risk. |
+| Honest test | Build the map without the eval set: from a general modern/KJV glossary, or automatically, by mapping modern words that are frequent in questions but rare in the corpus to their nearest corpus words by Granite cosine. Have someone who has not read the questions freeze it. Evaluate once on the fresh blind set (#1 step d); `plain-blind` is an in-sample check only. Rank below #1 because #1 gets the same blind lift with less risk. |
 
 **3. Cross-encoder reranker on the top 30–50 candidates.**
 
 | | |
 | --- | --- |
 | What | Rerank the top 30–50 candidates (hybrid V10 or dense) with a cross-encoder. Untested here: no reranker is cached. |
-| Candidates | Only models with a clean lineage under AGENTS.md §3. An IBM Granite reranker is the obvious one to check: IBM's R2 report describes one, but the name and lineage must be verified before download. Exclude anything BGE- or Jina-derived. MS MARCO-trained rerankers raise licence questions. |
+| Candidates | Only models with a clean lineage under AGENTS.md §3, checked by base and teacher model, not just by name. **Excluded:** anything BGE- (BAAI) or Jina-derived; GTE (Alibaba), including `gte-reranker-modernbert-base`; Qwen3-Reranker; mxbai-rerank-v2 (Qwen2.5 base); and DeepSeek-derived models. The MS MARCO data is licensed for non-commercial research purposes only, which rules out `cross-encoder/ms-marco-*` unless Patrick decides otherwise. **Candidate, needing Patrick's approval:** IBM `granite-embedding-reranker-english-r2`. Per the CTO's r1 check it is 149M parameters, Apache-2.0, on the Granite R2 base, with no MS MARCO in training. I have not re-verified that here. The revision to pin is still unconfirmed, and nothing has been or may be downloaded without Patrick's approval. |
 | Expected effect | This is the only option that reads question and passage together, so it is the one most likely to fix VOCAB, THEME and PASSAGE misses (§3: 8 blind + 6 `plain`). Size unknown until measured. |
 | Cost | A new weight download (Patrick to approve). About 150M parameters: estimated +300–600 MB RSS fp32, less with the existing ONNX int8 path. CPU latency is unmeasured; my estimate is 0.3–1.5 s for 30 pairs on the Sprite. If it uses sentence-transformers in the product, that is a new dependency; an ONNX export avoids it. |
 | Overfitting risk | Low if used off the shelf (no tuning). Moderate if k or a fusion with the reranker score is tuned. |
@@ -364,11 +371,14 @@ The card says no prefix, and §6 shows prefixes hurt the blind questions (−0.0
 
 The scripts behind every number here are committed in `reports/w3-retrieval-diag/` (added by W3-DIAG-SCRIPTS). They are scratch analysis, not product code: nothing under `src/`, `app/` or `tests/` imports them, and `unittest discover -s tests` does not collect them. They were copied from `/cache/w3-retrieval-diag/scripts/` with only two kinds of change: usage docstrings, and paths made configurable (`PREACHED_CACHE` for the index and corpus, which `preached.paths` already honours and which defaults to `/cache`; an optional chunks path and output path for `stats.py`; an optional work directory for `table.py`). The analysis logic is unchanged.
 
+**Read-only (W3-DIAG-FIX, S4).** `diag.py`, `experiments.py` and `prefixes.py` open the index with `preached.store.open_readonly`: a sqlite URI with `mode=ro` plus `PRAGMA query_only`, so no WAL pragma, no DDL and no ALTER. (`store.connect`, used before, runs `migrate`, which does all three.) `stats.py` and `table.py` never touch the index. Their default output is now `$TMPDIR/w3-retrieval-diag/`, never the current directory or the repo root. The bench step below runs on a **copy** of the index, because `search/bench.py` opens its index with `connect` and re-syncs chunks into it (`ensure_chunks`).
+
 ```sh
 cd <checkout of this branch>
 W=/some/scratch/dir; mkdir -p $W
-# baseline, identical to the shipped bench (writes outside the repo)
-uv run --group bench search/bench.py --models granite-english-r2 \
+# baseline, identical to the shipped bench, on a COPY of the index: bench.py migrates and re-syncs chunks into its --index
+cp /cache/index/wesley.sqlite $W/wesley.sqlite
+uv run --group bench search/bench.py --models granite-english-r2 --index $W/wesley.sqlite \
   --out $W/bench-raw.json --note "W3-RETRIEVAL-DIAG baseline, raw ranker"
 # per-question top 100 for bm25 / dense / hybrid on plain + plain-blind
 uv run --group bench python reports/w3-retrieval-diag/diag.py $W/diag.json
@@ -386,26 +396,53 @@ With another cache location, set `PREACHED_CACHE=/path` (it must hold `index/wes
 
 ### Committed files and sha256
 
-| file | sha256 |
+Current (W3-DIAG-FIX: the scripts changed for S4, `categories.json` for S6), with the W3-DIAG-SCRIPTS (`832a198`) values for comparison:
+
+| file | sha256 now | sha256 at `832a198` |
+| --- | --- | --- |
+| `reports/w3-retrieval-diag/diag.py` | `e04e1cd4ec2946df2471ddf8dc0d0e7ae0b696e6df4505b5da8ba40f8f59986e` | `5f8a30977dc391e65e6d31577a87f96ddd4da2b50dedd9734faae8ff8ff3d59b` |
+| `reports/w3-retrieval-diag/experiments.py` | `f9d9d2d5bffacf8af53e8afaa89005638700ef5ac4395292fe5e9b6bc0517c0f` | `185ca95ceaafcbc9eb454f6752c79d0feea0200d2212ec401c1055fa90375ede` |
+| `reports/w3-retrieval-diag/prefixes.py` | `93bf5043f6383df283aab376b803e3d5311d6cfa7d679abf93fd2d0ab669452f` | `53de16cadc74792f451b64e9f4d5899d179cf4d28508af638457cd65cee4024e` |
+| `reports/w3-retrieval-diag/stats.py` | `b37a6e8d28b6b54c067f4c0153fa171c4ed156bab52713d2d1f811dc23bf3c58` | `3bf7e8173777181cda906b73bfc160a50a7ecdb46e6d926c0052459a23cf60a5` |
+| `reports/w3-retrieval-diag/table.py` | `cb993d5a834f09eeaf303155de0748c4d2db7c9a28dea20b39d80ccf05f2e87b` | `1f1543ac03d051dc0f8ec95963ff5206c9fcd05f5d178d670c2d0493c71311d4` |
+| `reports/w3-retrieval-diag/categories.json` (hand-written, input to `table.py`) | `fad3bad07e24383a52d730e107f18ba7289ef7d5768a208115edfa506b00afb7` | `e320527e193fe3ddd635dd63c6d56a9ed5ba2585a4285aa22aa4c4485d051477` |
+| `reports/w3-retrieval-diag/flags.json` (hand-written, input to `table.py`) | `bbb39c2c1b1acd4ed6c5c6b328b919a710fe9e362d3bd2198cfec378c2b95823` | same |
+
+**Original scratch scripts (restored; `832a198` dropped this table).** The first version of this report (`a2bcbec`) gave the first 12 hex of the scripts as run, in `/cache/w3-retrieval-diag/scripts/`. Those files are untouched, and their full sha256 still match the published prefixes:
+
+| script in `/cache/w3-retrieval-diag/scripts/` | sha256 (a2bcbec published the first 12 hex) |
 | --- | --- |
-| `reports/w3-retrieval-diag/diag.py` | `5f8a30977dc391e65e6d31577a87f96ddd4da2b50dedd9734faae8ff8ff3d59b` |
-| `reports/w3-retrieval-diag/experiments.py` | `185ca95ceaafcbc9eb454f6752c79d0feea0200d2212ec401c1055fa90375ede` |
-| `reports/w3-retrieval-diag/prefixes.py` | `53de16cadc74792f451b64e9f4d5899d179cf4d28508af638457cd65cee4024e` |
-| `reports/w3-retrieval-diag/stats.py` | `3bf7e8173777181cda906b73bfc160a50a7ecdb46e6d926c0052459a23cf60a5` |
-| `reports/w3-retrieval-diag/table.py` | `1f1543ac03d051dc0f8ec95963ff5206c9fcd05f5d178d670c2d0493c71311d4` |
-| `reports/w3-retrieval-diag/categories.json` (hand-written, input to `table.py`) | `e320527e193fe3ddd635dd63c6d56a9ed5ba2585a4285aa22aa4c4485d051477` |
-| `reports/w3-retrieval-diag/flags.json` (hand-written, input to `table.py`) | `bbb39c2c1b1acd4ed6c5c6b328b919a710fe9e362d3bd2198cfec378c2b95823` |
+| `diag.py` | `9dfaeb5588c7061d79c6530faed01fb10d63bafa0c0e068141bc29ec7334cd72` |
+| `experiments.py` | `120b33f3c765294a4b5ced424d136c03b02f8897d94d9fa851149161c518d9cc` |
+| `prefixes.py` | `1e10b254cfe7e896eed2650f3abe44216bcb87d40a9fdec05c0c7fd8ce919e78` |
+| `stats.py` | `e5d48880615c45a4705547b2ecded6b9cf706f08183c4e519152940f2c28e8f4` |
+| `table.py` | `5b8f514960ee7ce67a76aaa26c514be427105957f06be561e91a34a33feb5e37` |
 
 Small results are in `reports/w3-retrieval-diag/results/`: `experiments.txt` (the §6 tables), `prefixes.txt`, `stats.json` (the §2 signals), `bench-raw.md` (the baseline), `variants.md`. The large intermediates (`diag.json` 975 KB, `experiments.json` 818 KB, `bench-raw.json` 378 KB) are not committed; regenerate them with the commands above.
 
 ### Inputs that come from `/cache` (not in the repo)
 
-| input | sha256 |
-| --- | --- |
-| `/cache/index/wesley.sqlite` | `909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b` |
-| `/cache/corpus/wesley/chunks.jsonl` (8,383 chunks) | `110dd51989a982c44bbeeb7db6025c8a07a635cfeaef9e360ecbd16dcede016f` |
+The index is identified by what it holds, not by a whole-file hash: a byte hash of a SQLite file changes with page layout and cannot be checked against another build. Check these values, read-only, in your copy:
 
-The eval set (`eval/questions.jsonl`) and the model revision (Granite English R2 `47ea694b`) are as in §1. A reviewer with their own copy of the index and chunks should check these two hashes first; if they differ, the numbers need not match.
+| index content (`/cache/index/wesley.sqlite`) | value |
+| --- | --- |
+| `meta` `embeddings:granite-english-r2` → `fingerprint` | `13e0ed78bb32d86b` (dim 768, fp32) |
+| `meta` `chunks_sha256` (sha256 of the chunk file the index loaded, `chunks_aligned.jsonl`) | `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2` |
+| rows in `chunks` | 8,383 |
+| rows in `embeddings` with `model = 'granite-english-r2'` | 8,383 |
+
+```sh
+python3 - <<'EOF'
+import sqlite3
+c = sqlite3.connect("file:/cache/index/wesley.sqlite?mode=ro", uri=True); c.execute("PRAGMA query_only = ON")
+print(dict(c.execute("SELECT key, value FROM meta WHERE key IN ('chunks_sha256', 'embeddings:granite-english-r2')")))
+print(c.execute("SELECT count(*) FROM chunks").fetchone(), c.execute("SELECT count(*) FROM embeddings WHERE model = 'granite-english-r2'").fetchone())
+EOF
+```
+
+`stats.py` reads the text file directly: `/cache/corpus/wesley/chunks.jsonl` (8,383 chunks), sha256 `110dd51989a982c44bbeeb7db6025c8a07a635cfeaef9e360ecbd16dcede016f`.
+
+The eval set (`eval/questions.jsonl`) and the model revision (Granite English R2 `47ea694b`) are as in §1. A reviewer with their own copy should check these values first; if they differ, the numbers need not match.
 
 ### Reproduction check (rerun from the committed scripts, 2026-10-31)
 
@@ -419,6 +456,8 @@ Every script was rerun from `reports/w3-retrieval-diag/` against the inputs abov
 - V10 and the other variants (`experiments.txt`): identical to §6.
 - `search/bench.py` baseline: every score and CI identical. Only the timestamp, the commit hash in the header, and the latency columns (wall-clock, e.g. hybrid_rrf p50/p95 `115.6 / 138.0` vs `114.6 / 138.3` ms) differ between runs.
 
+**Rerun after the read-only change (W3-DIAG-FIX, 2026-10-31).** The `0baa33c` scripts were run against a copy of the index, and the read-only scripts against `/cache/index/wesley.sqlite` itself. `diag.json`, `experiments.json`, `experiments.txt`, `prefixes.txt`, `stats.json`, the `stats.py` printout, `table.md`, `legend.md` and the category counts are byte-identical. The index file's sha256 (`909afd60…7fe972b`) and mtime were the same before and after. The bench step on an index copy gave identical scores and CIs (only the timestamp and latency differ). After that, the S6 recategorisation changed two rows of `table.md` (p-015, p-030) and no count. Details: `reports/W3-DIAG-FIX.md`.
+
 The run took about 1 minute per script on this box (24 cores, CPU query vectors, cached document vectors).
 
 ## 9. Results summary, open issues, exclusions
@@ -428,7 +467,8 @@ The run took about 1 minute per script on this box (24 cores, CPU query vectors,
 - **Open issues and risks:**
   - Categories and flags are one LLM reader's judgment.
   - Every label used is proposed or unconfirmed, as before.
-  - The blind numbers are not cleanly held out (§5).
+  - No `plain-blind` number is held out, for any variant (§5); a fresh blind set is the confirmatory test (§7 #1 d).
+  - The `plain-blind` questions are LLM-written (Grok) and all their labels and the §4 flags are LLM (Claude) judgments; none is confirmed by a person.
   - The abstain and `--dedupe` paths are untested under any variant.
 - **Excluded:**
   - Reranker experiments: no cached model, and downloads are not allowed.
