@@ -158,14 +158,15 @@ and `gzip -n`. The same index, model bytes, and source tree produce the same
 manifest and the same tar. GNU tar sometimes exits 1 ("file changed as we
 read it") even on that private copy. The likely cause is the Grok Bot box's
 snapshot daemon, which creates and deletes `*.box-store-snap-*` files next to
-the index and model files while tar reads them (5 of 10 real Wesley builds
-hit it; one retry recovered each). The script makes up to three tar attempts
-on exit 1, checks each archive against `MANIFEST.sha256`, and only then
-renames it into place. If it prints `tar failed (tar 1, gzip 0)`, rerun the
-build; do not investigate. Any other non-zero exit (another tar or gzip
-status, a manifest mismatch, a refused input) is a real error: investigate it.
-If all 3 attempts fail closed, rerun once and report; the fallback is building
-off-box. The script removes any `.tar.gz` (and leftover
+the index and model files while tar reads them (8 of 10 real Wesley builds
+hit it in the r2 measurement; one retry recovered each). The script makes up
+to three tar attempts on exit 1, checks each archive against
+`MANIFEST.sha256`, and only then renames it into place. A line `attempt N of 3`
+followed by exit 0 is a success. If it prints `tar failed (tar 1, gzip 0)`,
+rerun once; if that fails the same way, report and build off-box. Any other
+non-zero exit is a real error: investigate it. That covers another tar or gzip
+status, `tar.gz does not match MANIFEST.sha256`, and a refused input.
+The script removes any `.tar.gz` (and leftover
 `.tar.gz.partial.<pid>` files) from an earlier build before it checks
 anything, so a failed build exits non-zero and leaves no `.tar.gz`. If
 `/tmp/preached-bundle.tar.gz` exists, the build succeeded. Pass the output
@@ -289,14 +290,18 @@ It does guarantee:
   signal. What systemd sees depends on how `serve.sh` started it: with the
   project `.venv` it `exec`s Python directly and the unit ends by signal
   (`SIGTERM`, not an exit status); only the `uv run` path reports exit
-  status 143. Add `SuccessExitStatus=143 SIGTERM` if a unit
-  may be stopped that early. If a handler thread is still running 10 s after
+  status 143. Add `SuccessExitStatus=143` if a unit
+  may be stopped that early (SIGTERM needs no entry: systemd already counts
+  a SIGTERM death as a clean stop). If a handler thread is still running 10 s after
   the stop (`DRAIN_TIMEOUT_S`), the index is left open, the process waits
   for that thread and exits 1.
   Ctrl-C (SIGINT) while serving stops the same way and exits 0. A second
   Ctrl-C (or a second SIGTERM) does not force an exit while a handler is
   stuck: the stop is already under way and the signal is ignored. Send
-  SIGKILL, or set `TimeoutStopSec=` in the unit so systemd does. During
+  SIGKILL, or set `TimeoutStopSec=` in the unit: when it runs out systemd
+  sends SIGKILL to the unit, and the stop is then reported as failed
+  (result `timeout`), not as a clean exit. The default is 90 s, which is
+  long next to the 10 s `DRAIN_TIMEOUT_S`. During
   `main`'s start-up checks it exits 130 with no traceback; during the
   module imports before `main` it prints a traceback and dies by SIGINT.
   A refusal (`error: ...`) exits 1.
@@ -387,6 +392,12 @@ is no `PREACHED_ALLOW_ROOT` and no `PREACHED_PYTHON` override.
 `/healthz` is the health check. It has its own rate buckets and its own
 in-flight table, and one connection over the cap is reserved for it (see
 Hardening). A search is `/api/search?q=...&k=5&mode=hybrid&library=wesley`.
+
+API clients (Hark, parallel callers) must honour `Retry-After` on a `503`
+(wait that long, then retry; do not retry at once) and on a `429`. Users
+behind one IP, such as a shared office, school or NAT, share that IP's caps
+(4 connections, 4 requests in flight, and the rate limit), unless the IP is
+a trusted proxy that forwards `X-Forwarded-For`, which keys them separately.
 
 Local smoke, which builds a temp bundle, syncs a fresh venv, and does not
 leave the server running:

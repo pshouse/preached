@@ -1204,10 +1204,17 @@ class RequestSlotRaceTests(_Served):
                 self.assertEqual(_get(port, path, source="127.0.0.2")[0], 200)
 
     def test_in_flight_never_exceeds_the_cap_and_every_slot_comes_back(self) -> None:
-        # Production invariant under contention: at most max_requests in
-        # flight per key, every refusal is a busy 503 with Retry-After: 1,
-        # and no slot leaks. Counted inside acquire and release, so the
-        # result does not depend on how the threads interleave.
+        """Production invariant under contention: at most max_requests in
+        flight per key, every refusal is a busy 503 with Retry-After: 1,
+        and no slot leaks. Counted inside acquire and release, so the
+        result does not depend on how the threads interleave.
+
+        Limits: this catches a non-atomic acquire only through contention
+        (a mutant was killed 5/5 with a 2 ms window), so it is probabilistic
+        for atomicity. ``test_slot_is_held_until_after_the_response_is_written``
+        (``slot_is_held``) is the deterministic guard for off-by-one, not for
+        atomicity.
+        """
         port, _app, server = self._serve(max_connections=32, max_per_client=16, max_requests=2)
         lock = threading.Lock()
         state = {"now": 0, "peak": 0, "acquired": 0, "released": 0, "returned": 0}
@@ -1259,6 +1266,42 @@ class RequestSlotRaceTests(_Served):
         self.assertEqual(state["released"], state["acquired"])
         self.assertEqual(state["now"], 0)
         self.assertEqual(server._slots_by_key, {})
+
+    def test_slot_is_released_when_sending_the_error_response_fails(self) -> None:
+        # CTO #29 r4 S1: the search fails, the 500 cannot be written (the
+        # client is gone), and the exception leaves _respond_inner. The slot
+        # must still come back.
+        port, app, server = self._serve(max_connections=16, max_per_client=4, max_requests=1)
+        releases = _Releases(server)
+        failures = {"search": 0, "send": 0}
+        real_search = app.search
+
+        def search(query, *args, **kwargs):
+            if query == "boom":
+                failures["search"] += 1
+                raise RuntimeError("search failed")
+            return real_search(query, *args, **kwargs)
+
+        app.search = search
+        handler = server.RequestHandlerClass
+        real_send_json = handler._send_json
+
+        def send_json(self, status, *args, **kwargs):
+            if status == 500:
+                failures["send"] += 1
+                raise BrokenPipeError("client went away")
+            return real_send_json(self, status, *args, **kwargs)
+
+        handler._send_json = send_json
+        self.addCleanup(setattr, handler, "_send_json", real_send_json)
+        sock = _connect(port, "127.0.0.2")
+        self.addCleanup(sock.close)
+        _send(sock, "/api/search?q=boom")
+        self.assertTrue(releases.wait_for(1))
+        self.assertEqual(failures, {"search": 1, "send": 1})
+        self.assertEqual(server._slots_by_key, {})
+        # The one slot is free: the same key is served, not refused with 503.
+        self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.2")[0], 200)
 
 
 class ReconnectRetryAfterTests(_Served):
