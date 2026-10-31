@@ -43,9 +43,9 @@ MERGE_MAX_WORDS = 300
 
 # Player pre-roll. start_s stays the true onset of the chunk's first word
 # (honest for citations, same on the canonical and ASR paths); only the play
-# position starts this much earlier. W1-C's measured chunk starts are off by
-# a median 0.42 s and at most 0.76 s against the audio, sometimes late, so
-# 0.75 s keeps the first word. app/static/app.js uses the same value.
+# position starts this much earlier, as a safety margin for chunk starts that
+# land late against the audio. It is a margin, not a measured bound (no
+# measurement data is kept). app/static/app.js uses the same value.
 PREROLL_S = 0.75
 
 

@@ -57,7 +57,7 @@ uv run app/server.py                                 # http://127.0.0.1:8000/api
 > They are therefore **equal to the text metric by construction (14/23 vs 14/23) and are not an
 > independent audio-accuracy result.** They show that timings and text agree, not that the timings
 > match the audio. The audio-accuracy evidence is the **W1-C spot-check**: `start_s` against the
-> audio, |delta| median 0.42 s, max 0.76 s, covered by the 0.75 s pre-roll. Do not present the
+> audio, but the repo holds no measurement data for it, so no offset is quoted here. Do not present the
 > timestamp hit@k to judges as a separate result.
 
 How a hit is judged: the gold span is the first-to-last word time of the eval quote, found in the
@@ -74,7 +74,8 @@ often repeats its text verse. Grade-2 passages only; grade 1 adds nothing (same 
 - **Timestamp hits equal text hits exactly** (by construction, see the note above), question by question (after counting every
   occurrence of the quote). This only shows that the stored times agree with the text; it says
   nothing about whether they match the audio. The audio evidence is W1-C's spot-check (chunk
-  starts vs the audio: |delta| median 0.42 s, max 0.76 s), which the 0.75 s pre-roll covers.
+  starts vs the audio), whose earlier figures (0.42 s median, 0.76 s max) are withdrawn: the repo
+  holds no measurement data for them. The 0.75 s pre-roll is a margin, not a measured bound.
 - Strict is low by design, not an error: a chunk is ~45 s (median) and the gold quote is a sentence
   or two inside it, so `start_s` is the chunk's start, a little before the quote. Among the 14
   top-1 overlap hits, the quote starts 0 s after `start_s` in 5, ≤ 2 s in 8, and at most 31.7 s
@@ -82,8 +83,8 @@ often repeats its text verse. Grade-2 passages only; grade 1 adds nothing (same 
   reaches the quote in under half a minute every time.
 - **Pre-roll.** These numbers judge the stored `[start_s, end_s]`, which stay the exact first-word
   onset (data unchanged by §6). The player and the CLI link now seek 0.75 s earlier, so in playback
-  each lead above is 0.75 s longer and no top-1 hit starts after its first word (W1-C's worst
-  measured late start is 0.76 s). Re-run after §6: `eval/timestamps.py` gives identical results,
+  each lead above is 0.75 s longer and no top-1 hit is expected to start after its first word (a margin, not a measured bound; the
+  earlier 0.76 s figure is withdrawn). Re-run after §6: `eval/timestamps.py` gives identical results,
   question by question (hit@1 14, hit@5 23, strict 5/7).
 - Retrieval itself is the limit (hit@5 0.66 is W1-B's recall@5 0.629 counted per question, with
   unanswerable excluded). Misses are retrieval misses (the wrong sermon or passage), not timing.

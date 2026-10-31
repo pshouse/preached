@@ -39,8 +39,8 @@ TOP_K = 5
 METRIC_NOTE = (
     "Derived from the W1-C alignment: the gold span and the chunk times come from the same per-word "
     "alignment, so overlap hit@k equals the text hit@k by construction. It is not an independent "
-    "audio-accuracy result. Audio accuracy is the W1-C spot-check (start_s vs audio: median 0.42 s, "
-    "max 0.76 s, covered by the 0.75 s pre-roll)."
+    "audio-accuracy result. No audio-accuracy figure is claimed here: the repo holds no "
+    "measurement data for the earlier W1-C spot-check numbers."
 )
 
 
