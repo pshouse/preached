@@ -32,6 +32,7 @@ from preached.store import open_readonly, pending_review_count, visible_count  #
 from preached.youtube.cli import main  # noqa: E402
 from preached.youtube.coverage import (  # noqa: E402
     LENGTH_TOLERANCE_S,
+    LONG_WORD_S,
     MAX_UNCOVERED_S,
     SR,
     Span,
@@ -40,6 +41,8 @@ from preached.youtube.coverage import (  # noqa: E402
     clip_to_window,
     open_spans,
     sound_spans_from_db,
+    sparse_spans,
+    stretched_spans,
     uncovered_spans,
     sound_spans,
 )
@@ -141,6 +144,39 @@ class CheckTests(unittest.TestCase):
         self.assertLessEqual(gaps[0].start_s, 12)
         self.assertGreaterEqual(gaps[0].end_s, 48)
 
+    def test_stretched_word_over_speech_is_a_span(self) -> None:
+        # CTO round 2 S-a: a 7 s word over speech hides ~5 s, under MAX_UNCOVERED_S.
+        words = [*words_for((2, 20)), Word(20.0, 27.0, "the"), *words_for((27, 58))]
+        sound = sound_spans(synth(60.0, [(2, 58)]))
+        self.assertEqual(uncovered_spans(sound, words), [])
+        self.assertEqual(sparse_spans(sound, words), [])
+        self.assertEqual(stretched_spans(sound, words), [Span(20.0, 27.0)])
+        self.assertEqual(self.check([(2, 58)], words), [Span(20.0, 27.0)])
+        # A hand-set window around the sermon keeps it, though it is under 5 s.
+        self.assertEqual(clip_to_window([Span(20.0, 27.0)], (2, 58)), [Span(20.0, 27.0)])
+
+    def test_stretched_word_over_silence_or_under_the_limit_passes(self) -> None:
+        # The same word over room tone hides nothing.
+        words = [*words_for((2, 20)), Word(20.0, 27.0, "amen"), *words_for((27, 58))]
+        self.assertEqual(self.check([(2, 20), (27, 58)], words), [])
+        # A word up to LONG_WORD_S long is not this rule's business.
+        words = [*words_for((2, 20)), Word(20.0, 20.0 + LONG_WORD_S, "the"), *words_for((20.0 + LONG_WORD_S, 58))]
+        self.assertEqual(self.check([(2, 58)], words), [])
+
+    def test_words_sharing_a_timestamp_count_once(self) -> None:
+        # CTO round 2 S-b: three words on each stray timestamp used to triple the density.
+        stray = [Word(10 + 4.5 * k + d, 10.3 + 4.5 * k + d, "and") for k in range(9) for d in (0.0, 0.0, 0.0)]
+        words = [*words_for((2, 10)), *stray, *words_for((50, 58))]
+        sound = sound_spans(synth(60.0, [(2, 58)]))
+        self.assertEqual(uncovered_spans(sound, words), [])
+        spans = sparse_spans(sound, words)
+        self.assertEqual(len(spans), 1)
+        self.assertLessEqual(spans[0].start_s, 12)
+        self.assertGreaterEqual(spans[0].end_s, 48)
+        # Three distinct starts per stray position is real density, and passes.
+        spread = [Word(10 + 4.5 * k + d, 10.3 + 4.5 * k + d, "and") for k in range(9) for d in (0.0, 1.0, 2.0)]
+        self.assertEqual(sparse_spans(sound, [*words_for((2, 10)), *spread, *words_for((50, 58))]), [])
+
     def test_quiet_speech_counts_as_sound(self) -> None:
         # S1: speech 33 dB below the loud parts is sound at 40 dB (it was silence at 30 dB).
         path = write_wav(self.dir / "a.wav", synth(60.0, [(2, 20), (40, 58)], quiet=[(20, 40)]))
@@ -175,12 +211,27 @@ class CheckTests(unittest.TestCase):
         # Within the tolerance it runs.
         self.assertEqual(check_coverage(path, words_for((1, 19)), duration_s=20.0 + LENGTH_TOLERANCE_S - 0.5), [])
 
+    def test_audio_a_few_seconds_short_is_unchecked(self) -> None:
+        # CTO round 2 S-c: 3-5 s short of the stated duration or the last word is past LENGTH_TOLERANCE_S.
+        path = write_wav(self.dir / "a.wav", synth(20.0, [(1, 19)]))
+        for short in (3.0, 4.0, 5.0):
+            with self.subTest(short=short):
+                with self.assertRaises(Unchecked):
+                    check_coverage(path, words_for((1, 19)), duration_s=20.0 + short)
+                with self.assertRaises(Unchecked):
+                    check_coverage(path, [*words_for((1, 19)), Word(19.5, 20.0 + short, "amen")])
+        # Right at the tolerance it still runs.
+        self.assertEqual(check_coverage(path, words_for((1, 19)), duration_s=20.0 + LENGTH_TOLERANCE_S), [])
+
     def test_window_clips_and_drops_spans(self) -> None:
         spans = [Span(0, 12), Span(30, 50)]
         self.assertEqual(clip_to_window(spans, None), spans)
         self.assertEqual(clip_to_window(spans, (20, 100)), [Span(30, 50)])
         self.assertEqual(clip_to_window(spans, (40, 100)), [Span(40, 50)])
         self.assertEqual(clip_to_window(spans, (45, 100)), [])
+        # Wholly inside the window: kept at any length. Cut by it: needs more than max_gap_s left.
+        self.assertEqual(clip_to_window([Span(30, 33)], (20, 100)), [Span(30, 33)])
+        self.assertEqual(clip_to_window([Span(18, 23)], (20, 100)), [])
 
 
 def fixture(name: str) -> tuple[np.ndarray, list[Word], list[Word]]:

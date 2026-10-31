@@ -13,7 +13,13 @@ time against sound time and lists every stretch longer than
   28 s does not hide a hole;
 - **sparse stretches**: windows of ``DENSITY_WINDOW_S`` where the words per
   second of sound fall under ``MIN_WORDS_PER_S`` (stray words every few
-  seconds over continuous speech).
+  seconds over continuous speech). Words that share one start time count
+  once: corrupted runs emit several words on the same timestamp;
+- **stretched words**: any word longer than ``LONG_WORD_S`` with sound in
+  the part its capped cover leaves open. Clean Whisper words never ran past
+  2.12 s; a 7 s word over speech hides about 5 s, which is under
+  ``MAX_UNCOVERED_S`` and could not open a gap on its own (CTO round 2:
+  the corrupted run c01.tiny.1t-b passed whole).
 
 The library refuses to approve a sermon while any span is open
 (``preached.exclusions.approve``) and never serves one whose stored spans are
@@ -22,7 +28,10 @@ not ``[]`` (``preached.store.visible_sql``).
 Sound is energy based, on the decoded audio. The stack's Silero VAD is not
 used: a check that shares the transcriber's VAD cannot see what that VAD
 threw away. Sound that is not speech (a song, applause, intro music) is also
-non-silent, so it opens a span too.
+non-silent, so it opens a span too. The reverse is a known blind spot:
+speech within about ``NOISE_MARGIN_DB`` (6 dB) of a steady hum or a music
+bed under it cannot be told from that bed by level, so a hole there is not
+found. Such a recording needs a human listen before approval.
 
 The check fails closed (``Unchecked``, stored as NULL, so approval is
 refused) when the audio cannot be decoded, or when the decoded audio is
@@ -36,7 +45,9 @@ video that starts or ends outside the span (music before or after the
 sermon), or after re-transcribing. Church path (``align/asr_chunks.py``):
 fix the transcript, or set its ``searchable_start``/``searchable_end``
 around the sermon, then re-run it with ``--audio-dir``. There is no
-per-span "acknowledged" flag.
+per-span "acknowledged" flag. **Never add placeholder words** (``...``,
+``[music]``, made-up text) to a transcript to clear a span: that hides the
+very speech the check exists to find, and a name in it is never flagged.
 """
 
 from __future__ import annotations
@@ -78,6 +89,9 @@ DENSITY_WINDOW_S = 15.0
 DENSITY_STEP_S = 1.0
 DENSITY_MIN_SOUND_S = 7.5
 MIN_WORDS_PER_S = 0.5
+# A word longer than this, with sound under its uncovered middle, is a span.
+# Clean runs never went past 2.12 s.
+LONG_WORD_S = 4.0
 # Decoded audio may be this much shorter than the last word or the stated duration.
 LENGTH_TOLERANCE_S = 2.0
 
@@ -239,11 +253,21 @@ def uncovered_spans(
 
 
 def sparse_spans(sound: list[Span], words: Iterable) -> list[Span]:
-    """Windows with sound but too few words per second of it, merged and trimmed to their sound."""
+    """Windows with sound but too few words per second of it, merged and trimmed to their sound.
+
+    Words are counted by distinct start time: several words on one
+    timestamp are one word (they are a corrupted run's filler, not speech).
+    """
     if not sound:
         return []
-    starts = sorted(float(w.start) for w in words)
-    ends = sorted(float(w.end) for w in words)
+    # One entry per start time, ending where the longest of its words ends,
+    # so "some word with this start overlaps the window" stays one test.
+    latest: dict[float, float] = {}
+    for w in words:
+        start = float(w.start)
+        latest[start] = max(latest.get(start, start), float(w.end))
+    starts = sorted(latest)
+    ends = sorted(latest.values())
     end_s = sound[-1].end_s
     # Cumulative sound time before each span, for window overlap lookups.
     sound_starts = [s.start_s for s in sound]
@@ -278,6 +302,26 @@ def sparse_spans(sound: list[Span], words: Iterable) -> list[Span]:
     return out
 
 
+def stretched_spans(sound: list[Span], words: Iterable) -> list[Span]:
+    """Words longer than ``LONG_WORD_S`` whose uncovered middle holds sound.
+
+    ``word_cuts`` lets such a word cover ``WORD_MAX_COVER_S`` at its ends;
+    if at least ``MIN_SOUND_S`` of sound sits in the rest, the whole word is
+    a span: something was said there that the transcript did not write.
+    """
+    half = WORD_MAX_COVER_S / 2
+    out: list[Span] = []
+    for w in words:
+        start, end = float(w.start), float(w.end)
+        if end - start <= LONG_WORD_S:
+            continue
+        a, b = start + half, end - half
+        heard = sum(min(s.end_s, b) - max(s.start_s, a) for s in sound if s.end_s > a and s.start_s < b)
+        if heard >= MIN_SOUND_S:
+            out.append(Span(start, end))
+    return out
+
+
 def _union(spans: Iterable[Span]) -> list[Span]:
     out: list[list[float]] = []
     for s in sorted(spans, key=lambda s: s.start_s):
@@ -289,8 +333,13 @@ def _union(spans: Iterable[Span]) -> list[Span]:
 
 
 def open_spans(sound: list[Span], words: list, *, max_gap_s: float = MAX_UNCOVERED_S) -> list[Span]:
-    """Gaps and sparse stretches together, merged where they overlap."""
-    return _union([*uncovered_spans(sound, words, max_gap_s=max_gap_s), *sparse_spans(sound, words)])
+    """Gaps, sparse stretches and stretched words together, merged where they overlap."""
+    words = list(words)
+    return _union([
+        *uncovered_spans(sound, words, max_gap_s=max_gap_s),
+        *sparse_spans(sound, words),
+        *stretched_spans(sound, words),
+    ])
 
 
 def check_coverage(
@@ -321,9 +370,15 @@ def clip_to_window(spans: list[Span], window: tuple[float, float] | None, *, max
 
     A ``--windows`` entry (or a transcript's searchable range) is a human's
     statement of where the sermon is, so music or announcements outside it
-    need no clearing.
+    need no clearing. A span wholly inside the window is kept whatever its
+    length (a stretched word can be under ``max_gap_s``); one the window cut
+    is kept only if more than ``max_gap_s`` of it is left inside.
     """
     if window is None:
         return spans
-    clipped = [Span(max(s.start_s, window[0]), min(s.end_s, window[1])) for s in spans]
-    return [s for s in clipped if s.length_s > max_gap_s]
+    out = []
+    for s in spans:
+        clipped = Span(max(s.start_s, window[0]), min(s.end_s, window[1]))
+        if clipped == s or clipped.length_s > max_gap_s:
+            out.append(clipped)
+    return out
