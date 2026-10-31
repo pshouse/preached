@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import app.server as server  # noqa: E402
-from app.server import STATIC_DIR, STALE_NOTE, INDEX_READ_NOTE, App, Searcher  # noqa: E402
+from app.server import FALLBACK_NOTE, STATIC_DIR, STALE_NOTE, INDEX_READ_NOTE, App, Searcher  # noqa: E402
 from preached.models import MODELS  # noqa: E402
 from preached.store import connect, save_embedding_info, write_embeddings  # noqa: E402
 from test_server import _insert  # noqa: E402
@@ -126,6 +126,39 @@ class Bm25OnlyStatusReadTests(unittest.TestCase):
         self.connection.commit()
         self.app.search("grace", 5, "bm25")
         self.assertIsNone(self.app.fallback_note)
+
+
+class StartupModelFailureRecoveryTests(unittest.TestCase):
+    """The model failed to load at startup (encode=None, FALLBACK_NOTE): a status blip must not lose that note."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.connection = connect(Path(tmp.name) / "index.sqlite")
+        self.addCleanup(self.connection.close)
+        _insert(self.connection, chunk_id="c1", text="By grace are ye saved through faith.", start_s=10, end_s=20)
+        self.connection.execute("INSERT INTO meta (key, value) VALUES ('chunks_sha256', 'aaa')")
+        self.connection.commit()
+        self.app = App(
+            connection=self.connection, searcher=Searcher(self.connection), encode=None, fallback_note=FALLBACK_NOTE,
+            model_name=None, hosts={"127.0.0.1"}, static_dir=STATIC_DIR,
+        )
+
+    def test_the_startup_note_comes_back_after_a_status_read_failure_with_no_reload_error(self) -> None:
+        with self.assertLogs(level="DEBUG") as logs:
+            with patch("app.server.index_stamp", side_effect=sqlite3.OperationalError("disk I/O error")):
+                self.app.search("grace", 5, "bm25")
+            self.assertEqual(self.app.fallback_note, INDEX_READ_NOTE)
+            # Restore the read: a changed stamp makes the reload path run again.
+            self.connection.execute("UPDATE meta SET value = 'bbb' WHERE key = 'chunks_sha256'")
+            self.connection.commit()
+            self.app.search("grace", 5, "bm25")
+            logging.info("marker")
+        self.assertEqual(self.app.fallback_note, FALLBACK_NOTE)
+        # No D-line: the only ERROR is the stamp traceback (S2), never a reload string.
+        for line in (UNAVAILABLE, STATUS_UNREADABLE, MISMATCH):
+            self.assertNotIn(line, logs.output)
+        self.assertEqual(len([l for l in logs.output if l.startswith("ERROR")]), 1)
 
 
 class StoppedCleanlyTests(unittest.TestCase):

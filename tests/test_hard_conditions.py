@@ -263,7 +263,7 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     _sqlite3``, and a ``"sqlite3"`` or ``"_sqlite3"`` string
     (``__import__``, ``importlib.import_module``). A ``sqlite3`` or
     ``_sqlite3`` string (also one starting ``sqlite3.`` or ``_sqlite3.``)
-    and the ``<name>.sqlite3`` attribute (``store.sqlite3``) each count as
+    and the ``<expr>.sqlite3`` attribute (``store.sqlite3``) each count as
     one raw open, on top of the import. Raw
     opens: any reference to ``connect`` or ``dbapi2`` on a sqlite3 name, a
     call to ``Connection``, ``getattr`` on a sqlite3 name, and every name
@@ -354,7 +354,7 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                     bound |= names
                     changed = True
     for node in ast.walk(tree):
-        # ``<name>.sqlite3`` (``store.sqlite3.connect``) reaches the module
+        # ``<expr>.sqlite3`` (``store.sqlite3.connect``) reaches the module
         # through another module's import: an import plus a raw open (S12).
         if isinstance(node, ast.Attribute) and node.attr == "sqlite3":
             imports = True
