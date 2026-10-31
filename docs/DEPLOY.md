@@ -52,7 +52,14 @@ column of approved church sermons. `scripts/serve.sh` passes neither, and
 the bundle does not ship a church file. `app/server.py` opens the church
 side only when every condition below holds. Otherwise it logs one
 `ERROR church side refused: <why>` line and serves the classic side exactly
-as with no church named, from a checkout or a bundle.
+as with no church named, from a checkout or a bundle. A problem found while
+serving logs `ERROR church side dropped: <why>` once instead, and the church
+side stays off until restart. A pause logs `INFO church side paused: <why>`
+when it starts and `INFO church side resumed` when church results come back.
+
+The church slug (`--church-library`, or the file's stem) is chosen by the
+operator and hard to guess. It is not the church's public name: the slug is
+what a client asks for in `library=`.
 
 1. **Deploy switch.** `PREACHED_CHURCH_SIDE=enabled` (exactly that value)
    is in the server's environment. It is not on `serve.sh`'s allow-list, so
@@ -62,7 +69,11 @@ as with no church named, from a checkout or a bundle.
    import.
 3. **Permissions and owner.** The church name is not a symlink. The real
    file and the directory that really holds it are owned by the serving uid
-   (or root), and neither is group- or world-writable. The file has one
+   (or root), and neither is group- or world-writable. So is every
+   directory above it up to `/`, on the path given and on the real path;
+   the one exception is a root-owned sticky directory (like `/tmp`) whose
+   next component is owned by the serving uid or root. The file SQLite
+   opened must be the inode that was checked. The file has one
    hard link and is not a classic. Its `-wal`/`-shm`/`-journal` names, when
    present, are plain files with one link. These are checked at start and
    before every church search. Any failure drops the church side until
@@ -70,8 +81,10 @@ as with no church named, from a checkout or a bundle.
 4. **DELETE journal mode.** `--ack-review` leaves the file in DELETE mode,
    so the read-only open creates no `-wal` or `-shm`. A WAL-mode church file
    is refused at start. While `--ack-review` is writing (the file is briefly
-   in WAL mode), each church search is skipped for that request, nothing is
-   read, and the side is not dropped. If `--ack-review` prints
+   in WAL mode, or holds its write lock), each church search is skipped for
+   that request, and the side is not dropped. The church connection never
+   waits for a lock (`busy_timeout` 0), so a writer never stalls the
+   server. If `--ack-review` prints
    `warning: the church file is still in wal journal mode`, close the other
    reader and run it again.
 5. **Publish gate.** Only approved sermons are served: the review file's
@@ -80,8 +93,8 @@ as with no church named, from a checkout or a bundle.
 
 Known gaps, accepted for now:
 - The checks run by name. A same-uid process can still race them (#33).
-- Pages corrupted in place, without a new inode, can still be served from
-  SQLite's page cache until the next read misses it.
+- A file edited or corrupted in place, without a new inode, can still be
+  served from SQLite's page cache until the next read misses it.
 - `/healthz` says `"church": null` whether or not a church side is open.
 
 ## What the server needs
