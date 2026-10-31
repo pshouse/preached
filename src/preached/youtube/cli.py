@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
             return 2
         for sibling, why in skipped:
             print(
-                f"warning: {sibling.name} is still marked as your church; it {why}, so the mark was not cleared",
+                f"warning: {sibling.name} may still be marked as your church; it {why}, so the mark was not cleared",
                 file=sys.stderr,
             )
     return code

@@ -13,7 +13,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -547,26 +547,36 @@ class _SwapOnConnect:
 
     That is after every check by name (``is_protected_classic``,
     ``church_shaped``, the sibling scan) and before SQLite opens the file.
-    Read-only opens (``store.open_readonly``, a ``uri``) pass through. With
-    ``link`` the new name is a hardlink to ``replacement``; without it a
-    separate copy is renamed over the name (one link, a new inode).
+    The write open is the ``file:...?mode=rw`` URI (``library._rw_uri``);
+    read-only opens (``store.open_readonly``, ``mode=ro``) pass through.
+    ``how`` is ``"link"`` (a hardlink to ``replacement``), ``"copy"`` (a
+    separate copy: one link, a new inode) or ``"symlink"`` (a symlink to
+    ``replacement``, which may not exist), renamed over the name.
     """
 
-    def __init__(self, name: Path, replacement: Path, *, link: bool = True) -> None:
+    def __init__(self, name: Path, replacement: Path, *, how: str = "link") -> None:
         self.name = name
         self.replacement = replacement
-        self.link = link
+        self.how = how
         self.fired = False
         self._real = sqlite3.connect
 
+    def _is_write_open(self, database, kwargs) -> bool:
+        if not kwargs.get("uri") or not isinstance(database, str):
+            return False
+        parts = urllib.parse.urlsplit(database)
+        return parts.query == "mode=rw" and urllib.parse.unquote(parts.path) == os.path.abspath(self.name)
+
     def __call__(self, database, *args, **kwargs):
-        if not self.fired and not kwargs.get("uri") and os.fspath(database) == os.fspath(self.name):
+        if not self.fired and self._is_write_open(database, kwargs):
             self.fired = True
             temp = self.name.with_name(self.name.name + ".swap")
-            if self.link:
+            if self.how == "link":
                 os.link(self.replacement, temp)
-            else:
+            elif self.how == "copy":
                 temp.write_bytes(self.replacement.read_bytes())
+            else:
+                os.symlink(self.replacement, temp)
             os.replace(temp, self.name)
         return self._real(database, *args, **kwargs)
 
@@ -706,19 +716,318 @@ class OpenRaceTests(unittest.TestCase):
         copy_source.write_bytes(self.wesley.read_bytes())
         other = self.work / "other.sqlite"
         _plain_marked(other, church_import=True)
-        swap = _SwapOnConnect(other, copy_source, link=False)
+        swap = _SwapOnConnect(other, copy_source, how="copy")
         with swap.patch():
             skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
         self.assertTrue(swap.fired)
         self.assertEqual(skipped, [(other, "is not a church import (no videos table)")])
         self.assertEqual(other.read_bytes(), copy_source.read_bytes())
-        swap = _SwapOnConnect(self.sample, copy_source, link=False)
+        swap = _SwapOnConnect(self.sample, copy_source, how="copy")
         with swap.patch(), self.assertRaises(ValueError) as caught:
             mark_your_church_exclusive(self.sample, self.work, sample=True)
         self.assertTrue(swap.fired)
         self.assertIn("is not a church import", str(caught.exception))
         self.assertEqual(self.sample.read_bytes(), copy_source.read_bytes())
         self.assert_untouched(self.wesley, before)
+
+
+class SidecarTests(unittest.TestCase):
+    """CTO round 1 on PR #27, must-fix 1: a -wal, -shm or -journal name that is
+    a hardlink to wesley.sqlite.
+
+    SQLite opens those by name, after any check on the main file, so no race
+    is needed. Before the fix a -wal or -shm link made the mark (and the
+    sibling clear, and even a read-only ``church_shaped``) write the WAL or
+    the shm index into Wesley, then delete the name. Now the sidecars are
+    lstat'ed before any open: the target raises ``UnsafeOpen``, a sibling is
+    reported and not opened, and the read-only helpers say not church.
+    """
+
+    SUFFIXES = ("-wal", "-shm", "-journal")
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.work = Path(tmp.name) / "work"
+        self.index_dir.mkdir()
+        self.work.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        _plain_marked(self.wesley)
+        self.sample = self.work / "sample.sqlite"
+        self.build_sample()
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def build_sample(self) -> None:
+        for leftover in (self.sample, *(Path(f"{self.sample}{suffix}") for suffix in self.SUFFIXES)):
+            leftover.unlink(missing_ok=True)
+        rows, vectors = church_rows()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+
+    def wesley_state(self) -> tuple[str, int, int]:
+        st = self.wesley.stat()
+        return hashlib.sha256(self.wesley.read_bytes()).hexdigest(), st.st_size, st.st_mtime_ns
+
+    def plant(self, church: Path, suffix: str) -> Path:
+        # A read-only open of a WAL file leaves an empty -wal and -shm behind.
+        sidecar = Path(f"{church}{suffix}")
+        sidecar.unlink(missing_ok=True)
+        os.link(self.wesley, sidecar)
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+        return sidecar
+
+    def is_marked(self, path: Path) -> bool:
+        connection = sqlite3.connect(path)
+        try:
+            return is_your_church(connection)
+        finally:
+            connection.close()
+
+    def test_target_with_a_hardlinked_sidecar_is_refused_and_wesley_is_unchanged(self) -> None:
+        for suffix in self.SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.build_sample()
+                before = self.wesley_state()
+                sidecar = self.plant(self.sample, suffix)
+                with self.assertRaises(UnsafeOpen) as caught:
+                    mark_your_church_exclusive(self.sample, self.work, sample=True)
+                self.assertIn(f"has a {suffix} file with 2 hard links", str(caught.exception))
+                self.assertEqual(self.wesley_state(), before)
+                self.assertEqual(os.stat(self.wesley).st_nlink, 2)
+                self.assertTrue(sidecar.exists())
+                sidecar.unlink()
+                self.assertFalse(self.is_marked(self.sample))
+
+    def test_sibling_with_a_hardlinked_sidecar_is_reported_and_not_opened(self) -> None:
+        rows, vectors = church_rows()
+        for mode in ("rollback", "wal"):
+            for suffix in self.SUFFIXES:
+                with self.subTest(mode=mode, suffix=suffix):
+                    self.build_sample()
+                    other = self.work / "other.sqlite"
+                    if mode == "rollback":
+                        _plain_marked(other, church_import=True)
+                    else:
+                        build_library(other, rows[:1], vectors[:1], church=True)
+                    with closing(sqlite3.connect(other)) as probe:
+                        journal = probe.execute("PRAGMA journal_mode").fetchone()[0]
+                    self.assertEqual(journal, "wal" if mode == "wal" else "delete")
+                    other_before = other.read_bytes()
+                    before = self.wesley_state()
+                    sidecar = self.plant(other, suffix)
+                    skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertEqual(skipped, [(other, f"has a {suffix} file with 2 hard links (not opened)")])
+                    self.assertEqual(self.wesley_state(), before)
+                    self.assertEqual(other.read_bytes(), other_before)
+                    self.assertTrue(self.is_marked(self.sample))
+                    sidecar.unlink()
+                    self.assertTrue(self.is_marked(other))
+                    other.unlink()
+
+    def test_read_only_helpers_do_not_open_a_file_with_a_hardlinked_sidecar(self) -> None:
+        rows, vectors = church_rows()
+        church = self.work / "church.sqlite"
+        build_library(church, rows[:1], vectors[:1], church=True)
+        self.assertTrue(church_shaped(church))
+        self.assertTrue(library._is_church_file(church))
+        for suffix in self.SUFFIXES:
+            with self.subTest(suffix=suffix):
+                before = self.wesley_state()
+                sidecar = self.plant(church, suffix)
+                self.assertFalse(church_shaped(church))
+                self.assertFalse(library._is_church_file(church))
+                self.assertEqual(church_index_matches(self.work), [])
+                self.assertEqual(find_church_index(self.work), None)
+                self.assertEqual(self.wesley_state(), before)
+                sidecar.unlink()
+        self.assertEqual(church_index_matches(self.work), [church])
+
+    def test_symlinked_or_classic_sidecars_are_refused(self) -> None:
+        cases = {
+            "symlink": lambda sidecar: os.symlink(self.wesley, sidecar),
+            "directory": lambda sidecar: sidecar.mkdir(),
+        }
+        for what, make in cases.items():
+            with self.subTest(what=what):
+                self.build_sample()
+                sidecar = Path(f"{self.sample}-wal")
+                make(sidecar)
+                before = self.wesley_state()
+                with self.assertRaises(UnsafeOpen) as caught:
+                    mark_your_church_exclusive(self.sample, self.work)
+                self.assertIn("-wal file that is", str(caught.exception))
+                self.assertEqual(self.wesley_state(), before)
+                sidecar.rmdir() if what == "directory" else sidecar.unlink()
+        # One link on Wesley's inode (a bind mount): only the classic-id check refuses it.
+        self.build_sample()
+        Path(f"{self.sample}-shm").write_bytes(b"")
+        wesley = os.stat(self.wesley)
+        real_lstat = os.lstat
+
+        def as_wesley(name, *args, **kwargs):
+            st = real_lstat(name, *args, **kwargs)
+            if os.fspath(name) == f"{self.sample}-shm":
+                return SimpleNamespace(st_mode=st.st_mode, st_dev=wesley.st_dev, st_ino=wesley.st_ino, st_nlink=1)
+            return st
+
+        with patch.object(library.os, "lstat", as_wesley), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertIn("has a -shm file that is a classic library file", str(caught.exception))
+
+    def test_sidecar_planted_after_the_connect_is_caught_before_the_first_write(self) -> None:
+        """The name check passed; a -wal link appears once the main file is open.
+
+        The first read opens it (WAL mode), and the check on the new
+        descriptors refuses it before anything is written.
+        """
+        for side in ("target", "sibling"):
+            with self.subTest(side=side):
+                self.build_sample()
+                rows, vectors = church_rows()
+                other = self.work / "other.sqlite"
+                other.unlink(missing_ok=True)
+                build_library(other, rows[:1], vectors[:1], church=True)
+                victim = self.sample if side == "target" else other
+                real = sqlite3.connect
+                fired = []
+
+                def plant_after(database, *args, **kwargs):
+                    connection = real(database, *args, **kwargs)
+                    if not fired and kwargs.get("uri") and database.endswith("?mode=rw") and victim.name in database:
+                        fired.append(database)
+                        Path(f"{victim}-wal").unlink(missing_ok=True)
+                        os.link(self.wesley, f"{victim}-wal")
+                    return connection
+
+                before = self.wesley_state()
+                with patch.object(library.sqlite3, "connect", plant_after):
+                    if side == "target":
+                        with self.assertRaises(UnsafeOpen) as caught:
+                            mark_your_church_exclusive(self.sample, self.work)
+                        self.assertIn("2 hard links", str(caught.exception))
+                    else:
+                        skipped = mark_your_church_exclusive(self.sample, self.work)
+                        self.assertEqual([path for path, _why in skipped], [other])
+                        self.assertIn("2 hard links", skipped[0][1])
+                self.assertTrue(fired)
+                Path(f"{victim}-wal").unlink(missing_ok=True)
+                self.assertEqual(self.wesley_state(), before)
+                other.unlink()
+
+
+class DescriptorTests(unittest.TestCase):
+    """CTO round 1 on PR #27, should-fixes 1, 2 and 4."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.work = Path(tmp.name) / "work"
+        self.index_dir.mkdir()
+        self.work.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        _plain_marked(self.wesley)
+        self.sample = self.work / "sample.sqlite"
+        rows, vectors = church_rows()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def test_a_reused_descriptor_number_counts_as_new(self) -> None:
+        """SQLite gets a number that was open before; a benign file opens next.
+
+        A diff of fd numbers alone saw only the benign file and passed, while
+        the main file was the classic. The ``(st_dev, st_ino)`` snapshot sees
+        both, and more than one new file is refused.
+        """
+        before = self.wesley.read_bytes()
+        held = os.open(self.work / "held.bin", os.O_CREAT | os.O_RDWR)
+        benign = []
+        reused = []
+        real = sqlite3.connect
+        wesley_ino = os.stat(self.wesley).st_ino
+
+        def reuse(database, *args, **kwargs):
+            if kwargs.get("uri") and database.endswith("?mode=rw") and not reused:
+                temp = self.work / "swap"
+                os.link(self.wesley, temp)
+                os.replace(temp, self.sample)
+                os.close(held)
+                connection = real(database, *args, **kwargs)
+                reused.append(os.fstat(held).st_ino == wesley_ino)
+                benign.append(os.open(self.work / "benign.bin", os.O_CREAT | os.O_RDWR))
+                return connection
+            return real(database, *args, **kwargs)
+
+        try:
+            with patch.object(library.sqlite3, "connect", reuse), self.assertRaises(UnsafeOpen) as caught:
+                mark_your_church_exclusive(self.sample, self.work)
+        finally:
+            for fd in benign:
+                os.close(fd)
+        self.assertEqual(reused, [True])
+        self.assertIn("2 new files, not 1", str(caught.exception))
+        self.assertEqual(self.wesley.read_bytes(), before)
+
+    def test_the_opened_file_must_be_the_one_the_name_points_at_after_the_connect(self) -> None:
+        real = sqlite3.connect
+        other = self.work / "elsewhere.sqlite"
+        other.write_bytes(self.sample.read_bytes())
+
+        def rename_after(database, *args, **kwargs):
+            connection = real(database, *args, **kwargs)
+            if kwargs.get("uri") and database.endswith("?mode=rw"):
+                # The opened inode keeps its one link, under another name.
+                os.rename(self.sample, self.work / "moved.sqlite")
+                os.rename(other, self.sample)
+            return connection
+
+        with patch.object(library.sqlite3, "connect", rename_after), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertIn("is not the file SQLite opened", str(caught.exception))
+
+    def test_a_dangling_symlink_swap_creates_no_file(self) -> None:
+        """``mode=rw`` never creates: a swap for a link to a missing classic path writes nothing there."""
+        spurgeon = self.index_dir / "spurgeon.sqlite"
+        swap = _SwapOnConnect(self.sample, spurgeon, how="symlink")
+        with swap.patch(), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(swap.fired)
+        self.assertIn("could not be opened for writing", str(caught.exception))
+        self.assertFalse(os.path.lexists(spurgeon))
+        other = self.work / "other.sqlite"
+        _plain_marked(other, church_import=True)
+        rows, vectors = church_rows()
+        self.sample.unlink()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+        swap = _SwapOnConnect(other, spurgeon, how="symlink")
+        with swap.patch():
+            skipped = mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(swap.fired)
+        self.assertEqual([path for path, _why in skipped], [other])
+        self.assertIn("could not be opened for writing", skipped[0][1])
+        self.assertFalse(os.path.lexists(spurgeon))
+
+    def test_a_target_that_fails_once_opened_clears_no_sibling(self) -> None:
+        other = self.work / "other.sqlite"
+        _plain_marked(other, church_import=True)
+        before = other.read_bytes()
+        swap = _SwapOnConnect(self.sample, self.wesley)
+        with swap.patch(), self.assertRaises(UnsafeOpen):
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(swap.fired)
+        self.assertEqual(other.read_bytes(), before)
+        with closing(sqlite3.connect(other)) as connection:
+            self.assertTrue(is_your_church(connection))
 
 
 class ChurchGateTripwireTests(unittest.TestCase):

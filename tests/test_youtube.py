@@ -1142,7 +1142,7 @@ class ImportTests(unittest.TestCase):
             )
             self.assertEqual(code, 0, err)
             self.assertIn(
-                "warning: other.sqlite is still marked as your church; it has 2 hard links, so the mark was not cleared",
+                "warning: other.sqlite may still be marked as your church; it has 2 hard links, so the mark was not cleared",
                 err,
             )
             kept = open_readonly(root / "other.sqlite")

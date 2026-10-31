@@ -13,7 +13,7 @@ import sqlite3
 import stat
 from pathlib import Path
 
-from preached.libraries import PUBLIC_DOMAIN, canonical_index, classic_index_problem
+from preached.libraries import PUBLIC_DOMAIN, SIDECAR_SUFFIXES, canonical_index, classic_index_problem
 from preached.store import migrate, open_readonly
 
 # meta.key. One file holds role=church. Import --your-church clears the others.
@@ -158,6 +158,9 @@ def church_heading(connection: sqlite3.Connection | None, slug: str | None) -> s
 
 
 def _is_church_file(path: Path) -> bool:
+    """Read-only. False, without opening it, when a sidecar is unsafe (``_sidecar_problem``)."""
+    if _sidecar_problem(path) is not None:
+        return False
     try:
         connection = open_readonly(path)
     except (OSError, sqlite3.Error):
@@ -258,9 +261,14 @@ def mark_your_church_exclusive(
     (``church_shaped``): a Wesley-shaped file, or one whose ``meta.library``
     names a classic. Those checks name a path, and the name can be swapped
     for a link to wesley.sqlite before the file is opened. So every write
-    goes through ``_open_checked``: the descriptor SQLite actually opened
-    must have one link and must not be a classic file, and the church shape
-    is read again through that connection, before the first write.
+    goes through ``_Checked``: no -wal, -shm or -journal file may be a
+    symlink, a hardlink, or a classic file (``_sidecar_problem``, else
+    ``UnsafeOpen``); the descriptor SQLite actually opened must have one
+    link and must not be a classic file; and the church shape is read again
+    through that connection, before the first write.
+
+    The target is opened and checked first and held open; then the siblings
+    are cleared; then the target is migrated and marked.
 
     Siblings are cleared with a plain ``sqlite3`` connection, which does not
     migrate and does not change the journal mode. The target is the church
@@ -272,33 +280,47 @@ def mark_your_church_exclusive(
         raise ValueError(_classic_church_error(target.name))
     if reason is not None:
         raise ValueError(_hardlink_church_error(target.name, _links(target)))
+    sidecar = _sidecar_problem(target)
+    if sidecar is not None:
+        raise UnsafeOpen(target, sidecar)
     if not church_shaped(target):
         raise ValueError(f"error: {target.name} is not a church import (no videos table); it is not marked")
-    skipped = _marked_siblings_not_cleared(index_dir, target)
-    for candidate in church_index_matches(index_dir, exclude=target):
-        if is_protected_classic(candidate) or not church_shaped(candidate):
-            continue
-        problem = _clear_church_mark(candidate)
-        if problem is not None:
-            skipped.append((candidate, problem))
-    connection = _open_checked(target)
+    # The target is opened and checked first, and held, so a target that
+    # fails changes no sibling.
+    checked = _Checked(target)
     try:
-        problem = _church_shape_problem(connection)
+        problem = _church_shape_problem(checked.connection)
         if problem is not None:
             raise ValueError(f"error: {target.name} {problem}; it is not marked")
-        migrate(connection)
-        mark_your_church(connection, label=label, sample=sample)
-        connection.commit()
+        skipped = _marked_siblings_not_cleared(index_dir, target)
+        for candidate in church_index_matches(index_dir, exclude=target):
+            if is_protected_classic(candidate) or not church_shaped(candidate):
+                continue
+            problem = _clear_church_mark(candidate)
+            if problem is not None:
+                skipped.append((candidate, problem))
+        # The switch to WAL opens -wal and -shm; check them before the schema
+        # and the mark are written.
+        checked.recheck()
+        checked.connection.execute("PRAGMA journal_mode=WAL")
+        checked.connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        checked.recheck()
+        migrate(checked.connection)
+        mark_your_church(checked.connection, label=label, sample=sample)
+        checked.recheck()
+        checked.connection.commit()
     finally:
-        connection.close()
+        checked.close()
     return sorted(skipped)
 
 
 def _marked_siblings_not_cleared(index_dir: Path, target: Path) -> list[tuple[Path, str]]:
     """Marked files ``church_index_matches`` leaves out, other than classics.
 
-    A classic library is never opened. A hardlinked or non-church-shaped file
-    is opened read-only to see whether it carries ``role=church``.
+    A classic library is never opened. A file with an unsafe sidecar
+    (``_sidecar_problem``) is never opened either; it is listed whether or
+    not it is marked. A hardlinked or non-church-shaped file is opened
+    read-only to see whether it carries ``role=church``.
     """
     root = Path(index_dir)
     if not root.is_dir():
@@ -309,6 +331,11 @@ def _marked_siblings_not_cleared(index_dir: Path, target: Path) -> list[tuple[Pa
             continue
         reason = _protection(candidate)
         if reason == "classic":
+            continue
+        sidecar = _sidecar_problem(candidate)
+        if sidecar is not None:
+            # Not opened, even read-only, so its mark is not known.
+            found.append((candidate, f"{sidecar} (not opened)"))
             continue
         if reason is not None:
             why = f"has {_links(candidate)} hard links"
@@ -395,8 +422,11 @@ def church_shaped(path: Path) -> bool:
     """True when ``path`` holds a church import (``_church_shape_problem``).
 
     Read-only (``store.open_readonly``). Anything unreadable is not
-    church-shaped, so it is not written.
+    church-shaped, so it is not written. A file with an unsafe sidecar
+    (``_sidecar_problem``) is not opened and is not church-shaped.
     """
+    if _sidecar_problem(Path(path)) is not None:
+        return False
     try:
         connection = open_readonly(Path(path))
     except (OSError, sqlite3.Error):
@@ -428,17 +458,69 @@ def _church_shape_problem(connection: sqlite3.Connection) -> str | None:
     return None
 
 
-def _open_descriptors() -> set[int]:
-    """Descriptors open in this process. The one ``listdir`` used is closed
-    by the time it returns, so ``fstat`` drops it."""
-    found = set()
+def _descriptors() -> dict[int, os.stat_result]:
+    """``{fd: fstat}`` for every descriptor open in this process. The one
+    ``listdir`` used is closed by the time it returns, so ``fstat`` drops it."""
+    found = {}
     for name in os.listdir("/dev/fd"):
         try:
-            os.fstat(int(name))
+            fd = int(name)
+            found[fd] = os.fstat(fd)
         except (OSError, ValueError):
             continue
-        found.add(int(name))
     return found
+
+
+def _new_files(before: dict[int, os.stat_result]) -> tuple[list[os.stat_result], dict[int, os.stat_result]]:
+    """Regular files open now that were not open in ``before``, and the new snapshot.
+
+    A descriptor number that was open before but now names another
+    ``(st_dev, st_ino)`` was closed and reused, so it counts as new.
+    """
+    now = _descriptors()
+    opened = []
+    for fd, st in sorted(now.items()):
+        old = before.get(fd)
+        if old is not None and (old.st_dev, old.st_ino) == (st.st_dev, st.st_ino):
+            continue
+        if stat.S_ISREG(st.st_mode):
+            opened.append(st)
+    return opened, now
+
+
+def _sidecar_problem(path: Path) -> str | None:
+    """Why a -wal, -shm or -journal file next to ``path`` makes it unsafe to open, or None.
+
+    SQLite opens those by name (``libraries.SIDECAR_SUFFIXES``), after any
+    check on the main file, and writes them, even from a read-only
+    connection (the -shm index). One that is a hardlink to wesley.sqlite
+    makes SQLite write into Wesley, then delete the name, so nothing shows
+    afterwards. Each one that exists must be a regular file, not a symlink,
+    with one link, and not a classic file (``_classic_ids``). Both the name
+    given and its realpath are checked, since SQLite resolves symlinks in
+    the database path. Nothing is opened.
+    """
+    bases = dict.fromkeys([os.path.abspath(path), os.path.realpath(path)])
+    classic = None
+    for base in bases:
+        for suffix in SIDECAR_SUFFIXES:
+            try:
+                st = os.lstat(f"{base}{suffix}")
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                return f"has a {suffix} file that cannot be checked ({exc.strerror})"
+            if stat.S_ISLNK(st.st_mode):
+                return f"has a {suffix} file that is a symlink"
+            if not stat.S_ISREG(st.st_mode):
+                return f"has a {suffix} file that is not a regular file"
+            if st.st_nlink != 1:
+                return f"has a {suffix} file with {st.st_nlink} hard links"
+            if classic is None:
+                classic = _classic_ids()
+            if (st.st_dev, st.st_ino) in classic:
+                return f"has a {suffix} file that is a classic library file"
+    return None
 
 
 class UnsafeOpen(ValueError):
@@ -449,40 +531,77 @@ class UnsafeOpen(ValueError):
         self.why = why
 
 
-def _open_checked(path: Path) -> sqlite3.Connection:
-    """A plain connection to ``path``, refused unless the file SQLite opened is safe.
+def _rw_uri(path: Path) -> str:
+    """``file:`` URI for ``path`` with ``mode=rw``: SQLite opens it read-write
+    but never creates it, so a dangling symlink swapped in creates nothing."""
+    return Path(os.path.abspath(path)).as_uri() + "?mode=rw"
 
-    SQLite opens the main database file when it connects, before any read
-    (the -wal and -shm files come later). The descriptors that appeared
-    across ``sqlite3.connect`` are fstat'ed: each must be a regular file
-    with one link whose ``(st_dev, st_ino)`` is not a classic file
-    (``_classic_ids``). That is the file every later write goes to, whatever
-    the name points at by then. No new descriptor means nothing could be
-    checked, which is refused too. Raises ``UnsafeOpen``.
+
+class _Checked:
+    """A plain read-write connection to ``path``, refused unless every file SQLite opened is safe.
+
+    Before the open, the sidecars are checked by name (``_sidecar_problem``).
+    SQLite opens the main database file when it connects, before any read.
+    The descriptors open across ``sqlite3.connect`` are compared with a
+    ``{fd: (st_dev, st_ino)}`` snapshot (a reused number counts as new).
+    Exactly one new regular file must appear, it must be the file
+    ``os.stat(path)`` names after the connect, and it must have one link and
+    not be a classic file (``_classic_ids``). That is the file every later
+    write goes to, whatever the name points at by then. Then one read runs
+    (in WAL mode that opens -wal and -shm) and ``recheck`` runs. Callers
+    call ``recheck`` again before a step that opens a new sidecar (the switch
+    to WAL). Raises ``UnsafeOpen``.
     """
-    before = _open_descriptors()
-    connection = sqlite3.connect(path)
-    try:
-        opened = []
-        for fd in sorted(_open_descriptors() - before):
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        problem = _sidecar_problem(self.path)
+        if problem is not None:
+            raise UnsafeOpen(self.path, problem)
+        before = _descriptors()
+        try:
+            self.connection = sqlite3.connect(_rw_uri(self.path), uri=True)
+        except sqlite3.Error as exc:
+            raise UnsafeOpen(self.path, f"could not be opened for writing ({exc})") from exc
+        try:
+            opened, self._seen = _new_files(before)
+            if not opened:
+                raise UnsafeOpen(self.path, "could not be checked once opened (no new descriptor)")
+            if len(opened) != 1:
+                raise UnsafeOpen(self.path, f"could not be checked once opened ({len(opened)} new files, not 1)")
             try:
-                st = os.fstat(fd)
-            except OSError:
-                continue
-            if stat.S_ISREG(st.st_mode):
-                opened.append(st)
-        if not opened:
-            raise UnsafeOpen(path, "could not be checked once opened (no new descriptor)")
-        classic = _classic_ids()
+                named = os.stat(self.path)
+            except OSError as exc:
+                raise UnsafeOpen(self.path, f"could not be checked once opened ({exc.strerror})") from exc
+            self._refuse_file(opened[0], sidecar=False)
+            if (opened[0].st_dev, opened[0].st_ino) != (named.st_dev, named.st_ino):
+                raise UnsafeOpen(self.path, "is not the file SQLite opened (the name changed)")
+            self.connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            self.recheck()
+        except BaseException:
+            self.connection.close()
+            raise
+
+    def _refuse_file(self, st: os.stat_result, *, sidecar: bool) -> None:
+        if st.st_nlink != 1:
+            what = "a sidecar with " if sidecar else ""
+            raise UnsafeOpen(self.path, f"has {what}{st.st_nlink} hard links once opened")
+        if (st.st_dev, st.st_ino) in _classic_ids():
+            what = "has a sidecar that is" if sidecar else "is"
+            raise UnsafeOpen(self.path, f"{what} a classic library file once opened")
+
+    def recheck(self) -> None:
+        """Files SQLite opened since the last check (the -wal, -shm, a hot
+        journal) get the same checks, and the sidecar names are checked again."""
+        problem = _sidecar_problem(self.path)
+        if problem is not None:
+            raise UnsafeOpen(self.path, problem)
+        opened, self._seen = _new_files(self._seen)
         for st in opened:
-            if st.st_nlink != 1:
-                raise UnsafeOpen(path, f"has {st.st_nlink} hard links once opened")
-            if (st.st_dev, st.st_ino) in classic:
-                raise UnsafeOpen(path, "is a classic library file once opened")
-    except BaseException:
-        connection.close()
-        raise
-    return connection
+            self._refuse_file(st, sidecar=True)
+
+    def close(self) -> None:
+        self.connection.close()
 
 
 def _clear_church_mark(path: Path) -> str | None:
@@ -492,21 +611,25 @@ def _clear_church_mark(path: Path) -> str | None:
     A plain connection does neither. The journal mode already on the file
     stays as it is. Callers check ``is_protected_classic`` and
     ``church_shaped`` first; the open file is checked again here
-    (``_open_checked``, ``_church_shape_problem``) before the delete.
+    (``_Checked``, ``_church_shape_problem``) before the delete.
     Returns why the mark was left in place, or None when it was cleared.
     """
     try:
-        connection = _open_checked(path)
+        checked = _Checked(path)
     except UnsafeOpen as exc:
         return exc.why
     try:
-        problem = _church_shape_problem(connection)
+        problem = _church_shape_problem(checked.connection)
         if problem is not None:
             return problem
-        clear_church_role(connection)
-        connection.commit()
+        try:
+            checked.recheck()
+        except UnsafeOpen as exc:
+            return exc.why
+        clear_church_role(checked.connection)
+        checked.connection.commit()
     finally:
-        connection.close()
+        checked.close()
     return None
 
 
