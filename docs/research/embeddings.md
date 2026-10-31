@@ -12,6 +12,11 @@ Last run: 2026-10-30 (America/New_York), task EVAL-DELEAK, on the 60-question gr
 - **Hybrid reliably beats BM25 alone.** Granite hybrid RRF minus BM25: nDCG@10 +0.157 [+0.06, +0.26], MRR@10 +0.173 [+0.07, +0.28].
 - **The eval set is small and its labels are an LLM agent's.** There were 35 answerable questions; EVAL-DELEAK adds 20 rewrites (55 answerable, 25 of them `plain`). Human review by Patrick is pending. Read every number with that in mind.
 
+## Decisions (Patrick, Oct 30 2026)
+
+- Excluded from the product by Patrick, Oct 30 2026; kept in the eval for re-runs. This is Arctic Embed v1 (`arctic-embed-l`). It is marked `eval_only = true` in `search/models.toml`, so the server (`--model`), `search/query.py` (`--model`) and `Searcher` refuse it. `search/bench.py` still runs it, and its results below stay as measured.
+- The default stays IBM Granite English R2 (Patrick, Oct 30 2026). EmbeddingGemma 2 tied once correctly configured (the `title: none | text: ` prefix) and remains in the eval.
+
 ## Question and constraints
 
 The question is which text embedding model to use, alongside BM25, to find the passage in Wesley's sermons (and later a church's transcribed sermons) that answers a church member's question. The constraints are:
@@ -31,7 +36,7 @@ The question is which text embedding model to use, alongside BM25, to find the p
 | `google/embeddinggemma-300m` | Google DeepMind | Gemma license, gated | 308M | not run: gated, no `HF_TOKEN` | Predecessor (Gemma 3). [card](https://huggingface.co/google/embeddinggemma-300m) |
 | `ibm-granite/granite-embedding-english-r2` | IBM | Apache-2.0 | 149M | **benchmarked, clean, recommended** | IBM trained its own encoder from scratch with the ModernBERT architecture recipe, using no ModernBERT weights ("We train both our base and small models from scratch", [arXiv:2508.21085](https://arxiv.org/abs/2508.21085) §2). Synthetic data and query rewrites use Mistral-7B-Instruct (Mistral AI, France). Hard negatives are mined with IBM's own granite-embedding-125m. No MS-MARCO ([card](https://huggingface.co/ibm-granite/granite-embedding-english-r2)). |
 | `ibm-granite/granite-embedding-small-english-r2` | IBM | Apache-2.0 | 47M | not run (same release, smaller) | Same paper. A candidate for a later "smaller and faster" row. |
-| `Snowflake/snowflake-arctic-embed-l` (v1) | Snowflake | Apache-2.0 | 334M | **benchmarked, lineage unclear, pending Patrick** | Initialized from `intfloat/e5-large-unsupervised` (Microsoft Research Asia). The paper does not name the models used for hard-negative mining or LLM query generation ([arXiv:2405.05374](https://arxiv.org/abs/2405.05374), "Model Initialization", "Tunable Hard Negative Mining"). |
+| `Snowflake/snowflake-arctic-embed-l` (v1) | Snowflake | Apache-2.0 | 334M | **benchmarked, eval-only: excluded from the product by Patrick, Oct 30 2026** | Initialized from `intfloat/e5-large-unsupervised` (Microsoft Research Asia). The paper does not name the models used for hard-negative mining or LLM query generation ([arXiv:2405.05374](https://arxiv.org/abs/2405.05374), "Model Initialization", "Tunable Hard Negative Mining"). |
 | `nomic-ai/nomic-embed-text-v2-moe` | Nomic AI | Apache-2.0 | 475M (305M active) | **excluded after benchmarking** | Its paper uses BAAI BGE-M3 to filter hard negatives for both English and multilingual data ([arXiv:2502.07972](https://arxiv.org/abs/2502.07972) §4.4). That alone is the basis for the exclusion. Two weaker lineage notes, worded to match the sources: its English pretraining pairs inherit Nomic v1's consistency filtering with Alibaba gte-base ([arXiv:2402.01613](https://arxiv.org/abs/2402.01613); v2 reuses that pre-filtered data, 2502.07972 §4.2), and the §7.3 ablation found Stella 1.5B v5 (built on Qwen2) the best negative-mining teacher, but the paper does not state which teacher the final model used. (The first CTO review of PR #2 said gte-base mined v2's hard negatives and Stella was the production teacher; CTO corrected that in the re-review.) It was also the only `trust_remote_code` load. |
 | `Snowflake/snowflake-arctic-embed-l-v2.0` | Snowflake | Apache-2.0 | 568M | excluded | Initialized from BAAI `bge-m3-retromae` ([arXiv:2412.04506](https://arxiv.org/abs/2412.04506) §2.1). |
 | `Snowflake/snowflake-arctic-embed-m-v2.0` | Snowflake | Apache-2.0 | 305M | excluded | Initialized from Alibaba `gte-multilingual-mlm-base` (same paper, §2.1). |
@@ -152,7 +157,7 @@ Clean-lineage candidates:
 | embeddinggemma-2 | hybrid RRF | 0.643 [0.49, 0.80] | 0.458 [0.33, 0.59] | 0.518 [0.39, 0.65] | 0.943 | −0.039 [−0.12, +0.04] (7/19/9) | 130 / 190 | 63.9 |
 | embeddinggemma-2 | hybrid weighted | 0.586 [0.43, 0.74] | 0.451 [0.32, 0.59] | 0.511 [0.38, 0.64] | 0.943 | −0.046 [−0.13, +0.04] (8/19/8) | 133 / 165 | 63.9 |
 
-Lineage unclear (pending Patrick's decision), kept as measurements:
+Excluded from the product by Patrick, Oct 30 2026; kept in the eval for re-runs. Lineage unclear; measurements kept as run:
 
 | model | mode | R@5 | MRR@10 | nDCG@10 | Δ nDCG@10 vs Granite RRF | CPU p50 ms |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -294,7 +299,7 @@ On `plain-blind`, Granite dense alone beats the default on lenient hit@10 by +0.
 
 **EmbeddingGemma 2 is a close, legitimate alternative, not the weakest model.** Patrick's original default was "Gemma Embeddings 2 unless there's a better offline option". On this eval, Granite is better on cost and equal on quality, so that bar is met, but only narrowly. Switching is a one-line change (`default = "embeddinggemma-2"`) plus `--group bench` dependencies, and it would cost about 15 ms per query. Gemma 2's multilingual and audio-embedding abilities are not used today. Revisit the choice if a non-English congregation or direct audio search becomes a requirement, or after the eval set is human-reviewed and grown.
 
-Arctic v1 stays benchmark-only until Patrick rules on its lineage. Nomic v2-MoE is excluded.
+Arctic v1 is eval-only (see [Decisions](#decisions-patrick-oct-30-2026)). Nomic v2-MoE is excluded.
 
 **After EVAL-DELEAK (unchanged default, open question for Patrick).** On the 55-question set Granite hybrid RRF is still the best or tied-best clean row overall (nDCG@10 0.361; Gemma 2 RRF −0.031 [−0.08, +0.02]). On the `plain` group, Granite is still the best clean model, but Granite *dense alone* beats the default mode by +0.050 nDCG@10 [+0.01, +0.10] (4 wins, 1 loss) while losing on `names-topic`. Arctic v1 dense (eval-only) has the highest `plain` point estimate (+0.077 [−0.02, +0.20]). Every row is near zero at quote level on `plain`. The default was not changed. See [Is Granite still the best choice on `plain`?](#is-granite-still-the-best-choice-on-plain).
 
