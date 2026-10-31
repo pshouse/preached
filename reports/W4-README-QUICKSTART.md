@@ -1,6 +1,6 @@
 # W4-README-QUICKSTART: a judge can follow the README from a fresh cache
 
-Fresh-clone QA findings 1 and 3–18 (`reports/W4-FRESH-CLONE-QA.md` on `qa/w4-fresh-clone`, PR #68, as corrected for CTO MF1/MF2). Branch `docs/w4-readme-quickstart`.
+Fresh-clone QA findings 1 and 3–18 (`reports/W4-FRESH-CLONE-QA.md` on `qa/w4-fresh-clone`, PR #68, as corrected for CTO MF1/MF2). Branch `docs/w4-readme-quickstart`. Section 9 is the re-sync with #71 at `1907d1f`. The sections above that are the first walkthrough, at `59b44fb`.
 
 **Base.** `origin/main` is `b224281` and does not contain the ONNX PR. This branch starts at `origin/fix/w4-onnx-pin-repro` (`59b44fb`), which does contain `ATEN_CPU_CAPABILITY` in `scripts/export_onnx.py`. `git merge origin/main` returned **Already up to date**: `origin/main` is an ancestor, so there is no merge commit. **This PR must merge after the ONNX PR.**
 
@@ -8,7 +8,7 @@ Fresh-clone QA findings 1 and 3–18 (`reports/W4-FRESH-CLONE-QA.md` on `qa/w4-f
 
 ## 1. What was done
 
-`README.md` is rewritten for a clone. It names uv (`uv_build>=0.13.6,<0.14`), Python `>=3.12,<3.14`, network, disk, and `ffmpeg` for audio. It documents `PREACHED_CACHE` (default `/cache`): the directory must exist and be writable, and an unset `HF_HOME` is set to `$PREACHED_CACHE/huggingface` by the library code. The quickstart is text-only (`start_s` empty, play `n/a`). The first block fetches, chunks, validates, and benches **Granite only**. It then syncs the bench group and runs `scripts/export_onnx.py`, which pins `ATEN_CPU_CAPABILITY=avx2` and needs an x86-64 host with AVX2. The export keeps an ambient `HF_HOME` (`setdefault` before torch); when that variable is unset the export reads `/cache/huggingface`. It deletes the revision directory under `PREACHED_ONNX_DIR` (default `/cache/models/granite-english-r2-onnx/<revision>/`) before writing, and it prints the pin line or exits non-zero with no manifest. The later `uv sync` is described as dropping the bench group. Alignment is a separate step, after fetch, and the README says to do it before expecting playback. The church block is a shape (`--privacy privacy.example.toml`); `@channel` is not a channel to import. YouTube placeholders are quoted `"SLUG"` and `"privacy.toml"`. Local outputs (`corpus/catalog.json`, `eval/results/`) and `--accept-new-text` are named. The opening line is "This repo builds". The server section is "From the clone:". Wesley is described as built in on its own pipeline; `src/preached/libraries.py` lists Spurgeon and Edwards. The test command is `uv run python -m unittest discover -s tests`, and the README states no count. `reports/W3-CPU.md`'s count and worktree path are called stale.
+`README.md` is rewritten for a clone. It names uv (`uv_build>=0.13.6,<0.14`), Python `>=3.12,<3.14`, network, disk, and `ffmpeg` for audio. It documents `PREACHED_CACHE` (default `/cache`): the directory must exist and be writable, and an unset `HF_HOME` is set to `$PREACHED_CACHE/huggingface` by the library code. The quickstart is text-only (`start_s` empty, play `n/a`). The first block fetches, chunks, validates, and benches **Granite only**. It then syncs the bench group and runs `scripts/export_onnx.py`, which pins `ATEN_CPU_CAPABILITY=avx2` and needs an x86-64 host with AVX2. The export keeps an ambient `HF_HOME` (`setdefault` before torch); when that variable is unset the export reads `/cache/huggingface`. That cache path is what `59b44fb` did. Section 9 is `1907d1f`: an unset `HF_HOME` is `$PREACHED_CACHE/huggingface`, and `/cache/huggingface` only when `PREACHED_CACHE` is unset. It deletes the revision directory under `PREACHED_ONNX_DIR` (default `/cache/models/granite-english-r2-onnx/<revision>/`) before writing, and it prints the pin line or exits non-zero with no manifest. The later `uv sync` is described as dropping the bench group. Alignment is a separate step, after fetch, and the README says to do it before expecting playback. The church block is a shape (`--privacy privacy.example.toml`); `@channel` is not a channel to import. YouTube placeholders are quoted `"SLUG"` and `"privacy.toml"`. Local outputs (`corpus/catalog.json`, `eval/results/`) and `--accept-new-text` are named. The opening line is "This repo builds". The server section is "From the clone:". Wesley is described as built in on its own pipeline; `src/preached/libraries.py` lists Spurgeon and Edwards. The test command is `uv run python -m unittest discover -s tests`, and the README states no count. `reports/W3-CPU.md`'s count and worktree path are called stale.
 
 No pin and no export code changed. Finding 2 stays on the ONNX branch.
 
@@ -230,6 +230,8 @@ The seven extra paths versus `origin/main` are the ONNX PR (`59b44fb`): `app/ser
 
 ## 7. Open issues
 
+Section 9 closes the pin, the shared-graph failures, and the cite failures. The two bullets under them stood at the first walkthrough.
+
 - Finding 2 is deferred, as the table says. Until the ONNX PR has merged, a PR of this branch into `main` would also carry that PR's diff.
 - The shared graph on this machine is still the old pin. The exact suite stays red on those five tests until that directory is re-exported. This task did not re-export it.
 - The 52 `docs/DEPLOY.md` cite failures are unchanged. That file is out of scope.
@@ -239,3 +241,80 @@ The seven extra paths versus `origin/main` are the ONNX PR (`59b44fb`): `app/ser
 ## 8. Dependencies added
 
 None.
+
+## 9. Re-sync with #71 at 1907d1f
+
+**Precondition.** After `git fetch`, `origin/fix/w4-onnx-pin-repro` is `1907d1f`. `scripts/export_onnx.py` re-executes under `PYTHONHASHSEED=1`, sets `ATEN_CPU_CAPABILITY=avx2`, keeps the pin `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`, and defaults `HF_HOME` to `$PREACHED_CACHE/huggingface` (`/cache/huggingface` only when `PREACHED_CACHE` is unset). Not blocked.
+
+**Merges.** Merge commits, no rebase. Both were clean (`ort`).
+
+- `9b82a65` merges `origin/fix/w4-onnx-pin-repro` (`1907d1f`).
+- `15e77c2` merges `origin/main` (`abdada3`). The only file that merge adds is `reports/W4-FRESH-CLONE-QA.md`.
+
+`scripts/export_onnx.py` was not edited on this branch. It arrived with the first merge.
+
+**README.** The export command is `uv run --group bench python scripts/export_onnx.py`, with no environment variables on the line. `CUDA_VISIBLE_DEVICES=""` is not on that line. The script assigns `os.environ["CUDA_VISIBLE_DEVICES"] = ""` before it imports torch, so a prefix cannot reach the export. This round did not run a second export with the prefix set. The run below left the variable unset and wrote the pin. The missing-graph sentence still quotes `CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py`, which is `EXPORT_COMMAND` in `src/preached/artifacts.py`. That file was not edited here.
+
+The `/cache` caveat is gone. An `HF_HOME` already set is kept. When it is unset, the export sets `$PREACHED_CACHE/huggingface`, and `/cache/huggingface` only when `PREACHED_CACHE` is unset. The sentence in §1 that says an unset `HF_HOME` reads `/cache/huggingface` is the export at `59b44fb`, not `1907d1f`.
+
+The README names the pin `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`, the x86-64 + AVX2 requirement, the missing-graph log (`ERROR` embedding line, `ERROR ONNX GRAPH NOT BUILT`, `WARNING` model-not-built, then `PREACHED_LISTENING`), and `/healthz` `"search_mode": "bm25"` with `"search_mode_reason": "onnx_graph_not_built"`. Those reader-visible strings are unchanged at `1907d1f`. A graph that is present and is not the pin is still `error: ONNX sha256 for model.fp32.onnx is not the pinned digest`.
+
+Finding 2 in the table was deferred to #71. That head is merged. The open pin item in §7 is closed by this section. The table cell is the first-round status.
+
+**Re-run.** Fresh `PREACHED_CACHE=/cache/w4-readme-resync`, deleted afterwards. Unset: `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `PYTHONHASHSEED`, `ATEN_CPU_CAPABILITY`, `CUDA_VISIBLE_DEVICES`. `PREACHED_ONNX_DIR=$PREACHED_CACHE/onnx`, so the export's delete could not touch `/cache/models/granite-english-r2-onnx/`. That shared file's mtime stayed `2026-10-30 11:58:17` and its sha256 stayed `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`.
+
+Host: x86-64, and `/proc/cpuinfo` flags include `avx2`.
+
+| Step | Exit | Wall (s) | Notes |
+| --- | --- | --- | --- |
+| export | 0 | 35.41 | `uv run --group bench python scripts/export_onnx.py` |
+| fetch | 0 | 1.432 | index for the query; the command text did not change |
+| chunk | 0 | 0.476 | 8383 chunks |
+| bench | 0 | 144.02 | CUDA embed 63.9 s; the headline is not in the README |
+| query hybrid | 0 | 1.381 | once |
+| query bm25 | 0 | 0.113 | once, `--side` |
+
+The export downloaded the snapshot into the fresh cache and printed `snapshot /cache/w4-readme-resync/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b257b703fee9253d75c2b1f2985180498`, then `fp32 sha256 matches the pin 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The first walkthrough's export wrote `aed7adba…` because that script did not fix the hash seed. This graph is the pin, so the money query was re-run once per mode and recorded as run.
+
+Hybrid, text-only (`start_s=None`, play `n/a`), no abstain line. Same rows as §3:
+
+```
+[1] The Use of Money  (score 0.0320, wesley-050-c0007)
+[2] The Use of Money  (score 0.0318, wesley-050-c0004)
+[3] Upon our Lord's Sermon on the Mount, Discourse 8  (score 0.0317, wesley-028-c0076)
+```
+
+Rows 4 and 5 were again The More Excellent Way `wesley-089-c0050` (0.0311) and The Use of Money `wesley-050-c0032` (0.0298).
+
+BM25 `--side` (`mode: bm25`, `confidence: unrated`, `Classic library: John Wesley`), same top 3 as §3:
+
+```
+[1] The Use of Money  (score 9.0136, wesley-050-c0007)
+[2] The Use of Money  (score 7.8838, wesley-050-c0032)
+[3] Upon our Lord's Sermon on the Mount, Discourse 8  (score 7.8549, wesley-028-c0076)
+```
+
+The church column printed `Nothing from your church yet.`
+
+The bench headline was again `hybrid_rrf recall@5=0.285 mrr@10=0.219 ndcg@10=0.246`. Those numbers are not in the README. `eval/results/2026-10-31.json` and `.md` were deleted and are not in the commit. `corpus/catalog.json` is not modified in git.
+
+**Suite.** Exact command, from this worktree, `PREACHED_ONNX_DIR` unset (shared graph `3861025a…`):
+
+```bash
+PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests
+```
+
+Exit 0. Wall 271.101 s. `Ran 1027 tests in 270.453s`, `OK`, no skip line. The 52 cite failures and the five pin failures from §3 are not in this run.
+
+`uv lock --check`: exit 0, wall 0.008 s, `Resolved 79 packages in 0.49ms`.
+
+**Diff stat.** `git diff --stat origin/fix/w4-onnx-pin-repro..HEAD` after the commit that adds this section. The five paths are the four files of this PR plus `reports/W4-FRESH-CLONE-QA.md` from the main merge. `src/preached/search.py` and `tests/test_api_path.py` are the finding-17 change from the first round. They are not edited again here.
+
+```
+ README.md                       |  70 +++++++--
+ reports/W4-FRESH-CLONE-QA.md    | 139 +++++++++++++++++
+ reports/W4-README-QUICKSTART.md | 320 ++++++++++++++++++++++++++++++++++++++++
+ src/preached/search.py          |  12 +-
+ tests/test_api_path.py          |   9 ++
+ 5 files changed, 530 insertions(+), 20 deletions(-)
+```
