@@ -594,6 +594,28 @@ class ChurchRefusalWhileServingTests(unittest.TestCase):
         app = church_app(self.classic_path, self.church_path, check=lambda conn: 1 / 0)
         self.assert_church_gone(app)
 
+    def test_app_clears_a_slug_on_the_church_searcher(self) -> None:
+        """A slug on the church searcher could earn the public-domain exemption
+        (``store.public_domain_file``); App keeps it None."""
+        classic = reopen(self.classic_path)
+        church = reopen(self.church_path)
+        self.addCleanup(classic.close)
+        self.addCleanup(church.close)
+        app = App(
+            connection=classic,
+            searcher=Searcher(classic),
+            encode=None,
+            fallback_note=None,
+            model_name="fixture",
+            hosts={"127.0.0.1"},
+            static_dir=STATIC_DIR,
+            church_connection=church,
+            church_searcher=Searcher(church, gated=True, library="spurgeon"),
+            church_library="sample",
+        )
+        self.assertIsNone(app.church_searcher.library)
+        self.assertIs(app.church_searcher.gated, True)
+
     def test_mismatched_parts_are_refused(self) -> None:
         classic = reopen(self.classic_path)
         church = reopen(self.church_path)
