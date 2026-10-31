@@ -2,7 +2,9 @@
 
 Fresh-clone BLOCKER 2 (`reports/W4-FRESH-CLONE-QA.md` on `qa/w4-fresh-clone`, PR #68, finding 2). Branch `fix/w4-onnx-pin-repro`, PR #71. Task 95 did the first pass. Task 96 (`96-W4-ONNX-AVX2-PIN`) applied the CTO's avx2 ruling. Task 96-W4-ONNX-MATRIX adds the CTO's hard requirements: the full seed × dispatch matrix, a pin for each variable that moves the bytes, a two-export test that varies the ambient seed and dispatch level, and re-measured equivalence. This report describes the branch as it now stands.
 
-**Result.** Both variables drive the bytes, so both are pinned. I measured the 18-cell matrix `PYTHONHASHSEED` {0..5} × `ATEN_CPU_CAPABILITY` {default, avx2, avx512}. Without the script's overrides, the 12 runnable cells give **four** digests. The 6 avx512 cells cannot run on this CPU (SIGILL). Through `scripts/export_onnx.py`, all **18 / 18** cells give one digest, `aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`. That is the single pin in `src/preached/artifacts.py`, and `docs/DEPLOY.md` now quotes it too. The new graph is equivalent to the old pin: initializers byte-identical, ORT outputs bitwise identical, search results identical. The decision record is `docs/adr/0001-onnx-export-determinism.md`.
+**Result.** Both variables drive the bytes, so the export fixes both: `ATEN_CPU_CAPABILITY=avx2` (set before torch is imported) and `PYTHONHASHSEED=1` (re-exec). Seed 1 + avx2 reproduces the **existing pin `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`**, so there is no re-pin: `src/preached/artifacts.py` and `docs/DEPLOY.md` are back to the main values, and the shared `/cache` graph (also `3861025a`) matches. Through `scripts/export_onnx.py`, all 21 ambient cells (seed unset, 0-5 × dispatch default, avx2, avx512) exit 0 and write the pin. The raw 18-cell matrix agrees with the CTO's seeded exports. The graphs `aed7adba…` (avx2 + seed 0) and `3861025a…` are functionally identical. The decision record is `docs/adr/0001-onnx-export-determinism.md`.
+
+History: task 96 wrongly re-pinned to `aed7adba…` (seed 0) and attributed the difference to dispatch. The CTO's correction showed seed alone splits the pin from `aed7adba`, and that default dispatch changes bytes on its own. This task supersedes 96's pin and wording.
 
 ## 1. Cause: the matrix (hard requirement 1)
 
@@ -37,29 +39,33 @@ Why the avx512 cells cannot run: this CPU has no AVX512 (none of the `avx512*` f
 
 Reading the table: each (order, dispatch) pair has exactly one digest. Seed changes the digest at fixed dispatch, and dispatch changes it at fixed seed. So both variables matter, and with unset/ambient settings the result is a per-host, per-run lottery. `3861025a…` (the 2026-10-30 pin) is avx2 with the sliding-first order. `d99ba823…` (the CTO's "other host" digest) is default dispatch with the full-first order.
 
-### 1b. Through the script: one digest
+### 1b. Through the script: one digest, the pin
 
-`/tmp/onnxmatrix/script.sh` (not committed) runs the real `uv run --group bench python scripts/export_onnx.py` once per cell, into `/cache/w4-onnx-matrix/script-<cap>-<seed>`, with the cell's values as the **ambient** environment. Output: `/cache/w4-onnx-matrix/script.tsv` and per-cell logs.
+`/tmp/seed1m/cell.sh` (not committed) runs the real `uv run --group bench python scripts/export_onnx.py` once per cell into `/cache/w4-onnx-seed1/<cap>-<seed>` (a branch-specific cache; the shared `/cache/models` graph is never written), with the cell's values as the **ambient** environment. Output: `/cache/w4-onnx-seed1/script.tsv`.
 
-| ambient `ATEN_CPU_CAPABILITY` | ambient `PYTHONHASHSEED` 0 / 1 / 2 / 3 / 4 / 5 |
+| ambient `ATEN_CPU_CAPABILITY` | ambient `PYTHONHASHSEED` unset / 0 / 1 / 2 / 3 / 4 / 5 |
 | --- | --- |
-| default | `aed7adba…5b78` ×6, exit 0 |
-| avx2 | `aed7adba…5b78` ×6, exit 0 |
-| avx512 | `aed7adba…5b78` ×6, exit 0 |
+| default | `3861025a…8fa9` ×7, exit 0 |
+| avx2 | `3861025a…8fa9` ×7, exit 0 |
+| avx512 | `3861025a…8fa9` ×7, exit 0 |
 
-All 18 cells: exit 0, `fp32 sha256 matches the pin` in the log, fp32 `aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`, and manifest sha256 `b36f04e9b9c044f46e442b7ce2dfa0063c88addf9aa98f1d6ab2b55ae74c0638` in every cell. Because the manifest lists every file's digest, int8, tokenizer and pooling are identical too. The ambient avx512 cells run here because the script replaces the value with avx2 before torch is imported.
+All 21 cells: exit 0, `fp32 sha256 matches the pin`, fp32 `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`, and manifest sha256 `96f276e6b10d89cea0aa763e61f99af1b8e082353a8e3f1397908b0cf6f064fd` in every cell (so int8, tokenizer and pooling are identical too). The ambient avx512 cells run here because the script replaces the value with avx2 before torch is imported.
 
-## 2. Fix (hard requirements 2 and 4)
+**Reconciliation with the CTO's cells.** Raw avx2 + seed 1 → `3861025a` and avx2 + seed 0 → `aed7adba` (this host, §1a) match the CTO. Raw default dispatch → `d99ba823` (seed 0/3/4/5) or `44038d45` (seed 1/2) matches the CTO's "d99ba823 or 44038d45 by seed class". The CTO's AVX512 cells (seed 0 or 3 → `aed7adba`, seed 1 → `3861025a`) equal my avx2 cells for the same seeds; I cannot run raw AVX512 here (SIGILL), so those are the CTO's, not re-verified. **No disagreement.** The r1 claim that dispatch alone explained the bytes was wrong, and it is removed.
+
+**A bug found on the way.** My first re-exec guard also tested `sys.flags.hash_randomization`. That flag reads 1 under every seed except 0, so under seed 1 the script re-executed itself forever (the first matrix attempt hung, burning CPU, until I killed it). The guard now tests only `PYTHONHASHSEED == "1"`; a numeric seed wins over `-R` (checked: `PYTHONHASHSEED=1 python -R` iterates sliding first). `HashSeedReexecTests` covers it.
+
+## 2. Fix
 
 `scripts/export_onnx.py`, run as `__main__`:
 
-1. `_require_avx2()` refuses a host that is not `x86_64`/`amd64`, a CPU whose `/proc/cpuinfo` flags lack `avx2`, or an unreadable cpuinfo. The message is `export needs an x86-64 host with AVX2 …`, with exit code 1. Kept from 96.
-2. `_reexec_with_hashseed()` handles the hash seed. The seed cannot be set inside a running interpreter, so the script sets `PYTHONHASHSEED=0` (`EXPORT_HASHSEED`) in the environment and `os.execv`s itself. The new interpreter starts with the seed fixed. The re-exec happens before torch is imported (torch is imported only inside `main()`). It is skipped only when the seed is already `0` **and** `sys.flags.hash_randomization` is 0. That second condition is new in this task: `python -R` keeps hashing random even under `PYTHONHASHSEED=0`, and the restart drops interpreter flags.
-3. `ATEN_CPU_CAPABILITY=avx2` (`EXPORT_CPU_CAPABILITY`) is set at module top, before torch is imported, and overrides any ambient value. After import, `main()` refuses unless `torch.backends.cpu.get_cpu_capability() == "AVX2"`. Kept from 96.
-4. `_check_trace_order` refuses to trace unless `set(config.layer_types)` iterates `["full_attention", "sliding_attention"]` (sorted order).
+1. `_require_avx2()` refuses a host that is not `x86_64`/`amd64`, a CPU whose `/proc/cpuinfo` flags lack `avx2`, or an unreadable cpuinfo (exit 1, message names AVX2).
+2. `_reexec_with_hashseed()`: the seed cannot be set in a running interpreter, so the script sets `PYTHONHASHSEED=1` (`EXPORT_HASHSEED`) and `os.execv`s itself unless it is already `1`. This happens before torch is imported.
+3. `ATEN_CPU_CAPABILITY=avx2` is set at module top, before torch is imported, overriding any ambient value. `main()` refuses unless `get_cpu_capability() == "AVX2"`.
+4. `_check_trace_order` refuses unless `set(config.layer_types)` iterates `["sliding_attention", "full_attention"]` (seed 1 on CPython 3.12).
 5. `_check_pin` exits non-zero before writing a manifest if the fp32 graph is not the pin.
 
-`src/preached/artifacts.py` has one pin value, `FP32_ONNX_SHA256 = aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`, and the matrix (§1b) is the evidence for it. The value is the one 96 set. This task did not change it, because the matrix showed it is the only digest the script writes. Its comment now records the matrix. `docs/DEPLOY.md` §7 and its ONNX file table quoted the old `3861025a…`. Both now quote `aed7adba…`, so the branch has exactly one fp32 pin value anywhere (`grep -rn 3861025a` finds it only as history: the ADR, this report, the artifacts.py comment, and the dated W3 reports `W3-CPU`, `W3-RSS`, `W3-DEPLOY-PREP`).
+`src/preached/artifacts.py` keeps `FP32_ONNX_SHA256 = 3861025a…` (only comments and the missing-graph additions differ from main). `docs/DEPLOY.md` quotes the same value as main (the 96 edits to the two sha quotes are reverted).
 
 ## 3. Startup log and /healthz
 
@@ -74,29 +80,15 @@ All 18 cells: exit 0, `fp32 sha256 matches the pin` in the log, fp32 `aed7adbae7
 - `search_mode`: `"hybrid"` or `"bm25"`.
 - `search_mode_reason`: `null` when hybrid. When BM25, a code from `SEARCH_MODE_REASONS`: `onnx_graph_not_built`, `model_unavailable`, `stale_vectors`, `index_unreadable`, `bm25_only` (started with `--bm25-only`), or `fallback` for any other note. It is a code, never a path. A graph that is present but not the pin (for example an old `3861025a` export) is `model_unavailable`.
 
-## 4. Equivalence (hard requirement 5, re-measured)
+## 4. Equivalence of the two avx2 graphs (evidence kept from task 96)
 
-This was re-measured in this task, with fresh scripts. The old `/tmp/onnxtools` scripts are gone. `/tmp/onnxmatrix/equiv_one.py` runs once per graph, as a subprocess, and patches the code pin to that graph's own digest so the old graph loads. `/tmp/onnxmatrix/equiv_cmp.py` compares the two runs. Output: `/cache/w4-onnx-matrix/equiv.json`. Old graph: `3861025a…` in `/cache/models/granite-english-r2-onnx`. New graph: `aed7adba…`, the matrix's avx2 / seed 0 export by the script (`/cache/w4-onnx-matrix/script-avx2-0`). ORT CPU, 1 thread, `OnnxEmbedder.load(variant="fp32", batch_size=1)`.
+Because the pin is unchanged, nothing at runtime changes. For the record, the avx2 / seed 0 graph `aed7adba…` was compared with the pin `3861025a…` (old scripts, now gone; output `/cache/w4-onnx-matrix/equiv.json`; ORT CPU, 1 thread):
 
-- Header (ir version, opsets, producer) equal.
-- **Initializers: 134 / 134 byte-identical** (serialized `TensorProto` compared).
-- Nodes: 3009 each. **6 differ**: `/inner/rotary_emb/Constant_1`, `/inner/rotary_emb_1/Constant`, and `/inner/layers.{0,1}/attn/Unsqueeze_{2,3}`.
-- **ORT outputs: bitwise identical** (`tobytes()` equal), max abs diff 0.0. That covers all 93 `eval/questions.jsonl` queries (`encode_queries`) and 21 corpus chunks (`rowid % 419 = 1`, `encode_documents` with titles).
-- **Search**: `build_app(..., embed_backend="onnx", variant="fp32", ort_threads=1)` on `/cache/index/wesley.sqlite` (opened read-only), then `App.search(q, 10, "hybrid")` for all 93 questions with `took_ms` removed. Top-10 identical 93 / 93, with 0 empty result lists.
+- Header equal. **Initializers: 134 / 134 byte-identical.** Nodes: 3009 each, 6 differ (`rotary_emb/Constant_1`, `rotary_emb_1/Constant`, `layers.{0,1}/attn/Unsqueeze_{2,3}`).
+- **ORT outputs bitwise identical** (max abs diff 0.0) on all 93 `eval/questions.jsonl` queries and 21 corpus chunks.
+- `App.search(q, 10, "hybrid")` on `/cache/index/wesley.sqlite`: top-10 identical 93 / 93. Response, chunk-id and vector hashes were equal under both graphs (`f66c732275af497f`, `c397bf6f45d22114`, `7d11acdaaa1f1c20`, `29b07255a0733b1f`, `66b31d7885d2d20e`). The CTO's literal `20bf48af596a4d4d` / `73463e64b1ce508a` are not reproduced (harness not in the repo).
 
-Hashes (sha256, first 16 hex characters) under each graph:
-
-| Definition | old `3861025a` | new `aed7adba` |
-| --- | --- | --- |
-| responses, `json.dumps(sort_keys=True)` | `f66c732275af497f` | `f66c732275af497f` |
-| responses, sorted keys, compact separators | `c397bf6f45d22114` | `c397bf6f45d22114` |
-| top-10 chunk ids per query | `7d11acdaaa1f1c20` | `7d11acdaaa1f1c20` |
-| query vectors, float32 bytes | `29b07255a0733b1f` | `29b07255a0733b1f` |
-| query then document vectors, float32 bytes | `66b31d7885d2d20e` | `66b31d7885d2d20e` |
-
-**The CTO's `20bf48af596a4d4d` / `73463e64b1ce508a`.** I can re-measure that they are unchanged, but I cannot reproduce the literal values. The CTO's harness and hash definition are not in the repo, in `/cache`, or in git history (`git log --all -S20bf48af596a4d4d` finds only this branch's report). None of my five definitions produces those values. Under every definition I tried, the hash is the same for both graphs. This matches the bitwise-identical outputs, so any hash of the outputs is unchanged as well. To check the literal values, the CTO's harness needs to be run against `/cache/w4-onnx-matrix/script-avx2-0` (or committed).
-
-The new export's `int8` is not pinned, and the server never opens it.
+This evidence was not re-run in this task (the pin did not move); it is stated as measured in 96.
 
 ## 5. Tests (hard requirement 3)
 
@@ -108,23 +100,17 @@ The new export's `int8` is not pinned, and the server never opens it.
 | `HealthzSearchModeTests` (3) | `/healthz` `search_mode` / `search_mode_reason` for a missing graph, another load failure, `--bm25-only`, and hybrid. |
 | `Avx2GuardTests` (4) | Importing the script sets `ATEN_CPU_CAPABILITY=avx2` (over `default`) before torch is imported. Non-x86-64 hosts, cpuinfo without `avx2`, and a missing cpuinfo are refused. The script run as `__main__` on a faked `arm64` exits non-zero. |
 | `MutantGraphTests` (1) | One flipped mantissa bit, with a manifest rewritten to agree, is refused by `verify_manifest` and `OnnxEmbedder.load`. |
-| `TraceOrderTests` (2) | `PINNED_TRACE_ORDER` is sorted order. `EXPORT_HASHSEED` passes `_check_trace_order`, and seed 1 is refused. |
-| `HashSeedReexecTests` (3, **new**) | Runs `_reexec_with_hashseed()` in a subprocess with `os.execv` recorded. Ambient seed unset, `random`, 1, 2, 3, 4, 5: each restarts `sys.executable` on the script with `PYTHONHASHSEED=0`. Ambient `0`: no restart. `python -R` with seed 0: restarts. |
-| `ExportIsByteIdenticalTests` (1, **changed**) | Two real exports from **different ambient settings**. Run a uses `PYTHONHASHSEED=1`, `ATEN_CPU_CAPABILITY=default` (raw: `44038d45…`). Run b uses `PYTHONHASHSEED=3`, `ATEN_CPU_CAPABILITY=avx512` (raw: the other order; on this CPU raw avx512 would SIGILL). Both exit 0. The fp32 files are byte-identical (`filecmp`, not shallow) and equal the pin. The tokenizer equals its pin, both pass `verify_manifest` with pins, and the manifests are identical. It skips only when the Granite snapshot is absent from `PREACHED_CACHE`. Before, run b inherited the ambient dispatch level instead of setting one. |
+| `TraceOrderTests` (2) | `PINNED_TRACE_ORDER` is sliding first. `EXPORT_HASHSEED` (1) passes `_check_trace_order`, and seed 0 is refused. |
+| `HashSeedReexecTests` (3) | `_reexec_with_hashseed()` in a subprocess with `os.execv` recorded. Ambient seed unset, `random`, 0, 2, 3, 4, 5: each restarts `sys.executable` on the script with `PYTHONHASHSEED=1`. Ambient `1`: no restart, also under `-R`. |
+| `ExportIsByteIdenticalTests` (1) | Three real exports from different ambient settings: (a) seed unset, dispatch `default`; (b) seed 0, `avx2`; (c) seed 3, `avx512`. All exit 0, the fp32 files are byte-identical (`filecmp`, not shallow) and equal the pin `3861025a…`, tokenizer equals its pin, `verify_manifest` passes, manifests identical. Skips only when the Granite snapshot is absent from `PREACHED_CACHE`. |
 
 `PREACHED_CACHE=/cache uv run python -m unittest discover -s tests -p test_onnx_pin_repro.py -v`: see §7 for the full-suite run, which includes it.
 
 `tests/test_deploy_alerts.py` `CITED` is re-pinned (§7).
 
-## 6. Demo box and every existing export (action needed after merge)
+## 6. Existing exports and the demo box
 
-The `/cache/models/granite-english-r2-onnx/47ea…/` graph is still `3861025a…`. I did not replace it: main still pins `3861025a`, and replacing it before merge would turn main's server and tests BM25-only or red. **Once this PR merges, the runtime refuses that graph.** The server starts BM25 only, logs `embedding model unavailable` with `not the pinned digest`, and `/healthz` shows `search_mode: "bm25"`, `search_mode_reason: "model_unavailable"`. After merge, run on every box:
-
-```
-CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
-```
-
-This takes under a minute here once the HF snapshot is cached. Stored passage vectors need no rebuild (outputs are bitwise identical). Or copy `/cache/w4-onnx-avx2/final/47ea694b257b703fee9253d75c2b1f2985180498/` over it.
+The pin did not move, so **no re-export is needed anywhere**. Verified: `/cache/models/granite-english-r2-onnx/47ea…/model.fp32.onnx` hashes to `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`, and the full suite passes against it (§7). The 3 failures and 2 errors that 96 produced (§7 of the earlier report) came from the moved pin and are gone. The PR migration note is: no action after merge; a fresh clone runs `CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py` (x86-64 with AVX2) and gets the same bytes.
 
 ## 7. DEPLOY.md cites, merge, full suite, scope
 
@@ -132,57 +118,30 @@ This takes under a minute here once the HF snapshot is cached. Stored passage ve
 
 This PR changes `app/server.py` (+23 lines: the `ArtifactMissing` import, the `MISSING_GRAPH_*` and `SEARCH_MODE_REASONS` constants, the `except ArtifactMissing` branch, and the two `/healthz` fields). So every `app/server.py` cite in `docs/DEPLOY.md` and in `tests/test_deploy_alerts.py` `CITED` is re-pinned in this PR.
 
-- **Main moved mid-task.** On the first pass, `origin/main` was `b224281`, and its 52 `app/server.py` cites were stale by a uniform +3 (the 52 known failures). I re-pinned them from cite+3. Before push, `git fetch && git merge origin/main` brought in #73 (R4-COND, `0559b02`), which re-pins those cites to main's `server.py` and conflicts with mine in both files. Resolution, in merge commit `cbe962b`: I took main's two files, then re-ran the re-pin from main's now-correct cites (offset 0), and re-applied the fp32 sha quotes.
-- **Method.** `/tmp/onnxmatrix/cites/repin.py` (not committed) takes each cite on `origin/main`'s `app/server.py` and follows it through a `difflib` line alignment onto this branch's `app/server.py`. It asserts the needle is on the target line. DEPLOY.md is rewritten using the runbook parser's own rules (`runbook_cites`: per row, list item and paragraph, a bare `:n` belongs to the last named file), and only cites it attributes to `app/server.py` change. `src/preached/library.py` and `scripts/build-bundle.sh` cites are untouched. A word diff against `origin/main` shows that only `app/server.py` cite numbers and the two fp32 sha quotes changed in DEPLOY.md, and only cite numbers in `CITED`.
-- **Verified by reading the file.** Each of the 63 `CITED` entries' lines is read from the working tree, and its needle is found: 0 misses. `test_deploy_alerts`: 7 tests OK. That includes `test_every_cited_file_line_holds_its_string` (reads each file) and `test_the_runbook_cites_exactly_the_pinned_lines` (DEPLOY.md set == `CITED` set). Examples (main → branch): `REQUEST_TIMEOUT_S` 234→235, `UNAVAILABLE_LOG` 285→286, `INDEX_STATUS_LOG` 286→291, D2's `logging.exception(UNAVAILABLE_LOG)` 842→861, the stop path 3203-3221→3226-3244, `stopped cleanly` 3219→3242.
-- DEPLOY.md's two fp32 sha quotes (§7 go-live, ONNX file table) now give `aed7adba…`.
+- **Cites.** This task did not touch `app/server.py` (the cites re-pinned in 96 stand: main `0559b02`/`b2c7b77`, merged and green). Standing rule 4 holds: the full suite shows zero `test_every_cited_file_line_holds_its_string` failures. `docs/DEPLOY.md` differs from main only in the 96 cite numbers; its two fp32 sha quotes are back to `3861025a…`.
 
 ### Merge, lock, suite
 
-`git fetch origin && git merge origin/main`: merge commit `cbe962b` (main `0559b02`), with conflicts resolved as above. `uv lock --check`: OK (`Resolved 79 packages`). No new dependencies.
+`git fetch origin && git merge origin/main`: already up to date (main is `b2c7b77`, already merged by 96). `uv lock --check`: OK (`Resolved 79 packages`). No new dependencies.
 
-Full suite **after the merge**, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests` (log `/cache/w4-onnx-matrix/suite3.log`):
+Full suite, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests` against the shared `/cache` graph (log `/cache/w4-onnx-seed1/suite.log`):
 
-`Ran 1023 tests in 249.358s`, **`FAILED (failures=3, errors=2)`**, 0 skipped. The two-export test ran and passed. There are no stale-cite failures: main is green on cites after #73, and this PR keeps them green. The 5 failures are all the box's own graph, which is still the old `3861025a…` (§6). Each message is `not the pinned digest`:
-
-- `test_embed_backend.RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins` (fail)
-- `test_embed_backend.RealOnnxTests.test_fp32_directory_without_int8_loads` (error)
-- `test_embed_backend.RealOnnxTests.test_fp32_query_is_unit_normalized` (error)
-- `test_embed_backend.ImportGuardTests.test_youtube_embed_path_does_not_import_torch` (fail)
-- `test_shutdown.LoadedSigtermTests.test_sigterm_under_hybrid_load_exits_zero_and_cleans_up` (fail: the server fell back to BM25)
-
-The same command with `PREACHED_ONNX_DIR=/cache/w4-onnx-avx2/final`, a complete export by this branch (log `suite4.log`): `Ran 1023 tests in 260.085s`, **`OK`**, 0 skipped. So the 5 clear once the box is re-exported after merge. The pre-merge runs gave the same counts (`suite1.log`: 3 failures / 2 errors; `suite2.log`: OK; 1023 tests each).
-
-**Second merge.** While I pushed, main gained #70 (`b2c7b77`: docs only, `AGENTS.md`, `docs/DEPLOY.md` text, a report). It merged cleanly in `2225151`, and that merge was pushed before I re-ran anything, so I re-ran on it. `test_deploy_alerts`: OK. Full suite (`suite5.log`): `Ran 1023 tests in 257.976s`, `FAILED (failures=3, errors=2)`, the same 5 box-graph tests. With `PREACHED_ONNX_DIR=/cache/w4-onnx-avx2/final` (`suite6.log`): `Ran 1023 tests in 256.846s`, `OK`. `uv lock --check`: OK.
+**`Ran 1023 tests in 266.212s`, `OK`.** Zero failures, zero errors, zero skipped. The three-export test ran and passed. The 3 failures and 2 errors from 96 are gone.
 
 ## 8. Diff scope
 
-`git diff --stat origin/main..HEAD` at `cbe962b`, before this report's final edits. It is unchanged in file list after the #70 merge; only this report grew:
-
-```
- app/server.py                            |  23 ++
- docs/DEPLOY.md                           | 116 ++++----
- docs/adr/0001-onnx-export-determinism.md |  62 ++++
- reports/W4-ONNX-PIN-REPRO.md             | 178 ++++++++++++
- scripts/export_onnx.py                   |  89 +++++-
- src/preached/artifacts.py                |  23 +-
- tests/test_deploy_alerts.py              |  92 +++---
- tests/test_embed_backend.py              |   4 +-
- tests/test_onnx_pin_repro.py             | 477 +++++++++++++++++++++++++++++++
- 9 files changed, 952 insertions(+), 112 deletions(-)
-```
+@@STAT@@
 
 The files in scope: the export script, `artifacts.py`, server/healthz, their tests, the ADR, this report, and the standing-rule-4 cite re-pin (`docs/DEPLOY.md`, `tests/test_deploy_alerts.py`). No README.md and no keep-alive code.
 
 ## Open issues
 
-- **AVX512 is unverified here.** This CPU cannot run it (SIGILL). The script makes it moot for export, since it always dispatches avx2, but the raw AVX512 digest is the CTO's measurement alone.
-- **The CTO's literal search hashes are not reproduced** (§4). The equivalence is re-measured under five definitions, but `20bf48af596a4d4d` / `73463e64b1ce508a` need the CTO's harness.
-- **Every existing export must be redone after merge** (§6), including this box's `/cache/models/granite-english-r2-onnx`. Until then that box's server is BM25 only, and the 5 tests in §7 fail there.
+- **Raw AVX512 is unverified here.** This CPU cannot run it (SIGILL). The script makes it moot for export, since it always dispatches avx2; the raw AVX512 cells are the CTO's measurement alone.
+- **The CTO's literal search hashes are not reproduced** (§4), and the equivalence in §4 was measured in 96, not re-run.
 - Any later PR that changes `app/server.py` above a cited line must re-pin again. `test_deploy_alerts` catches a miss.
 - The runbook still has no row for the `ONNX GRAPH NOT BUILT` line or the new `/healthz` fields. D2 still fires, because its line is emitted first.
-- The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 0 differently, `_check_trace_order` stops the export with a message. The lasting fix is upstream `sorted(set(...))`.
-- Scratch files are safe to delete: `/cache/w4-onnx-matrix/` (about 0.6 GB: one kept fp32 graph, logs, matrix data), `/cache/w4-onnx-avx2/` (about 0.75 GB) and `/cache/w4-onnx-repro/` (95, about 1.5 GB).
+- The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 1 differently, `_check_trace_order` stops the export with a message. The lasting fix is upstream `sorted(set(...))`.
+- Scratch files are safe to delete: `/cache/w4-onnx-matrix/` (about 0.6 GB), `/cache/w4-onnx-avx2/` (about 0.75 GB), `/cache/w4-onnx-repro/` (95, about 1.5 GB) and `/cache/w4-onnx-seed1/` (this task: one kept pin graph, logs, `script.tsv`).
 
 ## Dependencies added
 
