@@ -1,6 +1,6 @@
 # W4-README-QUICKSTART: a judge can follow the README from a fresh cache
 
-Fresh-clone QA findings 1 and 3–18 (`reports/W4-FRESH-CLONE-QA.md` on `qa/w4-fresh-clone`, PR #68, as corrected for CTO MF1/MF2). Branch `docs/w4-readme-quickstart`. Section 9 is the re-sync with #71 at `1907d1f`. The sections above that are the first walkthrough, at `59b44fb`.
+Fresh-clone QA findings 1 and 3–18 (`reports/W4-FRESH-CLONE-QA.md` on `qa/w4-fresh-clone`, PR #68, as corrected for CTO MF1/MF2). Branch `docs/w4-readme-quickstart`. Section 9 is the re-sync with #71 at `1907d1f`. The sections above that are the first walkthrough, at `59b44fb`. Section 10 is the CTO review of this PR, on #71's final head `27ed9cb`.
 
 **Base.** `origin/main` is `b224281` and does not contain the ONNX PR. This branch starts at `origin/fix/w4-onnx-pin-repro` (`59b44fb`), which does contain `ATEN_CPU_CAPABILITY` in `scripts/export_onnx.py`. `git merge origin/main` returned **Already up to date**: `origin/main` is an ancestor, so there is no merge commit. **This PR must merge after the ONNX PR.**
 
@@ -69,7 +69,7 @@ Fetch wrote 141 sermons, 652145 words. `corpus/catalog.json` is not modified in 
 
 The bench installed 49 packages, embedded Granite on CUDA in 65.9 s (127.2 chunks/s, VRAM peak 2063 MiB), and wrote `eval/results/2026-10-31.json` and `.md`. Those two files were deleted and are not in the commit. Its headline included `hybrid_rrf recall@5=0.285 mrr@10=0.219 ndcg@10=0.246`. Those numbers are not in the README. This walkthrough did not pass `--dedupe`.
 
-`uv sync --group bench` was `Resolved 79 packages` / `Checked 70 packages` (already installed). The export read the snapshot at `/cache/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b257b703fee9253d75c2b1f2985180498` and printed `fp32 sha256 matches the pin aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`. The later `uv sync` printed `Uninstalled 49 packages`, including torch.
+`uv sync --group bench` was `Resolved 79 packages` / `Checked 70 packages` (already installed). The export read the snapshot at `/cache/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b257b703fee9253d75c2b1f2985180498` and printed a `fp32 sha256 matches the pin` line for a digest that is not `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The later `uv sync` printed `Uninstalled 49 packages`, including torch.
 
 The shared graph's sha256 was `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` before the walkthrough and the same value after it.
 
@@ -113,7 +113,7 @@ PREACHED_LISTENING http://127.0.0.1:8000
 
 `GET /healthz` was `fallback: true`, `dense: false`, `search_mode: bm25`, `search_mode_reason: onnx_graph_not_built`, `model: null`, `chunks: 8383`. The money query was not run again. `search/query.py` prints `error:` plus the `ArtifactMissing` text and exits 1; that string is the same missing-manifest sentence. A graph that is present and is not the pin raises `ONNX sha256 for model.fp32.onnx is not the pinned digest` (seen on the shared old graph in the exact suite).
 
-With the fresh graph, `/healthz` was `fallback: false`, `dense: true`, `search_mode: hybrid`, `search_mode_reason: null`, `backend: onnx`, `model: granite-english-r2`, `model_sha256: aed7adba…`. The log line was `INFO embed backend=onnx variant=fp32 threads=1`. `--bm25-only` logged `INFO BM25 only; the embedding model was not loaded` and `/healthz` was `search_mode: bm25`, `search_mode_reason: bm25_only`, `fallback: false`, `model: null`.
+With the fresh graph, `/healthz` was `fallback: false`, `dense: true`, `search_mode: hybrid`, `search_mode_reason: null`, `backend: onnx`, `model: granite-english-r2`, and `model_sha256` was not the pin `3861025a…`. The log line was `INFO embed backend=onnx variant=fp32 threads=1`. `--bm25-only` logged `INFO BM25 only; the embedding model was not loaded` and `/healthz` was `search_mode: bm25`, `search_mode_reason: bm25_only`, `fallback: false`, `model: null`.
 
 ### Align, church shape, quoted slugs
 
@@ -139,8 +139,8 @@ The negative assertion was not reached. After the regex change, `DisplayExcerptT
 
 Exact command (`PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache`, `PREACHED_ONNX_DIR` unset, so the shared graph `3861025a…`): `Ran 1021 tests in 255.196s`, `FAILED (failures=55, errors=2)`, no skip line. 1021 is the previous 1020 plus `test_paragraph_number_after_a_verse_reference_is_hidden`. The new test is not among the failures.
 
-- **52** subtests of `test_deploy_alerts.RunbookTests.test_every_cited_file_line_holds_its_string`. Stale `docs/DEPLOY.md` cites. `docs/DEPLOY.md` was not edited.
-- **3 failures and 2 errors** open the shared graph and refuse it (`ONNX sha256 for model.fp32.onnx is not the pinned digest`; the pin test asserts `3861025a… != aed7adba…`):
+- **52** subtests of `test_deploy_alerts.RunbookTests.test_every_cited_file_line_holds_its_string`. These came from #71 at `59b44fb`. They are gone at `4d6ae86` (§10). This walkthrough started at `59b44fb` and did not edit `docs/DEPLOY.md`.
+- **3 failures and 2 errors** open the shared graph and refuse it (`ONNX sha256 for model.fp32.onnx is not the pinned digest`; the pin at `59b44fb` was not the shared graph's `3861025a…`):
   - `test_embed_backend.RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins`
   - `test_fp32_directory_without_int8_loads` (error)
   - `test_fp32_query_is_unit_normalized` (error)
@@ -230,11 +230,11 @@ The seven extra paths versus `origin/main` are the ONNX PR (`59b44fb`): `app/ser
 
 ## 7. Open issues
 
-Section 9 closes the pin, the shared-graph failures, and the cite failures. The two bullets under them stood at the first walkthrough.
+Section 9 closes the pin and the shared-graph failures. The 52 cite failures are not closed here: they came from #71 at `59b44fb` and are gone at `4d6ae86` (§10). The bullets under them stood at the first walkthrough.
 
 - Finding 2 is deferred, as the table says. Until the ONNX PR has merged, a PR of this branch into `main` would also carry that PR's diff.
 - The shared graph on this machine is still the old pin. The exact suite stays red on those five tests until that directory is re-exported. This task did not re-export it.
-- The 52 `docs/DEPLOY.md` cite failures are unchanged. That file is out of scope.
+- The 52 `docs/DEPLOY.md` cite failures came from #71 at `59b44fb`. They are gone at `4d6ae86`. They are not a failure of this README diff, and they were not still open when §9 ran.
 - A fresh cache has no Wesley transcripts, so align cannot succeed from the README alone. The audio ingest is `reports/W1-C.md`.
 - `@channel` is a shape. It exits 1. A judge needs a real channel URL and a privacy config they have reviewed.
 
@@ -274,7 +274,7 @@ Host: x86-64, and `/proc/cpuinfo` flags include `avx2`.
 | query hybrid | 0 | 1.381 | once |
 | query bm25 | 0 | 0.113 | once, `--side` |
 
-The export downloaded the snapshot into the fresh cache and printed `snapshot /cache/w4-readme-resync/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b257b703fee9253d75c2b1f2985180498`, then `fp32 sha256 matches the pin 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The first walkthrough's export wrote `aed7adba…` because that script did not fix the hash seed. This graph is the pin, so the money query was re-run once per mode and recorded as run.
+The export downloaded the snapshot into the fresh cache and printed `snapshot /cache/w4-readme-resync/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b257b703fee9253d75c2b1f2985180498`, then `fp32 sha256 matches the pin 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The first walkthrough's export did not write that pin, because that script did not fix the hash seed. This graph is the pin, so the money query was re-run once per mode and recorded as run.
 
 Hybrid, text-only (`start_s=None`, play `n/a`), no abstain line. Same rows as §3:
 
@@ -304,7 +304,7 @@ The bench headline was again `hybrid_rrf recall@5=0.285 mrr@10=0.219 ndcg@10=0.2
 PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests
 ```
 
-Exit 0. Wall 271.101 s. `Ran 1027 tests in 270.453s`, `OK`, no skip line. The 52 cite failures and the five pin failures from §3 are not in this run.
+Exit 0. Wall 271.101 s. `Ran 1027 tests in 270.453s`, `OK`, no skip line. The 52 cite failures and the five pin failures from §3 are not in this run. The cite failures had already gone at `4d6ae86` on #71; this re-sync is later than that commit. The five pin failures went away because the pin stayed `3861025a…` and the shared graph matches it.
 
 `uv lock --check`: exit 0, wall 0.008 s, `Resolved 79 packages in 0.49ms`.
 
@@ -318,3 +318,30 @@ Exit 0. Wall 271.101 s. `Ran 1027 tests in 270.453s`, `OK`, no skip line. The 52
  tests/test_api_path.py          |   9 ++
  5 files changed, 530 insertions(+), 20 deletions(-)
 ```
+
+## 10. CTO review, on #71 at 27ed9cb
+
+**Precondition.** After `git fetch`, `origin/fix/w4-onnx-pin-repro` is `27ed9cb`. `artifacts.onnx_root()` is `PREACHED_ONNX_DIR` when that variable is set, otherwise `$PREACHED_CACHE/models/granite-english-r2-onnx`, otherwise `/cache/models/granite-english-r2-onnx`. `EXPORT_COMMAND` in `src/preached/artifacts.py` is `uv run --group bench python scripts/export_onnx.py`, with no `CUDA_VISIBLE_DEVICES`. Not blocked.
+
+**Merges.** Merge commits, no rebase and no force.
+
+- `b662a0b` merges `origin/fix/w4-onnx-pin-repro` (`27ed9cb`). Clean (`ort`). The files that merge brings are `docs/DEPLOY.md`, `docs/adr/0001-onnx-export-determinism.md`, `reports/W4-ONNX-PIN-REPRO.md`, `scripts/export_onnx.py`, `src/preached/artifacts.py`, `tests/test_deploy_alerts.py`, and `tests/test_onnx_pin_repro.py`.
+- `git merge origin/main` (`abdada3`) was already up to date. No second merge commit.
+
+**README.** One knob, `PREACHED_CACHE`. The corpus, the SQLite index, the Hugging Face files, and the ONNX graph all live under it. The README does not name `PREACHED_ONNX_DIR`, and it does not describe an `HF_HOME` or `/cache/huggingface` caveat. The export line is `uv run --group bench python scripts/export_onnx.py`. It does not carry `CUDA_VISIBLE_DEVICES=""`. The missing-graph sentence quotes that same command, which is `EXPORT_COMMAND` at this head. The pin is `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The script forces `ATEN_CPU_CAPABILITY=avx2` before torch and re-executes under `PYTHONHASHSEED=1`. An x86-64 host with AVX2 is required. A GPU is recommended for the bench. A CPU-only bench takes about 9 minutes (541.9 s measured on 8 cores). The README does not say the bench needs a GPU. Until the bench fail-closed change lands, a judge checks the bench output for an `error:` line: a model that fails to load currently falls back to BM25-only and the bench exits 0. The pre-registered sentence is unchanged, including U+2212 in `−0.034`. No other retrieval figure was added.
+
+**Cites.** The 52 `test_every_cited_file_line_holds_its_string` failures in §3 came from #71 at `59b44fb`. They are gone at `4d6ae86`. §3's walkthrough started on `59b44fb`, where #71's own report counted those 52 subtests. #71's report at `4d6ae86` records `Ran 1023 tests in 266.212s`, `OK`, and zero `test_every_cited_file_line_holds_its_string` failures. §7's "unchanged / out of scope" and §9's "this section closes the cite failures" were the wrong attribution. §9's re-run is later than `4d6ae86`, so those 52 were already gone before that re-sync.
+
+**Finding 17.** Two tests in `tests/test_api_path.py`. A Roman numeral after a verse, from the corpus: `Rom. 8:16 I. 1. None who believe` becomes `Rom. 8:16 None who believe`. `Matt. 5:13-16 1. The beauty of holiness` becomes `Matt. 5:13-16 The beauty of holiness`. The regex already did both. `src/preached/search.py` is not edited in this round.
+
+**Suite.** From this worktree. `HF_HOME` was unset (the shell had it at `/cache/huggingface`). `PREACHED_ONNX_DIR` was unset. The shared graph stayed `3861025a…`.
+
+```bash
+PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests
+```
+
+Exit 0. `Ran 1036 tests in 269.285s`, `OK`, no skip line. Zero `test_every_cited_file_line_holds_its_string` failures.
+
+**Cache.** A listing of `/cache` (path, size, mtime) had 132547 entries before that run and 132563 after. No file under the ONNX graph directory, the Hugging Face hub, or the SQLite index files themselves changed size or mtime. The fp32 graph sha256 is still `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. What moved: `wesley.sqlite-shm` and `cc-speech.sqlite-shm` mtimes (sizes unchanged), the `/cache/models` directory mtime only, uv's editable metadata for the `/work/preached` install, deno's analysis-cache wal, an empty `/cache/demo-kill` mtime, and Claude MCP logs under `/cache/xdg` from another process.
+
+**Diff stat.** Filled in the following commit, from `git diff --stat origin/fix/w4-onnx-pin-repro...HEAD` and `git diff --stat origin/fix/w4-onnx-pin-repro..HEAD`.

@@ -4,7 +4,7 @@ Search a sermon archive and return the preacher's own words. This repo builds th
 
 You need uv (the build pin is `uv_build>=0.13.6,<0.14`), Python `>=3.12,<3.14`, a network connection, and disk for the corpus, the index, and the model weights. Importing audio also needs `ffmpeg`.
 
-`PREACHED_CACHE` (default `/cache`) is where the corpus and the SQLite index go. Create that directory before the first command and make sure it is writable. If you cannot write `/cache`, point `PREACHED_CACHE` at a directory you can. When `HF_HOME` is unset, the code sets it to `$PREACHED_CACHE/huggingface`.
+`PREACHED_CACHE` (default `/cache`) is the one cache knob. The corpus, the SQLite index, the Hugging Face files, and the ONNX graph all live under it. Create that directory before the first command and make sure it is writable. If you cannot write `/cache`, point `PREACHED_CACHE` at a directory you can.
 
 The steps below are text-only. `corpus/chunk_sermons.py` leaves `start_s` empty, so every passage says that audio timing is still coming, links to the CCEL text, and has play `n/a`. Playback is a later step. It is written after the corpus commands, and it needs transcripts this quickstart does not build.
 
@@ -17,7 +17,7 @@ uv run --group bench search/bench.py --models granite-english-r2
 
 `eval/validate.py` checks every graded quote against every chunk. It prints nothing for about two minutes, then one JSON line. `corpus/fetch_wesley.py` rewrites `corpus/catalog.json` in the clone. If the CCEL text no longer matches that catalog, the fetch stops until you run it again with `--accept-new-text`, after you have re-checked the eval quotes. The bench writes a dated `.json` and `.md` under `eval/results/` in the clone. The catalog and those result files are local outputs. Do not commit them.
 
-The bench line embeds IBM Granite English R2 only. It needs network and disk for the weights, and a GPU. On a GPU it takes a few minutes; CPU is much slower, and a cold weight download is slower still. The same command without `--models` downloads the three enabled models and wants a GPU. How Granite was chosen is in `reports/W1-B.md`. Labeling notes are in `eval/README.md`.
+The bench line embeds IBM Granite English R2 only. It needs network and disk for the weights. A GPU is recommended. On a GPU it takes a few minutes. A CPU-only bench takes about 9 minutes (541.9 s measured on 8 cores), and a cold weight download is slower still. The same command without `--models` downloads the three enabled models; a GPU is recommended for that run too. Until the bench fail-closed change lands, check the bench output for an `error:` line. A model that fails to load currently falls back to BM25-only and the bench exits 0. How Granite was chosen is in `reports/W1-B.md`. Labeling notes are in `eval/README.md`.
 
 Hybrid search does not download an ONNX graph. Build it with the bench group. The export then checks the file against the pin `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` in `src/preached/artifacts.py`:
 
@@ -26,13 +26,13 @@ uv sync --group bench
 uv run --group bench python scripts/export_onnx.py
 ```
 
-Call `scripts/export_onnx.py` as it is. Do not set `ATEN_CPU_CAPABILITY`, `PYTHONHASHSEED`, or `CUDA_VISIBLE_DEVICES` on the command. The script sets `ATEN_CPU_CAPABILITY=avx2` before it imports torch, re-executes itself under `PYTHONHASHSEED=1`, and sets `CUDA_VISIBLE_DEVICES` to empty. It needs an x86-64 host with AVX2. Any other host exits non-zero and says so. An `HF_HOME` already set in the environment is kept. When `HF_HOME` is unset, the export sets it to `$PREACHED_CACHE/huggingface`, and to `/cache/huggingface` only when `PREACHED_CACHE` is unset. Before writing, it deletes the revision directory under `PREACHED_ONNX_DIR` (default `/cache/models/granite-english-r2-onnx/<revision>/`). When the graph matches the pin, it prints `fp32 sha256 matches the pin` and that digest, then writes `manifest.json`. When it does not match, the export exits non-zero and writes no manifest.
+Call `scripts/export_onnx.py` as it is. The script forces `ATEN_CPU_CAPABILITY=avx2` before it imports torch and re-executes itself under `PYTHONHASHSEED=1`. An x86-64 host with AVX2 is required. Any other host exits non-zero and says so. The ONNX graph is written under the same `PREACHED_CACHE` knob, at `$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/`. Before writing, the export deletes that revision directory and rewrites it. When the graph matches the pin, it prints `fp32 sha256 matches the pin` and that digest, then writes `manifest.json`. When it does not match, the export exits non-zero and writes no manifest.
 
 ```bash
 uv run search/query.py "how should a Christian use money" --mode hybrid -k 5
 ```
 
-If the graph was never built, that query exits 1 and prints `error: missing ONNX manifest at <path>; build it with: CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py`. That sentence is what the loader prints. The script sets `CUDA_VISIBLE_DEVICES` itself, so the command in the block above has no prefix. The server still starts and prints `PREACHED_LISTENING http://127.0.0.1:8000`. Its log, in order, is `ERROR embedding model unavailable; serving BM25 only`, then `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only.` and the same missing-manifest sentence, then `WARNING The search model has not been built; results are BM25 only.` `GET /healthz` then has `"fallback": true`, `"dense": false`, `"search_mode": "bm25"`, and `"search_mode_reason": "onnx_graph_not_built"`. A graph that is present but is not the pin is a different refusal: `error: ONNX sha256 for model.fp32.onnx is not the pinned digest`.
+If the graph was never built, that query exits 1 and prints `error: missing ONNX manifest at <path>; build it with: uv run --group bench python scripts/export_onnx.py`. That sentence is what the loader prints. The server still starts and prints `PREACHED_LISTENING http://127.0.0.1:8000`. Its log, in order, is `ERROR embedding model unavailable; serving BM25 only`, then `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only.` and the same missing-manifest sentence, then `WARNING The search model has not been built; results are BM25 only.` `GET /healthz` then has `"fallback": true`, `"dense": false`, `"search_mode": "bm25"`, and `"search_mode_reason": "onnx_graph_not_built"`. A graph that is present but is not the pin is a different refusal: `error: ONNX sha256 for model.fp32.onnx is not the pinned digest`.
 
 The page is a stdlib server. From the clone:
 
