@@ -98,16 +98,32 @@ def migrate(connection: sqlite3.Connection) -> sqlite3.Connection:
     return connection
 
 
+class UnsafeSidecar(ValueError):
+    """A -wal, -shm or -journal file next to the index is unsafe (``library._sidecar_problem``)."""
+
+
 def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -> sqlite3.Connection:
     """Open an existing index without creating or writing it.
 
     ``mode=ro`` plus ``query_only`` so the web server cannot migrate the
     file out from under the ingest job. Missing audio columns stay missing;
-    callers read them with ``row_value``.
+    callers read them with ``row_value``. Before the connect, the sidecars
+    are checked by name (``library._sidecar_problem``: regular file, not a
+    symlink, one link, not a classic file); an unsafe one raises
+    ``UnsafeSidecar`` and nothing is opened. That check is by name, so a
+    link planted between it and the first read is not caught.
     """
     index_path = path or INDEX_PATH
     if not index_path.is_file():
         raise FileNotFoundError(f"missing index {index_path}")
+    # SQLite opens -wal/-shm/-journal by name and writes the shm index even
+    # in mode=ro, so a sidecar hardlinked to wesley.sqlite would be written.
+    # Imported here: library imports this module.
+    from preached.library import _sidecar_problem
+
+    problem = _sidecar_problem(index_path)
+    if problem is not None:
+        raise UnsafeSidecar(f"error: {index_path} {problem}; it is not opened")
     uri = index_path.resolve().as_uri() + "?mode=ro"
     connection = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread)
     connection.row_factory = sqlite3.Row
