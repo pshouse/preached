@@ -7,7 +7,7 @@ Hard limit is 5:00 (BRIEF.md). This plan totals **4:40**, leaving 20 s of slack.
 - Use only the public-domain Wesley library on screen. No Gaston Community Church audio, titles or transcripts. No real names of members anywhere.
 - Every result shown is the preacher's own words. Never imply the app wrote an answer.
 
-All results below were produced by running the real code on `main` (`ad78a75`; every query below was re-run live on it) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
+All results below were produced by running the real code on `main` (`a40706b`; every query below was re-run live on it) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
 
 ## Shots
 
@@ -74,7 +74,7 @@ All results below were produced by running the real code on `main` (`ad78a75`; e
 
 Do this the day before and again right before recording.
 
-- [ ] Branch: `main` at or after `ad78a75`; `git status` clean.
+- [ ] Branch: `main` at or after `a40706b`; `git status` clean.
 - [ ] **Index:** `/cache/index/wesley.sqlite` (default; do not use `wesley-onnx-*.sqlite` copies or `cc-speech.sqlite`). `curl http://HOST:PORT/healthz` must show `"chunks": 8383`, `"index_version": "198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2"` (Patrick's `/cache` build; update if the index is rebuilt), `"backend": "onnx"`, `"fallback": false`, `"church": null`. If `fallback` is true the server is on BM25 only and the results above will differ.
 - [ ] **Start the server** (loopback, from the repo): `uv run app/server.py` (default 127.0.0.1:8000). For the Tailscale URL, follow `docs/DEPLOY.md` ("Bind `PREACHED_HOST=127.0.0.1`... `tailscale serve` to that loopback port, add the tailscale hostname to `PREACHED_HOSTS`"). **URL over Tailscale:** `http://<this machine's tailnet name>:PORT` (the actual name is not recorded anywhere in the repo; fill in: ______ ; Patrick's placeholder). Open it once from the recording browser and run one search before hitting record. A tailnet-only demo exists; the public URL is Patrick's decision.
 - [ ] Do not record the public Sprite URL; there is no public exposure (`docs/DEPLOY.md`, "Going public").

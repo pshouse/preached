@@ -64,3 +64,8 @@ Merged `origin/main` (`ad78a75`, includes #54 `b93e25b` and #60) into this branc
 - **Item 7:** Tailscale fill-in at DEMO-SCRIPT:79 left blank; no URL, tailnet name or IP written.
 - **Optional S1:** a bare `Worry` query is NOT `weak` on `ad78a75`: it returns level `none`, `abstain: true` (consistent with W4-DEMO-DRYRUN.md:84). The `Worry` button sends "What did Wesley say about worry?", which is `weak` (top On Riches 1110.29). DEMO-SCRIPT:38 describes the button and is correct, so it is unchanged; flagging the difference.
 - The #52 S1 to S4 text and the citable sentence are untouched.
+
+## Addendum (post-#63, task 93)
+
+- **#61 N1, row 13 cite:** row 13 above names `reports/W3-FUSION-PREREG.md` as the backing for the pre-registered sentence. That was the cite at the time. The cite now used in `docs/SUBMISSION-DRAFT.md:33` is `reports/W3-CONFIRMATORY.md`, which holds the numbers in the sentence (pooled hit@10 51 vs 50 of 58, paired difference +0.017, 95% CI −0.034 to +0.086; lines 7, 84, 96, 108). `W3-FUSION-PREREG.md` is the pre-registration (rule and grid), not the result. Row 13 is left as written.
+- **#61 N2:** this report already says the final run was on `ad78a75` (see "Corrections", line 61). Nothing added. The docs have since moved to `a40706b`; see `reports/W4-SUBMIT-POST63.md`.
