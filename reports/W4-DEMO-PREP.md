@@ -52,7 +52,7 @@ Merged `origin/main` (`efdf8ab`) into the branch (merge commit). Docs only.
 | Item | Change |
 | --- | --- |
 | Must-fix 1 | Kept the retrieval row; added a caveat in the draft's claims table and the demo script's "Things not to say": headline mostly measures title lookup; plain-language nDCG@10 0.028, R@5 0.040 (`EVAL-DELEAK.md:7`); blind questions 3 of 28, 0.11 (`EVAL-GRADE.md:20`); demo works best in the preacher's own vocabulary or by topic. Caveat text is 62 words. Row also notes 0.614 comes from the bench script with dedupe, not the web page. |
-| Must-fix 2 | RSS now 683 MiB (`W3-RSS.md`), measured 722.7 MiB at start / about 728 MiB after queries on `efdf8ab` (figures as given in the review; not independently re-measured). Tests 693 -> 729 (re-run: OK). References 180a0a4 -> efdf8ab. |
+| Must-fix 2 | RSS now 683 MiB (`W3-RSS.md`), measured 722.7 MiB at start / about 728 MiB after queries on `efdf8ab` (figures as given in the review; not independently re-measured). Tests 693 -> 729 on `efdf8ab`, now 738 on `cd3ad8f` (re-run: OK). References 180a0a4 -> efdf8ab. |
 | Must-fix 3 | Anchoring citation -> `W1-C.md:190`; 8,383 chunks -> `W1-C.md:192` and `W1-B.md`. The 0.42 s / 0.76 s figures are dropped (no measurement data in the repo). |
 | Must-fix 4 | Shot 5 narration: "a small synthetic test set written by an AI". |
 | Must-fix 5 | Description sentence replaced with the suggested wording. |
