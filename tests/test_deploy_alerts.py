@@ -25,20 +25,18 @@ ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "docs" / "DEPLOY.md"
 
 # The server logs "%(levelname)s %(message)s"; assertLogs adds ":root:".
-WRITER_LOCK_AT_START = (
-    "church side refused: the church file is locked by a writer (database is locked); it is not opened"
-)
+WRITER_LOCK_AT_START = "the church file is locked by a writer (database is locked)"
 SEARCH_FAILED = "church search failed; that side is empty"
-SEARCHER_NOT_BUILT = "church side refused: its searcher could not be built"
+SEARCHER_NOT_BUILT = "church side refused: its searcher could not be built (RuntimeError: boom)"
 # Prefixes and fixed lines the runbook's alert table names.
 DOCUMENTED = (
-    "ERROR church side refused: the church file is locked by a writer (database is locked); it is not opened",
+    "ERROR church side refused: the church file could not be opened (<exc>)",
     "ERROR church side refused:",
     "ERROR church side dropped:",
     "INFO church side paused:",
     "INFO church side resumed",
     "ERROR church search failed; that side is empty",
-    "ERROR church side refused: its searcher could not be built",
+    "ERROR church side refused: its searcher could not be built (<Type>: <why>)",
     "tar failed (tar 1, gzip 0)",
     "ERROR church vectors do not match search/models.toml; that side is BM25 only",
     "ERROR church vectors unavailable; that side is BM25 only",
@@ -57,42 +55,43 @@ DOCUMENTED = (
 # (file, line, text on that line of the file). The runbook's tables cite each
 # as file:line; PR #46 refreshes the numbers and this table with them.
 CITED = (
-    ("app/server.py", 826, "stored vectors do not match search/models.toml; serving BM25 only"),
-    ("app/server.py", 829, "embedding model unavailable; serving BM25 only"),
-    ("app/server.py", 853, "church vectors do not match search/models.toml; that side is BM25 only"),
-    ("app/server.py", 856, "church vectors unavailable; that side is BM25 only"),
-    ("app/server.py", 983, "church side refused: %s"),
-    ("app/server.py", 988, "church side refused:"),
-    ("app/server.py", 1069, "refusing to serve after reload:"),
-    ("app/server.py", 1146, "refusing to serve:"),
-    ("app/server.py", 1351, "church side dropped:"),
-    ("app/server.py", 1359, "church side paused:"),
-    ("app/server.py", 1418, "church side resumed"),
-    ("app/server.py", 1421, "church search failed; that side is empty"),
-    ("app/server.py", 1633, "church side refused: its searcher could not be built"),
-    ("app/server.py", 2600, "listening on http://"),
-    ("app/server.py", 2663, "church side refused:"),
-    ("app/server.py", 2668, "church side refused:"),
-    ("app/server.py", 2679, "church side refused:"),
-    ("app/server.py", 3030, "handler thread(s) still running after"),
-    *(("app/server.py", n, "request failed:") for n in (1833, 1838, 1883, 1885, 1945, 2185, 2206)),
+    ("app/server.py", 833, "stored vectors do not match search/models.toml; serving BM25 only"),
+    ("app/server.py", 836, "embedding model unavailable; serving BM25 only"),
+    ("app/server.py", 860, "church vectors do not match search/models.toml; that side is BM25 only"),
+    ("app/server.py", 865, "church vectors unavailable; that side is BM25 only"),
+    ("app/server.py", 886, "church side refused: its searcher could not be built"),
+    ("app/server.py", 1102, "refusing to serve after reload:"),
+    ("app/server.py", 1179, "refusing to serve:"),
+    ("app/server.py", 1381, "church side refused: %s"),
+    ("app/server.py", 1386, "church side refused:"),
+    ("app/server.py", 1419, "church side refused: the church file could not be opened"),
+    ("app/server.py", 1455, "church side dropped:"),
+    ("app/server.py", 1463, "church side paused:"),
+    ("app/server.py", 1522, "church side resumed"),
+    ("app/server.py", 1525, "church search failed; that side is empty"),
+    ("app/server.py", 2719, "listening on http://"),
+    ("app/server.py", 2787, "church side refused:"),
+    ("app/server.py", 2794, "church side refused:"),
+    ("app/server.py", 2805, "church side refused:"),
+    ("app/server.py", 3156, "handler thread(s) still running after"),
+    *(("app/server.py", n, "request failed:") for n in (1952, 1957, 2002, 2004, 2064, 2304, 2325)),
 )
 
 
 class AlertLineTests(_Root):
-    def test_a_writer_lock_at_startup_is_refused_with_the_paged_line(self) -> None:
+    def test_a_writer_lock_at_startup_is_a_pause_not_a_refusal(self) -> None:
         church = self.root / "sample.sqlite"
         build_church(church)
         writer = sqlite3.connect(church, isolation_level=None)
         writer.execute("BEGIN EXCLUSIVE")
         try:
-            with self.assertLogs(level="ERROR") as logs:
-                opened = server.open_church(church, slug=None, classic_library="wesley", classic_index=self.wesley)
+            with self.assertNoLogs(level="ERROR"):
+                with self.assertRaises(server.ChurchPaused) as caught:
+                    server.open_church(church, slug=None, classic_library="wesley", classic_index=self.wesley)
         finally:
             writer.execute("ROLLBACK")
             writer.close()
-        self.assertIsNone(opened)
-        self.assertEqual(logs.output, [f"ERROR:root:{WRITER_LOCK_AT_START}"])
+        self.assertEqual(str(caught.exception), WRITER_LOCK_AT_START)
 
     def test_a_failed_church_search_logs_the_ticket_line_with_a_traceback(self) -> None:
         church = self.root / "sample.sqlite"
@@ -106,7 +105,7 @@ class AlertLineTests(_Root):
         self.assertEqual(first, f"ERROR:root:{SEARCH_FAILED}")
         self.assertTrue(rest.startswith("Traceback"), rest)
 
-    def test_a_searcher_that_cannot_be_built_is_refused_with_a_traceback(self) -> None:
+    def test_a_searcher_that_cannot_be_built_is_refused_in_one_line(self) -> None:
         church = self.root / "sample.sqlite"
         build_church(church)
 
@@ -128,9 +127,7 @@ class AlertLineTests(_Root):
                 )
         self.assertIsNone(app.church_searcher)
         self.assertEqual(len(logs.output), 1, logs.output)
-        first, _, rest = logs.output[0].partition("\n")
-        self.assertEqual(first, f"ERROR:root:{SEARCHER_NOT_BUILT}")
-        self.assertTrue(rest.startswith("Traceback"), rest)
+        self.assertEqual(logs.output, [f"ERROR:root:{SEARCHER_NOT_BUILT}"])
 
     def test_the_log_format_is_the_one_the_rules_anchor_on(self) -> None:
         source = Path(server.__file__).read_text(encoding="utf-8")

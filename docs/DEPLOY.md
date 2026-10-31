@@ -175,8 +175,8 @@ Wire that command as the systemd service. Unit settings:
   `Environment=` lines. `serve.sh` starts the server with `env -i` and its
   allow-list, so nothing else from the unit's environment reaches it.
 - `TimeoutStopSec=30` (for example). It has to be above `DRAIN_TIMEOUT_S`
-  (10 s, `app/server.py:235`) and `REQUEST_TIMEOUT_S` (15 s,
-  `app/server.py:229`). The systemd default is 90 s. When it runs out,
+  (10 s, `app/server.py:237`) and `REQUEST_TIMEOUT_S` (15 s,
+  `app/server.py:231`). The systemd default is 90 s. When it runs out,
   systemd sends SIGKILL and reports the stop as failed (result `timeout`),
   not as a clean exit.
 - `SuccessExitStatus=143`, only if the unit may be stopped in the first
@@ -190,8 +190,8 @@ Wire that command as the systemd service. Unit settings:
   `ERROR <n> handler thread(s) still running after 10s; index left open`,
   leaves the classic index, the church index (when one is open) and the
   ONNX session open, waits for that thread, and exits 1
-  (`app/server.py:3026-3043`; the church connection is closed only on the
-  clean path at `:3040`; alert table, "deploy alerts"). A second SIGTERM or Ctrl-C does not force an exit.
+  (`app/server.py:3152-3169`; the church connection is closed only on the
+  clean path at `:3166`; alert table, "deploy alerts"). A second SIGTERM or Ctrl-C does not force an exit.
   `TimeoutStopSec=` (or a SIGKILL by hand) ends it.
 - Logs go to stderr, so under systemd to journald. Set journald's limits
   (Part 2, "Notes for the host").
@@ -629,12 +629,14 @@ CTO marks each one met.
   client asks for in `library=`.
 - [ ] **OPEN: Infra Ops alerts on the exact strings.** The rules in the
   alert table below are live and enabled, matching the exact strings,
-  including `church side refused: the church file is locked by a writer`.
-- [ ] **OPEN: The writer-lock fix, or the interim rule.** A writer lock at
-  startup drops the church side until restart. Treat a busy startup as
-  paused and retry the open later. Until fixed, never start the server
-  while `--ack-review` runs, and Infra Ops alerts on
-  `church side refused: the church file is locked by a writer`.
+  including `church side refused: the church file could not be opened` and
+  `church side paused:`.
+- [ ] **OPEN: The writer-lock fix: fixed in #46, pending CTO deploy
+  verification.** A church file that is busy at start (a writer's lock, or
+  WAL mode while `--ack-review` runs) is no longer a refusal. The server logs
+  `INFO church side paused: <reason>` (`app/server.py:1463`), retries the open
+  after 1 s, doubling to 30 s (`CHURCH_RETRY_FIRST_S`, `CHURCH_RETRY_MAX_S`,
+  `app/server.py:270-271`), and the side comes back with no restart.
 - [ ] **OPEN: Church-on integration test.** One test, with a church side
   open, under #29's caps, covering: health buckets, refusal-log flush,
   SIGTERM, and the stuck path.
@@ -643,12 +645,6 @@ Met, for the record (these are not church conditions that stay open):
 
 - [x] **MET: #27 S1 and #33 should-fixes 1-2** (CTO #37 r3).
 - [x] **MET: the #39 tar/bundle gate** (CTO #39 r2).
-
-The interim rule, as an operator step: **never start (or restart) the
-server while `--ack-review` runs.** At startup a writer's lock, or a church
-file that `--ack-review` has briefly left in WAL mode, is a refusal, not a
-pause, and the church side stays off until the next restart. Only a lock
-seen after start is a pause.
 
 Approval rule for every church sermon: it is not approved on a cue-rule
 pass. The reviewer must listen through the whole recording, start to end,
@@ -687,27 +683,41 @@ the classic side serves exactly as with no church named.
 4. **DELETE journal mode.** `--ack-review` leaves the file in DELETE mode,
    so the read-only open creates no `-wal` or `-shm`. If `--ack-review`
    prints `warning: the church file is still in wal journal mode`, close the
-   other reader and run it again. The church connection never waits for a
-   lock (`busy_timeout` 0), so a writer never stalls the server.
+   other reader and run it again. A file in WAL mode, or locked by a writer,
+   is a pause (below), at start as well as while serving. The church
+   connection never waits for a lock (`busy_timeout` 0), so a writer never
+   stalls the server.
 5. **Publish gate.** Only approved sermons are served: the review file's
    sha256 was approved, `status = 'ok'`, and ASR coverage was checked with
    no open gap. A human listened through each recording first (above).
 
 What happens, and what is logged:
 
-- **Refused at start.** Any failed condition at start, including a writer's
-  lock or a WAL-mode file, logs one `ERROR church side refused: <why>`
-  line. The church side stays off until restart. One case adds a traceback
-  under that line: when the church searcher cannot be built, the line is
-  `ERROR church side refused: its searcher could not be built` followed by
-  the Python traceback (`logging.exception`), so a log reader sees more
-  than one line for that one event.
+- **Refused at start.** Any other failed condition at start logs one
+  `ERROR church side refused: <why>` line (`app/server.py:2787`, `:2794`,
+  `:2805`, `:1381`, `:1386`). The church side stays off until restart.
+  When the church searcher cannot be built, the line is
+  `ERROR church side refused: its searcher could not be built (<Type>: <why>)`
+  (`app/server.py:886`): one line, no traceback.
+- **Paused at start.** A church file that is busy at start (a writer's
+  lock, `src/preached/library.py:895-896`, `:921-922`; or WAL mode,
+  `:883-884`, reason `<file> is in WAL journal mode`) is not a refusal. The
+  server logs `INFO church side paused: <reason>` (`app/server.py:1463`),
+  and retries the open on a later church request after 1 s, doubling to 30 s
+  (`CHURCH_RETRY_FIRST_S`, `CHURCH_RETRY_MAX_S`). The side returns without a
+  restart. A failed retry logs
+  `ERROR church side refused: the church file could not be opened (<exc>)`
+  (`app/server.py:1419`) and ends the retries. A successful retry logs
+  `INFO church side: <slug>, read-only, through the publish gate`
+  mid-process, so that line is **not** a restart marker. **OPEN (HD1):** the
+  startup `paused` line is currently logged before `INFO listening on`; a
+  code fix is queued separately.
 - **Dropped while serving.** A problem found before a church search (owner,
   mode, inode, link count, sidecars, shape) logs
   `ERROR church side dropped: <why>` once. The side stays off until
   restart.
 - **Paused while serving.** A writer's lock or a WAL-mode file seen after
-  start skips the church side for that request only. Nothing is dropped.
+  the side is open skips the church side for that request only. Nothing is dropped.
   `INFO church side paused: <why>` is logged once when the pause starts,
   and `INFO church side resumed` once, after the next church search
   completes. With no church searches, no `resumed` line comes.
@@ -735,22 +745,28 @@ They are not readable from this repo. **Every church rule stays DISABLED
 until the church deploy is approved** (hard conditions above).
 
 Log format: `logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")`
-(`app/server.py:2848`). Each line is the level name, one space, the
+(`app/server.py:2974`). Each line is the level name, one space, the
 message. Patterns are anchored to the start of the line. A
 `logging.exception` call adds a traceback on the following lines.
 
 Infra Ops reported these sources against `2b7ac93`. Each was grep-verified
-again on `f1de31e` (main after #44); every line number still matches.
+again on the tree of this branch merged with main `96195be` (#46); the
+numbers below are that tree's.
 
 | # | Severity | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | PAGE (checked first) | `ERROR church side refused: the church file is locked by a writer (database is locked); it is not opened` | `app/server.py:2668`; text from `src/preached/library.py:468` and `:865` | A writer's lock at startup. Other start-up lock forms, same rule: `ERROR church side refused: <file> cannot be opened (database is locked)` (`library.py:848`), `ERROR church side refused: <file> cannot be read (database is locked)` (`library.py:869`). |
-| 2 | PAGE | `ERROR church side refused:` | `app/server.py:983`, `:988`, `:1633`, `:2663`, `:2668`, `:2679` | Any start-up refusal. `:1633` is `ERROR church side refused: its searcher could not be built`, followed by a traceback. |
-| 3 | PAGE | `ERROR church side dropped:` | `app/server.py:1351` | Off until restart. |
-| 4 | INFO, then PAGE | `INFO church side paused:` | `app/server.py:1359` | Opens a 15-minute window. Closed by `INFO church side resumed` (`app/server.py:1418`), which is logged only after the next church search completes. With no church search in the window, no `resumed` line comes, and the rule raises the info notice `church-paused-unverified`, not a page. It pages (`church-paused-stuck`) only if an access line `GET /api/side 200` is logged in the window while still paused. See the note below. |
-| 5 | TICKET | `ERROR church search failed; that side is empty` | `app/server.py:1421` | At most one ticket per hour. Traceback follows. |
+| 1 | PAGE | `ERROR church side refused:` | `app/server.py:1381`, `:1386`, `:2787`, `:2794`, `:2805` | Any start-up refusal, one line. Start-time lock and WAL are no longer refusals (rule 4). |
+| 2 | PAGE | `ERROR church side refused: its searcher could not be built` | `app/server.py:886` | `ERROR church side refused: its searcher could not be built (<Type>: <why>)`, one line, no traceback. |
+| 3 | PAGE | `ERROR church side refused: the church file could not be opened` | `app/server.py:1419` | `ERROR church side refused: the church file could not be opened (<exc>)`, on a failed retry of a paused start. In the paging group with rows 1-2. |
+| 4 | PAGE | `ERROR church side dropped:` | `app/server.py:1455` | Off until restart. |
+| 5 | INFO, then PAGE | `INFO church side paused:` | `app/server.py:1463` | Opens a 15-minute window. Start-time busy file, or a lock or WAL seen while serving. The side retries (1 s doubling to 30 s) and returns without a restart. Closed by `INFO church side resumed` (`app/server.py:1522`), which is logged only after the next church search completes. With no church search in the window, no `resumed` line comes, and the rule raises the info notice `church-paused-unverified`, not a page. It pages (`church-paused-stuck`) only if an access line `GET /api/side 200` is logged in the window while still paused. See the note below. |
+| 6 | TICKET | `ERROR church search failed; that side is empty` | `app/server.py:1525` | At most one ticket per hour. Traceback follows. |
 
-On rule 4: Infra Ops' prepared rule (`church-alerts.yaml`, state machine
+Rule numbers moved with #46: the old rule 1 (a writer's lock at start is a
+page) is obsolete, and the old rule 2 is split into rows 1-3 above. The old
+rows 3-5 are now 4-6.
+
+On rule 5: Infra Ops' prepared rule (`church-alerts.yaml`, state machine
 `church-paused`) is passive. It does not probe. After 15 minutes:
 
 - If an access line matching `^INFO \S+ \S+ GET /api/side 200$` was logged
@@ -778,8 +794,8 @@ BM25 only, with no refusal. Both lines carry a traceback
 
 | # | Severity | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- |
-| 6 | TICKET | `ERROR church vectors do not match search/models.toml; that side is BM25 only` | `app/server.py:853` | The church file's stored vectors do not match the configured model. Traceback follows. |
-| 7 | TICKET | `ERROR church vectors unavailable; that side is BM25 only` | `app/server.py:856` | The church vectors could not be loaded. Traceback follows. |
+| 7 | TICKET | `ERROR church vectors do not match search/models.toml; that side is BM25 only` | `app/server.py:860` | The church file's stored vectors do not match the configured model. Traceback follows. |
+| 8 | TICKET | `ERROR church vectors unavailable; that side is BM25 only` | `app/server.py:865` | The church vectors could not be loaded. Traceback follows. |
 
 #### Deploy alerts (OPEN for Infra Ops)
 
@@ -790,37 +806,36 @@ proposals for Infra Ops to confirm.
 
 | # | Severity | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- |
-| D1 | PAGE | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | `app/server.py:826` | Traceback follows. Dense search is off. |
-| D2 | PAGE | `ERROR embedding model unavailable; serving BM25 only` | `app/server.py:829` | Traceback follows. Dense search is off. |
-| D3 | PAGE | `ERROR refusing to serve after reload:` | `app/server.py:1069` | A checkout reloaded an index it will not serve. |
-| D4 | PAGE | `ERROR refusing to serve:` | `app/server.py:1146` | The frozen bundle index changed after start; every request is `503`. |
-| D5 | PAGE | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3030` | The stuck stop; exit 1. |
-| D6 | TICKET (rate) | `ERROR request failed:` | `app/server.py:1833`, `:1838`, `:1883`, `:1885`, `:1945`, `:2185`, `:2206` | Ticket on a rate (for example more than N a minute), not on one line. The line carries the exception type only. |
+| D1 | PAGE | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | `app/server.py:833` | Traceback follows. Dense search is off. |
+| D2 | PAGE | `ERROR embedding model unavailable; serving BM25 only` | `app/server.py:836` | Traceback follows. Dense search is off. |
+| D3 | PAGE | `ERROR refusing to serve after reload:` | `app/server.py:1102` | A checkout reloaded an index it will not serve. |
+| D4 | PAGE | `ERROR refusing to serve:` | `app/server.py:1179` | The frozen bundle index changed after start; every request is `503`. |
+| D5 | PAGE | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3156` | The stuck stop; exit 1. |
+| D6 | TICKET (rate) | `ERROR request failed:` | `app/server.py:1952`, `:1957`, `:2002`, `:2004`, `:2064`, `:2304`, `:2325` | Ticket on a rate (for example more than N a minute), not on one line. The line carries the exception type only. |
 
-Other lines this runbook names, all grep-verified on `f1de31e`:
+Other lines this runbook names, all grep-verified on the merge tree (this branch merged with main `96195be`):
 
 | Line | Emitted at | Where it shows |
 | --- | --- | --- |
-| `INFO church side: <slug>, read-only, through the publish gate` | `app/server.py:2686` | Church side opened at start. |
-| `INFO church side paused: <file> is in WAL journal mode` | `app/server.py:1359`, text from `src/preached/library.py:907` | Pause, WAL form. |
-| `INFO church side paused: the church file is locked by a writer (...)` | `app/server.py:1359`, text from `library.py:468` (check) or `app/server.py:1426` (search) | Pause, lock form. |
-| `ERROR church side refused: <file> is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it` | `app/server.py:2668`, text from `src/preached/library.py:839` | A start while `--ack-review` has the file in WAL mode. |
+| `INFO church side: <slug>, read-only, through the publish gate` | `app/server.py:2812` | Church side opened, at start or on a successful retry. Not a restart marker. |
+| `INFO church side paused: <file> is in WAL journal mode` | `app/server.py:1463`, text from `src/preached/library.py:883-884` (start) or `:962` (search) | Pause line, WAL form. |
+| `INFO church side paused: the church file is locked by a writer (...)` | `app/server.py:1463`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (check) or `app/server.py:1530` (search) | Pause line, lock form. |
 | `warning: the church file is still in wal journal mode (...)` | `src/preached/youtube/pipeline.py:333`, text from `src/preached/youtube/library.py:157` | `--ack-review` output (step 4 of the gate). |
-| `INFO listening on http://<host>:<port>` | `app/server.py:2600` | Server up. Infra Ops' restart marker. |
-| `INFO stopping` | `app/server.py:3025` | Start of every stop. |
-| `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3030` | The stuck path; exit 1 (also D5 above). |
-| `WARNING refused <class> <detail> suppressed=N` | `app/server.py:469` | Rate-limited refusal lines. |
-| `WARNING refused <class> flush suppressed=N` | `app/server.py:481` | Counts flushed at stop. |
+| `INFO listening on http://<host>:<port>` | `app/server.py:2719` | Server up. Infra Ops' restart marker. (HD1, OPEN: a start-time `paused` line is currently logged before it.) |
+| `INFO stopping` | `app/server.py:3151` | Start of every stop. |
+| `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3156` | The stuck path; exit 1 (also D5 above). |
+| `WARNING refused <class> <detail> suppressed=N` | `app/server.py:476` | Rate-limited refusal lines. |
+| `WARNING refused <class> flush suppressed=N` | `app/server.py:488` | Counts flushed at stop. |
 | `tar exited 1 (file changed as we read it?); attempt N of 3` | `scripts/build-bundle.sh:239` | Build machine, the tar flake. Not an alert. |
 | `tar failed (tar 1, gzip 0); no archive written` | `scripts/build-bundle.sh:243` | Build machine, the tar flake after three attempts: rerun once. Not an alert. |
 | `tar.gz does not match MANIFEST.sha256; no archive written` | `scripts/build-bundle.sh:247` | Build machine: a real error. |
 
-`tests/test_deploy_alerts.py` pins the rule-1 line, the rule-5 line and its
-traceback, the searcher-build line and its traceback, the log format, and
-that this file quotes each of them. It also checks that the string in every
-`file:line` cited for an alert row sits on that line of that file. PR #46
-shifts the `app/server.py` numbers; it refreshes every one, and the test
-fails until it does.
+`tests/test_deploy_alerts.py` pins the start-time lock pause (no log line,
+`ChurchPaused`), the rule-6 line and its traceback, the one-line
+searcher-build refusal, the log format, and that this file quotes each of
+them. It also checks that the string in every `file:line` cited for an alert
+row sits on that line of that file, so a change to `app/server.py` that moves
+a line fails it until this file is refreshed.
 
 ## Going public (Part 4, not part of this deploy)
 
