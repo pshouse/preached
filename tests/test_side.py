@@ -883,7 +883,9 @@ class SidecarTests(unittest.TestCase):
         """The name check passed; a -wal link appears once the main file is open.
 
         The first read opens it (WAL mode), and the check on the new
-        descriptors refuses it before anything is written.
+        descriptors refuses it before the mark is written. A -wal link
+        planted here leaves Wesley intact. A -shm link would not: the first
+        read writes the shm index before any recheck (reports/W3-SIDE-RACE.md).
         """
         for side in ("target", "sibling"):
             with self.subTest(side=side):
