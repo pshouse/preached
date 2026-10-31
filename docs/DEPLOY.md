@@ -194,11 +194,28 @@ It does guarantee:
   SIGTERM is blocked from before the directory is made until its atexit
   hook and handler are installed, so a SIGTERM at any point removes it.
   Importing the module installs no handler.
-- **Exit codes.** SIGTERM is a requested stop and always exits 0, in every
-  phase (imports, start-up checks, serving), with no traceback. So a unit
-  needs no `SuccessExitStatus=143`. Ctrl-C (SIGINT) before the server is
-  listening exits 130; during serving it logs "stopping" and exits 0. Any
-  refusal (`error: ...`) exits 1.
+- **Stop and exit codes.** SIGTERM is a requested stop. While serving it
+  stops in order: no new connections, wait for the handler threads (a
+  search in progress finishes; an idle keep-alive connection is closed),
+  close the index, release the ONNX session. The process then exits 0 with
+  no traceback and the bytecode directory removed. `tests/test_shutdown.py`
+  proves this with 16 clients searching (bm25 and hybrid), on an idle
+  server, and with an idle keep-alive connection open. A SIGTERM after the
+  handler is installed and before serving exits 0 and serves nothing in the
+  cases tested: during the imports, in `main`'s start-up checks, and during
+  an `onnxruntime` import that turns it into `ImportError` (the server
+  records the request and does not serve the BM25 fallback). Same file and
+  `tests/test_deploy.py`.
+  Not covered: a SIGTERM in the first moments of start, before the first
+  lines of `app/server.py` install the handler, kills the process by the
+  signal (status 143 to systemd). Add `SuccessExitStatus=143` if a unit may
+  be stopped that early. If a handler thread is still running 10 s after
+  the stop (`DRAIN_TIMEOUT_S`), the index is left open, the process waits
+  for that thread and exits 1.
+  Ctrl-C (SIGINT) while serving stops the same way and exits 0. During
+  `main`'s start-up checks it exits 130 with no traceback; during the
+  module imports before `main` it prints a traceback and dies by SIGINT.
+  A refusal (`error: ...`) exits 1.
 - `main` runs the whole bundle check (`bundle_problem`, then the model
   directory check) before it opens the index or binds the port.
 
