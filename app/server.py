@@ -735,8 +735,8 @@ class App:
         # so an import, --redo or approval made while this process runs
         # applies to the next request.
         self.gated = library != LIBRARY
-        if hasattr(searcher, "gated"):
-            searcher.gated = searcher.gated or self.gated
+        if self.gated and hasattr(searcher, "gate_on"):
+            searcher.gate_on()
         if hasattr(searcher, "library"):
             searcher.library = library
         if is_public_domain(library) and not public_domain_file(connection, library):

@@ -1483,6 +1483,13 @@ class ChurchGateTripwireTests(unittest.TestCase):
 
         The only exceptions are ``CLASSIC_BUILDERS``, and those may not
         mention church at all.
+
+        Known gaps (accepted, CTO round 2 on PR #27): string lookups
+        (``getattr``, ``eval``, ``globals()``), a copy of the gate dict
+        mutated elsewhere (a helper, ``operator.setitem``, ``for``/``with``
+        rebinding), a classic builder called from church code, and modules
+        other than these two. ``s.gated = False`` / ``setattr`` after
+        construction is refused at runtime (``Searcher.gated`` is read-only).
         """
         repo = Path(__file__).resolve().parents[1]
         offenders = []
@@ -1611,6 +1618,56 @@ def load_search(connection):
                 self.assertTrue(kept is None or kept.gated is True)
             finally:
                 connection.close()
+                church.close()
+
+    def test_searcher_gated_is_read_only(self) -> None:
+        """CTO round 2 on PR #27, item 4: no assignment turns the gate off after construction.
+
+        ``gated`` is a property with no setter; ``gate_on`` only turns it on.
+        Still not covered (accepted, see reports/W3-SIDECAR-READONLY.md):
+        writing ``_gated`` directly or through ``object.__setattr__``.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.sqlite"
+            build_library(path, *church_rows(), church=True, sample=True)
+            church = reopen(path)
+            try:
+                searcher = Searcher(church, gated=True)
+                with self.assertRaises(AttributeError):
+                    searcher.gated = False
+                with self.assertRaises(AttributeError):
+                    setattr(searcher, "gated", False)
+                with self.assertRaises(AttributeError):
+                    del searcher.gated
+                self.assertIs(searcher.gated, True)
+                self.assertEqual(searcher.bm25("churchonlytoken", 5), [])
+                ungated = Searcher(church)
+                self.assertIs(ungated.gated, False)
+                ungated.gate_on()
+                self.assertIs(ungated.gated, True)
+                self.assertEqual(ungated.bm25("churchonlytoken", 5), [])
+            finally:
+                church.close()
+
+    def test_app_turns_the_gate_on_for_a_searcher_built_without_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.sqlite"
+            build_library(path, *church_rows(), church=True, sample=True)
+            church = reopen(path)
+            try:
+                searcher = Searcher(church)
+                App(
+                    connection=church,
+                    searcher=searcher,
+                    encode=None,
+                    fallback_note=None,
+                    model_name="fixture",
+                    hosts={"127.0.0.1"},
+                    static_dir=STATIC_DIR,
+                    library="sample",
+                )
+                self.assertIs(searcher.gated, True)
+            finally:
                 church.close()
 
 
