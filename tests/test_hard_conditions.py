@@ -258,7 +258,8 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     """``(imports sqlite3, raw opens, store.connect uses, unknown)`` for one file's source.
 
     Any import counts: ``import sqlite3``, ``import sqlite3 as db``,
-    ``import sqlite3.dbapi2``, ``from sqlite3 import ...``, and a
+    ``import sqlite3.dbapi2``, ``from sqlite3 import ...``, ``from <module>
+    import sqlite3 [as q]`` (S12), and a
     ``"sqlite3"`` string (``__import__``, ``importlib.import_module``). Raw
     opens: any reference to ``connect`` or ``dbapi2`` on a sqlite3 name, a
     call to ``Connection``, ``getattr`` on a sqlite3 name, and every name
@@ -288,10 +289,10 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] == "sqlite3":
+                if alias.name.split(".")[0] in ("sqlite3", "_sqlite3"):
                     imports = True
-                    modules.add(alias.asname or "sqlite3")
-                    if alias.name != "sqlite3":
+                    modules.add(alias.asname or alias.name.split(".")[0])
+                    if alias.name not in ("sqlite3", "_sqlite3"):
                         raw += 1  # sqlite3.dbapi2: a second door to connect
                 elif alias.name in ("preached.store", "store") and alias.asname:
                     store_modules.add(alias.asname)
@@ -303,7 +304,11 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                     packages.add(alias.asname)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module.split(".")[0] == "sqlite3":
+            for alias in node.names:
+                if alias.name == "sqlite3":  # S12: from preached.store import sqlite3 [as q]
+                    imports = True
+                    modules.add(alias.asname or "sqlite3")
+            if module.split(".")[0] in ("sqlite3", "_sqlite3"):
                 imports = True
                 for alias in node.names:
                     if alias.name not in SQLITE3_SAFE or alias.name == "Connection":
@@ -318,7 +323,7 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                     if alias.name == "store":
                         store_modules.add(alias.asname or "store")
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if node.value == "sqlite3" or node.value.startswith("sqlite3."):
+            if node.value in ("sqlite3", "_sqlite3") or node.value.startswith(("sqlite3.", "_sqlite3.")):
                 imports = True
                 raw += 1
     # A module bound to another name (``db = sqlite3``, ``s = store``,
@@ -504,6 +509,9 @@ class RawConnectGuardTests(unittest.TestCase):
             "from preached import library\nlibrary.sqlite3.connect('x')": (True, 1, 0),
             "from preached import store as s\ns.sqlite3.connect('x')": (True, 1, 0),
             "import preached.store as ps\nps.sqlite3.connect('x')": (True, 1, 0),
+            "from preached.store import sqlite3 as q\nq.connect('x')": (True, 1, 0),
+            "from preached.library import sqlite3\nsqlite3.connect('x')": (True, 1, 0),
+            "import _sqlite3\n_sqlite3.connect('x')": (True, 1, 0),
         }
         for source, want in cases.items():
             with self.subTest(source=source):
