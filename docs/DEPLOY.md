@@ -39,6 +39,51 @@ control. Add an exclude line for every announcement, prayer request, prayer
 list, or testimony the rules missed. That rule is the one in the review
 file header (`reviewer_must`) and in `reports/W3-PRIV-SKIP.md`.
 
+## The church gate (not for any current deploy)
+
+**Do not deploy a church side.** It stays off until the pastor's permission
+is confirmed and the CTO approves a church deploy. These holds stand
+whatever the code allows. The gate below is a HARD CONDITION before any
+church deploy (CTO ruling on PR #37 r1, should-fix 4). It is not something
+to set up now.
+
+`--church-library <slug>` or `--church-index <file>` adds a second, read-only
+column of approved church sermons. `scripts/serve.sh` passes neither, and
+the bundle does not ship a church file. `app/server.py` opens the church
+side only when every condition below holds. Otherwise it logs one
+`ERROR church side refused: <why>` line and serves the classic side exactly
+as with no church named, from a checkout or a bundle.
+
+1. **Deploy switch.** `PREACHED_CHURCH_SIDE=enabled` (exactly that value)
+   is in the server's environment. It is not on `serve.sh`'s allow-list, so
+   a `serve.sh` start never has it. Without it the church file is not opened.
+2. **Privacy config.** `PREACHED_PRIVACY` names the library's privacy TOML
+   (`privacy.example.toml`). Approval must run under the same config as the
+   import.
+3. **Permissions and owner.** The church name is not a symlink. The real
+   file and the directory that really holds it are owned by the serving uid
+   (or root), and neither is group- or world-writable. The file has one
+   hard link and is not a classic. Its `-wal`/`-shm`/`-journal` names, when
+   present, are plain files with one link. These are checked at start and
+   before every church search. Any failure drops the church side until
+   restart.
+4. **DELETE journal mode.** `--ack-review` leaves the file in DELETE mode,
+   so the read-only open creates no `-wal` or `-shm`. A WAL-mode church file
+   is refused at start. While `--ack-review` is writing (the file is briefly
+   in WAL mode), each church search is skipped for that request, nothing is
+   read, and the side is not dropped. If `--ack-review` prints
+   `warning: the church file is still in wal journal mode`, close the other
+   reader and run it again.
+5. **Publish gate.** Only approved sermons are served: the review file's
+   sha256 was approved, `status = 'ok'`, and ASR coverage was checked with
+   no open gap. A human listened through each recording first (above).
+
+Known gaps, accepted for now:
+- The checks run by name. A same-uid process can still race them (#33).
+- Pages corrupted in place, without a new inode, can still be served from
+  SQLite's page cache until the next read misses it.
+- `/healthz` says `"church": null` whether or not a church side is open.
+
 ## What the server needs
 
 Python 3.12 (`.python-version`, `requires-python >=3.12,<3.14`). On this

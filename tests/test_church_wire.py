@@ -48,6 +48,8 @@ from test_side import (  # noqa: E402
 
 PRIVACY = Path(__file__).resolve().parents[1] / "privacy.example.toml"
 EVAL_ONLY = "arctic-embed-l"
+# The deploy switch every server-side church test sets (PR #37 r1 should-fix 4).
+CHURCH_ON = {"PREACHED_CHURCH_SIDE": "enabled"}
 
 # One token per sermon. Only VISIBLE ones may ever leave the church file.
 VISIBLE = {"approvedtoken": "churchvid01", "sharedpulpit": "churchvid02", "flaggedtoken": "churchvid03"}
@@ -106,6 +108,10 @@ def church_fixture_rows() -> tuple[list[dict], list[list[float]]]:
         # Flagged chunk (a redacted name) and a far-away sibling in the same sermon.
         row("c-flagged", "churchvid03", "Flagged Sermon", "flaggedtoken prayer for [name] this week.", 100.0, 110.0, (0, 7)),
         row("c-flag-sib", "churchvid03", "Flagged Sermon", "siblingtoken a later word on grace.", 900.0, 915.0, (500, 507)),
+        # A name at the very end of one chunk, and the chunk right after it: the
+        # next card's pre-roll would play the name (PR #37 r1 should-fix 2).
+        row("c-near-flag", "churchvid03", "Flagged Sermon", "nearflagtoken thanks to [name].", 200.0, 210.0, (100, 105)),
+        row("c-adjacent", "churchvid03", "Flagged Sermon", "adjacenttoken the next words.", 210.0, 225.0, (105, 110)),
         row("c-unapproved", "churchvid04", "Unapproved Sermon", "unapprovedtoken sharedpulpit words.", 10.0, 20.0, (0, 4)),
         row("c-stale", "churchvid05", "Stale Review", "stalereviewtoken sharedpulpit words.", 10.0, 20.0, (0, 4)),
         row("c-gap", "churchvid06", "Gap Sermon", "gaptoken sharedpulpit words.", 10.0, 20.0, (0, 4)),
@@ -114,7 +120,8 @@ def church_fixture_rows() -> tuple[list[dict], list[list[float]]]:
         row("c-orphan", None, "Orphan", "orphantoken sharedpulpit words.", 10.0, 20.0, (0, 4)),
     ]
     # Hidden rows sit right on the query vector, so a leak through dense would win.
-    vectors = [[0, 0.8, 0.6, 0], [0, 0.8, 0.6, 0], [0, 0.8, 0.6, 0], [0, 0.8, 0.6, 0]] + [[1, 0, 0, 0]] * 6
+    vectors = [[0, 0.8, 0.6, 0], [0, 0.8, 0.6, 0], [0, 0.8, 0.6, 0], [0, 0.8, 0.6, 0], [0, 0, 0, 1], [0, 0, 0, 1]]
+    vectors += [[1, 0, 0, 0]] * 6
     return rows, vectors
 
 
@@ -127,6 +134,7 @@ def build_church(path: Path, *, model: str = "fixture", fingerprint: str = FIXTU
         _insert(connection, **item)
     connection.execute("UPDATE chunks SET video_id = CASE WHEN sermon_id = 'orphan-sermon' THEN NULL ELSE sermon_id END")
     connection.execute("UPDATE chunks SET flag_end_s = 104.0 WHERE chunk_id = 'c-flagged'")
+    connection.execute("UPDATE chunks SET flag_end_s = 209.8 WHERE chunk_id = 'c-near-flag'")
     connection.executemany(
         "INSERT INTO videos (video_id, status, review_sha256, approved_sha256, coverage_gaps) VALUES (?, ?, ?, ?, ?)",
         VIDEOS,
@@ -138,7 +146,16 @@ def build_church(path: Path, *, model: str = "fixture", fingerprint: str = FIXTU
     write_embeddings(connection, model, rowids, np.array(vectors, dtype=np.float32))
     save_embedding_info(connection, model, {"fingerprint": fingerprint})
     connection.commit()
+    # As --ack-review leaves it: DELETE mode, so the read-only open makes no -wal/-shm.
+    assert connection.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
     connection.close()
+
+
+def delete_mode(path: Path) -> Path:
+    """Leave a fixture in DELETE journal mode, as --ack-review does."""
+    with closing(sqlite3.connect(path)) as writer:
+        assert writer.execute("PRAGMA journal_mode=DELETE").fetchone()[0] == "delete"
+    return path
 
 
 def sha(path: Path) -> str:
@@ -262,7 +279,7 @@ class ChurchServedTests(unittest.TestCase):
         status, payload = self.get_json(self.both, "/api/search?q=approvedtoken&library=wesley&mode=bm25")
         self.assertEqual((status, payload["results"]), (200, []))
         status, payload = self.get_json(self.both, "/api/search?q=approvedtoken&library=spurgeon&mode=bm25")
-        self.assertEqual((status, payload["error"]), (400, "library must be wesley or sample"))
+        self.assertEqual((status, payload["error"]), (400, "library must be wesley"))
         status, payload = self.get_json(self.classic_only, "/api/search?q=approvedtoken&library=sample&mode=bm25")
         self.assertEqual((status, payload["error"]), (400, "library must be wesley"))
 
@@ -298,6 +315,20 @@ class ChurchServedTests(unittest.TestCase):
         # Same sermon, far from the name: only its own timed link, no source link from 0:00.
         self.assertIsNone(sibling["source_url"])
         self.assertIn("&t=", sibling["audio_url"])
+
+    def test_the_chunk_right_after_a_flagged_name_has_no_audio(self) -> None:
+        # PR #37 r1 should-fix 2: c-near-flag's name ends at 209.8 s and
+        # c-adjacent starts at 210 s, so its pre-roll link would play it.
+        _, payload = self.get_json(self.both, "/api/side?q=adjacenttoken&mode=bm25&k=5")
+        (hit,) = payload["church"]["results"]
+        self.assertEqual(hit["chunk_id"], "c-adjacent")
+        self.assertNotIn("[name]", hit["text"])
+        self.assertIsNone(hit["audio_url"])
+        self.assertIsNone(hit["start_s"])
+        self.assertIsNone(hit["source_url"])
+        self.assertTrue(hit["audio_withheld"])
+        _, searched = self.get_json(self.both, "/api/search?q=adjacenttoken&mode=bm25&k=5&library=sample")
+        self.assertEqual(searched["results"], payload["church"]["results"])
 
     def test_approval_while_running_applies_to_the_next_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -446,7 +477,7 @@ class ChurchRefusalAtOpenTests(unittest.TestCase):
         for target in (
             patch("preached.paths.INDEX_DIR", self.index_dir),
             patch("preached.paths.INDEX_PATH", self.wesley),
-            patch.dict(os.environ, {"PREACHED_PRIVACY": str(PRIVACY)}),
+            patch.dict(os.environ, {"PREACHED_PRIVACY": str(PRIVACY), **CHURCH_ON}),
         ):
             target.start()
             self.addCleanup(target.stop)
@@ -501,7 +532,7 @@ class ChurchRefusalAtOpenTests(unittest.TestCase):
     def test_not_a_church_import(self) -> None:
         plain = self.index_dir / "plain.sqlite"
         build_library(plain, *classic_rows())
-        self.assertIn("not a church import", self.refused(plain))
+        self.assertIn("not a church import", self.refused(delete_mode(plain)))
 
     def test_no_publish_gate_columns(self) -> None:
         bare = self.index_dir / "bare.sqlite"
@@ -521,6 +552,90 @@ class ChurchRefusalAtOpenTests(unittest.TestCase):
     def test_world_writable_church_file(self) -> None:
         os.chmod(self.church, 0o666)
         self.assertIn("world-writable", self.refused())
+
+    # PR #37 r1 must-fix 2: a symlink, and the real file's owner and directory.
+
+    def shared_dir(self) -> Path:
+        """A directory every local user can write, holding a church file."""
+        shared = self.root / "shared"
+        shared.mkdir()
+        os.chmod(shared, 0o777)
+        self.addCleanup(os.chmod, shared, 0o700)
+        build_church(shared / "mychurch.sqlite")
+        return shared
+
+    def test_symlink_into_a_world_writable_directory_is_refused(self) -> None:
+        # The CTO case: refused by name in the 0777 directory, but served
+        # through a symlink from the 0755 index directory.
+        real = self.shared_dir() / "mychurch.sqlite"
+        self.assertIn("world-writable", self.refused(real))
+        link = self.index_dir / "linked.sqlite"
+        os.symlink(real, link)
+        self.assertIsNone(server.writable_problem(link))  # the old check looked at the link's directory
+        self.assertIn("linked.sqlite is a symlink", self.refused(link))
+
+    def test_symlink_to_a_safe_church_file_is_refused_too(self) -> None:
+        link = self.index_dir / "linked.sqlite"
+        os.symlink(self.church, link)
+        self.assertIn("linked.sqlite is a symlink", self.refused(link))
+        with self.assertRaises(ChurchRefused) as caught:
+            open_church_readonly(link, classic=self.wesley)
+        self.assertIn("is a symlink", str(caught.exception))
+
+    def test_real_directory_behind_a_symlinked_parent_is_checked(self) -> None:
+        # The name is a plain file, but its directory is a symlink to a 0777 one.
+        shared = self.shared_dir()
+        via = self.index_dir / "via"
+        os.symlink(shared, via)
+        with self.assertRaises(ChurchRefused) as caught:
+            open_church_readonly(via / "mychurch.sqlite", classic=self.wesley)
+        self.assertIn(f"church file's directory {shared}", str(caught.exception))
+        self.assertIn("world-writable", str(caught.exception))
+
+    def test_church_file_owned_by_another_user_is_refused(self) -> None:
+        with patch("preached.library.os.geteuid", return_value=os.geteuid() + 4242):
+            line = self.refused()
+        self.assertIn(f"church file {self.church.resolve()} is owned by uid {os.geteuid()}", line)
+
+    def test_church_directory_owned_by_another_user_is_refused(self) -> None:
+        real_stat = os.stat
+        directory = self.church.resolve().parent
+
+        def stat(target, *args, **kwargs):
+            st = real_stat(target, *args, **kwargs)
+            if Path(target) == directory:
+                values = list(st)
+                values[4] = st.st_uid + 4242  # st_uid
+                return os.stat_result(values)
+            return st
+
+        with patch("preached.library.os.stat", side_effect=stat):
+            line = self.refused()
+        self.assertIn(f"church file's directory {directory} is owned by uid", line)
+
+    # PR #37 r1 should-fix 6: a WAL-mode church file is not opened.
+
+    def test_wal_mode_church_file_is_refused_and_no_sidecar_appears(self) -> None:
+        with closing(sqlite3.connect(self.church)) as writer:
+            self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        before = sha(self.church)
+        self.assertIn("WAL journal mode", self.refused())
+        for suffix in ("-wal", "-shm"):
+            self.assertFalse(Path(f"{self.church}{suffix}").exists(), suffix)
+        self.assertEqual(sha(self.church), before)
+
+    def test_delete_mode_church_file_opens_with_no_sidecar(self) -> None:
+        with self.assertLogs(level="INFO"):
+            connection, _slug, check = server.open_church(
+                self.church, slug=None, classic_library="wesley", classic_index=self.wesley
+            )
+        try:
+            self.assertIsNone(check(connection))
+            connection.execute("SELECT count(*) FROM chunks").fetchone()
+            for suffix in ("-wal", "-shm", "-journal"):
+                self.assertFalse(Path(f"{self.church}{suffix}").exists(), suffix)
+        finally:
+            connection.close()
 
     def test_open_church_readonly_raises_a_refusal_not_a_crash(self) -> None:
         with self.assertRaises(ChurchRefused):
@@ -589,6 +704,61 @@ class ChurchRefusalWhileServingTests(unittest.TestCase):
                 side = app.side("classiconlytoken", 5, "bm25")
         self.assertFalse(side["church"]["present"])
         self.assertTrue(side["classic"]["results"])
+
+    def test_name_swapped_for_a_symlink_to_the_same_file_after_start(self) -> None:
+        # Same inode, one link: only the symlink rule sees it.
+        app = self.app()
+        self.assertTrue(app.side("approvedtoken", 5, "bm25")["church"]["results"])
+        moved = self.church_path.parent / "elsewhere"
+        moved.mkdir()
+        os.replace(self.church_path, moved / "sample.sqlite")
+        os.symlink(moved / "sample.sqlite", self.church_path)
+        self.assert_church_gone(app)
+
+    def test_owner_change_after_start(self) -> None:
+        app = self.app()
+        self.assertTrue(app.side("approvedtoken", 5, "bm25")["church"]["results"])
+        with patch("preached.library.os.geteuid", return_value=os.geteuid() + 4242):
+            self.assert_church_gone(app)
+
+    def test_wal_mode_while_serving_skips_the_request_without_dropping(self) -> None:
+        app = self.app()
+        self.assertTrue(app.side("approvedtoken", 5, "bm25")["church"]["results"])
+        writer = sqlite3.connect(self.church_path)
+        self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        with self.assertLogs(level="INFO") as logs:
+            side = app.side("approvedtoken", 5, "bm25")
+        self.assertIn("church side skipped for this request", "\n".join(logs.output))
+        self.assertNotIn("ERROR", "\n".join(logs.output))
+        self.assertFalse(side["church"]["present"])
+        self.assertEqual(app.church_library, "sample")  # paused, not dropped
+        for suffix in ("-wal", "-shm"):
+            self.assertFalse(Path(f"{self.church_path}{suffix}").exists(), suffix)  # nothing read
+        self.assertEqual(writer.execute("PRAGMA journal_mode=DELETE").fetchone()[0], "delete")
+        writer.close()
+        self.assertTrue(app.side("approvedtoken", 5, "bm25")["church"]["results"])
+
+    def test_400_text_is_the_same_with_without_and_after_a_dropped_church(self) -> None:
+        # PR #37 r1 should-fix 3: the 400 does not reveal a church side.
+        both, none = Running(self.app()), Running(church_app(self.classic_path, None))
+        self.addCleanup(both.close)
+        self.addCleanup(none.close)
+
+        def error(running, slug):
+            status, _h, body = running.get(f"/api/search?q=approvedtoken&mode=bm25&library={slug}")
+            self.assertEqual(status, 400, slug)
+            return json.loads(body)["error"]
+
+        want = error(none, "sample")
+        self.assertEqual(want, "library must be wesley")
+        self.assertEqual(error(none, "spurgeon"), want)
+        self.assertEqual(error(both, "spurgeon"), want)
+        status, _h, _body = both.get("/api/search?q=approvedtoken&mode=bm25&library=sample")
+        self.assertEqual(status, 200)
+        os.chmod(self.church_path, 0o666)
+        with self.assertLogs(level="ERROR"):
+            self.assertEqual(error(both, "sample"), want)  # dropped now
+        self.assertEqual(error(both, "spurgeon"), want)
 
     def test_check_that_raises_is_a_refusal(self) -> None:
         app = church_app(self.classic_path, self.church_path, check=lambda conn: 1 / 0)
@@ -673,7 +843,7 @@ class ServerMainTests(unittest.TestCase):
             patch.object(server, "INDEX_PATH", self.wesley),
             patch.object(server, "bundle_problem", lambda _index: None),
             patch.object(server, "make_server", no_server),
-            patch.dict(os.environ, {"PREACHED_PRIVACY": str(PRIVACY)}),
+            patch.dict(os.environ, {"PREACHED_PRIVACY": str(PRIVACY), **CHURCH_ON}),
         ):
             target.start()
             self.addCleanup(target.stop)
@@ -726,6 +896,35 @@ class ServerMainTests(unittest.TestCase):
         self.assertTrue(app.side("classiconlytoken", 5, "bm25")["classic"]["results"])
         self.assertEqual(sha(self.wesley), wesley_before)
 
+    # PR #37 r1 should-fix 4: the church side is off unless the deploy config turns it on.
+
+    def test_without_the_deploy_switch_the_church_is_not_opened_and_wesley_serves(self) -> None:
+        before = sha(self.church)
+        plain = self.run_main()
+        for value in (None, "", "1", "true", "Enabled", "enabled "):
+            with self.subTest(value=value), patch.dict(os.environ):
+                if value is None:
+                    os.environ.pop("PREACHED_CHURCH_SIDE", None)
+                else:
+                    os.environ["PREACHED_CHURCH_SIDE"] = value
+                for flag, arg in (("--church-library", "mychurch"), ("--church-index", str(self.church))):
+                    with patch.object(server, "open_church_readonly", side_effect=AssertionError("opened")):
+                        with self.assertLogs(level="ERROR") as logs:
+                            app = self.run_main(flag, arg)
+                    self.assertIn("church side refused: PREACHED_CHURCH_SIDE is not 'enabled'", "\n".join(logs.output))
+                    self.assertIsNone(app.church_searcher)
+                    self.assertEqual(app.library_names(), ["wesley"])
+                    self.assertEqual(_without_took(app.side("approvedtoken", 5, "bm25")),
+                                     _without_took(plain.side("approvedtoken", 5, "bm25")))
+        for suffix in ("-wal", "-shm", "-journal"):
+            self.assertFalse(Path(f"{self.church}{suffix}").exists(), suffix)
+        self.assertEqual(sha(self.church), before)
+
+    def test_the_deploy_switch_is_not_passed_by_serve_sh(self) -> None:
+        serve = (Path(__file__).resolve().parents[1] / "scripts" / "serve.sh").read_text()
+        self.assertNotIn("PREACHED_CHURCH_SIDE", serve)
+        self.assertNotIn("--church", serve)
+
     def test_classic_named_as_the_church_still_exits(self) -> None:
         for slug in ("wesley", "spurgeon", "edwards"):
             with self.assertRaises(SystemExit) as caught:
@@ -775,6 +974,13 @@ class CliSideTests(unittest.TestCase):
     def test_flagged_passage_prints_without_audio(self) -> None:
         text, _ = self.run_cli("flaggedtoken", "--church-index", str(self.church))
         church = _section(text, "Your church (sample data)")
+        self.assertIn("audio withheld", church)
+        self.assertNotIn("churchvid03", church)
+
+    def test_the_chunk_right_after_a_flagged_name_prints_without_audio(self) -> None:
+        text, _ = self.run_cli("adjacenttoken", "--church-index", str(self.church))
+        church = _section(text, "Your church (sample data)")
+        self.assertIn("adjacenttoken", church)
         self.assertIn("audio withheld", church)
         self.assertNotIn("churchvid03", church)
 

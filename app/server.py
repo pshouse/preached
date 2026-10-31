@@ -96,6 +96,7 @@ from preached.library import (  # noqa: E402
     CHURCH_EMPTY,
     CHURCH_LABEL,
     CLASSIC_LABEL,
+    ChurchPaused,
     ChurchRefused,
     church_file_problem,
     classic_church_refusal,
@@ -407,7 +408,7 @@ def parse_search_args(
     """Query, k, mode, and the library slug this search is scoped to.
 
     ``libraries`` is the files this process has open (classic, then church).
-    A slug outside that list is a 400. The default slug is the classic one,
+    A slug outside that list is a 400 that names only the classic library. The default slug is the classic one,
     so a request that omits ``library`` stays on the library the page already
     asks for.
     """
@@ -440,7 +441,10 @@ def parse_search_args(
     raw_library = _first(args, "library")
     chosen = allowed[0] if raw_library is None or raw_library.strip() == "" else raw_library.strip()
     if chosen not in allowed:
-        raise BadRequest("library must be " + " or ".join(allowed))
+        # One message whether or not a church side is open (PR #37 r1
+        # should-fix 3): it names only the classic library, so it is the same
+        # as main's and does not change when the church side drops.
+        raise BadRequest(f"library must be {allowed[0]}")
     return query, k, mode, chosen
 
 
@@ -1029,7 +1033,7 @@ class App:
                 payload = self.church_search(query, k, mode)
                 if payload is not None:
                     return payload
-            raise BadRequest("library must be " + " or ".join(self.library_names()))
+            raise BadRequest(f"library must be {self.library}")
         started = time.perf_counter()
         note = None
         effective = mode
@@ -1068,6 +1072,8 @@ class App:
 
         Runs ``church_check`` on the open file. A problem, or an exception,
         drops the church side for the life of the process and logs why.
+        ``ChurchPaused`` (the file is in WAL mode while ``--ack-review``
+        writes it) skips the church side for this request only.
         """
         if self.church_searcher is None:
             return False
@@ -1075,6 +1081,10 @@ class App:
             return True
         try:
             problem = self._church_check(self.church_connection)
+        except ChurchPaused as exc:
+            # Not a refusal: skipped for this request only, nothing read.
+            logging.info("church side skipped for this request: %s", exc)
+            return False
         except Exception as exc:
             problem = f"the church file could not be checked ({exc})"
         if problem is None:
@@ -1932,6 +1942,23 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
+# The deploy switch for the church side (PR #37 r1 should-fix 4). Without
+# exactly this value in the server's environment, a named church is refused
+# and only the classic side is served. serve.sh does not pass it.
+CHURCH_SIDE_ENV = "PREACHED_CHURCH_SIDE"
+CHURCH_SIDE_ON = "enabled"
+
+
+def church_side_problem() -> str | None:
+    """Why the deploy config does not allow a church side, or None."""
+    if os.environ.get(CHURCH_SIDE_ENV) != CHURCH_SIDE_ON:
+        return (
+            f"{CHURCH_SIDE_ENV} is not {CHURCH_SIDE_ON!r}; the church side is off unless the deploy "
+            "config turns it on (docs/DEPLOY.md, church gate)"
+        )
+    return None
+
+
 def prepare_church(*, church_index: Path | None, church_library: str | None) -> None:
     """Refuse an explicit classic as the church. Open nothing, log nothing.
 
@@ -1962,11 +1989,20 @@ def open_church(path: Path, *, slug: str | None, classic_library: str, classic_i
 
     Read-only through ``library.open_church_readonly`` (#33's sidecar-checked
     ``store.open_readonly``, privacy config required, church-shaped, publish-gate
-    columns present). The file and its directory must not be group- or
-    world-writable (``writable_problem``, the classic side's rule). ``check``
+    columns present, not a symlink, owner and mode of the real file and
+    directory checked, DELETE journal mode). The file and its directory must
+    not be group- or world-writable (``writable_problem``, the classic side's
+    rule). ``check``
     repeats the file checks before every church search. A refusal never
     stops the classic side.
+
+    Refused first unless ``$PREACHED_CHURCH_SIDE`` is ``enabled``
+    (``church_side_problem``), from a checkout or a bundle.
     """
+    problem = church_side_problem()
+    if problem is not None:
+        logging.error("church side refused: %s", problem)
+        return None
     try:
         connection, identity = open_church_readonly(path, classic=classic_index)
     except ChurchRefused as exc:
@@ -1985,6 +2021,7 @@ def open_church(path: Path, *, slug: str | None, classic_library: str, classic_i
         return None
 
     def check(conn) -> str | None:
+        # church_file_problem raises ChurchPaused while the file is in WAL mode.
         return writable_problem(path) or church_file_problem(conn, path, identity)
 
     logging.info("church side: %s, read-only, through the publish gate", slug)

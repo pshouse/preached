@@ -655,9 +655,54 @@ class ChurchRefused(ValueError):
     """The church file is not searched. The message is the logged refusal."""
 
 
+class ChurchPaused(Exception):
+    """The church file is in WAL mode (``--ack-review`` is writing it): skip this search, read nothing."""
+
+
 def _church_identity(path: Path) -> tuple[int, int] | None:
     ident = _file_id(path)
     return None if ident is None else ident[:2]
+
+
+def church_path_problem(path: Path) -> str | None:
+    """Why the church file's name, real file or real directory may not be served, or None.
+
+    The name must not be a symlink (DEPLOY's rule for the classic library):
+    a symlink lets a file in a directory other local users can write be
+    served from a safe-looking one (PR #37 r1). The real file and the
+    directory that really holds it must be owned by the serving uid or root
+    and must not be group- or world-writable. Never opens the file.
+    """
+    path = Path(path)
+    try:
+        if stat.S_ISLNK(os.lstat(path).st_mode):
+            return f"{path.name} is a symlink; name the church file itself"
+    except OSError as exc:
+        return f"{path.name} cannot be checked ({exc.__class__.__name__})"
+    real = Path(os.path.realpath(path))
+    owners = {0, os.geteuid()} if hasattr(os, "geteuid") else None
+    for target, what in ((real, "church file"), (real.parent, "church file's directory")):
+        try:
+            st = os.stat(target)
+        except OSError as exc:
+            return f"{what} {target} cannot be checked ({exc.__class__.__name__})"
+        if owners is not None and st.st_uid not in owners:
+            return f"{what} {target} is owned by uid {st.st_uid}, not the serving uid or root"
+        if st.st_mode & 0o022:
+            return f"{what} {target} is group- or world-writable (mode {stat.S_IMODE(st.st_mode):o})"
+    return None
+
+
+def wal_mode(path: Path) -> bool | None:
+    """True when the file's SQLite header says WAL; None when it cannot be read. Opens no database."""
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(20)
+    except OSError:
+        return None
+    if len(header) < 20 or not header.startswith(b"SQLite format 3\x00"):
+        return None
+    return header[18] == 2 or header[19] == 2
 
 
 def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sqlite3.Connection, tuple[int, int]]:
@@ -670,7 +715,8 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
 
     Refused, in this order: no privacy config (``privacy.required_config``),
     a missing file, a classic or hardlinked file (``classic_church_refusal``),
-    the classic index itself, an unsafe sidecar, a file that is not a church
+    a symlinked name or a real file or directory with the wrong owner or
+    mode (``church_path_problem``), a WAL-mode file, the classic index itself, an unsafe sidecar, a file that is not a church
     import (``_church_shape_problem``), a file without the publish-gate
     columns (``store.visible_sql`` gives ``"0"``), and a file replaced while
     it was opened. Each one means the church side is empty; the caller logs
@@ -688,9 +734,13 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
         raise ChurchRefused(f"privacy config: {exc}; the church side is not searched") from exc
     if not path.is_file():
         raise ChurchRefused(f"{path.name} not found; the church side is empty")
-    refusal = classic_church_refusal(None, path)
+    refusal = classic_church_refusal(None, path) or church_path_problem(path)
     if refusal:
         raise ChurchRefused(refusal)
+    if wal_mode(path):
+        # A read-only open of a WAL file creates -wal and -shm beside it.
+        # Approval (--ack-review) leaves the file in DELETE mode.
+        raise ChurchRefused(f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it")
     identity = _church_identity(path)
     if identity is None:
         raise ChurchRefused(f"{path.name} cannot be checked; it is not opened")
@@ -703,7 +753,10 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
     except (OSError, sqlite3.Error) as exc:
         raise ChurchRefused(f"{path.name} cannot be opened ({exc})") from exc
     try:
-        problem = church_file_problem(connection, path, identity)
+        try:
+            problem = church_file_problem(connection, path, identity)
+        except ChurchPaused as exc:
+            problem = f"{exc}; it is not opened"
         if problem is None and visible_sql(connection, "chunks", gated=True) == "0":
             problem = f"{path.name} has no publish-gate columns; nothing in it is served"
     except sqlite3.Error as exc:
@@ -717,12 +770,17 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
 def church_file_problem(connection: sqlite3.Connection, path: Path, identity: tuple[int, int]) -> str | None:
     """Why the open church file may not be searched now, or None. Read-only.
 
-    Run before every church search: the name still points at the file that
-    was opened (same ``(st_dev, st_ino)``, one link, not a classic), its
+    Run before every church search: ``church_path_problem`` (no symlink;
+    owner and mode of the real file and directory), the name still points
+    at the file that was opened (same ``(st_dev, st_ino)``, one link, not a classic), its
     sidecars are still safe (``_sidecar_problem``), and the open file still
-    reads as a church import.
+    reads as a church import. A WAL-mode file raises ``ChurchPaused`` before
+    anything is read: skip this search, but it is not a refusal.
     """
     path = Path(path)
+    problem = church_path_problem(path)
+    if problem is not None:
+        return f"{problem}; refused"
     if _church_identity(path) != identity:
         return f"{path.name} was replaced after it was opened; refused"
     reason = _protection(path)
@@ -733,6 +791,10 @@ def church_file_problem(connection: sqlite3.Connection, path: Path, identity: tu
     sidecar = _sidecar_problem(path)
     if sidecar is not None:
         return f"{path.name} {sidecar}; refused"
+    if wal_mode(path):
+        # Before the first read: reading now would join the WAL (creating
+        # -wal/-shm) and stop --ack-review's switch back to DELETE mode.
+        raise ChurchPaused(f"{path.name} is in WAL journal mode")
     shape = _church_shape_problem(connection)
     if shape is not None:
         return f"{path.name} {shape}; refused"

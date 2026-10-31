@@ -1927,7 +1927,7 @@ class SideApiTests(unittest.TestCase):
         # Any other slug is a 400; with no church file the church slug is one too.
         status, _, body = self.both.get("/api/search?q=churchonlytoken&library=spurgeon&mode=bm25")
         self.assertEqual(status, 400)
-        self.assertEqual(json.loads(body)["error"], "library must be wesley or sample")
+        self.assertEqual(json.loads(body)["error"], "library must be wesley")
         for slug in ("sample", "spurgeon"):
             only_status, _, only_body = self.classic_only.get(
                 f"/api/search?q=churchonlytoken&library={slug}&mode=bm25"
@@ -2149,7 +2149,7 @@ class SideApiTests(unittest.TestCase):
                         "/api/search?q=classiconlytoken&library=other&mode=bm25"
                     )
                     self.assertEqual(bad, 400, slug)
-                    self.assertEqual(json.loads(bad_body)["error"], f"library must be {slug} or sample")
+                    self.assertEqual(json.loads(bad_body)["error"], f"library must be {slug}")
                     side_status, _, side_body = running.get(
                         "/api/side?q=classiconlytoken&mode=bm25&k=1"
                     )
