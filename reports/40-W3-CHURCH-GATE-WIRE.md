@@ -293,7 +293,7 @@ The script `/tmp/cwfix/mut.py` (not committed) applied each mutation on its own 
 - `uv lock --check`: passed (79 packages). `pyproject.toml` and `uv.lock` are unchanged.
 - gitleaks: NOT run (not installed in this sandbox).
 - **PR body: NOT updated.** `gh` is not installed in this sandbox. The branch is pushed. The PR body should get this section's item table.
-- Code head before this section: `a3db9c0`. The branch head is the commit that adds this section.
+- Code head before this section: `a3db9c0`. The commit that adds this section is `445661d`. The branch head is the follow-up commit that records this SHA (report text only).
 
 ### Open issues
 
