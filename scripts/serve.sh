@@ -97,12 +97,6 @@ HF_HUB_DISABLE_TELEMETRY=1
 TRANSFORMERS_OFFLINE=1
 TOKENIZERS_PARALLELISM=false
 PYTHONDONTWRITEBYTECODE=1
-# Bytecode in the tree is never loaded: an old __pycache__ can match a
-# source file's size and mtime (every release tar has the same mtime) and
-# run in place of the hashed source. A fresh empty prefix means Python
-# compiles from source. app/bundle.py also refuses a bundle with any
-# __pycache__ or *.pyc outside .venv.
-PYTHONPYCACHEPREFIX=$(mktemp -d "${TMPDIR:-/tmp}/preached-pycache.XXXXXX")
 PYTHONUNBUFFERED=1
 PYTHONNOUSERSITE=1
 PYTHONPATH="$ROOT/src:$ROOT"
@@ -138,16 +132,26 @@ pass HF_HUB_DISABLE_TELEMETRY
 pass TRANSFORMERS_OFFLINE
 pass TOKENIZERS_PARALLELISM
 pass PYTHONDONTWRITEBYTECODE
-pass PYTHONPYCACHEPREFIX
 pass PYTHONUNBUFFERED
 pass PYTHONNOUSERSITE
 pass PYTHONPATH
 pass TZ
 
+# Bytecode in the tree is never loaded: an old __pycache__ can match a
+# source file's size and mtime (every release tar has the same mtime) and
+# run in place of the hashed source. The preflight imports app (and
+# app.server itself) before app/server.py can set its own prefix, so it
+# runs with a fresh empty PYTHONPYCACHEPREFIX. That directory is removed
+# before the exec below. The server is started as a script, so its first
+# lines set a private prefix of their own and remove it at exit.
+# app/bundle.py also refuses a bundle with any __pycache__ or *.pyc
+# outside .venv.
+PYCACHE=$(mktemp -d "${TMPDIR}/preached-pycache.XXXXXX")
+trap 'rm -rf -- "$PYCACHE"' EXIT
 if [ -n "$PY" ]; then
-  CHECK=(env -i "${ENV_ARGS[@]}" "$PY")
+  CHECK=(env -i "${ENV_ARGS[@]}" "PYTHONPYCACHEPREFIX=${PYCACHE}" "$PY")
 else
-  CHECK=(env -i "${ENV_ARGS[@]}" uv run --project "$ROOT" --frozen --no-sync --no-dev --no-default-groups python)
+  CHECK=(env -i "${ENV_ARGS[@]}" "PYTHONPYCACHEPREFIX=${PYCACHE}" uv run --project "$ROOT" --frozen --no-sync --no-dev --no-default-groups python)
 fi
 # Bundle or checkout, the manifest, no bytecode, the bundle's own model
 # directory. Stdlib only, run as a script with -I -B, so it runs before any
@@ -177,6 +181,9 @@ except sqlite3.DatabaseError as exc:
 finally:
     connection.close()
 PY
+
+rm -rf -- "$PYCACHE"
+trap - EXIT
 
 ARGS=(
   app/server.py
