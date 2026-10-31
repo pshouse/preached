@@ -37,6 +37,7 @@ from preached.youtube.listing import Video
 
 from test_privacy_wire import CHANNEL, FILLER, ID_A, ID_B, OPENING_A, OPENING_B, Base, embedder, transcript, words_for
 from test_privacy_wire import REPO_ROOT, videos
+from coverage_stub import stub_audio
 
 ID_C = "wirevideo03"
 NAMES = ("Fenwick", "Gerald", "Okonkwo", "Thistlewood", "Brenda", "Townsend", "Kowalczyk", "Liam")
@@ -84,6 +85,7 @@ class LiveGateTests(Base):
             metadata=lambda video: {"title": video.title, "duration": 400, "upload_date": "20240602"},
             downloader=lambda video, dest: dest / f"{video.id}.m4a",
             transcriber=lambda path: spoken[Path(path).stem],
+            coverage=lambda *_a, **_k: [],
             embedder=embedder,
         )
 
@@ -302,6 +304,7 @@ class TitleTests(Base):
             metadata=lambda video: {**meta[video.id], "duration": 400, "upload_date": "20240602"},
             downloader=lambda video, dest: dest / f"{video.id}.m4a",
             transcriber=lambda path: spoken[Path(path).stem],
+            coverage=lambda *_a, **_k: [],
             embedder=embedder,
         )
         self.assertEqual(code, 0, err)
@@ -439,7 +442,7 @@ class AsrGateTests(unittest.TestCase):
         code = 0
         with redirect_stdout(out), redirect_stderr(err):
             try:
-                self.module.main([str(self.transcript_path), "--out", str(self.out), *argv], **kwargs)
+                self.module.main([str(self.transcript_path), "--out", str(self.out), *argv, *stub_audio(self.transcript_path)], **{"coverage": lambda *_a, **_k: [], **kwargs})
             except SystemExit as exc:
                 code = exc.code if isinstance(exc.code, int) else 2
         return code, out.getvalue(), err.getvalue()

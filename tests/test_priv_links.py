@@ -36,6 +36,7 @@ from preached.store import open_readonly  # noqa: E402
 from preached.youtube.cli import main as youtube_main  # noqa: E402
 from preached.youtube.listing import watch_url  # noqa: E402
 from test_privacy_wire import FILLER, ID_A, ID_B, Base, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 YOUTUBE = re.compile(r"https://www\.youtube\.com/watch\?v=[A-Za-z0-9_-]{11}(&t=\d+s)?")
 QUERIES = ("soup", "faithful", "mercy", "season", "zephyrgrace", "morning", "God", "hospital", "children")
@@ -205,7 +206,7 @@ class AsrRuleTests(unittest.TestCase):
         self.index = root / "church.sqlite"
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(transcript), "--out", str(root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(toml), "--index", str(self.index), *stub_audio(transcript)], embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)], index_dir=root)
         self.assertEqual(code, 0)
         self.connection = open_readonly(self.index, check_same_thread=False)

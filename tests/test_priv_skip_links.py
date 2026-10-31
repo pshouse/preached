@@ -41,6 +41,7 @@ from preached.youtube.listing import Video  # noqa: E402
 from test_priv_skip import PRAYER, SERVICE  # noqa: E402
 from test_privacy_wire import CHANNEL, FILLER, ID_A, Base, embedder, words_for  # noqa: E402
 from test_privacy_wire_fix import LiveServer  # noqa: E402
+from coverage_stub import stub_audio
 
 # A word every kept chunk of SERVICE holds (FILLER), so one search returns them all.
 EVERYWHERE = "faithful"
@@ -151,6 +152,7 @@ class YouTubeTests(Checks, Base):
             downloader=lambda v, dest: dest / f"{v.id}.m4a",
             transcriber=lambda path: words_for(text),
             embedder=embedder,
+            coverage=lambda *_a, **_k: [],
         )
         self.assertEqual(code, 0, err)
         code, _out, err = self.cli(["--library", "wire", "--ack-review", ID_A])
@@ -196,7 +198,7 @@ class AsrTests(Checks, unittest.TestCase):
         toml.write_text("# none\n")
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()) as err:
             asr_chunks.main([str(transcript), "--out", str(self.root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(toml), "--index", str(self.index), *stub_audio(transcript)], embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)], index_dir=self.root)
         self.assertEqual(code, 0, err.getvalue())
 

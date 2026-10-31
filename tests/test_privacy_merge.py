@@ -32,6 +32,7 @@ from unittest.mock import patch
 
 from test_dedupe import hit, words
 from test_privacy_wire import FILLER, ID_A, ID_B, REPO_ROOT, Base, embedder, words_for
+from coverage_stub import stub_audio
 
 YT = f"https://www.youtube.com/watch?v={ID_A}"
 APP_JS = REPO_ROOT / "app" / "static" / "app.js"
@@ -299,12 +300,12 @@ class ChurchAsrServedTests(unittest.TestCase):
         toml.write_text('block = ["Timothy"]\n')
         index = root / "church.sqlite"
         argv = [str(transcript), "--out", str(root / "chunks.jsonl"), "--library", "church",
-                "--privacy", str(toml), "--index", str(index)]
+                "--privacy", str(toml), "--index", str(index), *stub_audio(transcript)]
         from contextlib import redirect_stderr
         from preached.youtube.cli import main as youtube_main
 
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            asr_chunks.main(argv, embedder=embedder)
+            asr_chunks.main(argv, embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)],
                                 index_dir=root)
         self.assertEqual(code, 0)
