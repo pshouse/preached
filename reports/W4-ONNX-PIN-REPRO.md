@@ -470,3 +470,14 @@ On 2026-10-31 at 16:29 ET, during a mutant run, a test removed and rewrote the s
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ````
+
+## r3b: re-check against main `ebffabb` (#69 merged)
+
+Result: no re-merge needed. The branch already contains `ebffabb` (the #69 merge commit) as an ancestor, via merge `5f6a8fe`, and that merge re-pinned every `app/server.py` cite in `docs/DEPLOY.md` and `CITED` in `tests/test_deploy_alerts.py` against the merged tree. Commits after `5f6a8fe` touch only this report (`git diff --stat 5f6a8fe HEAD`), so `app/server.py` is unchanged since the re-pin.
+
+- Ahead/behind `origin/main` (`ebffabb`): 28 ahead, 0 behind.
+- Cites: `tests.test_deploy_alerts` re-run on the current tree with scratch `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME` (temp dirs) and `PREACHED_REQUIRE_DENO=1`: `Ran 7 tests`, `OK`, so every cited server.py line holds its string (all 30 `CITED` server.py pins, e.g. 238, 244, 285-286, 296-312, 506, 518, 863-922, 1121-1244, 1348-1349, 1444-1490, plus the DEPLOY.md cites). DEPLOY.md wording is tree-relative, with no shas.
+- Full suite and `uv lock --check`: not re-run (step 1 stop condition; no code changed). The last full run is r3 above: 1043 tests, `OK (skipped=9)`.
+- Cache snapshot (`/cache`, path+size+mtime, 132589 entries) before and after the cite test: identical (sha256 `cba0cf49…1783`). Nothing was written outside a temp dir.
+
+`git diff --stat origin/main..HEAD` is unchanged from "Branch state" above (10 files, all in scope).
