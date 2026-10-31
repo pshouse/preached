@@ -214,7 +214,13 @@ It does guarantee:
   close the index, release the ONNX session. The process then exits 0 with
   no traceback and the bytecode directory removed. `tests/test_shutdown.py`
   proves this with 16 clients searching (bm25 and hybrid), on an idle
-  server, and with an idle keep-alive connection open. A SIGTERM after the
+  server, and with an idle keep-alive connection open. The loaded test is
+  probabilistic: on CI's small bm25 index (3 runs, no hybrid) it misses the
+  old crash about half the time, so the deterministic in-flight test
+  (a search held open across SIGTERM) is the CI gate. The gate for a
+  change to the drain is the real-index loaded run,
+  `PREACHED_SHUTDOWN_RUNS=30 python -m unittest tests.test_shutdown`
+  with `/cache` present (bm25 and hybrid). A SIGTERM after the
   handler is installed and before serving exits 0 and serves nothing in the
   cases tested: during the imports, in `main`'s start-up checks, and during
   an `onnxruntime` import that turns it into `ImportError` (the server
@@ -222,11 +228,17 @@ It does guarantee:
   `tests/test_deploy.py`.
   Not covered: a SIGTERM in the first moments of start, before the first
   lines of `app/server.py` install the handler, kills the process by the
-  signal (status 143 to systemd). Add `SuccessExitStatus=143` if a unit may
-  be stopped that early. If a handler thread is still running 10 s after
+  signal. What systemd sees depends on how `serve.sh` started it: with the
+  project `.venv` it `exec`s Python directly and the unit ends by signal
+  (`SIGTERM`, not an exit status); only the `uv run` path reports exit
+  status 143. Add `SuccessExitStatus=143 SIGTERM` if a unit
+  may be stopped that early. If a handler thread is still running 10 s after
   the stop (`DRAIN_TIMEOUT_S`), the index is left open, the process waits
   for that thread and exits 1.
-  Ctrl-C (SIGINT) while serving stops the same way and exits 0. During
+  Ctrl-C (SIGINT) while serving stops the same way and exits 0. A second
+  Ctrl-C (or a second SIGTERM) does not force an exit while a handler is
+  stuck: the stop is already under way and the signal is ignored. Send
+  SIGKILL, or set `TimeoutStopSec=` in the unit so systemd does. During
   `main`'s start-up checks it exits 130 with no traceback; during the
   module imports before `main` it prints a traceback and dies by SIGINT.
   A refusal (`error: ...`) exits 1.
