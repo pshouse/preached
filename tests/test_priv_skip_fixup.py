@@ -42,6 +42,7 @@ from preached.youtube.cli import main as youtube_main  # noqa: E402
 from preached.youtube.listing import Video  # noqa: E402
 from test_priv_skip import MARKERS, SERVICE  # noqa: E402
 from test_privacy_wire import CHANNEL, FILLER, ID_A, Base, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 CANARY = "velvetlantern"
 FAST = {"CHECKPOINT_WAITS": (0.01, 0.02), "CHECKPOINT_BUSY_MS": 10}
@@ -161,6 +162,7 @@ class YouTubeFixupTests(Base):
             downloader=lambda v, dest: dest / f"{v.id}.m4a",
             transcriber=lambda path: words_for(text),
             embedder=embedder,
+            coverage=lambda *_a, **_k: [],
         )
 
     def ack(self):
@@ -375,7 +377,7 @@ class AsrOutTests(unittest.TestCase):
     def test_out_file_drops_newly_excluded_words_and_keeps_other_sermons(self) -> None:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([*map(str, self.paths), "--out", str(self.out), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(self.toml), "--index", str(self.index), *stub_audio(*self.paths)], embedder=embedder, coverage=lambda *_a, **_k: [])
         before = [json.loads(x) for x in self.out.read_text().splitlines()]
         self.assertIn(CANARY, " ".join(r["text"] for r in before if r["sermon_id"] == "church-1"))
         review = self.root / "church" / "review" / "church-1.review.jsonl"
@@ -406,7 +408,8 @@ class AsrOutTests(unittest.TestCase):
         out = link / "c.jsonl"
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(self.paths[0]), "--out", str(out), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(self.toml), "--index", str(self.index), *stub_audio(self.paths[0])],
+                            embedder=embedder, coverage=lambda *_a, **_k: [])
         self.assertIn(CANARY, (real / "c.jsonl").read_text())
         review = self.root / "church" / "review" / "church-1.review.jsonl"
         words = words_for(SERVICE)
@@ -423,9 +426,9 @@ class AsrOutTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in real.iterdir()), ["c.jsonl"])
 
     def test_rerun_keeps_reviewer_stretches(self) -> None:
-        argv = [str(self.paths[0]), "--out", str(self.out), "--library", "church", "--privacy", str(self.toml), "--index", str(self.index)]
+        argv = [str(self.paths[0]), "--out", str(self.out), "--library", "church", "--privacy", str(self.toml), "--index", str(self.index), *stub_audio(*self.paths)]
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            asr_chunks.main(argv, embedder=embedder)
+            asr_chunks.main(argv, embedder=embedder, coverage=lambda *_a, **_k: [])
         review = self.root / "church" / "review" / "church-1.review.jsonl"
         words = words_for(SERVICE)
         index = next(i for i, w in enumerate(words) if w.text == CANARY)
@@ -433,7 +436,7 @@ class AsrOutTests(unittest.TestCase):
         lines.append({"field": "exclude", "start_s": words[index - 1].start, "end_s": words[index + 3].end})
         review.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines))
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
-            asr_chunks.main(argv, embedder=embedder)
+            asr_chunks.main(argv, embedder=embedder, coverage=lambda *_a, **_k: [])
         self.assertNotIn(CANARY, self.out.read_text())
         self.assertNotIn(CANARY.encode(), raw(self.index))
 

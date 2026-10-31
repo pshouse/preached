@@ -19,8 +19,8 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, top_indices, weighted_fusion
-from preached.store import bm25_search, check_fingerprint, load_embeddings, visible_count, visible_rowids, visible_sql
+from preached.rank import dense_hits, dense_scores, reciprocal_rank_fusion, weighted_fusion
+from preached.store import bm25_search, check_fingerprint, load_embeddings, visible_count, visible_sql
 
 CANDIDATES = 100
 # GET /api/search asks the ranker for this many hits, then de-dups down to k.
@@ -88,6 +88,15 @@ class Hit:
         return list(self.merged_ids) if self.merged_ids else [self.chunk_id]
 
 
+@dataclass
+class Visible:
+    """What a gated file may serve right now (``Searcher._visible``)."""
+
+    fts: sqlite3.Connection
+    rowids: list[int]
+    matrix: np.ndarray | None
+
+
 class Searcher:
     def __init__(
         self,
@@ -115,6 +124,9 @@ class Searcher:
         self._fingerprint = fingerprint
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
+        # The rows visible now, for search on a gated file (``_visible``).
+        self._visible_cache: Visible | None = None
+        self._visible_key: tuple | None = None
         if model:
             if fingerprint is None:
                 from preached.models import MODELS
@@ -168,23 +180,59 @@ class Searcher:
         return [hit_from_row(rows[rowid], score) for rowid, score in scored if rowid in rows]
 
     def _lexical(self, query: str, limit: int, where: str | None) -> list[tuple[int, float]]:
-        """BM25 over chunks visible now; the gate is part of the query."""
-        return bm25_search(self.connection, query, limit, where)
+        """BM25 over chunks visible now.
+
+        Filtering the file's own FTS index is not enough on a gated file:
+        SQLite's bm25() takes its term statistics (row count, document
+        frequency, mean length) from every indexed row, hidden ones
+        included, so the scores and the order of visible rows would change
+        with what an unpublished sermon says. A gated file is searched in a
+        private in-memory index of the visible rows only, which scores
+        exactly as a file that never held the hidden ones.
+        """
+        if where is None:
+            return bm25_search(self.connection, query, limit)
+        return bm25_search(self._visible(where).fts, query, limit)
 
     def _semantic(self, vector: np.ndarray, limit: int, where: str | None) -> list[tuple[int, float]]:
-        scores = dense_scores(vector, self._matrix)
+        """Dense over chunks visible now. On a gated file only the visible
+        rows are scored, so no hidden row changes a score (BLAS rounding
+        depends on the matrix shape) or how long the search takes."""
         if where is None:
-            return dense_hits(self._rowids, scores, limit)
-        # Walk the full ranking and keep the first ``limit`` rows visible now.
-        order = top_indices(scores, scores.shape[0])
-        kept: list[tuple[int, float]] = []
-        for start in range(0, len(order), max(limit, 1) * 4):
-            batch = [(self._rowids[int(i)], float(scores[int(i)])) for i in order[start : start + max(limit, 1) * 4]]
-            visible = visible_rowids(self.connection, [rowid for rowid, _ in batch], gated=self.gated, library=self.library)
-            kept.extend(item for item in batch if item[0] in visible)
-            if len(kept) >= limit:
-                break
-        return kept[:limit]
+            return dense_hits(self._rowids, dense_scores(vector, self._matrix), limit)
+        visible = self._visible(where)
+        if not visible.rowids:
+            return []
+        return dense_hits(visible.rowids, dense_scores(vector, visible.matrix), limit)
+
+    def _visible(self, where: str) -> Visible:
+        """The visible rows: an FTS5 copy and their vectors. Rebuilt when the
+        file changes (``PRAGMA data_version``), the gate condition changes, or
+        the vectors are reloaded."""
+        key = (self._data_version(), where, id(self._matrix))
+        if self._visible_cache is not None and self._visible_key == key:
+            return self._visible_cache
+        rows = self.connection.execute(
+            f"SELECT rowid, text, sermon_title, coalesce(scripture, '') FROM chunks WHERE {where} ORDER BY rowid"
+        ).fetchall()
+        memory = sqlite3.connect(":memory:", check_same_thread=False)
+        memory.row_factory = sqlite3.Row
+        memory.execute(
+            "CREATE VIRTUAL TABLE chunks_fts USING fts5("
+            f"text, sermon_title, scripture, tokenize={fts_tokenizer(self.connection)!r})"
+        )
+        memory.executemany("INSERT INTO chunks_fts(rowid, text, sermon_title, scripture) VALUES (?, ?, ?, ?)", rows)
+        memory.commit()
+        rowids: list[int] = []
+        matrix = None
+        if self._matrix is not None and self._rowids is not None:
+            position = {rowid: index for index, rowid in enumerate(self._rowids)}
+            rowids = [int(row[0]) for row in rows if int(row[0]) in position]
+            matrix = self._matrix[[position[rowid] for rowid in rowids]]
+        if self._visible_cache is not None:
+            self._visible_cache.fts.close()
+        self._visible_cache, self._visible_key = Visible(memory, rowids, matrix), key
+        return self._visible_cache
 
     def bm25(self, query: str, limit: int) -> list[Hit]:
         where = self._where()
@@ -226,6 +274,16 @@ class Searcher:
         else:
             raise RuntimeError(f"unknown fusion {fusion}")
         return self._pack(fused, limit, where)
+
+
+FTS_TOKENIZE = re.compile(r"tokenize\s*=\s*'((?:[^']|'')*)'", re.IGNORECASE)
+
+
+def fts_tokenizer(connection: sqlite3.Connection) -> str:
+    """The ``tokenize`` option of the file's ``chunks_fts`` (store.SCHEMA: ``porter unicode61``)."""
+    row = connection.execute("SELECT sql FROM sqlite_master WHERE name = 'chunks_fts'").fetchone()
+    match = FTS_TOKENIZE.search(row[0] if row and row[0] else "")
+    return match.group(1).replace("''", "'") if match else "porter unicode61"
 
 
 def row_value(row: sqlite3.Row, key: str):

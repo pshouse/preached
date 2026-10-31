@@ -19,7 +19,7 @@ hit@10 means at least one labelled passage is in the top 10. Strict counts grade
 - **On `plain`, the 0.028 is mostly narrow labels.** Counting every passage a reader judged acceptable, the default puts one in the top 10 for 18 of 25 `plain` questions (0.72 [0.52, 0.88]). Strict, it does so for 2. Lenient nDCG@10 is 0.132, still low, because these questions now have 3 to 22 acceptable passages each, which raises the ideal.
 - **On questions written blind to the corpus, retrieval really is failing.** The default finds an acceptable passage in the top 10 for 3 of 28 answerable `plain-blind` questions (0.11 [0.00, 0.21]), and the right sermon in the top 10 for 10 of 28. sermon@50 is 0.82, so the material is reachable but ranked too low. These labels were picked from the same rankers' top 20 plus the grader's own corpus search, so this is not a pooling artefact.
 - **BM25 is what drags the default down on blind questions.** Granite dense alone has lenient hit@10 0.39 vs 0.11 for the default on `plain-blind`: +0.29 [+0.14, +0.46], with 8 wins and 0 losses. On `plain` the two are tied (−0.04 [−0.20, +0.12]). On `names-topic` dense alone is worse on lenient nDCG (−0.064 [−0.12, −0.01]). **I did not change anything.** Patrick decides, after confirming labels.
-- **The 0.8129 abstain floor holds on the old set but not with `plain-blind`.** The shipped `search/abstain.toml` on main is commit `adb419ec`. PR #10 replaced the earlier file at `73d86bda`. The Granite floor is unchanged at 0.8129. This PR does not edit `search/abstain.toml`.
+- **The 0.8129 abstain floor holds on the old set but not with `plain-blind`.** `adb419ec` is the sha256 (first 8 hex) of the shipped `search/abstain.toml` on main, which is the current file (git blob `38e5d4bc`; its bytes are unchanged). `73d86bda` is the sha256 of the previous version of that file (git blob `8d51609c`, last in commit `86ec71a`), which PR #10 replaced. Neither is a git object name. The shipped calibration did not change; the Granite floor is unchanged at 0.8129. This PR does not edit `search/abstain.toml`.
   - Refit on the 63 questions without `plain-blind`: 0.8129, unchanged.
   - Refit on all 93: 0.7753, with abstain recall 0 on the unanswerable questions.
   - With the shipped floor, 2 answerable blind questions would show "nothing found" (`p-016` "help i messed up bad", `p-017` "why wont he answer"). The 2 blind unanswerable questions score above the floor.
@@ -215,7 +215,7 @@ Lenient nDCG is *lower* than strict on the keyword groups and `names-topic`. Tha
 | share of default top-10 slots that look relevant but are unlabelled | 28% (12 questions) | 16% hold a proposed label (40 of 250 slots, all 25) |
 | lenient hit@10, default | — | 19/25 |
 
-The hybrid counts match. Dense is one question lower on each. The bench counts only grade-2 sermons; the whole gap is q-perfection-plain. The CTO's 28% was an eyeball estimate. Ours is stricter: the bar asks for an answer to the question, not just relevance to it.
+The hybrid counts match. Dense is one question lower on each. The bench counts only grade-2 sermons; the CTO's 17/24 counted any labelled sermon. The whole gap is q-perfection-plain. The CTO's 28% was an eyeball estimate. Ours is stricter: the bar asks for an answer to the question, not just relevance to it.
 
 ### Lint
 
@@ -289,7 +289,7 @@ CTO verdict on `fdde6ea` was CHANGES. One doc-only must-fix, three should-fixes.
 | item | commit |
 | --- | --- |
 | Proposed labels are `found_by` `llm-proposed:claude`; the 30 blind questions are `provenance` `llm-written:grok`; README, `docs/research/embeddings.md`, and the review-sheet note say so and that a human has not confirmed them | `9e911a78185450723f64d893dda96055ef2d46bd` |
-| Dense sermon@10/@50 gap: the bench counts only grade-2 sermons; the whole gap is `q-perfection-plain`. Shipped `search/abstain.toml` on main is `adb419ec` (PR #10 replaced `73d86bda`). Granite floor unchanged at 0.8129 | `82f7aca4895b28e08bab6bb8c10be683dbe87f59` |
+| Dense sermon@10/@50 gap: the bench counts only grade-2 sermons; the whole gap is `q-perfection-plain`. The shipped `search/abstain.toml` is sha256 `adb419ec` (git blob `38e5d4bc`, unchanged); PR #10 replaced the earlier version, sha256 `73d86bda` (blob `8d51609c`). Granite floor unchanged at 0.8129 | `82f7aca4895b28e08bab6bb8c10be683dbe87f59` |
 | `eval/pool.py` shuffles the grader's pool and drops ranker and rank | `133d932652379e3a5e145ddb4b92253d81b75722` |
 | `.gitignore` keeps `eval/review/review-*.csv` only | `8a1b20401157276c6e8cfd8b54eab811a2017e5f` |
 | Leak lint: modern verse wording, a single distinctive word, and "fell away", with tests | `7b9673d277b1c0992942004fb595ec498f9cecc5` |
@@ -339,3 +339,66 @@ Merge commit: `49fb5daacec19f7cd55c3192828654845dc0c7a0` (parents `14eae9e366010
 Head: `565ede0f3de4666aa300e58199a6d65985aa6840` adds this section. This sentence is the commit after it. `git log -1` on `feat/eval-deleak` is the branch head.
 
 PR #17: https://github.com/pshouse/preached/pull/17. After pushing `565ede0`, GitHub compare `main...feat/eval-deleak` reports status `ahead`, ahead 25, behind 0. Main `6c7c4ca` is an ancestor of the branch, so the PR has no conflicts with main. `git merge-tree origin/main HEAD` exits 0. The pulls API `mergeable` field was still null and `mergeable_state` was `unknown` while GitHub's merge job had not finished (checked for several minutes after the push).
+
+## EVAL-NITS (CTO should-fixes from PR #17 round 3)
+
+Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/check_title_leak.py` (with a test); its docstring was meant to say 3+ letter content words, matching `tokens()` (that edit did not land; fixed in the fix-up below); `eval/pool.py` opens the index with `open_readonly`; the abstain.toml hashes above are relabelled (they are sha256 file hashes, corrected in the fix-up below); the 17/24 note is added to the CTO cross-check. No label status, question, search, fusion, or dependency changed. No LLM, no re-grading.
+
+**Rewrite (director-authorised, Oct 30).** The new `trick` synonym made `q-satan-plain` leak the title of wesley-042, so the question was reworded instead of adding a lint exemption. Same intent (resisting deceptions and temptations that look good); no title words and no synonym-map words for any sermon. No other question, label, or grading changed.
+
+- Old: "Something keeps trying to pull me away from God and make me lose heart. How do I keep from being tricked?"
+- New: "Something keeps pulling me away from God and wearing me down, and the wrong choices look so good. How do I stand firm?"
+- The same text was updated in `eval/pool/pool-2026-10-30.jsonl` and `eval/review/review-2026-10-30.csv`. `reports/EVAL-DELEAK.md` still quotes the old wording as history.
+
+**Tests.** `uv run python -m unittest discover -s tests`: 529 tests, 0 failures. `uv lock --check`: `Resolved 79 packages`, exit 0.
+
+## EVAL-NITS-FIX (CTO round 1 on PR #22)
+
+Docs and eval data only. `origin/main` (`9e5c054`) was merged first (merge commit `966d142`). No rebase, no force-push, no new dependency, no model change.
+
+| Item | Commit |
+| --- | --- |
+| Must-fix 1: `scripts/check_title_leak.py` docstring now says "3 or more letters" (the EVAL-NITS edit had not landed); the EVAL-NITS note above is corrected | `0f46d25`, `c3ea000` |
+| Must-fix 2: `adb419ec` and `73d86bda` are sha256 hashes, not git blobs. Current `search/abstain.toml`: sha256 `adb419ec`, git blob `38e5d4bc`, bytes unchanged. `73d86bda` is the previous version (blob `8d51609c`, commit `86ec71a`). Reworded at the top-level finding and in the CTO cross-check table; the shipped calibration did not change | `c3ea000` |
+| Must-fix 3: `q-satan` family re-pooled with the final `q-satan-plain` wording; the 62 chunks that were newly pooled were read and judged; 4 grade-1 labels added; bench rerun; review CSV rows regenerated | `7a0d7dc` |
+| Should-fix 1: `q-satan-plain` reworded (below). `check_title_leak.py`: 25 plain checked, 0 leaking | `0f46d25` |
+| Should-fix 2: synonym test now covers `enemy`, `enemies`, `trick`, `tricked`, `deceive`, `deception`; `deceive` and `deception` added to the `wesley-042` synonyms | `0f46d25`, `7a0d7dc` |
+| Should-fix 3: `eval/timestamps.py` uses `open_readonly` | `0f46d25` |
+| Should-fix 4: `eval/README.md` says the `-plain` rewrites were written by an LLM agent | `c3ea000` |
+| Nit: stale "PR not opened" line removed from this report | `c3ea000` |
+| Nit: `eval/pool.py` exits with `pool.py: missing index PATH. Build the index first ...` instead of a traceback. It also gains `--family ID ...`, which re-pools only those families and replaces their records in place | `0f46d25` |
+
+**Wording.** Now: "Something keeps pulling me away from God and wearing me down until I want to give up. How do I stand firm?" The intermediate wording ("... and the wrong choices look so good ...") is gone from the pool file and the CSV; its text never sits next to rankings from another wording. Pool record `q-satan` now holds rankers for the final text of both `q-satan` and `q-satan-plain`.
+
+**Re-pool.** `uv run --group bench eval/pool.py --family q-satan`. The `q-satan` ranker lists were identical to the old pool (deterministic); the `q-satan-plain` lists changed. The family's pool stayed at 150 chunks, but 62 of them were not in the old pool and had never been judged. I read all 62 and proposed 4 grade-1 labels, each with a quote and a reason, like the other labels. The other 58 got no label (off-topic, a different device, or already covered by an existing label such as `wesley-072-c0053`). Two commands applied them: `eval/apply_grades.py --check` (no problems), then `eval/apply_grades.py --pool eval/pool/pool-2026-10-30.jsonl /cache/eval-pool/2026-10-30/grades`. Only `q-satan` and `q-satan-plain` changed in `eval/questions.jsonl` (same 19 grade-1 labels on both). `eval/validate.py`: all graded quotes match.
+
+New labels (all `status: "proposed"`, `found_by: "llm-proposed:claude"`; an LLM judged them and **Patrick has not confirmed them**):
+
+| passage_id | chunk | note |
+| --- | --- | --- |
+| `q-satan-g1-16` | `wesley-042-c0019` | Satan wears down peace and joy with fear; keep your eye on Christ |
+| `q-satan-g1-17` | `wesley-078-c0043` | cry to the Strong for strength against the world and powers of darkness |
+| `q-satan-g1-18` | `wesley-078-c0048` | fight the good fight of faith, stand fast in liberty |
+| `q-satan-g1-19` | `wesley-019-c0055` | watch and pray always so inward sin does not regain dominion |
+
+**Bench, `q-satan-plain` alone** (`--questions` with only that item, `--allow-cached`; strict = grade 2 only is 0.000 for every row both times; lenient adds grade-1; `hit@10_lenient` is 1.000 in both runs except where noted):
+
+| model | mode | before: R@5 / MRR@10 / nDCG@10 (lenient) | after: R@5 / MRR@10 / nDCG@10 (lenient) |
+| --- | --- | --- | --- |
+| granite-english-r2 (default) | hybrid_rrf | 0.000 / 0.143 / 0.051 | 0.000 / 0.167 / 0.054 |
+| granite-english-r2 | dense | 0.062 / 0.333 / 0.076 | 0.100 / 0.500 / 0.210 |
+| granite-english-r2 | hybrid_weighted | 0.062 / 0.250 / 0.066 | 0.050 / 0.333 / 0.179 |
+| embeddinggemma-2 | dense | 0.062 / 0.250 / 0.066 | 0.050 / 0.333 / 0.076 |
+| embeddinggemma-2 | hybrid_rrf | 0.000 / 0.143 / 0.051 | 0.000 / 0.125 / 0.048 |
+| embeddinggemma-2 | hybrid_weighted | 0.062 / 0.200 / 0.059 | 0.000 / 0.125 / 0.048 |
+| arctic-embed-l | dense | 0.062 / 0.200 / 0.059 | 0.100 / 1.000 / 0.256 |
+| arctic-embed-l | hybrid_rrf | 0.000 / 0.000 / 0.000 (hit@10 0) | 0.000 / 0.100 / 0.044 |
+| arctic-embed-l | hybrid_weighted | 0.000 / 0.125 / 0.048 | 0.050 / 0.500 / 0.141 |
+
+"Before" is the head `632dca4` wording with its labels; "after" is the final wording with the 4 new labels. One question is one data point, not a trend. Full runs: `eval/results/2026-10-30-nits.{json,md}` and `eval/results/2026-10-30-abstain-nits.{json,md}`. `search/abstain.toml` was not written (no `--write-calibration`); the shipped Granite floor is unchanged at 0.8129.
+
+**Tests and lock.** `uv run python -m unittest discover -s tests`: 559 tests, 0 failures (the count includes tests that came in with the `origin/main` merge). `uv lock --check`: `Resolved 79 packages`, exit 0.
+
+**Review CSV.** `eval/review/review-2026-10-30.csv` was regenerated in full; only the `q-satan` (#17) and `q-satan-plain` (#18) rows differ from before. Those two rows alone are in `eval/review/review-2026-10-30-q-satan-rows.csv` (with the comment line and header) so the sheet can be updated by pasting. The four new proposals appear in the "proposed grade-1 passages" cell of both rows.
+
+**Head.** The head SHA is the commit that adds this section (`git log -1` on `feat/eval-nits`).

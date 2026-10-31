@@ -40,6 +40,9 @@ VIDEO_EXTRA_COLUMNS = (
     ("approved_at", "TEXT"),
     # preached.privacy.config_sha256 of the config the import ran under.
     ("privacy_sha256", "TEXT"),
+    # JSON list of [start_s, end_s] uncovered non-silent spans (preached.youtube.coverage).
+    # NULL means the check never ran; approval refuses both NULL and a non-empty list.
+    ("coverage_gaps", "TEXT"),
     # sha256 of the review file without its "exclude" lines (preached.exclusions):
     # the reviewer may widen or add exclusions, and nothing else.
     ("review_base_sha256", "TEXT"),
@@ -210,6 +213,7 @@ def index_video(
     matrix: np.ndarray,
     review_sha256: str | None = None,
     privacy_sha256: str | None = None,
+    coverage_gaps: list | None = None,
     review_base_sha256: str | None = None,
     reader: str | None = None,
     sermon_number: int | None = None,
@@ -302,9 +306,15 @@ def index_video(
             error=None,
         )
         connection.execute(
-            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, review_base_sha256 = ?, "
+            "UPDATE videos SET review_sha256 = ?, privacy_sha256 = ?, review_base_sha256 = ?, coverage_gaps = ?, "
             "approved_sha256 = NULL, approved_at = NULL WHERE video_id = ?",
-            (review_sha256, privacy_sha256, review_base_sha256, video_id),
+            (
+                review_sha256,
+                privacy_sha256,
+                review_base_sha256,
+                None if coverage_gaps is None else json.dumps([[float(a), float(b)] for a, b in coverage_gaps]),
+                video_id,
+            ),
         )
         connection.execute(
             "INSERT INTO meta (key, value) VALUES ('embed_model', ?) "

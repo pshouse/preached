@@ -28,6 +28,7 @@ import asr_chunks  # noqa: E402
 from preached.privacy import _open_private_dir, read_private_file  # noqa: E402
 from preached.youtube.pipeline import write_private_review  # noqa: E402
 from test_privacy_wire import FILLER, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 ITEMS = [{"text": "Invented Person", "reason": "test"}]
 
@@ -180,8 +181,8 @@ class AsrChunksSymlinkTests(unittest.TestCase):
     def run_asr(self) -> None:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(self.transcript), "--out", str(self.root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite")],
-                            embedder=embedder)
+                             "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite"), *stub_audio(self.transcript)],
+                            embedder=embedder, coverage=lambda *_a, **_k: [])
 
     def test_symlink_at_the_review_file(self) -> None:
         review = self.index_dir / "church" / "review"

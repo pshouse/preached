@@ -30,7 +30,7 @@ from preached.metrics import contains_quote  # noqa: E402
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import CACHE_ROOT, INDEX_PATH, SERMONS_JSONL, index_chunks_jsonl  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import connect  # noqa: E402
+from preached.store import open_readonly  # noqa: E402
 from textnorm import asr_tokens, canonical_tokens  # noqa: E402
 
 ALIGNED = CACHE_ROOT / "aligned" / "wesley"
@@ -119,7 +119,7 @@ def main() -> None:
     questions = [json.loads(line) for line in open(ROOT / "eval" / "questions.jsonl")]
     sermons = {row["sermon_id"]: row for row in read_jsonl(SERMONS_JSONL)}
     chunk_rows = {row["chunk_id"]: row for row in read_jsonl(index_chunks_jsonl())}
-    connection = connect(INDEX_PATH)
+    connection = open_readonly(INDEX_PATH)
     spec = MODELS[DEFAULT_MODEL]
     loaded = load_model(spec, device="cpu", batch_size=1)
     searcher = Searcher(connection, model=DEFAULT_MODEL)

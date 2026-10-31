@@ -40,6 +40,7 @@ from preached.youtube.cli import main as youtube_main  # noqa: E402
 from preached.youtube.library import open_library  # noqa: E402
 from preached.youtube.listing import policy_watch_url, watch_url, youtube_watch_url  # noqa: E402
 from test_privacy_wire import CHANNEL, FILLER, ID_A, ID_B, Base, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 SPURGEON_ROW = "spurgeon-191"
 CLASSIC_WORDS = "the builder of his church lays every living stone upon the chief corner stone " * 30
@@ -478,7 +479,7 @@ class ChurchAsrSermonTests(unittest.TestCase):
         self.index = root / "church.sqlite"
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(transcript), "--out", str(root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(toml), "--index", str(self.index), *stub_audio(transcript)], embedder=embedder, coverage=lambda *_a, **_k: [])
             code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(toml)], index_dir=root)
         self.assertEqual(code, 0)
 
