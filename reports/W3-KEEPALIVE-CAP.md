@@ -53,7 +53,7 @@ That is why four finished keep-alives from one tab make the next connection from
 
 Idle sockets still count toward the per-IP cap. A peer already at that cap may take its own oldest socket once the socket has been quiet for `KEEPALIVE_IDLE_S` (1.0 s). The hand-over is the same `shutdown(SHUT_RDWR)` and `refused evict holder->holder` log the global path already uses.
 
-`KEEPALIVE_IDLE_S` is a constant (`app/server.py:260`). No new environment variable. `_takeable_idle` (`2540–2559`) returns the oldest socket of that holder that is not busy, not reading, not reserved, and not closed, and whose `since` is at least 1.0 s ago. `since` is the accept time until `mark_idle` (`2650–2656`) moves it to the end of the last response, so a socket is takeable only after it has actually been sitting. `_acquire_connection` (`2584–2594`) forgets that socket under the lock, decrements the local `held` so the new connection lands on the same per-IP count, and skips global eviction (`elif`). If nothing has been quiet long enough, it returns false and the 503 is unchanged.
+`KEEPALIVE_IDLE_S` is a constant (`app/server.py:260`). No new environment variable. `_takeable_idle` (`2540–2561`) returns the oldest socket of that holder that is not busy, not reading, not reserved, and not closed, and whose `since` is at least 1.0 s ago. `since` is the accept time until `mark_idle` (`2655–2661`) moves it to the end of the last response, so a socket is takeable only after it has actually been sitting. `_acquire_connection` (`2586–2599`) forgets that socket under the lock, decrements the local `held` so the new connection lands on the same per-IP count, and skips global eviction (`elif`). If nothing has been quiet long enough, it returns false and the 503 is unchanged.
 
 Why this and not the other two shapes:
 
@@ -64,8 +64,8 @@ Why this and not the other two shapes:
 
 ## Why the #29 protections still hold
 
-- The slot is still released in `Handler.finish` after `super().finish()` flushes the body (`1947–1958`). An interim 100 Continue is not that flush. A slow reader keeps the slot until the body is out. `process_request_thread` (`2695–2699`) still releases as a backstop.
-- Inside the quiet second, and whenever every socket of that peer is busy or still reading, `_acquire_connection` returns false. The 503, `Retry-After: 1`, and accept-thread reject are the same (`2683–2688`, `2705–2720`).
+- The slot is still released in `Handler.finish` after `super().finish()` flushes the body (`1947–1958`). An interim 100 Continue is not that flush. A slow reader keeps the slot until the body is out. `process_request_thread` (`2700–2704`) still releases as a backstop.
+- Inside the quiet second, and whenever every socket of that peer is busy or still reading, `_acquire_connection` returns false. The 503, `Retry-After: 1`, and accept-thread reject are the same (`2688–2693`, `2710–2725`).
 - A socket with `reading` set (request line arrived, headers still coming) is not takeable. The single header deadline is unchanged, so a slowloris that has started its headers still holds the slot until that deadline. A different peer still cannot take the socket unless the global cap is full and `_pick_victim`'s "at least two more" rule says so.
 - Busy sockets and reserved `/healthz` connections are not takeable. The health reserve still runs only on the global-cap path.
 - A trusted proxy still skips the per-IP check. IPv6 `/64` keying, per-key in-flight request slots, and the separate `/healthz` request table are untouched.
@@ -115,8 +115,70 @@ uv lock --check
 
 `uv lock --check`: `Resolved 79 packages in 0.73ms`. No lockfile change.
 
-Full suite: `Ran 1007 tests in 235.550s`, `FAILED (failures=52)`. All 52 are `test_deploy_alerts.RunbookTests.test_every_cited_file_line_holds_its_string` for `app/server.py`. The same 52 cites miss on unmodified `origin/main:app/server.py` (the pin list was written against an older tree; `REQUEST_TIMEOUT_S = 15` is line 234 there, and the cite says 231). No cite that matches on `origin/main` misses on this branch. Nothing else failed. `tests.test_keepalive_cap` and the #29 suites in `tests/test_exposure.py` (`SlotFairnessTests`, `SlotReleaseTests` including the 100-continue case, `EvictionOrderTests`, `RequestSlotRaceTests`, `ReconnectRetryAfterTests`) and `tests/test_deploy.py` (`test_header_deadline_is_not_per_read`, `test_connection_caps_reject_without_a_handler_slot`) are in that run and are not among the failures.
+Full suite: `Ran 1007 tests in 235.550s`, `FAILED (failures=52)`. All 52 are `test_deploy_alerts.RunbookTests.test_every_cited_file_line_holds_its_string` for `app/server.py`. The same 52 cites miss on unmodified `origin/main:app/server.py` (the pin list was written against an older tree; `REQUEST_TIMEOUT_S = 15` is line 234 there, and the cite says 231). Nothing else failed. `tests.test_keepalive_cap` and the #29 suites in `tests/test_exposure.py` (`SlotFairnessTests`, `SlotReleaseTests` including the 100-continue case, `EvictionOrderTests`, `RequestSlotRaceTests`, `ReconnectRetryAfterTests`) and `tests/test_deploy.py` (`test_header_deadline_is_not_per_read`, `test_connection_caps_reject_without_a_handler_slot`) are in that run and are not among the failures.
+
+## Re-pin and CTO round (after main `b2c7b77`)
+
+Merged `origin/main` (`b2c7b77`, which contains PR #73 `docs/w3-deploy-r4-cond`) with a merge commit. No rebase. PR #69 and PR #97 are not on that main, so the early pins did not take an extra +3.
+
+`gh` is not installed here, so PR #72 comments beyond the task file were not read. The findings in the task are applied below.
+
+### Cites
+
+Every `app/server.py` cite in `docs/DEPLOY.md` and every `app/server.py` entry in `CITED` (`tests/test_deploy_alerts.py`) was checked by reading the line, not by adding the shift and stopping. `RunbookTests` then passed: the needle is on that line, and the runbook cites exactly the pinned set. Cites of `src/preached/library.py`, `src/preached/youtube/`, and `scripts/build-bundle.sh` are unchanged.
+
+Relative to main after R4-COND:
+
+| Pins on main | Shift from the hand-over | Read on this tree |
+| --- | --- | --- |
+| `:234`, `:240` | +3 (module docstring) | `:237` `REQUEST_TIMEOUT_S = 15`, `:243` `DRAIN_TIMEOUT_S = 10.0` |
+| 38 pins, `:273`–`:2370` | +11 (`KEEPALIVE_IDLE_S` block) | D1 `:839` → `:850` `logging.exception(MISMATCH_LOG)`; D2b `:1214` → `:1225`; text `:284` `:285` `:286` → `:295` `:296` `:297` |
+| 12 pins, `:2765`–`:3219` | +44 from the hand-over code, then +5 from the N2/N3 comments | `listening on` `:2814`; `stopped cleanly` `:3268`; stuck range `:3252–3270` (`stuck = server.drain()` … `raise SystemExit(1)`) |
+
+The hand-over alone would have put `stopped cleanly` at `:3263` (main `:3219` + 44; the pre-R4 cite `:3216` + 47). The two comments below sit above that region and move those twelve pins five lines further. That is the file.
+
+### Guards
+
+Four tests in `tests/test_keepalive_cap.py`. Each was run against its mutant, then with the mutant reverted.
+
+- `test_a_partial_header_socket_is_not_handed_over`. Same peer, request line and one header, quiet for more than 1 s. The newcomer is 503 and the half-sent socket still answers 200. Mutant drops `conn.reading` from `_takeable_idle`: the newcomer got 200. Restored: pass.
+- `test_a_busy_peer_cannot_close_another_peers_idle_socket`. Global cap is not full. `127.0.0.3` is at its cap on two busy searches and cannot close `127.0.0.2`'s idle keep-alive. Mutant drops `conn.holder != holder`: the newcomer got 200. Restored: pass.
+- `test_hand_over_leaves_the_per_ip_count_at_the_cap`. After the hand-over `_conn_by_ip[peer]` equals the cap, and it is 0 once every socket has closed. Mutant drops `held -= 1`: the count was 2, not 1. Restored: pass.
+- `test_a_reserved_healthz_socket_is_never_handed_over`. A `/healthz` socket admitted on the reserve, still waiting for its request, is not taken. Mutant drops `conn.reserved`: the newcomer got 200. Restored: pass.
+
+### Notes
+
+N2: the quiet-period probe must run within 1 s. Commented on the `KEEPALIVE_IDLE_S` check in `_takeable_idle` and on the probe in `test_idle_keepalive_frees_the_per_ip_slot`.
+
+N3: a request that arrives on the idle socket at the moment of the hand-over is dropped. Commented in `_acquire_connection`, and said in the Connections row of `docs/DEPLOY.md`.
+
+S3: that row now describes the same-peer hand-over, and says that clients sharing a NAT or an IPv6 /64 can close each other's idle keep-alives, which is intended.
+
+`church-alerts.yaml` is not on this machine (`/workspace/infra-ops/preached/alerts/church-alerts.yaml` is absent). TODO for CoS: supply the full sha256 of Infra Ops' current yaml (the task names the prefix `42dd7e7c`, 25 rules, all `enabled: false`) and replace the guide's `447cd7e283cba91169e695feb6d39bdf7642522e3d1c587e959f879ef7ea4f29`. The guide is unchanged on that point.
+
+`uv lock --check`: `Resolved 79 packages in 0.61ms`. No lockfile change.
+
+Full suite, from this checkout:
+
+```bash
+PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests
+```
+
+`Ran 1011 tests in 254.683s`, `OK`. Zero failures. Exit 0.
 
 ## Scope
 
-`app/server.py`, `tests/test_keepalive_cap.py`, this report. No new dependency. `DEPLOY.md`, `serve.sh`, and `README.md` are unchanged.
+`app/server.py` (hand-over, plus comments only for the quiet-period probe and the dropped request), `tests/test_keepalive_cap.py`, `docs/DEPLOY.md` (cites and the Connections row), `tests/test_deploy_alerts.py` (`CITED` only), this report. No new dependency. `serve.sh` and `README.md` are unchanged.
+
+## Diff stat
+
+`git diff --stat origin/main..HEAD`:
+
+```
+ app/server.py               |  55 +++++++++++-
+ docs/DEPLOY.md              | 123 +++++++++++++-------------
+ reports/W3-KEEPALIVE-CAP.md | 184 ++++++++++++++++++++++++++++++++++++++
+ tests/test_deploy_alerts.py |  92 +++++++++----------
+ tests/test_keepalive_cap.py | 209 ++++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 552 insertions(+), 111 deletions(-)
+```

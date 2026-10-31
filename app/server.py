@@ -2551,6 +2551,8 @@ class PreachedServer(ThreadingHTTPServer):
         for request, conn in self._conns.items():
             if conn.holder != holder or conn.closed or conn.busy or conn.reading or conn.reserved:
                 continue
+            # The quiet-period probe must run within 1 s of the socket
+            # going idle. After that this idle socket can be handed over.
             if now - conn.since < KEEPALIVE_IDLE_S:
                 continue
             if oldest is None or conn.since < oldest_at:
@@ -2584,7 +2586,10 @@ class PreachedServer(ThreadingHTTPServer):
             if held >= self.max_connections_per_client and not trusted:
                 # Its own quiet keep-alive, not someone else's slot. A
                 # connection that has not been idle long enough stays, and
-                # the new one is refused, same as before.
+                # the new one is refused, same as before. A request that
+                # arrives on the idle socket at the moment of the hand-over
+                # is dropped: the socket is shut down and that request is
+                # not answered.
                 victim = self._takeable_idle(holder)
                 if victim is None:
                     return False
