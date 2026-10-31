@@ -344,4 +344,12 @@ Exit 0. `Ran 1036 tests in 269.285s`, `OK`, no skip line. Zero `test_every_cited
 
 **Cache.** A listing of `/cache` (path, size, mtime) had 132547 entries before that run and 132563 after. No file under the ONNX graph directory, the Hugging Face hub, or the SQLite index files themselves changed size or mtime. The fp32 graph sha256 is still `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. What moved: `wesley.sqlite-shm` and `cc-speech.sqlite-shm` mtimes (sizes unchanged), the `/cache/models` directory mtime only, uv's editable metadata for the `/work/preached` install, deno's analysis-cache wal, an empty `/cache/demo-kill` mtime, and Claude MCP logs under `/cache/xdg` from another process.
 
-**Diff stat.** Filled in the following commit, from `git diff --stat origin/fix/w4-onnx-pin-repro...HEAD` and `git diff --stat origin/fix/w4-onnx-pin-repro..HEAD`.
+**Diff stat.** `git diff --stat origin/fix/w4-onnx-pin-repro...HEAD` and `git diff --stat origin/fix/w4-onnx-pin-repro..HEAD` are the same, because `27ed9cb` is an ancestor of HEAD. `src/preached/search.py` is the finding-17 change from the first round. It is not edited in this round. The four paths are the whole diff against #71.
+
+```
+ README.md                       |  70 ++++++--
+ reports/W4-README-QUICKSTART.md | 355 ++++++++++++++++++++++++++++++++++++++++
+ src/preached/search.py          |  12 +-
+ tests/test_api_path.py          |  25 +++
+ 4 files changed, 442 insertions(+), 20 deletions(-)
+```
