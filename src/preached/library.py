@@ -294,7 +294,16 @@ def mark_your_church_exclusive(
             raise ValueError(f"error: {target.name} {problem}; it is not marked")
         skipped = _marked_siblings_not_cleared(index_dir, target)
         for candidate in church_index_matches(index_dir, exclude=target):
-            if is_protected_classic(candidate) or not church_shaped(candidate):
+            if is_protected_classic(candidate):
+                continue
+            # The scans above checked its sidecars by name; one made unsafe
+            # since then is reported, not passed over by church_shaped.
+            sidecar = _sidecar_problem(candidate)
+            if sidecar is not None:
+                if all(path != candidate for path, _ in skipped):
+                    skipped.append((candidate, f"{sidecar} (not opened)"))
+                continue
+            if not church_shaped(candidate):
                 continue
             problem = _clear_church_mark(candidate)
             if problem is not None:
