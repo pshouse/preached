@@ -87,7 +87,7 @@ PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover
 
 - Baseline on origin/main `b224281`: `test_every_cited_file_line_holds_its_string` FAILED, 52 subtests.
 - `tests.test_deploy_alerts` on this tree after the re-pin: `Ran 7 tests`, `OK`, including `test_every_cited_file_line_holds_its_string`.
-- Full suite (`PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`) on this tree, which is origin/main `b224281` plus these edits: `Ran 1005 tests in 233.409s`, `OK`. No failures.
+- Full suite (`PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`) after `git fetch && git merge origin/main` (already up to date at `b224281`): `Ran 1005 tests in 229.274s`, `OK`. No failures. An earlier run of the same command on this tree reported `Ran 1005 tests in 233.409s`, `OK`.
 
 ## Open
 
