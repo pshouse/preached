@@ -40,7 +40,42 @@ DOCUMENTED = (
     "ERROR church search failed; that side is empty",
     "ERROR church side refused: its searcher could not be built",
     "tar failed (tar 1, gzip 0)",
+    "ERROR church vectors do not match search/models.toml; that side is BM25 only",
+    "ERROR church vectors unavailable; that side is BM25 only",
+    "ERROR stored vectors do not match search/models.toml; serving BM25 only",
+    "ERROR embedding model unavailable; serving BM25 only",
+    "ERROR refusing to serve after reload:",
+    "ERROR refusing to serve:",
+    "ERROR <n> handler thread(s) still running after 10s; index left open",
+    "ERROR request failed:",
+    "INFO listening on http://",
+    "church-paused-stuck",
+    "church-paused-unverified",
     "%(levelname)s %(message)s",
+)
+
+# (file, line, text on that line of the file). The runbook's tables cite each
+# as file:line; PR #46 refreshes the numbers and this table with them.
+CITED = (
+    ("app/server.py", 826, "stored vectors do not match search/models.toml; serving BM25 only"),
+    ("app/server.py", 829, "embedding model unavailable; serving BM25 only"),
+    ("app/server.py", 853, "church vectors do not match search/models.toml; that side is BM25 only"),
+    ("app/server.py", 856, "church vectors unavailable; that side is BM25 only"),
+    ("app/server.py", 983, "church side refused: %s"),
+    ("app/server.py", 988, "church side refused:"),
+    ("app/server.py", 1069, "refusing to serve after reload:"),
+    ("app/server.py", 1146, "refusing to serve:"),
+    ("app/server.py", 1351, "church side dropped:"),
+    ("app/server.py", 1359, "church side paused:"),
+    ("app/server.py", 1418, "church side resumed"),
+    ("app/server.py", 1421, "church search failed; that side is empty"),
+    ("app/server.py", 1633, "church side refused: its searcher could not be built"),
+    ("app/server.py", 2600, "listening on http://"),
+    ("app/server.py", 2663, "church side refused:"),
+    ("app/server.py", 2668, "church side refused:"),
+    ("app/server.py", 2679, "church side refused:"),
+    ("app/server.py", 3030, "handler thread(s) still running after"),
+    *(("app/server.py", n, "request failed:") for n in (1833, 1838, 1883, 1885, 1945, 2185, 2206)),
 )
 
 
@@ -108,6 +143,14 @@ class RunbookTests(unittest.TestCase):
         for line in DOCUMENTED:
             with self.subTest(line=line):
                 self.assertIn(line, text)
+
+    def test_every_cited_file_line_holds_its_string(self) -> None:
+        text = DEPLOY.read_text(encoding="utf-8")
+        for name, number, needle in CITED:
+            with self.subTest(file=name, line=number):
+                lines = (ROOT / name).read_text(encoding="utf-8").splitlines()
+                self.assertIn(needle, lines[number - 1])
+                self.assertRegex(text, rf"`{name}:{number}`|`:{number}`")
 
 
 if __name__ == "__main__":

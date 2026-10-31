@@ -78,7 +78,13 @@ Every line must say `OK`.
    directory named with the manifest sha256, for example
    `/srv/preached/<manifest-sha>/`. Leave the previous directory in place:
    it is the roll back.
-2. **HUMAN.** Extract the tar as the service user, under `umask 022`.
+2. **HUMAN.** Extract the tar as the service user, under `umask 022`. The
+   tar has no top-level directory (entries start `./`), so extract into the
+   new directory with `-C`:
+
+   ```bash
+   umask 022; tar -xzf preached-bundle.tar.gz -C /srv/preached/<manifest-sha>
+   ```
 3. **HUMAN.** In that directory, run `sha256sum -c MANIFEST.sha256` again.
 
 ### 4. Set owner and modes
@@ -185,7 +191,7 @@ Wire that command as the systemd service. Unit settings:
   leaves the classic index, the church index (when one is open) and the
   ONNX session open, waits for that thread, and exits 1
   (`app/server.py:3026-3043`; the church connection is closed only on the
-  clean path at `:3040`). A second SIGTERM or Ctrl-C does not force an exit.
+  clean path at `:3040`; alert table, "deploy alerts"). A second SIGTERM or Ctrl-C does not force an exit.
   `TimeoutStopSec=` (or a SIGKILL by hand) ends it.
 - Logs go to stderr, so under systemd to journald. Set journald's limits
   (Part 2, "Notes for the host").
@@ -199,10 +205,16 @@ Wire that command as the systemd service. Unit settings:
 - `dense: true`, `backend: onnx`, `model: granite-english-r2`
 - `model_sha256` equal to the fp32 pin
   (`3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`)
-- `index_version` equal to the Wesley index's `chunks_sha256`
-  (`198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2` for
-  the `/cache` copy this was written against; use the value your build
-  recorded)
+- `index_version` equal to the bundled index's `chunks_sha256` meta value.
+  Read it in the bundle root:
+
+  ```bash
+  .venv/bin/python -c "import sqlite3;print(sqlite3.connect('file:index/wesley.sqlite?mode=ro',uri=True).execute(\"select value from meta where key='chunks_sha256'\").fetchone()[0])"
+  ```
+
+  The build's `input index-file` and `input index-bundled` lines are sha256
+  digests of the SQLite file itself. They are not this value and `/healthz`
+  does not report them.
 - `"church": null` (it is null whether or not a church side is open, so it
   proves nothing about the church; step 6 is what keeps it off)
 
@@ -627,6 +639,11 @@ CTO marks each one met.
   open, under #29's caps, covering: health buckets, refusal-log flush,
   SIGTERM, and the stuck path.
 
+Met, for the record (these are not church conditions that stay open):
+
+- [x] **MET: #27 S1 and #33 should-fixes 1-2** (CTO #37 r3).
+- [x] **MET: the #39 tar/bundle gate** (CTO #39 r2).
+
 The interim rule, as an operator step: **never start (or restart) the
 server while `--ack-review` runs.** At startup a writer's lock, or a church
 file that `--ack-review` has briefly left in WAL mode, is a refusal, not a
@@ -730,17 +747,55 @@ again on `f1de31e` (main after #44); every line number still matches.
 | 1 | PAGE (checked first) | `ERROR church side refused: the church file is locked by a writer (database is locked); it is not opened` | `app/server.py:2668`; text from `src/preached/library.py:468` and `:865` | A writer's lock at startup. Other start-up lock forms, same rule: `ERROR church side refused: <file> cannot be opened (database is locked)` (`library.py:848`), `ERROR church side refused: <file> cannot be read (database is locked)` (`library.py:869`). |
 | 2 | PAGE | `ERROR church side refused:` | `app/server.py:983`, `:988`, `:1633`, `:2663`, `:2668`, `:2679` | Any start-up refusal. `:1633` is `ERROR church side refused: its searcher could not be built`, followed by a traceback. |
 | 3 | PAGE | `ERROR church side dropped:` | `app/server.py:1351` | Off until restart. |
-| 4 | INFO, then PAGE | `INFO church side paused:` | `app/server.py:1359` | Opens a 15-minute window. Closed by `INFO church side resumed` (`app/server.py:1418`), which is logged only after the next church search completes. Pages if the window ends without it. See the note below on checking with `/api/side`. |
+| 4 | INFO, then PAGE | `INFO church side paused:` | `app/server.py:1359` | Opens a 15-minute window. Closed by `INFO church side resumed` (`app/server.py:1418`), which is logged only after the next church search completes. With no church search in the window, no `resumed` line comes, and the rule raises the info notice `church-paused-unverified`, not a page. It pages (`church-paused-stuck`) only if an access line `GET /api/side 200` is logged in the window while still paused. See the note below. |
 | 5 | TICKET | `ERROR church search failed; that side is empty` | `app/server.py:1421` | At most one ticket per hour. Traceback follows. |
 
-On rule 4: Infra Ops' rule pages "only if `GET /api/side` still shows the
-side paused" after 15 minutes. `/api/side` has no paused state: a paused
-side gives `"present": false`, the same as a dropped or refused one. And a
-`GET /api/side?q=...` is itself a church search, so it ends the pause (and
-logs `resumed`) if the lock is gone. The workable check after 15 minutes is
-one `GET /api/side?q=<word>&library=wesley` probe: `"present": true` means
+On rule 4: Infra Ops' prepared rule (`church-alerts.yaml`, state machine
+`church-paused`) is passive. It does not probe. After 15 minutes:
+
+- If an access line matching `^INFO \S+ \S+ GET /api/side 200$` was logged
+  while the side was still paused (no `resumed` line since), it raises the
+  page `church-paused-stuck`.
+- If there was no such traffic, it raises the info notice
+  `church-paused-unverified`. That is not a page: with no church search,
+  nothing shows whether the lock is gone.
+
+`/api/side` has no paused state: a paused side gives `"present": false`, the
+same as a dropped or refused one. A `GET /api/side?q=...` is itself a church
+search, so it ends the pause (and logs `resumed`) if the lock is gone. The
+rule quotes only what CTO stated; the yaml is not in this repo.
+
+Optional manual check, not part of the rule: after 15 minutes, one
+`GET /api/side?q=<word>&library=wesley` probe. `"present": true` means
 resumed; `"present": false` with no `dropped` line since the `paused` line
-means still paused, so page.
+means still paused.
+
+#### Church silent degradation (ticket)
+
+The church searcher can fail to load its vectors and the side then serves
+BM25 only, with no refusal. Both lines carry a traceback
+(`logging.exception`):
+
+| # | Severity | Line starts with | Emitted at | Notes |
+| --- | --- | --- | --- | --- |
+| 6 | TICKET | `ERROR church vectors do not match search/models.toml; that side is BM25 only` | `app/server.py:853` | The church file's stored vectors do not match the configured model. Traceback follows. |
+| 7 | TICKET | `ERROR church vectors unavailable; that side is BM25 only` | `app/server.py:856` | The church vectors could not be loaded. Traceback follows. |
+
+#### Deploy alerts (OPEN for Infra Ops)
+
+**OPEN: Infra Ops rules.** These are lines from the Wesley deploy, not the
+church side. No rule exists for them yet; Infra Ops adds them. The first two
+are a failed go-live (step 7) if they appear at start. The severities are
+proposals for Infra Ops to confirm.
+
+| # | Severity | Line starts with | Emitted at | Notes |
+| --- | --- | --- | --- | --- |
+| D1 | PAGE | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | `app/server.py:826` | Traceback follows. Dense search is off. |
+| D2 | PAGE | `ERROR embedding model unavailable; serving BM25 only` | `app/server.py:829` | Traceback follows. Dense search is off. |
+| D3 | PAGE | `ERROR refusing to serve after reload:` | `app/server.py:1069` | A checkout reloaded an index it will not serve. |
+| D4 | PAGE | `ERROR refusing to serve:` | `app/server.py:1146` | The frozen bundle index changed after start; every request is `503`. |
+| D5 | PAGE | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3030` | The stuck stop; exit 1. |
+| D6 | TICKET (rate) | `ERROR request failed:` | `app/server.py:1833`, `:1838`, `:1883`, `:1885`, `:1945`, `:2185`, `:2206` | Ticket on a rate (for example more than N a minute), not on one line. The line carries the exception type only. |
 
 Other lines this runbook names, all grep-verified on `f1de31e`:
 
@@ -751,8 +806,9 @@ Other lines this runbook names, all grep-verified on `f1de31e`:
 | `INFO church side paused: the church file is locked by a writer (...)` | `app/server.py:1359`, text from `library.py:468` (check) or `app/server.py:1426` (search) | Pause, lock form. |
 | `ERROR church side refused: <file> is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it` | `app/server.py:2668`, text from `src/preached/library.py:839` | A start while `--ack-review` has the file in WAL mode. |
 | `warning: the church file is still in wal journal mode (...)` | `src/preached/youtube/pipeline.py:333`, text from `src/preached/youtube/library.py:157` | `--ack-review` output (step 4 of the gate). |
+| `INFO listening on http://<host>:<port>` | `app/server.py:2600` | Server up. Infra Ops' restart marker. |
 | `INFO stopping` | `app/server.py:3025` | Start of every stop. |
-| `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3030` | The stuck path; exit 1. |
+| `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3030` | The stuck path; exit 1 (also D5 above). |
 | `WARNING refused <class> <detail> suppressed=N` | `app/server.py:469` | Rate-limited refusal lines. |
 | `WARNING refused <class> flush suppressed=N` | `app/server.py:481` | Counts flushed at stop. |
 | `tar exited 1 (file changed as we read it?); attempt N of 3` | `scripts/build-bundle.sh:239` | Build machine, the tar flake. Not an alert. |
@@ -761,7 +817,10 @@ Other lines this runbook names, all grep-verified on `f1de31e`:
 
 `tests/test_deploy_alerts.py` pins the rule-1 line, the rule-5 line and its
 traceback, the searcher-build line and its traceback, the log format, and
-that this file quotes each of them.
+that this file quotes each of them. It also checks that the string in every
+`file:line` cited for an alert row sits on that line of that file. PR #46
+shifts the `app/server.py` numbers; it refreshes every one, and the test
+fails until it does.
 
 ## Going public (Part 4, not part of this deploy)
 
@@ -874,12 +933,12 @@ The go-public gate. All of these, in this order. None is done.
 4. **Audit logging (PR #29 review M2) accepted.** The log names the client
    key, and refusals and evictions are logged. In code on main since PR #29
    was merged; the item closes when the CTO accepts it.
-5. **Access-log retention.** The log stores the real client IP behind the
+5. **OPEN: Access-log retention.** The log stores the real client IP behind the
    proxy, with path and time. Set a retention period and journald limits
    (`SystemMaxUse=`, `MaxRetentionSec=`, `RateLimitIntervalSec=` and
    `RateLimitBurst=`) on the Sprite. The period is an open decision for
    Patrick.
-6. **Least-privilege, scoped credentials.** The Sprite credential can do
+6. **OPEN: Least-privilege, scoped credentials.** The Sprite credential can do
    only what operating this service needs. The Tailscale node is a tagged
    node whose ACL allows only `serve`/`funnel` to the server's port. Any
    auth key has an expiry and is rotated, and is referred to only by its
@@ -889,7 +948,7 @@ The go-public gate. All of these, in this order. None is done.
 7. **Fuzzing of untrusted input.** Nothing fuzzes the HTTP request parser
    (request line, headers, framing) or `client_key`/`X-Forwarded-For`
    parsing yet.
-8. **Dependency and secret scanning in CI.** The repo has no CI (no
+8. **OPEN: Dependency and secret scanning in CI.** The repo has no CI (no
    `.github/`). Which CI to add is an open decision for Patrick.
 9. **End-to-end test through a real `tailscale serve` or `tailscale funnel`**
    in front of the process, with `PREACHED_TRUSTED_PROXIES=127.0.0.1`: it
