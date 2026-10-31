@@ -131,7 +131,7 @@ nDCG@10 lenient on `--dedupe`: **names-topic 0.456 vs 0.485 baseline (lower)**; 
 
 There are 5 labelled unanswerable items (the `unanswerable` group). Separately, `p-004` and `p-023` are unlabelled plain-blind questions; they are reported on their own below and are not counted in the 5. There are 86 answerable items.
 
-| path | w | abstained (`none`) on the 5 labelled unanswerable | `none` on answerable (false abstain) | `weak` on answerable | levels strong/weak/none |
+| path | w | abstained (`none`) on the 5 labelled unanswerable | `none` on answerable (false abstain) | `weak` on answerable | levels strong/weak/none (all 93 items) |
 | --- | --- | --- | --- | --- | --- |
 | raw | 1.0 | 4/5 (80.0%) | 2/86 (2.3%: p-016, p-017) | 11/86 (12.8%) | 76/11/6 |
 | raw | 0.5 | 4/5 (80.0%) | 2/86 (2.3%: p-016, p-017) | **12/86 (14.0%)** | 75/12/6 |
@@ -142,7 +142,7 @@ There are 5 labelled unanswerable items (the `unanswerable` group). Separately, 
 - Unlabelled: `p-004` and `p-023` (plain-blind, no labels) also get `strong` under both weights. They are not in the 4/5 and are not scored as unanswerable.
 - Rule 5 does **not** fire. The prereg defines "degrade" as more false answers on unanswerable items, or lower hit@10 with `--dedupe`; neither moved.
 - **Against us:** `p-013` (answerable) moves from `strong` to `weak` under `w = 0.5`, on both paths. Rule 5 names false answers on unanswerable items, and this is not one. It is a minor adverse move, disclosed here: `weak` on answerable items goes from 11 to 12 of 86. It does not trigger rule 5.
-- For reference only, what `search/bench.py --abstain` itself would print: it refits a floor in memory (never written; `--write-calibration` was not used). That fitted floor is 0.7753 under both weights, and with it the in-sample and leave-one-out abstain recall on unanswerable items is 0.0, against 4 of the 5 labelled unanswerable items with the shipped floor. The shipped 0.8129 was fitted on a smaller, older set (35 answerable + 5 unanswerable); today's set is 86 answerable + 5 labelled unanswerable. The floor is not refit here, as the prereg says.
+- For reference only, what `search/bench.py --abstain` itself would print: it refits a floor in memory (never written; `--write-calibration` was not used). bench's refit treats all 7 items without labels as unanswerable (the 5 labelled plus unlabelled `p-004` and `p-023`); its fitted floor is 0.7753 under both weights, and abstain recall is 0/7 in-sample and leave-one-out, against 4/7 (4/5 of the labelled ones) with the shipped floor. The shipped 0.8129 was fitted on a smaller, older set (35 answerable + 5 unanswerable); today's set is 86 answerable + 5 labelled unanswerable. The floor is not refit here, as the prereg says.
 
 ## 5. In-sample check and sensitivity analysis
 
@@ -175,9 +175,9 @@ Under the sensitivity labels the pooled selection hits are 51 / 52 / 51, so the 
 | 4. chosen `w` does not beat baseline on the fresh set | **not evaluable: no fresh blind set exists** |
 | 5. abstain or `--dedupe` degrade | **does not fire** (the prereg defines degrade as more false answers on unanswerable items, or lower hit@10 with `--dedupe`; neither moved): unanswerable levels are identical, and pooled `--dedupe` selection hit@10 is 0.879 → 0.879 (2/54/2). Disclosed as a minor adverse move: p-013 moves strong → weak (weak on answerable 11 → 12 of 86); on `--dedupe` q-money-plain and q-worry are lost (and two gained); names-topic `--dedupe` nDCG@10 falls 0.485 → 0.456. |
 
-**This is a mixed and incomplete result.** On the selection data the pre-declared change gains one question net, with an interval that includes zero. Rules 1, 2 and 5 do not fire. The confirmatory evidence the prereg requires is missing. Under the prereg, nothing here may be read as an accuracy gain.
+**This is a mixed and incomplete result.** On the selection data the pre-declared change gains 51 vs 50 hits; the paired interval includes zero. Rules 1, 2 and 5 do not fire. The confirmatory evidence the prereg requires is missing. Under the prereg, nothing here may be read as an accuracy gain.
 
-**The only citable statement:** "In a pre-registered blind evaluation (58 questions, labels written with AI help and graded blind), the tuned fusion weight was statistically indistinguishable from the baseline (hit@10 51 vs 50; paired difference +0.017, 95% CI −0.034 to +0.086)." The default weight stays 1.0; this PR changes no weight. No third weight was tried, the rule was not changed and no label was edited.
+**The only citable statement:** "In a pre-registered evaluation (58 questions; relevance labels drafted with AI help, a subset confirmed blind by a human), the tuned fusion weight was statistically indistinguishable from the baseline (hit@10 51 vs 50; paired difference +0.017, 95% CI −0.034 to +0.086)." The w = 0.5 change is on HOLD until the fresh blind set is run (rules 3 and 4). The default weight stays 1.0; this PR changes no weight. No third weight was tried, the rule was not changed and no label was edited.
 
 **Who ran this.** Run by agent Claude Code, model claude-opus-5-5 (Anthropic), session claude-20261031-120632, task 77-W3-CONFIRMATORY, on omarchy in the Preached sandbox on 2026-10-31, roughly 12:06–12:17 EDT. This agent wrote `run.py` and executed both phases (`select` and `after`). It had already seen the corpus, the questions, the diag report and the prereg, which is why it cannot author the fresh blind set. The git commit author is the repo owner's identity, not the runner.
 
