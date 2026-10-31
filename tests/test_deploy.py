@@ -191,9 +191,10 @@ class RateAndKillTests(unittest.TestCase):
         return server.server_address[1], app, server
 
     def test_per_ip_limit_ignores_forwarded_for(self) -> None:
+        # /healthz has its own bucket now, so the first two are searches.
         port, _app, _server = self._serve(rate_limit=2, rate_window_s=60)
-        first, _, _ = _request(port, "/healthz")
-        second, _, _ = _request(port, "/healthz")
+        first, _, _ = _request(port, "/api/search?q=grace")
+        second, _, _ = _request(port, "/api/search?q=grace", headers={"X-Forwarded-For": "198.51.100.1"})
         third, headers, body = _request(
             port,
             "/api/search?q=secretquery",
@@ -277,9 +278,11 @@ class RateAndKillTests(unittest.TestCase):
         self.assertTrue(limiter.allow("a", now=1))
         self.assertFalse(limiter.allow("a", now=1))
 
-    def test_healthz_uses_the_same_bucket(self) -> None:
-        port, _app, _server = self._serve(rate_limit=1, rate_window_s=60)
+    def test_healthz_has_its_own_bucket(self) -> None:
+        # W3-EXPOSURE-HARDEN item 3 replaced "same bucket" with its own one.
+        port, _app, _server = self._serve(rate_limit=1, health_rate_limit=1, rate_window_s=60)
         self.assertEqual(_request(port, "/healthz")[0], 200)
+        self.assertEqual(_request(port, "/api/search?q=grace")[0], 200)
         status, _, body = _request(port, "/healthz")
         self.assertEqual(status, 429)
         self.assertEqual(json.loads(body), {"error": "too many requests"})
@@ -506,9 +509,9 @@ class BundleTests(unittest.TestCase):
     def test_refuses_church_and_youtube_libraries(self) -> None:
         script = ROOT / "scripts" / "build-bundle.sh"
         for library in ("sample", "cc-speech", "gaston", "youtube-gcc"):
-            with self.subTest(library=library):
+            with self.subTest(library=library), tempfile.TemporaryDirectory() as tmp:
                 result = subprocess.run(
-                    ["bash", str(script), "/tmp/does-not-matter"],
+                    ["bash", str(script), str(Path(tmp) / "bundle")],
                     cwd=ROOT,
                     env=self._env(PREACHED_LIBRARY=library),
                     capture_output=True,
@@ -851,6 +854,28 @@ class BundleTests(unittest.TestCase):
             self.assertIn("does not match MANIFEST.sha256", result.stderr)
             self.assertEqual(list(root.glob("bundle.tar*")), [])
 
+    def test_archive_manifest_must_equal_the_bundle_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Same lines in another order: every hash still checks and the file
+            # set is unchanged, but the archive's manifest is not the bundle's.
+            result, _ = self._build_with_tar(
+                root, "", pre='tac "$snap/MANIFEST.sha256" > "$snap/m.tmp" && mv "$snap/m.tmp" "$snap/MANIFEST.sha256"'
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not match MANIFEST.sha256", result.stderr)
+            self.assertEqual(list(root.glob("bundle.tar*")), [])
+
+    def test_archive_with_an_unlisted_symlink_is_not_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # A symlink is not a directory and not in the manifest. Every listed
+            # hash still checks, so only the file-set comparison can refuse it.
+            result, _ = self._build_with_tar(root, "", pre='ln -s README.md "$snap/extra-link"')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not match MANIFEST.sha256", result.stderr)
+            self.assertEqual(list(root.glob("bundle.tar*")), [])
+
     def _assert_archive_matches_manifest(self, root: Path, out: Path) -> None:
         archive = Path(str(out) + ".tar.gz")
         self.assertTrue(archive.is_file())
@@ -885,6 +910,11 @@ class BundleTests(unittest.TestCase):
             source, onnx_root, index = self._fixture_source(root)
             decoy = root / "elsewhere"
             marker = root / "decoy-ran"
+            # The version line imports platform; a decoy there must not run.
+            decoy.mkdir()
+            (decoy / "platform.py").write_text(
+                f"open({str(marker)!r}, 'a').write('platform')\nraise SystemExit('decoy imported')\n"
+            )
             for package in ("preached", "app", "scripts"):
                 (decoy / package).mkdir(parents=True)
                 (decoy / package / "__init__.py").write_text(
