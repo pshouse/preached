@@ -6,6 +6,7 @@ app.js in Deno against a fake DOM (skipped when Deno is not installed).
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -267,7 +268,8 @@ eq(MESSAGES.enter, "Enter a question.", "empty copy");
 function submitFrom(coarse) {
   var q = nodes.q;
   q.value = "worry"; q.blurs = 0;
-  window.matchMedia = function (query) { return { matches: coarse && query === "(pointer: coarse)" }; };
+  if (coarse === null) delete window.matchMedia;
+  else window.matchMedia = function (query) { return { matches: coarse && query === "(pointer: coarse)" }; };
   document.activeElement = q;
   init();
   nodes["search-form"].listeners.submit({ preventDefault() {} });
@@ -275,8 +277,9 @@ function submitFrom(coarse) {
 }
 eq(submitFrom(true), 1, "touch: input blurred on submit");
 eq(submitFrom(false), 0, "desktop: input keeps focus on submit");
-delete window.matchMedia;
-eq(submitFrom(false), 0, "no matchMedia: input keeps focus on submit");
+// null leaves window.matchMedia absent; init() and submit must not throw.
+eq(submitFrom(null), 0, "no matchMedia: input keeps focus on submit");
+eq("matchMedia" in window, false, "matchMedia really absent");
 
 // A deep link is capped at 300 code points without splitting an emoji.
 function deepLink(q) {
@@ -302,13 +305,25 @@ setTimeout(function () {
 """
 
 
+# PREACHED_REQUIRE_DENO=1 turns a missing deno into a failure instead of a skip.
+REQUIRE_DENO = os.environ.get("PREACHED_REQUIRE_DENO") == "1"
+
+
+class RequireDenoTests(unittest.TestCase):
+    def test_deno_present_when_required(self) -> None:
+        if REQUIRE_DENO and not shutil.which("deno"):
+            self.fail("PREACHED_REQUIRE_DENO=1 but deno is not installed")
+
+
 @unittest.skipUnless(
-    shutil.which("deno"),
+    shutil.which("deno") or REQUIRE_DENO,
     "SKIPPED, deno not installed: the withheld-card URL scan, the touch-only blur "
     "and the code-point query cap were NOT exercised",
 )
 class PhonePageBehaviourTests(unittest.TestCase):
     def test_cards_player_and_scroll(self) -> None:
+        if not shutil.which("deno"):
+            self.fail("PREACHED_REQUIRE_DENO=1 but deno is not installed")
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "check.js"
             script.write_text(FAKE + APP_JS.read_text() + CHECKS)

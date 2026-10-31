@@ -153,3 +153,12 @@ Scope: `app/static/app.js`, `tests/test_mobile_ux.py`, this report, and the `MAX
 | S3: `card.setAttribute("data-a", hit.audio_url)` on the withheld card | FAIL: same |
 
 The S1, S2 and S3 Deno checks are in one test method (`test_cards_player_and_scroll`), so a failure is identified by its message, not by a separate test name.
+
+## 7. Follow-up: CTO #63 r1 changes
+
+Scope: `tests/test_mobile_ux.py` and this report. `app/static/app.js` and `app/server.py` are unchanged.
+
+- **MF1:** `submitFrom()` reassigned `window.matchMedia` on every call, so the old "no matchMedia" check ran with a fake present. `submitFrom(null)` now deletes `window.matchMedia` and installs nothing; the test also asserts `"matchMedia" in window` is false, and any throw fails the Deno run. Mutant proof: with `isTouchScreen` changed to `!window.matchMedia || window.matchMedia("(pointer: coarse)").matches` (blur when matchMedia is missing), the test FAILS with "no matchMedia: input keeps focus on submit: got 1, want 0". `app.js` was then restored byte for byte (`git diff 3d59132 -- app/static/app.js` is empty).
+- **S1:** set `PREACHED_REQUIRE_DENO=1` in review and deploy runs. With it set and no `deno` on PATH, the suite fails (`RequireDenoTests` and `test_cards_player_and_scroll`) instead of skipping. Without it, a missing Deno still skips, and **that run does not test the withheld-card URL scan, the touch-only blur or the code-point cap.** Checked both ways: no deno on PATH gives a failure with the variable and a skip without it; the suite passes with deno and the variable set.
+- **S2 (no code change):** the 2 KiB URL cap (`MAX_TARGET`, `app/server.py:223`) binds before `MAX_QUERY` for non-ASCII input. 300 emoji percent-encode to about 3.6 KB, so `GET /?q=<300 emoji>` returns 414 before `app.js` runs. The 300 code-point cap in `capQuery()` is only reached by shorter deep links.
+- **Nit:** `maxlength="300"` counts UTF-16 code units, so the input box stops at 150 emoji. The client is stricter than the server's 300 code-point cap.
