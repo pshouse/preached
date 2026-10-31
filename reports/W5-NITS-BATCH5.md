@@ -27,3 +27,12 @@ Fail closed in `search/bench.py` when a model fails to load or score.
 - Full suite at the PR head: 1013 tests, OK (skipped=8), per `reports/W5-BENCH-FAILCLOSED-R2.md`; not re-run at that head. Main at 97537ae is now 1030 tests, OK (skipped=9) (read-only cache, temp env).
 
 ## Diff stat
+```
+ AGENTS.md                         |  8 +++++++-
+ reports/W3-DEPLOY-REGEX-PIN.md    |  2 +-
+ reports/W5-BENCH-FAILCLOSED-R2.md |  4 ++--
+ reports/W5-NITS-BATCH5.md         | 29 +++++++++++++++++++++++++++++
+ search/bench.py                   |  5 +++--
+ 5 files changed, 42 insertions(+), 6 deletions(-)
+```
+(The report itself is part of the stat; it is the head commit.)
