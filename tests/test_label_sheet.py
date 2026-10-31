@@ -19,6 +19,10 @@ _spec.loader.exec_module(gen)
 
 FORBIDDEN = re.compile(r"blind|held-out|heldout|split|grade|rank|hit|bm25|dense|hybrid", re.I)
 TEXT_COLUMNS = {"question", "chunk text"}
+# Literal pins: a regenerated-from-itself sheet cannot hide a changed seed, shuffle or column set.
+PINNED_SEED = 20261031
+PINNED_SHEET_SHA256 = "6141beaaed326f48a12813b95cb812cccd14f8e4eea55632ca063100f5369b12"
+PINNED_HEADER = ["row id", "question id", "question", "chunk id", "chunk text", "verdict", "notes"]
 
 
 class LabelSheetTest(unittest.TestCase):
@@ -29,6 +33,30 @@ class LabelSheetTest(unittest.TestCase):
         self.assertEqual(hashlib.sha256(sheet.encode()).hexdigest(), hashlib.sha256(committed).hexdigest())
         self.assertEqual(key.encode(), gen.KEY.read_bytes())
         self.assertIn(f"`{gen.SEED}`", gen.KEY.read_text(encoding="utf-8"))
+
+    def test_literal_pins_seed_sheet_hash_and_header(self):
+        self.assertEqual(gen.SEED, PINNED_SEED)
+        self.assertEqual(gen.HEADER, PINNED_HEADER)
+        committed = gen.SHEET.read_bytes()
+        self.assertEqual(hashlib.sha256(committed).hexdigest(), PINNED_SHEET_SHA256)
+        self.assertEqual(next(csv.reader(io.StringIO(committed.decode("utf-8"), newline=""))), PINNED_HEADER)
+        self.assertIn(f"`{PINNED_SEED}`", gen.KEY.read_text(encoding="utf-8"))
+
+    def test_text_cells_match_source_exactly_and_hold_no_markup_or_hidden_chars(self):
+        import json
+        import unicodedata
+        src = json.loads(gen.SOURCE.read_text(encoding="utf-8"))
+        rows = list(csv.reader(io.StringIO(gen.SHEET.read_text(encoding="utf-8"), newline="")))[1:]
+        self.assertEqual(sorted((r[2], r[4]) for r in rows), sorted((i["question"], i["chunk_text"]) for i in src))
+        for row in rows:
+            for value in row:
+                self.assertNotIn("<!--", value)
+                self.assertNotIn("-->", value)
+                self.assertIsNone(re.search(r"</?[A-Za-z!?]", value), value[:60])
+                for ch in value:
+                    # space separators are fine; control/format/private/other and exotic spaces are not
+                    cat = unicodedata.category(ch)
+                    self.assertTrue(ch == " " or cat[0] not in "CZ", (hex(ord(ch)), value[:60]))
 
     def test_no_leaking_tags_outside_question_and_chunk_text(self):
         rows = list(csv.reader(io.StringIO(gen.SHEET.read_text(encoding="utf-8"), newline="")))

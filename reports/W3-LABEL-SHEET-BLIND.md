@@ -12,7 +12,7 @@ Branch `docs/w3-label-sheet` (PR #43). Docs/data only; no change to `src/`, the 
 `20261031` (`random.Random(seed).shuffle` over the source rows), recorded in `reports/W3-LABEL-SHEET-KEY.md` and `scripts/make_label_sheet.py`. The KEY is now generated too, with the row/question id mapping.
 
 ## Files
-- `scripts/make_label_sheet.py` generates the sheet and KEY from `reports/w3_label_sheet_source.json` (the 24 rows of the 3b9441b sheet, verbatim). `--check` compares with the committed files.
+- `scripts/make_label_sheet.py` generates the sheet and KEY from `reports/W3-LABEL-SHEET-KEY-source.json` (the 24 rows of the 3b9441b sheet, verbatim). `--check` compares with the committed files.
 - `tests/test_label_sheet.py` covers (a) and (b) below.
 - Prereg note updated to list exactly what the labeller sees.
 - Copy refreshed at `/cache/w3-label-sheet/W3-LABEL-SHEET.csv` (where the previous run put it; the old `make.py` there is removed as stale).
