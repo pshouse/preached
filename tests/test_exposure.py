@@ -1211,9 +1211,11 @@ class RequestSlotRaceTests(_Served):
 
         Limits: this catches a non-atomic acquire only through contention
         (a mutant was killed 5/5 with a 2 ms window), so it is probabilistic
-        for atomicity. ``test_slot_is_held_until_after_the_response_is_written``
-        (``slot_is_held``) is the deterministic guard for off-by-one, not for
-        atomicity.
+        for atomicity. It also catches an off-by-one in the cap (8 threads
+        against a cap of 2 reached a peak of 3, W3-EXPOSURE-FIX5), so
+        ``test_slot_is_held_until_after_the_response_is_written``
+        (``slot_is_held``) is not the only guard for off-by-one: it is the
+        deterministic one. Neither proves atomicity.
         """
         port, _app, server = self._serve(max_connections=32, max_per_client=16, max_requests=2)
         lock = threading.Lock()
