@@ -31,12 +31,19 @@ Every other library fails closed:
   to load gate-keyed chunks into an ungated index, so the only way to serve
   them is ``--index <library>.sqlite``, which lands every sermon unpublished
   until ``import/youtube.py --library <slug> --ack-review <sermon id>``.
+
+A church sermon is approvable only after the coverage check ran
+(``preached.youtube.coverage``): its audio must be in ``--audio-dir`` and
+its transcript must state ``meta.duration_s`` (the recording's length, a
+positive number). Without either it is stored unchecked and approval
+refuses it.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -287,9 +294,10 @@ def sermon_audio(audio_dir: Path | None, sermon_id: str) -> Path | None:
 def sermon_gaps(transcript: dict, audio_dir: Path | None, coverage) -> list[tuple[float, float]] | None:
     """Open coverage spans in the searchable window, or None when the check cannot run.
 
-    None (no audio at hand, undecodable, or shorter than the transcript or
-    its ``meta.duration_s``) leaves the sermon's coverage unchecked, and
-    approval refuses it.
+    None (no audio at hand, no usable ``meta.duration_s``, undecodable, or
+    shorter than the transcript or its ``meta.duration_s``) leaves the
+    sermon's coverage unchecked, and approval refuses it. Without a stated
+    duration a download cut short after the last word would pass.
     """
     from preached.youtube.coverage import Unchecked, clip_to_window
     from preached.youtube.words import Word
@@ -305,8 +313,12 @@ def sermon_gaps(transcript: dict, audio_dir: Path | None, coverage) -> list[tupl
     if "searchable_start" in transcript and "searchable_end" in transcript:
         window = (float(transcript["searchable_start"]), float(transcript["searchable_end"]))
     duration = meta.get("duration_s")
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
+        print(f"coverage {sermon_id}: NOT checked (no meta.duration_s in the transcript); approval is blocked",
+              file=sys.stderr)
+        return None
     try:
-        spans = clip_to_window(coverage(audio, words, duration_s=float(duration) if duration else None), window)
+        spans = clip_to_window(coverage(audio, words, duration_s=float(duration)), window)
     except Unchecked as exc:
         print(f"coverage {sermon_id}: NOT checked ({exc}); approval is blocked", file=sys.stderr)
         return None
@@ -360,7 +372,7 @@ def main(argv: list[str] | None = None, *, embedder=None, coverage=None) -> None
     parser.add_argument("--library", required=True, help="library slug. wesley is never redacted; any other library must have a privacy config")
     parser.add_argument("--privacy", type=Path, default=None, help="privacy TOML; defaults to $PREACHED_PRIVACY (not for wesley; required otherwise)")
     parser.add_argument("--index", type=Path, default=None, help="church library SQLite to load the sermons into, unpublished until --ack-review (not for wesley)")
-    parser.add_argument("--audio-dir", type=Path, default=None, help="folder holding <sermon id>.<ext> audio (exact name); checks that the transcript covers every stretch of sound. Without it, or when the audio is shorter than the transcript, approval is refused")
+    parser.add_argument("--audio-dir", type=Path, default=None, help="folder holding <sermon id>.<ext> audio (exact name); checks that the transcript covers every stretch of sound. Without it, without meta.duration_s in the transcript, or when the audio is shorter than the transcript, approval is refused")
     args = parser.parse_args(argv)
     privacy = privacy_for(args.library, args.privacy)
     config = load_chunk_config(ROOT / "corpus" / "chunk_config.json")

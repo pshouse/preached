@@ -415,7 +415,8 @@ class ChurchPathTests(unittest.TestCase):
     def transcript(self, words, sermon_id: str = "church-1", **extra) -> Path:
         path = self.root / f"{sermon_id}.json"
         path.write_text(json.dumps({
-            "meta": {"id": sermon_id, "title": "Sunday morning", "audio_url": self.AUDIO, **extra.pop("meta", {})},
+            "meta": {"id": sermon_id, "title": "Sunday morning", "audio_url": self.AUDIO, "duration_s": 60.0,
+                     **extra.pop("meta", {})},
             "segments": [{"words": [[w.start, w.end, w.text] for w in words]}],
             **extra,
         }))
@@ -484,6 +485,24 @@ class ChurchPathTests(unittest.TestCase):
                 code, err = self.ack()
                 self.assertEqual(code, 1)
                 self.assertIn("never checked", err)
+
+    def test_no_stated_duration_stores_null(self) -> None:
+        # CTO round 2 S-d: without meta.duration_s a download cut short after the last word would pass.
+        write_wav(self.audio / "church-1.wav", synth(60.0, [(1, 59)]))
+        for duration in (None, 0, -5, "60", True):
+            with self.subTest(duration=duration):
+                err = self.chunk(self.transcript(words_for((1, 59)), meta={"duration_s": duration}), audio_dir=self.audio)
+                self.assertIsNone(self.stored()[0])
+                self.assertIn("no meta.duration_s", err)
+        path = self.transcript(words_for((1, 59)))
+        data = json.loads(path.read_text())
+        del data["meta"]["duration_s"]
+        path.write_text(json.dumps(data))
+        self.chunk(path, audio_dir=self.audio)
+        self.assertIsNone(self.stored()[0])
+        self.assertEqual(self.ack()[0], 1)
+        self.chunk(self.transcript(words_for((1, 59))), audio_dir=self.audio)
+        self.assertEqual(self.stored()[0], "[]")
 
     def test_short_or_undecodable_audio_stores_null(self) -> None:
         # M3 / S4: 20 s of a 60 s sermon; then a file ffmpeg cannot read.
