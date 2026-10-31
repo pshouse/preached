@@ -447,6 +447,8 @@ class RawConnectGuardTests(unittest.TestCase):
             "from preached import store\nstore.sqlite3.connect('x')": (True, 1, 0),
             "import preached.store\npreached.store.sqlite3.connect('x')": (True, 1, 0),
             "from preached import library\nlibrary.sqlite3.connect('x')": (True, 1, 0),
+            "from preached import store as s\ns.sqlite3.connect('x')": (True, 1, 0),
+            "import preached.store as ps\nps.sqlite3.connect('x')": (True, 1, 0),
         }
         for source, want in cases.items():
             with self.subTest(source=source):
