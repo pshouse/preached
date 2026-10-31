@@ -3,7 +3,8 @@
 docs/adr/0001-onnx-export-determinism.md has the cause: the exported bytes
 follow torch's ATen CPU dispatch level and the order ModernBERT traces its
 two rotary tables (``set(config.layer_types)``, so PYTHONHASHSEED). The
-exporter fixes both: ATEN_CPU_CAPABILITY=avx2 and EXPORT_HASHSEED.
+exporter fixes both: ATEN_CPU_CAPABILITY=avx2 before torch is imported, and a
+restart under EXPORT_HASHSEED whatever the caller's seed.
 
 ExportIsByteIdenticalTests runs the real exporter twice (about a minute
 each on CPU). It skips only when the Granite weights are not in
@@ -365,6 +366,51 @@ class TraceOrderTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("would not match the pinned graph", result.stderr)
 
+
+class HashSeedReexecTests(unittest.TestCase):
+    """scripts/export_onnx.py restarts under EXPORT_HASHSEED whatever the caller's seed."""
+
+    def _reexec(self, ambient: str | None, *flags: str) -> list[str]:
+        # os.execv is replaced, so the restart is recorded instead of run.
+        code = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'scripts')!r})\n"
+            "import export_onnx\n"
+            "def execv(path, argv):\n"
+            "    print('EXEC', os.environ['PYTHONHASHSEED'], path == sys.executable, argv[1:])\n"
+            "    raise SystemExit(0)\n"
+            "os.execv = execv\n"
+            "export_onnx._reexec_with_hashseed()\n"
+            "print('NOEXEC', os.environ['PYTHONHASHSEED'])\n"
+        )
+        env = dict(os.environ)
+        env.pop("PYTHONHASHSEED", None)
+        if ambient is not None:
+            env["PYTHONHASHSEED"] = ambient
+        result = subprocess.run(
+            [sys.executable, *flags, "-c", code], env=env, capture_output=True, text=True, timeout=60
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split()
+
+    def test_any_other_ambient_seed_restarts_under_the_export_seed(self) -> None:
+        exporter = _load_exporter()
+        script = str((ROOT / "scripts" / "export_onnx.py").resolve())
+        for ambient in (None, "random", "1", "2", "3", "4", "5"):
+            with self.subTest(ambient=ambient):
+                out = self._reexec(ambient)
+                self.assertEqual(out[:3], ["EXEC", exporter.EXPORT_HASHSEED, "True"])
+                self.assertIn(script, " ".join(out[3:]))
+
+    def test_the_export_seed_does_not_restart(self) -> None:
+        exporter = _load_exporter()
+        self.assertEqual(self._reexec(exporter.EXPORT_HASHSEED), ["NOEXEC", exporter.EXPORT_HASHSEED])
+
+    def test_dash_r_under_the_export_seed_still_restarts(self) -> None:
+        # -R randomizes hashing even under PYTHONHASHSEED=0.
+        exporter = _load_exporter()
+        self.assertEqual(self._reexec(exporter.EXPORT_HASHSEED, "-R")[:2], ["EXEC", exporter.EXPORT_HASHSEED])
+
 SNAPSHOT = (
     CACHE / "huggingface" / "hub" / "models--ibm-granite--granite-embedding-english-r2" / "snapshots" / GRANITE_REVISION
 )
@@ -387,10 +433,16 @@ class ExportIsByteIdenticalTests(unittest.TestCase):
     def test_two_avx2_exports_are_byte_identical_and_are_the_pin(self) -> None:
         with tempfile.TemporaryDirectory(dir=CACHE, prefix="export-repro-") as tmp:
             manifests = []
-            # Each run starts under a seed and dispatch level that, unfixed,
-            # trace another graph (dispatch DEFAULT; seed 1 is the other
-            # rotary order). The script must override both.
-            for name, start in (("a", {"PYTHONHASHSEED": "1", "ATEN_CPU_CAPABILITY": "default"}), ("b", {"PYTHONHASHSEED": "3"})):
+            # The two runs start under different ambient hash seeds (1 and 3
+            # trace the two rotary orders) and dispatch levels. Unfixed, run a
+            # traces 44038d45..., and run b's avx512 is an AVX512 host's
+            # native level (on a CPU without AVX512 torch does not clamp it;
+            # the export dies with SIGILL). The script must override both
+            # and write the pin both times.
+            for name, start in (
+                ("a", {"PYTHONHASHSEED": "1", "ATEN_CPU_CAPABILITY": "default"}),
+                ("b", {"PYTHONHASHSEED": "3", "ATEN_CPU_CAPABILITY": "avx512"}),
+            ):
                 out = Path(tmp) / name
                 env = dict(
                     os.environ,
@@ -401,8 +453,6 @@ class ExportIsByteIdenticalTests(unittest.TestCase):
                     HF_HUB_OFFLINE="1",
                     **start,
                 )
-                if "ATEN_CPU_CAPABILITY" not in start:
-                    env.pop("ATEN_CPU_CAPABILITY", None)
                 result = subprocess.run(
                     [*_export_command(), str(ROOT / "scripts" / "export_onnx.py")],
                     cwd=ROOT,

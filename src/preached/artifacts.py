@@ -26,6 +26,8 @@ GRANITE_MODEL_KEY = "granite-english-r2"
 # sha256 of the ATEN_CPU_CAPABILITY=avx2 export, re-pinned 2026-10-31.
 # EXPORT_COMMAND rebuilds this graph byte for byte (it fixes the dispatch
 # level and PYTHONHASHSEED; see docs/adr/0001-onnx-export-determinism.md).
+# Run under every ambient PYTHONHASHSEED 0-5 x ATEN_CPU_CAPABILITY
+# default/avx2/avx512, it wrote only this digest.
 # The 2026-10-30 pin 3861025a… is the same weights and outputs. The graph pin is
 # keyed by variant, not by whatever file name the manifest writes. A
 # rewritten manifest cannot aim fp32 at another graph.

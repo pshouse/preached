@@ -86,8 +86,13 @@ def _require_avx2(machine: str | None = None, cpuinfo: Path = Path("/proc/cpuinf
 
 
 def _reexec_with_hashseed() -> None:
-    """String hashing is fixed at interpreter start, so set it and restart."""
-    if os.environ.get("PYTHONHASHSEED") == EXPORT_HASHSEED:
+    """String hashing is fixed at interpreter start, so set it and restart.
+
+    The ambient seed (unset, random, or any other value) never reaches the
+    trace. ``-R`` keeps hashing random even under seed 0, so it is checked
+    too; the restart drops interpreter flags.
+    """
+    if os.environ.get("PYTHONHASHSEED") == EXPORT_HASHSEED and not sys.flags.hash_randomization:
         return
     os.environ["PYTHONHASHSEED"] = EXPORT_HASHSEED
     script = str(Path(__file__).resolve())
