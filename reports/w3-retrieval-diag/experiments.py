@@ -4,7 +4,7 @@ Usage (from the worktree root):
   uv run --group bench python reports/w3-retrieval-diag/experiments.py OUT.json
 Index path: $PREACHED_CACHE/index/wesley.sqlite (default /cache), via preached.paths, opened mode=ro&immutable=1 (scratch only).
 """
-import json, re, sys
+import json, re, sqlite3, sys
 from pathlib import Path
 root = Path.cwd()
 sys.path.insert(0, str(root / "src")); sys.path.insert(0, str(root / "search"))
@@ -23,10 +23,9 @@ import numpy as np
 
 def open_immutable(path):
     """Scratch only: mode=ro&immutable=1 never touches -shm/-wal (the product's open_readonly does).
-    Uses store.sqlite3, not its own import: tests/test_hard_conditions.py lists the files that import sqlite3."""
-    from preached import store
-    con = store.sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
-    con.row_factory = store.sqlite3.Row
+    Listed in RAW_CONNECTS in tests/test_hard_conditions.py."""
+    con = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+    con.row_factory = sqlite3.Row
     con.execute("PRAGMA query_only = ON")
     return con
 

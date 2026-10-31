@@ -216,6 +216,9 @@ RAW_CONNECTS = {
     "scripts/bundle_manifest.py": 1,  # dst: the new bundle copy it just unlinked and creates
     "scripts/measure_parity.py": 1,  # dst: a new copy under /cache/w3-cpu (refuses the shipped path)
     "scripts/gate_leak_sweep.py": 1,  # writer: the synthetic temp index the sweep just built
+    "reports/w3-retrieval-diag/diag.py": 1,  # scratch eval, reports/: mode=ro&immutable=1 on a static index, never shipped
+    "reports/w3-retrieval-diag/experiments.py": 1,  # scratch eval, reports/: mode=ro&immutable=1 on a static index, never shipped
+    "reports/w3-retrieval-diag/prefixes.py": 1,  # scratch eval, reports/: mode=ro&immutable=1 on a static index, never shipped
 }
 
 # Uses of the writer ``store.connect`` (WAL, schema, migrations; no sidecar
@@ -322,6 +325,12 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                 if is_it and not names <= bound:
                     bound |= names
                     changed = True
+    for node in ast.walk(tree):
+        # ``<name>.sqlite3`` (``store.sqlite3.connect``) reaches the module
+        # through another module's import: an import plus a raw open (S12).
+        if isinstance(node, ast.Attribute) and node.attr == "sqlite3":
+            imports = True
+            raw += 1
     writer = 0
     for node in ast.walk(tree):
         if (
@@ -434,6 +443,10 @@ class RawConnectGuardTests(unittest.TestCase):
             "from .. import store as s\ns.connect('x')": (False, 0, 1),
             "from .store import connect\nconnect('x')": (False, 0, 1),
             "import preached.store\npreached.store.open_readonly('x')": (False, 0, 0),
+            # S12: sqlite3 reached as an attribute of another module.
+            "from preached import store\nstore.sqlite3.connect('x')": (True, 1, 0),
+            "import preached.store\npreached.store.sqlite3.connect('x')": (True, 1, 0),
+            "from preached import library\nlibrary.sqlite3.connect('x')": (True, 1, 0),
         }
         for source, want in cases.items():
             with self.subTest(source=source):
