@@ -195,3 +195,22 @@ echo "bundle ${OUT}"
 echo "library ${LIBRARY}"
 echo "manifest $(sha256sum "$OUT/MANIFEST.sha256" | awk '{print $1}')"
 echo "tar $(sha256sum "$TAR" | awk '{print $1}')"
+# Everything the tar bytes depend on. Same lines, same tar. The index and
+# model are not in git: the bundled index is named by its own sha256, the
+# model by the pins in artifacts.py. uv writes requirements-serve.txt;
+# sqlite writes the index copy; tar and gzip write the archive.
+if SOURCE_REV=$(git -C "$SOURCE" rev-parse HEAD 2>/dev/null); then
+  if [ -n "$(git -C "$SOURCE" status --porcelain 2>/dev/null)" ]; then
+    SOURCE_REV="${SOURCE_REV} dirty"
+  fi
+else
+  SOURCE_REV="not a git tree"
+fi
+echo "input source ${SOURCE_REV}"
+echo "input index-file $(sha256sum "$INDEX" | awk '{print $1}')"
+echo "input index-bundled $(sha256sum "$OUT/index/${LIBRARY}.sqlite" | awk '{print $1}')"
+echo "input model-revision ${REVISION}"
+echo "input python $("$PY" -c 'import platform, sqlite3; print(platform.python_version(), "sqlite", sqlite3.sqlite_version)')"
+echo "input uv $(uv --version | awk '{print $2}')"
+echo "input tar $(tar --version | awk 'NR==1 {print $NF}')"
+echo "input gzip $(gzip --version | awk 'NR==1 {print $NF}')"

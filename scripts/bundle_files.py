@@ -47,6 +47,8 @@ STATIC_FILES = (
     "uv.lock",
     "README.md",
     "AGENTS.md",
+    "LICENSE",
+    "NOTICE",
     ".python-version",
     "ingest/manifest/spurgeon.jsonl",
     "ingest/manifest/spurgeon.provenance.json",

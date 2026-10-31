@@ -203,3 +203,51 @@ Changed existing tests: `test_world_writable_bundle_is_refused_not_repaired` han
 - `__file__`-relative data read lazily at serve time (`search/models.toml`, `search/abstain.toml`, the classics manifests, `preached/privacy_data/`) is in `STATIC_FILES` or the derived data directories. That list is still kept by hand. `bundle_files.py check` loads the Spurgeon and Edwards manifests from the bundle, and a missing TOML fails the serve smoke.
 
 The round-4 code head is `57198dd`, and this section is the commit after it. `git rev-parse HEAD` on `feat/w3-deploy-prep` is the branch head.
+
+## Fix-up: CTO round 5 of PR #18 (30-W3-DEPLOY-FIX5) and the main merge
+
+Reviewed head `2eebe78`. First, `origin/main` at `ef4d4eb` (#22, #23, #24, so the new `LICENSE` and `NOTICE`) was merged with a merge commit, `91ced64`. It merged cleanly. No rebase, no force-push. Where this section disagrees with the sections above, this section describes the current behaviour.
+
+| Item | Commit | Tests and checks |
+| --- | --- | --- |
+| **M1, must: a direct start ran stale bytecode before the check.** The fix the CTO specified. The first lines of `app/server.py`, before the `sys.path` setup and any `app`/`preached` import, set `sys.dont_write_bytecode = True` and `sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")`. An `atexit` hook removes the directory. `main` now turns SIGTERM into the same clean stop as Ctrl-C, so that hook also runs under systemd stop or `terminate()`. | `7623d48` | `test_direct_start_ignores_planted_bundle_bytecode`: plants a same-size, same-mtime edit of `app/bundle.py` in `app/__pycache__`. In the edit, `bundle_problem` creates a canary file and returns None. Control: a plain `import app.bundle` **does** run it. Then `python app/server.py`, `python -B app/server.py` and `uv run --frozen --no-sync ... app/server.py` are each started straight from the bundle, with no `serve.sh` and no `PYTHONPYCACHEPREFIX`. Each one exits non-zero with "bytecode", never reaches `PREACHED_LISTENING`, and never creates the canary. Nothing else is written to `app/__pycache__`. **Mutation check: with the two `sys` lines reverted, all three launchers reach `PREACHED_LISTENING`. That is the CTO's reproduction.** `test_direct_start_bundle_serves_and_leaves_no_temp_dir` is the control: a clean bundle does start directly, and after SIGTERM `$TMPDIR` is empty and there is no `app/__pycache__`. Before the fix, even a clean direct start without `-B` was refused, because the server wrote `app/__pycache__` on import and its own check then found it. `test_server_sets_its_own_bytecode_prefix_before_any_bundle_import` pins the order in the source. |
+| M1 docs: what a direct start does and does not guarantee. A new DEPLOY subsection with that title, plus `app/bundle.py` lines 5–14 and the `app/server.py` docstring. **Does guarantee:** no bytecode is read from the tree or written to it, and the full bundle check runs before the index is opened or the port is bound. **Does not guarantee:** that the check runs before bundle code. `app.bundle` and `preached.*` run from their `.py` files before `main` hashes them, so an edited `.py` runs first. It also does not cover a planted extension module: `bundle.cpython-312-*.so` beside `bundle.py` is preferred by the import system (checked: `ExtensionFileLoader` comes before `SourceFileLoader`). Nor `python -m app.server`, where `runpy` imports `app.server` before its first line runs. Nor `.venv`, or a SIGKILL, which leaves the empty 0700 directory behind. `serve.sh` is still the supported launcher: its stdlib pre-check runs `app/bundle.py` by path under `-I` and refuses any unlisted file before anything is imported. | `c6a7056` | `test_deploy_doc_modes_and_the_review_rule` asserts the heading and the `python -m app.server` line |
+| S1: a test for the frozen-index wiring. | `7623d48` | `test_frozen_is_wired_from_main`: runs `main` with `is_bundle` patched True and then False and captures the `App`. `frozen` is True and then False. Mutation check: `frozen=False` hard-coded in `main` fails it. |
+| S2: a test for the `PRAGMA data_version` check. | `7623d48` | `FrozenIndexTests.test_bundle_refuses_an_in_place_chunk_edit`: an `UPDATE chunks SET text = ...` from another connection. The row count and the `chunks_sha256` meta row are unchanged, and the test asserts `index_stamp` is unchanged. The next search is 503 and the searcher is dropped. Mutation check: with the `data_version` clause removed, the search returns 200 with the edited text. |
+| S3: `serve.sh` left an empty temp directory behind on every start. The directory is now used only for the two preflight runs (`"PYTHONPYCACHEPREFIX=${PYCACHE}"` on those `env -i` lines). It is removed before the `exec`, and an `EXIT` trap removes it when a preflight fails. It is no longer passed to the server: started as a script, the server sets its own prefix (M1) and removes it at exit. | `c9d0786` | `test_serve_sh_leaves_no_temp_dir`: with `TMPDIR` pointed at a scratch directory, a bundle start that reaches `PREACHED_LISTENING` and is then terminated, and a start refused in preflight, both leave the directory empty. Mutation check: the round-4 `serve.sh` leaves `preached-pycache.XXXXXX` behind and fails the test. `test_serve_sh_sets_a_fresh_pycache_prefix` was updated: the prefix is set for the preflight, is not passed through, and is removed before `exec`. |
+| S4 (noted only): DEPLOY now says the import-by-string guard is a text check for accidental lazy imports and not a security boundary. `getattr(builtins, ...)`, `exec`, `runpy` and `sys.modules` lookups get past it. | `c6a7056` | doc test asserts "Known limit: this is a text check" |
+| S7: `LICENSE` and `NOTICE` (from #23) are in `scripts/bundle_files.py` `STATIC_FILES`, so they ship and are listed in the manifest. | `c9d0786` | `test_bundle_ships_license_and_notice`: both are in `MANIFEST.sha256`, byte-identical to the repo. The real build below lists them. |
+| Reproducible hash: the CTO could rebuild only `d1b2ca80`, not the claimed `a4880c6f`. `build-bundle.sh` now prints, after the `tar` line, every input the tar bytes depend on: `input source` (git commit, plus `dirty` if `git status --porcelain` is not empty), `input index-file` and `input index-bundled` (sha256), `input model-revision`, `input python` (with the SQLite version), and the `uv`, `tar` and `gzip` versions. DEPLOY has a new "Reproducing a bundle hash" subsection. | `c6a7056` | `test_bundle_is_reproducible_and_serve_only`: two fixture builds print the same `input` lines, and every name is present |
+
+### What happened to `a4880c6f`
+
+I rebuilt round-4 head `2eebe78` from `git archive` (so it is clean by construction) with this machine's `/cache`. It gives tar `49ecca1a2a78e7f3cf789c5d0db10d67d30a4f6ba262c6c86ac519d59359be53`. That is neither `a4880c6f` nor `d1b2ca80`. `/cache/index/wesley.sqlite` was last modified at 2026-10-30 15:39 EDT, before round 4, and its bundled copy has the same sha256 as below. So the round-4 tar was built from a source tree that was not exactly committed, and the CTO's box differs from this one in at least one input (index bytes, SQLite, uv, tar or gzip). Without the `input` lines there is no way to tell which. From now on, a published hash comes with its inputs. The index is not in git, so nobody can rebuild the tar from the repo alone. Someone with an index of the same `index-bundled` sha256, the pinned model files, and the same tool versions can.
+
+### Numbers
+
+- `uv run python -m unittest discover -s tests`: **614 tests, 82.6 s, OK** (at `c6a7056`).
+- `uv lock --check`: clean (79 packages resolved). No lockfile change. No new dependencies. No LLM.
+- Two bundle builds from `c6a7056`, using the real `/cache/index/wesley.sqlite` and the pinned fp32 ONNX files, printed identical output apart from the output path:
+
+  ```
+  manifest 80689aefcf643d3de9fce66d1872338d83ab4e286b6f6f18ba647bd0ee3de6f0
+  tar 9009db10bd6f2d587346e9c92841ded9679f1057b5b8266516be0442b3db6706
+  input source c6a705620164cd16b23ae5fa151deeab05eb03f8
+  input index-file 909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b
+  input index-bundled 259bea8d9bab35e1d81807d1e90ba176b71131fdb20890059f1c086266ea2cc9
+  input model-revision 47ea694b257b703fee9253d75c2b1f2985180498
+  input python 3.12.16 sqlite 3.53.1
+  input uv 0.13.6
+  input tar 1.35
+  input gzip 1.15
+  ```
+
+  `sha256sum -c MANIFEST.sha256` OK. No `__pycache__` or `*.pyc` in the tree. `LICENSE` (`cfc7749b…`) and `NOTICE` (`0f720578…`) are listed. The source was clean (no `dirty`). This report commit does not change the bundle: reports are not shipped.
+- Serve smoke, `scripts/smoke-bundle.sh` (a third build with the same inputs, a fresh `uv sync --frozen --no-dev --no-default-groups`, then `serve.sh`): 8,383 chunks, `backend onnx`, `fallback False`, `index_version 198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`, `model_sha256 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. Search over 20 samples (1 warmup dropped): p50 client 58.1 ms, p50 took 57.0 ms. RSS 1.61 GB at start and 1.66 GB after. `smoke ok`. No new `preached-pycache*` directory was left in `/tmp`. The two older ones there came from round-4 `serve.sh` starts.
+
+### Notes and limits
+
+- The first commit, `7623d48`, carries the whole new test file, so the S3 and S7 tests in it fail until `c9d0786`. The full suite was run at `c6a7056` (614 OK), not at each commit.
+- Importing `app.server` sets `sys.pycache_prefix` and `sys.dont_write_bytecode` for that whole process. That includes the unit tests. The round-4 bytecode test now computes the in-tree `.pyc` path directly, not with `importlib.util.cache_from_source`, which follows the prefix.
+- SIGTERM now exits 0 through the same path as Ctrl-C ("stopping", then the socket and index close), instead of dying on the signal.
+- A direct start still runs the bundle's `.py` files before checking them (see the DEPLOY subsection). `serve.sh` stays the launcher DEPLOY tells operators to use.

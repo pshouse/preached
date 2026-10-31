@@ -3,7 +3,13 @@
 ``scripts/serve.sh`` runs this file as a script, ``python -I -B
 app/bundle.py ROOT INDEX``, before any bundle module is imported. The
 check therefore runs before the code it hashes. ``app.server.main`` runs the
-same check again for a server started some other way.
+same check again for a server started some other way. A direct start
+(``python app/server.py``, ``python -B``, ``uv run``) imports this module
+and ``preached.*`` from source first, with no bytecode read (app/server.py
+sets a private ``sys.pycache_prefix`` before those imports), and only then
+runs the check. An edited ``.py`` or a planted extension module runs before
+it refuses the tree; see docs/DEPLOY.md, "What a direct start does and does
+not guarantee".
 
 A tree is one of:
 

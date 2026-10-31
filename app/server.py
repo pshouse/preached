@@ -32,29 +32,51 @@ Security choices:
   and model/ must be the bundle's own, or the server does not start
   (app/bundle.py). A tree that is neither a bundle nor a .git checkout is
   refused
+- scripts/serve.sh runs that check, stdlib only, before any bundle code is
+  imported. Started directly (python app/server.py, python -B, uv run), no
+  bytecode is read or written: the first lines below set a private
+  sys.pycache_prefix before app.bundle and preached.* are imported. Those
+  modules still run from their .py files before main() checks them, so an
+  edited .py or a planted extension module runs first. python -m app.server
+  is not covered (docs/DEPLOY.md)
 - a bundle's index is frozen: a change after start is 503 until restart
 - a NUL or control character in the request line or a header value is a 400
 """
 
 from __future__ import annotations
 
-import argparse
-import ipaddress
-import json
-import logging
-import os
-import re
-import socket
-import sqlite3
-import stat
+import atexit
+import shutil
 import sys
-import threading
-import time
-from collections import deque
-from types import SimpleNamespace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+import tempfile
+
+# Before any app or preached import. ``python app/server.py``, ``python -B``
+# and ``uv run`` import app.bundle and preached.* below, before main() runs
+# bundle_problem. An old __pycache__ in the tree can match a source file's
+# size and mtime and would run in place of that source. A fresh, private,
+# empty prefix means every one of those modules is compiled from source,
+# and nothing is written. Removed at exit (main turns SIGTERM into one).
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
+atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+
+import argparse  # noqa: E402
+import ipaddress  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import signal  # noqa: E402
+import socket  # noqa: E402
+import sqlite3  # noqa: E402
+import stat  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from collections import deque  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
+from pathlib import Path  # noqa: E402
+from urllib.parse import parse_qs, urlsplit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -2187,10 +2209,17 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
         raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
 
 
+def _stop_on_sigterm(_signum, _frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> None:
     # No PREACHED_ALLOW_ROOT. Root is refused here, not only in serve.sh.
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         raise SystemExit("refusing to serve as root")
+    # SIGTERM (systemd stop, serve.sh's parent) stops like Ctrl-C, so the
+    # socket and index close and atexit removes the bytecode prefix above.
+    signal.signal(signal.SIGTERM, _stop_on_sigterm)
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

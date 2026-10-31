@@ -117,6 +117,14 @@ class TitleLeakTest(unittest.TestCase):
             {"sermon_id": "wesley-019", "sermon_title": "Born of God", "grade": 1, "quote": "y", "status": "proposed"}]}
         self.assertEqual(lint.leaks(q, {}), [])
 
+    def test_enemy_and_trick_are_synonyms_of_satans_devices(self):
+        # (word in the question, synonym it should match)
+        for word, syn in (("enemy", "enemy"), ("enemies", "enemy"), ("trick", "trick"), ("tricked", "trick"),
+                          ("deceive", "deceive"), ("deception", "deception")):
+            q = {"query": f"How does the {word} catch me?", "relevant": [
+                {"sermon_id": "wesley-042", "sermon_title": "Satan's Devices", "grade": 2, "quote": "x"}]}
+            self.assertTrue(any(h.startswith(f'synonym "{syn}"') for h in lint.leaks(q, {})), word)
+
     def test_plain_blind_leaks_do_not_fail(self):
         q = {"id": "p-x", "group": "plain-blind", "query": "Is the devil after me?", "relevant": [
             {"sermon_id": "wesley-042", "sermon_title": "Satan's Devices", "grade": 2, "quote": "x"}]}
