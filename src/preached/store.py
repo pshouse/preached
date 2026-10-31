@@ -562,7 +562,10 @@ def visible_sql(
     on the next request. A church library's chunks carry a ``video_id``; they
     are served only when that sermon's ``videos`` row is ``ok`` and a human
     approved the review file whose sha256 is stored (``approved_sha256 ==
-    review_sha256``). A row with a NULL ``video_id`` is never served. A
+    review_sha256``) and its ASR coverage check found nothing open
+    (``coverage_gaps = '[]'``; NULL, never checked, is not served, so a
+    sermon approved before the check existed stays hidden until it is
+    re-imported). A row with a NULL ``video_id`` is never served. A
     library file without the gate columns fails closed (``"0"``). Wesley's
     index has no ``video_id`` column and no ``videos`` table and is not gated,
     unless ``gated`` says this file must be (any library but wesley).
@@ -576,13 +579,13 @@ def visible_sql(
     video_cols = _columns(connection, "videos")
     if "video_id" not in chunk_cols and not video_cols and not gated:
         return None
-    if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+    if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status", "coverage_gaps"} <= video_cols:
         return "0"
     return (
         f"{alias}.video_id IS NOT NULL AND EXISTS ("
         f"SELECT 1 FROM videos v WHERE v.video_id = {alias}.video_id AND v.status = 'ok' "
         "AND v.approved_sha256 IS NOT NULL AND v.review_sha256 IS NOT NULL "
-        "AND v.approved_sha256 = v.review_sha256)"
+        "AND v.approved_sha256 = v.review_sha256 AND v.coverage_gaps = '[]')"
     )
 
 
@@ -609,13 +612,21 @@ def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = Fals
 
 
 def pending_review_count(connection: sqlite3.Connection) -> int:
-    """Imported sermons waiting for approval (a count; never ids or titles)."""
+    """Imported sermons waiting for approval (a count; never ids or titles).
+
+    Agrees with ``visible_sql``: a file missing any gate column serves
+    nothing, so every imported sermon in it is pending, not 0.
+    """
     video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
-    if not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+    if not video_cols:
         return 0
+    status = " WHERE status = 'ok'" if "status" in video_cols else ""
+    if not {"review_sha256", "approved_sha256", "status", "coverage_gaps"} <= video_cols:
+        return int(connection.execute(f"SELECT count(*) FROM videos{status}").fetchone()[0])
     row = connection.execute(
         "SELECT count(*) FROM videos WHERE status = 'ok' "
-        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256)"
+        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256 "
+        "OR coverage_gaps IS NOT '[]')"
     ).fetchone()
     return int(row[0])
 

@@ -365,6 +365,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: videos,
                 downloader=self._boom,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
                 metadata=self._boom,
             )
             self.assertEqual(code, 0)
@@ -438,6 +439,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: videos,
                 downloader=downloader,
                 transcriber=transcriber,
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -466,6 +468,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: videos,
                 downloader=downloader,
                 transcriber=transcriber,
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -503,6 +506,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: [inside, escaped, linked],
                 downloader=downloader,
                 transcriber=lambda _path: sample_words(),
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -534,6 +538,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: [video],
                 downloader=downloader,
                 transcriber=transcriber,
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -566,6 +571,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: [video],
                 downloader=downloader,
                 transcriber=lambda _path: sample_words(),
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -600,6 +606,7 @@ class ImportTests(unittest.TestCase):
                 metadata=metadata,
                 downloader=downloader,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
             )
             self.assertEqual(code, 0, err)
             self.assertIn("not Creative Commons", err)
@@ -611,6 +618,7 @@ class ImportTests(unittest.TestCase):
                 metadata=metadata,
                 downloader=downloader,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
             )
             self.assertEqual(code, 0, err)
             self.assertEqual(seen["meta"], 1)
@@ -632,6 +640,7 @@ class ImportTests(unittest.TestCase):
                 },
                 downloader=lambda _video, dest: dest / "samplevid01.m4a",
                 transcriber=lambda _path: sample_words(12.2),
+                coverage=lambda *_a, **_k: [],
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
@@ -733,6 +742,7 @@ class ImportTests(unittest.TestCase):
                 },
                 downloader=lambda _video, dest: dest / "samplevid02.m4a",
                 transcriber=lambda _path: sample_words(12.2),
+                coverage=lambda *_a, **_k: [],
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
@@ -934,6 +944,7 @@ class ImportTests(unittest.TestCase):
                 },
                 downloader=lambda _video, dest: dest / f"{video_id}.m4a",
                 transcriber=lambda _path: sample_words(12.2),
+                coverage=lambda *_a, **_k: [],
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
@@ -1003,6 +1014,7 @@ class ImportTests(unittest.TestCase):
                 lister=lister,
                 downloader=self._boom,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
                 metadata=self._boom,
             )
         self.assertEqual(code, 2, err)

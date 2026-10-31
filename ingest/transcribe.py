@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import preached.env  # noqa: F401  (HF_HOME under PREACHED_CACHE before any HF import)
+from preached.cpu_guard import avoid_amx
 from preached.paths import CACHE_ROOT
 
 TRANSCRIPT_DIR = CACHE_ROOT / "transcripts" / "wesley"
@@ -168,6 +169,8 @@ def is_oom(exc: BaseException) -> bool:
 class Transcriber:
     def __init__(self, model: str = MODEL, rung: int = 0,
                  repo: str = MODEL_REPO, revision: str = MODEL_REVISION):
+        # Before ctranslate2 loads: MKL's AMX int8 kernels corrupt the output (preached.cpu_guard).
+        avoid_amx()
         _preload_cuda_libs()
         import faster_whisper  # noqa: F401  (after preload)
 

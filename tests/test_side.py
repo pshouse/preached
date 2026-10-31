@@ -792,9 +792,10 @@ class ChurchGateTripwireTests(unittest.TestCase):
             build_library(path, rows, vectors, church=True, sample=True)
             writer = sqlite3.connect(path)
             writer.execute("UPDATE chunks SET video_id = sermon_id")
-            # samplevid01 (churchonlytoken) is unapproved; samplevid02 (sharedpulpit) is approved.
+            # samplevid01 (churchonlytoken) is unapproved; samplevid02 (sharedpulpit) is approved
+            # with its ASR coverage checked and nothing open.
             writer.executemany(
-                "INSERT INTO videos (video_id, status, review_sha256, approved_sha256) VALUES (?, 'ok', 'abc', ?)",
+                "INSERT INTO videos (video_id, status, review_sha256, approved_sha256, coverage_gaps) VALUES (?, 'ok', 'abc', ?, '[]')",
                 [("samplevid01", None), ("samplevid02", "abc")],
             )
             writer.commit()

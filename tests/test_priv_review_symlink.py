@@ -28,6 +28,7 @@ import asr_chunks  # noqa: E402
 from preached.privacy import _open_private_dir, read_private_file  # noqa: E402
 from preached.youtube.pipeline import write_private_review  # noqa: E402
 from test_privacy_wire import FILLER, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 ITEMS = [{"text": "Invented Person", "reason": "test"}]
 
@@ -42,8 +43,10 @@ class Victim:
         self.file = self.dir / "victim.txt"
         self.file.write_text("keep me\n")
         os.chmod(self.file, 0o644)
+        self.mtimes = (self.file.stat().st_mtime_ns, self.dir.stat().st_mtime_ns)
 
     def untouched(self, case: unittest.TestCase) -> None:
+        case.assertEqual((self.file.stat().st_mtime_ns, self.dir.stat().st_mtime_ns), self.mtimes)
         case.assertEqual(self.file.read_text(), "keep me\n")
         case.assertEqual(stat.S_IMODE(self.file.stat().st_mode), 0o644)
         case.assertEqual(stat.S_IMODE(self.dir.stat().st_mode), 0o755)
@@ -178,8 +181,8 @@ class AsrChunksSymlinkTests(unittest.TestCase):
     def run_asr(self) -> None:
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(self.transcript), "--out", str(self.root / "c.jsonl"), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite")],
-                            embedder=embedder)
+                             "--privacy", str(self.toml), "--index", str(self.index_dir / "church.sqlite"), *stub_audio(self.transcript)],
+                            embedder=embedder, coverage=lambda *_a, **_k: [])
 
     def test_symlink_at_the_review_file(self) -> None:
         review = self.index_dir / "church" / "review"
@@ -266,6 +269,30 @@ class MkdirRaceTests(unittest.TestCase):
             self.assertEqual(len(opens), 2, opens)
             shutil.rmtree(self.root / "race", ignore_errors=True)
             (self.root / "race").unlink(missing_ok=True)
+
+    def test_directory_removed_between_eexist_and_retry_fails_closed_without_looping(self) -> None:
+        real_mkdir, real_open = os.mkdir, os.open
+        mkdirs = []
+
+        def mkdir(path, mode=0o777, *, dir_fd=None):
+            if path == "race":
+                mkdirs.append(path)
+                # a retry loop would come back here forever; bounded code stops at once
+                if len(mkdirs) > 3:
+                    raise AssertionError("mkdir retried more than a bounded number of times")
+                if len(mkdirs) == 1:
+                    (self.root / "race").mkdir(mode=0o700)  # the rival wins the race
+            return real_mkdir(path, mode, dir_fd=dir_fd)
+
+        def opener(path, flags, *args, **kwargs):
+            if path == "race" and mkdirs and (self.root / "race").exists():
+                (self.root / "race").rmdir()  # the rival removes it before the retry
+            return real_open(path, flags, *args, **kwargs)
+
+        with patch("preached.privacy.os.mkdir", mkdir), patch("preached.privacy.os.open", opener):
+            with self.assertRaises(RuntimeError):
+                _open_private_dir(self.root / "race")
+        self.assertEqual(len(mkdirs), 1)
 
     def test_intermediate_component_swapped_fails_closed(self) -> None:
         for create in (True, False):

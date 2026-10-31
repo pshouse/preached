@@ -22,6 +22,7 @@ from preached.store import open_readonly
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_privacy_wire import CHANNEL, FILLER, ID_A, Base, embedder, words_for  # noqa: E402
+from coverage_stub import stub_audio
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,7 +102,7 @@ class ImportTests(Base):
         super().setUp()
         self.words = words_for(SERVICE)
 
-    def run_import(self, extra: list[str] | None = None):
+    def run_import(self, extra: list[str] | None = None, coverage=None):
         from datetime import date
 
         from preached.youtube.listing import Video
@@ -114,6 +115,7 @@ class ImportTests(Base):
             downloader=lambda v, dest: dest / f"{v.id}.m4a",
             transcriber=lambda path: self.words,
             embedder=embedder,
+            coverage=coverage or (lambda *_a, **_k: []),
         )
 
     def lines(self) -> list[dict]:
@@ -158,6 +160,66 @@ class ImportTests(Base):
         vectors = connection.execute("SELECT count(*) FROM embeddings").fetchone()[0]
         self.assertEqual(vectors, len(rows))
         self.assertFalse(words_file(self.review_file(ID_A)).exists())
+
+    def test_skip_stretch_and_open_coverage_span_both_gate_approval(self) -> None:
+        from preached.youtube.coverage import Span
+
+        code, _out, err = self.run_import(coverage=lambda *_a, **_k: [Span(100.0, 130.0)])
+        self.assertEqual(code, 0, err)
+        self.assertTrue([line for line in self.lines() if line.get("field") == "exclude"])  # a #19 skip stretch
+        self.assertTrue([line for line in self.lines() if line.get("field") == "coverage"])  # and an open span
+        code, _out, err = self.ack(embedder=_no_embedder)
+        self.assertEqual(code, 1)
+        self.assertIn("not covered by the transcript", err)
+        self.assertEqual(self.approved(), None)
+        # The reviewer widening a stretch does not clear the coverage gate.
+        index = next(i for i, w in enumerate(self.words) if w.text == "velvetlantern")
+        lines = self.lines()
+        insert = next(i for i, line in enumerate(lines) if line.get("field") == "exclude")
+        lines.insert(insert, {"field": "exclude", "start_s": self.words[index - 1].start, "end_s": self.words[index + 3].end, "note": "reviewer"})
+        self.write_lines(lines)
+        code, _out, err = self.ack(embedder=embedder)
+        self.assertEqual(code, 1)
+        self.assertIn("not covered by the transcript", err)
+        self.assertEqual(self.approved(), None)
+        # Resolved (re-import finds no gap): the skip rules still apply and approval goes through.
+        code, _out, err = self.run_import(["--redo"])
+        self.assertEqual(code, 0, err)
+        code, _out, err = self.ack(embedder=_no_embedder)
+        self.assertEqual(code, 0, err)
+        self.assertIsNotNone(self.approved())
+        raw = self.raw_index()
+        for marker in MARKERS:
+            self.assertNotIn(marker.encode(), raw)
+
+    def test_rebuild_keeps_an_unchecked_coverage_null(self) -> None:
+        # S5: the rebuild passes NULL through as NULL ('is None'), and '[]' as '[]'.
+        import hashlib
+
+        from preached.exclusions import _rebuild, _split
+        from preached.privacy import TOKEN, read_private_file
+        from preached.youtube.library import open_library
+
+        code, _out, err = self.run_import()
+        self.assertEqual(code, 0, err)
+        data = read_private_file(self.review_file(ID_A))
+        base, _excludes, _header = _split(data)
+        lines = [json.loads(x) for x in read_private_file(words_file(self.review_file(ID_A))).splitlines()]
+        info, kept = lines[0], lines[1:]
+        connection = open_library(self.index)
+        self.addCleanup(connection.close)
+        for stored in (None, "[]", "[[100.0, 130.0]]"):
+            with self.subTest(coverage_gaps=stored):
+                _rebuild(connection, ID_A, info, kept[:-3], data, hashlib.sha256(data).hexdigest(),
+                         hashlib.sha256(base).hexdigest(), TOKEN, embedder, stored)
+                self.assertEqual(connection.execute("SELECT coverage_gaps FROM videos WHERE video_id = ?", (ID_A,)).fetchone()[0], stored)
+
+    def approved(self):
+        connection = open_readonly(self.index)
+        try:
+            return connection.execute("SELECT approved_sha256 FROM videos WHERE video_id = ?", (ID_A,)).fetchone()[0]
+        finally:
+            connection.close()
 
     def test_chunks_are_cut_at_every_boundary(self) -> None:
         self.assertEqual(self.run_import()[0], 0)
@@ -311,7 +373,7 @@ class AsrPathTests(unittest.TestCase):
     def main(self, argv):
         out, err = StringIO(), StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            self.module.main([str(self.path), "--out", str(self.root / "c.jsonl"), *argv], embedder=embedder)
+            self.module.main([str(self.path), "--out", str(self.root / "c.jsonl"), *argv, *stub_audio(self.path)], embedder=embedder, coverage=lambda *_a, **_k: [])
         return out.getvalue() + err.getvalue()
 
     def test_church_asr_excludes_and_reviewer_additions_apply(self) -> None:
