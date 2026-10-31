@@ -136,14 +136,14 @@ None added.
 
 ## PR BODY
 
-Head: see the latest commit on `fix/w3-html-503`. It is the report commit; the code is at `906b03a`. Ahead/behind `origin/main` (`97537ae`): **4 ahead, 0 behind**, counting the report commit (3 before it: r1 `58f5ae5`, merge `bcadd00`, fix `906b03a`).
+Head: see the latest commit on `fix/w3-html-503`. It is the report commit; the code is at `906b03a`. Ahead/behind `origin/main` (`97537ae`): **5 ahead, 0 behind** (r1 `58f5ae5`, merge `bcadd00`, fix `906b03a`, report, report stat fix).
 
 `git diff --stat origin/main..HEAD` (all in scope):
 
 ```
  app/server.py               |  87 +++++++++++++-
  docs/DEPLOY.md              |  37 +++---
- reports/W3-HTML-503-R2.md   | (this report)
+ reports/W3-HTML-503-R2.md   | 174 +++++++++++++++++++++++++++
  reports/W3-HTML-503.md      |  94 +++++++++++++++
  tests/test_deploy_alerts.py |  24 ++--
  tests/test_html_503.py      | 287 ++++++++++++++++++++++++++++++++++++++++++++
