@@ -196,6 +196,24 @@ None.
 - **What is not known:** the pre-incident int8, pooling and manifest bytes were never recorded (see Open issues). If the directory held any other files besides the export's five, they are gone.
 - **Why it cannot recur:** `ExportMainTests._main` now refuses to call `main()` unless `artifact_dir()` is inside the test's temp cache. That is how the MF1 mutant fails above, without touching anything. All mutant runs after the incident also mounted `/cache` read-only.
 
+**Infra Ops verification (2026-10-31, ET; 99-W7-ONNX-INCIDENT).**
+
+- **Timeline.** 4:29 PM: a mutant test run `rmtree`d `/cache/models/granite-english-r2-onnx/47ea694b257b703fee9253d75c2b1f2985180498/`. Restored 4:30 PM from `/cache/w4-onnx-seed1/avx2-1/`.
+- **Export re-run.** Infra Ops ran `scripts/export_onnx.py` from the `5d8a5bf` tree into temp roots: exit 0, the AVX2 and seed-1 guards passed, and it printed "fp32 sha256 matches the pin". The fresh export, the restored folder and the seed1 copy are byte-identical, all 5 files:
+
+  | File | sha256 (first 12) | Pin |
+  | --- | --- | --- |
+  | `model.fp32.onnx` | `3861025a186e` | pinned |
+  | `model.int8.onnx` | `220d6de96c78` | unpinned by design |
+  | `tokenizer.json` | `6c8aaa9a5420` | pinned |
+  | `pooling.json` | `bf1476968368` | |
+  | `manifest.json` | `96f276e6b10d` | |
+
+  The export produces exactly these 5 files; nothing is missing, so the "if the directory held any other files" worry above is closed. Perms are 0755 and 0644, owner uid 1000.
+- **Live demo.** Its process started at 13:50 and loads the graph once at startup, so it never loaded the damaged folder. `/healthz` at 4:49 PM: 200, `dense` true, `fallback` false, `model_sha256` `3861025a`. No restart was needed.
+- **Church index.** The main db file is unchanged (ctime from Oct 30, no `-wal` growth). Only its `-shm` changed, at 4:50:31 PM ET, from a WAL open by a concurrent test suite. No leftover temp copies remain under `/cache/models`. The 597 MB in-cache test copy is being fixed by a separate PR (`fix/w5-cache-readonly-tests`).
+- **Guard, as it is in the tree.** `ExportMainTests._main` (`tests/test_onnx_pin_repro.py`) resolves `artifact_dir()` and calls `self.fail(...)` unless `folder.is_relative_to(cache)`, where `cache` is a `tempfile.TemporaryDirectory()` the test created; `main()` (the only caller of `rmtree`) runs only after that check, so a mutant that sends the export to the real `/cache` fails without touching it. All mutant runs after the incident also mounted `/cache` read-only. **Gap against standing rule 5:** the check is against the test's own temp cache, not a call to `Path.resolve()` plus an assertion under `tempfile.gettempdir()`, and it covers `main()` in `ExportMainTests` only. It is not a general guard on every destructive call. This task is report-only, so the stricter assertion is not added here; it is a candidate follow-up.
+
 ## 10. FIX1: DEPLOY.md D2 (SF1)
 
 - The D2 row now says it fires only at startup **in two forms**. A load failure logs it with a traceback (`:861`). A missing graph or manifest logs it with `logging.error`, no traceback (`:857`), and the next line is `ERROR ONNX GRAPH NOT BUILT…`. The Infra regex `^ERROR embedding model unavailable; serving BM25 only$` matches both. `MissingGraphMessageTests` asserts the exact line `ERROR:root:embedding model unavailable; serving BM25 only`, and the server's log format is `%(levelname)s %(message)s`.
@@ -243,7 +261,7 @@ Full suite, final head (R2): `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv r
 None for `/cache` hosts: the existing `3861025a` export stays valid. A host with `PREACHED_CACHE` other than `/cache` that kept the export at `/cache/models/...` must set `PREACHED_ONNX_DIR` or move it.
 
 ### Incident
-While running a mutant, a test removed and rewrote the shared `/cache/models/granite-english-r2-onnx/47ea…/`. It was restored from an identical script export (fp32 and tokenizer match their pins; `verify_manifest` OK). The test now refuses to run `main()` outside its temp cache. Details: `reports/W4-ONNX-PIN-REPRO.md` §9.
+While running a mutant, a test removed and rewrote the shared `/cache/models/granite-english-r2-onnx/47ea…/`. It was restored from an identical script export (fp32 and tokenizer match their pins; `verify_manifest` OK). The test now refuses to run `main()` outside its temp cache. Infra Ops re-ran the export and found the restored folder byte-identical to a fresh export (all 5 files); the live demo never loaded the damaged folder and needed no restart; the church index main db is unchanged. Details: `reports/W4-ONNX-PIN-REPRO.md` §9.
 
 ### Branch state
 0 behind, 23 ahead of `origin/main` (`abdada3`).
