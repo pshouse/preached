@@ -32,6 +32,7 @@ from app.server import (  # noqa: E402
     RateLimiter,
     main,
     make_server,
+    onnx_dir_problem,
     public_sha256,
 )
 from preached.artifacts import FP32_ONNX_SHA256, GRANITE_REVISION  # noqa: E402
@@ -323,11 +324,14 @@ class RateAndKillTests(unittest.TestCase):
             raw = socket.create_connection(("127.0.0.1", port), timeout=2)
             raw.sendall(b"GET /\x01secret HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
             raw.settimeout(2)
-            raw.recv(400)
+            reply = raw.recv(400)
             raw.close()
+        # A control character in the request line is a 400 before parsing;
+        # the line is neither echoed nor logged.
+        self.assertTrue(reply.startswith(b"HTTP/1.1 400") or reply.startswith(b"HTTP/1.0 400"), reply)
         joined = "\n".join(logs.output)
-        self.assertIn("\\x01", joined)
         self.assertNotIn("\x01", joined)
+        self.assertNotIn("secret", joined)
         status, _, _body = _request(port, "/healthz")
         self.assertEqual(status, 200)
 
@@ -859,7 +863,9 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(before, (0o777, 0o777, 0o666))
             self.assertEqual(after, before)
             self.assertNotEqual(result.returncode, 0, result.stderr)
-            self.assertIn("writable", result.stderr)
+            # No build stamp, so app/bundle.py refuses first; either way it
+            # is refused and the modes are left as they were.
+            self.assertRegex(result.stderr, "writable|refusing to serve")
 
     def test_preflight_uses_the_scrubbed_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1064,6 +1070,197 @@ class BundleTests(unittest.TestCase):
             self.assertNotEqual(broken.returncode, 0)
             self.assertIn("audio_policy", broken.stderr)
 
+    # Round 4 (21-W3-DEPLOY-FIX4).
+
+    def _plant_bytecode(self, bundle: Path, canary: Path) -> Path:
+        """Compile a same-size edit of a shipped module into __pycache__, then
+        restore the source with its size and mtime. Returns the .pyc."""
+        import importlib.util
+        import py_compile
+
+        source = bundle / "src" / "preached" / "paths.py"
+        original = source.read_bytes()
+        st = source.stat()
+        target = b"# Large data never lives in the git tree. HF_HOME is set in preached.env"
+        self.assertIn(target, original)
+        code = f"open({str(canary)!r}, 'w').close()  #".encode()
+        self.assertLessEqual(len(code), len(target))
+        modified = original.replace(target, code + b"x" * (len(target) - len(code)), 1)
+        self.assertEqual(len(modified), len(original))
+        source.chmod(0o644)
+        source.write_bytes(modified)
+        os.utime(source, ns=(st.st_atime_ns, st.st_mtime_ns))
+        pyc = Path(importlib.util.cache_from_source(str(source)))
+        py_compile.compile(str(source), cfile=str(pyc), doraise=True)
+        source.write_bytes(original)
+        os.utime(source, ns=(st.st_atime_ns, st.st_mtime_ns))
+        source.chmod(st.st_mode & 0o777)
+        return pyc
+
+    def test_planted_bytecode_does_not_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            canary = root / "canary"
+            self._plant_bytecode(out, canary)
+            probe = [str(ROOT / ".venv" / "bin" / "python"), "-c", "import preached.paths"]
+            base = {"PATH": os.environ["PATH"], "PYTHONPATH": f"{out / 'src'}:{out}"}
+            # Control: without a cache prefix the planted bytecode does run.
+            subprocess.run(probe, cwd=root, env=base, check=True, timeout=60)
+            self.assertTrue(canary.exists())
+            canary.unlink()
+            # serve.sh's PYTHONPYCACHEPREFIX alone stops it.
+            prefix = root / "pycache-prefix"
+            prefix.mkdir()
+            subprocess.run(probe, cwd=root, env={**base, "PYTHONPYCACHEPREFIX": str(prefix)}, check=True, timeout=60)
+            self.assertFalse(canary.exists())
+            # And the bundle check refuses the tree before anything imports.
+            problem = bundle_problem(out / "index" / "wesley.sqlite", root=out)
+            self.assertIn("bytecode", problem or "")
+            listening, code, log = self._start(out)
+            self.assertFalse(listening, log[-2000:])
+            self.assertNotEqual(code, 0)
+            self.assertIn("bytecode", log)
+            self.assertFalse(canary.exists())
+            # A lone .pyc with no __pycache__ directory is refused too.
+            loose = self._copy_without_bytecode(out)
+            (loose / "src" / "preached" / "paths.pyc").write_bytes(b"")
+            self.assertIn("not in", bundle_problem(loose / "index" / "wesley.sqlite", root=loose) or "")
+
+    def _copy_without_bytecode(self, bundle: Path) -> Path:
+        dest = bundle.parent / f"clean-{len(list(bundle.parent.iterdir()))}"
+        shutil.copytree(bundle, dest, symlinks=True, ignore=shutil.ignore_patterns("__pycache__"))
+        return dest
+
+    def test_serve_sh_sets_a_fresh_pycache_prefix(self) -> None:
+        text = (ROOT / "scripts" / "serve.sh").read_text()
+        self.assertIn('PYTHONPYCACHEPREFIX=$(mktemp -d', text)
+        self.assertIn("pass PYTHONPYCACHEPREFIX", text)
+        # The stdlib check runs, isolated, before the preflight imports app.server.
+        check = text.index('-I -B "$ROOT/app/bundle.py"')
+        self.assertLess(check, text.index("from app.server import check_servable"))
+        server = (ROOT / "app" / "bundle.py").read_text()
+        imports = {
+            line.split()[1].split(".")[0]
+            for line in server.splitlines()
+            if line.startswith(("import ", "from "))
+        }
+        self.assertLessEqual(imports, {"__future__", "hashlib", "os", "re", "stat", "sys", "pathlib"})
+
+    def test_bundle_needs_its_listed_stamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            self.assertTrue((out / "PREACHED_BUNDLE").is_file())
+            self.assertIn("  PREACHED_BUNDLE\n", (out / "MANIFEST.sha256").read_text())
+
+            no_stamp = self._copy(out, "no-stamp")
+            (no_stamp / "PREACHED_BUNDLE").unlink()
+            problem = bundle_problem(no_stamp / "index" / "wesley.sqlite", root=no_stamp)
+            self.assertIn("no build stamp", problem or "")
+            listening, code, log = self._start(no_stamp)
+            self.assertFalse(listening, log[-2000:])
+            self.assertIn("no build stamp", log)
+
+            # Every marker gone: still not a checkout, because there is no .git.
+            bare = self._copy(out, "bare")
+            for name in ("PREACHED_BUNDLE", "MANIFEST.sha256", "requirements-serve.txt"):
+                (bare / name).unlink()
+            shutil.rmtree(bare / "model")
+            index = root / "loose" / "wesley.sqlite"
+            index.parent.mkdir()
+            shutil.move(bare / "index" / "wesley.sqlite", index)
+            (bare / "index").rmdir()
+            problem = bundle_problem(index, root=bare)
+            self.assertIn("not a git checkout", problem or "")
+            listening, code, log = self._start(bare, PREACHED_INDEX=str(index))
+            self.assertFalse(listening, log[-2000:])
+            self.assertIn("not a git checkout", log)
+
+            # .git plus a bundle marker is not a checkout either.
+            mixed = self._copy(out, "mixed")
+            (mixed / "PREACHED_BUNDLE").unlink()
+            (mixed / ".git").mkdir()
+            self.assertIn("no build stamp", bundle_problem(mixed / "index" / "wesley.sqlite", root=mixed) or "")
+
+            unlisted = self._copy(out, "unlisted")
+            manifest = unlisted / "MANIFEST.sha256"
+            manifest.write_text(
+                "".join(line for line in manifest.read_text().splitlines(keepends=True) if not line.endswith("  PREACHED_BUNDLE\n"))
+            )
+            self.assertIn("is not in", bundle_problem(unlisted / "index" / "wesley.sqlite", root=unlisted) or "")
+
+            edited = self._copy(out, "edited")
+            (edited / "PREACHED_BUNDLE").write_text("something else\n")
+            self.assertIn("does not match", bundle_problem(edited / "index" / "wesley.sqlite", root=edited) or "")
+
+    def test_bundle_refuses_another_onnx_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            self.assertIsNone(onnx_dir_problem(out, None))
+            self.assertIsNone(onnx_dir_problem(out, str(out / "model")))
+            other = root / "rollback"
+            shutil.copytree(out / "model", other)
+            self.assertIn("own model directory", onnx_dir_problem(out, str(other)) or "")
+            # A checkout may point anywhere.
+            self.assertIsNone(onnx_dir_problem(ROOT, str(other)))
+            listening, code, log = self._start(out, PREACHED_ONNX_DIR=str(other))
+            self.assertFalse(listening, log[-2000:])
+            self.assertNotEqual(code, 0)
+            self.assertIn("own model directory", log)
+            listening, _code, log = self._start(out, PREACHED_ONNX_DIR=str(out / "model"))
+            self.assertTrue(listening, log[-2000:])
+
+    def test_build_fails_on_import_by_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, onnx_root, index = self._fixture_source(root)
+            lister = [sys.executable, "-I", "-B", str(source / "scripts" / "bundle_files.py"), "list", str(source)]
+            ok = subprocess.run(lister, capture_output=True, text=True, check=False, timeout=60)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            rank = source / "src" / "preached" / "rank.py"
+            original = rank.read_text()
+            for name, line in {
+                "import importlib": "import importlib\n",
+                "from importlib": "from importlib import import_module\n",
+                "__import__": "def _late():\n    return __import__('preached.embed')\n",
+                "builtins attr": "import builtins\n_load = builtins.__import__\n",
+            }.items():
+                with self.subTest(case=name):
+                    rank.write_text(original + "\n" + line)
+                    bad = subprocess.run(lister, capture_output=True, text=True, check=False, timeout=60)
+                    self.assertNotEqual(bad.returncode, 0)
+                    self.assertIn("imports by string", bad.stderr)
+                    self.assertIn("rank.py", bad.stderr)
+            rank.write_text(original + "\nimport importlib\n")
+            result = self._build(source, root / "out", onnx_root, index)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("imports by string", result.stderr)
+
+    def test_identity_is_taken_before_the_hash(self) -> None:
+        # A swap of the index while the bundle is being hashed is caught by
+        # the identity check: the identity was read before bundle_problem.
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "wesley.sqlite"
+            connection = connect(index)
+            _insert(connection, "By grace are ye saved through faith.")
+            connection.commit()
+            connection.close()
+            replacement = Path(tmp) / "other.sqlite"
+            shutil.copy2(index, replacement)
+
+            def swap(_index, root=None):
+                os.replace(replacement, index)
+                return None
+
+            with mock.patch("app.server.bundle_problem", side_effect=swap), mock.patch(
+                "app.server.make_server", side_effect=AssertionError("served a swapped index")
+            ):
+                with self.assertRaises(SystemExit) as caught:
+                    main(["--index", str(index), "--bm25-only", "--port", "0"])
+            self.assertIn("replaced", str(caught.exception.code))
+
 
 class UnreadBodyTests(unittest.TestCase):
     def test_unread_body_is_not_parsed_as_a_request(self) -> None:
@@ -1203,6 +1400,79 @@ class FramingTests(unittest.TestCase):
                     self.assertIn(b"Connection: close", data)
                     self.assertTrue(closed, data)
                     self.assertNotIn(b"HTTP/1.1 200", data)
+
+
+class FrozenIndexTests(unittest.TestCase):
+    """A bundle's App (frozen=True) refuses an index changed after start."""
+
+    def _write(self, app: App) -> None:
+        path = app.connection.execute("PRAGMA database_list").fetchone()[2]
+        other = sqlite3.connect(path)
+        other.execute(
+            """
+            INSERT INTO chunks (chunk_id, sermon_id, sermon_title, text, sermon_number, word_count)
+            VALUES ('wesley-002-c0000', 'wesley-002', 'Added', 'zealboundary added later', 2, 3)
+            """
+        )
+        other.commit()
+        other.close()
+
+    def test_bundle_refuses_an_index_change_until_restart(self) -> None:
+        port, app, _server = RateAndKillTests._serve(self, frozen=True)
+        status, _, _ = _request(port, "/healthz")
+        self.assertEqual(status, 200)
+        status, _, _ = _request(port, "/api/search?q=zealboundary")
+        self.assertEqual(status, 200)
+        self._write(app)
+        for path in ("/healthz", "/api/search?q=zealboundary", "/healthz"):
+            status, _, body = _request(port, path)
+            self.assertEqual(status, 503, (path, body))
+            self.assertNotIn("restart", body.decode() if isinstance(body, bytes) else str(body))
+        self.assertIsNone(app.searcher)
+
+    def test_checkout_reloads_an_index_change(self) -> None:
+        # Control: the same write is reloaded when not serving from a bundle.
+        port, app, _server = RateAndKillTests._serve(self)
+        self._write(app)
+        status, _, _ = _request(port, "/healthz")
+        self.assertEqual(status, 200)
+        status, _, body = _request(port, "/api/search?q=added")
+        self.assertEqual(status, 200)
+        self.assertIn("wesley-002", body.decode() if isinstance(body, bytes) else str(body))
+
+
+class ControlCharacterTests(unittest.TestCase):
+    """RFC 9110 5.5: no NUL or control characters in headers or the request line."""
+
+    def test_controls_are_refused_and_closed(self) -> None:
+        port, _app, _server = RateAndKillTests._serve(self)
+        exchange = FramingTests._exchange
+        cases = {
+            "NUL in header value": b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Note: a\x00b\r\n\r\n",
+            "SOH in header value": b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Note: a\x01b\r\n\r\n",
+            "VT in header value": b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Note: a\x0bb\r\n\r\n",
+            "DEL in header value": b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Note: a\x7fb\r\n\r\n",
+            "NUL in Host": b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\x00\r\n\r\n",
+            "bare CR in header value": b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Note: a\rb\r\n\r\n",
+            "NUL in target": b"GET /healthz\x00 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "TAB in target": b"GET /health\tz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "NUL in method": b"G\x00ET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "ESC in version": b"GET /healthz HTTP/1.1\x1b\r\nHost: 127.0.0.1\r\n\r\n",
+            "bare CR in request line": b"GET /healthz\rX HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        }
+        for name, payload in cases.items():
+            with self.subTest(case=name):
+                found, data, closed = exchange(self, port, payload + FramingTests.SMUGGLED)
+                self.assertEqual(len(found), 1, data)
+                self.assertTrue(found[0].startswith(b"HTTP/1.1 400"), data)
+                self.assertTrue(closed, data)
+
+    def test_tab_and_obs_text_in_a_value_are_allowed(self) -> None:
+        port, _app, _server = RateAndKillTests._serve(self)
+        payload = b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Note: a\tb \xe9\r\n\r\n"
+        found, data, _closed = FramingTests._exchange(self, port, payload)
+        self.assertEqual(len(found), 1, data)
+        self.assertTrue(found[0].startswith(b"HTTP/1.1 200"), data)
 
 
 if __name__ == "__main__":

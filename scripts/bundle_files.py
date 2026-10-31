@@ -16,6 +16,9 @@ below. A new module the server imports is picked up without editing
 lazily, so not seen by the import) must name a loaded module or a module in
 BUILD_ONLY; otherwise the list fails.
 
+Shipped code may not use ``importlib`` or ``__import__``: an import by
+string is invisible to that scan, so the list fails on either.
+
 ``check`` imports the same entry points from BUNDLE and fails unless every
 loaded ``app`` or ``preached`` module's file is inside BUNDLE.
 """
@@ -101,6 +104,27 @@ def _imports(path: Path, package: str, source: Path) -> set[str]:
     }
 
 
+def _dynamic_imports(path: Path) -> list[str]:
+    """Lines in ``path`` that import by string: ``importlib`` or ``__import__``."""
+    found: list[str] = []
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        hit = False
+        if isinstance(node, ast.Import):
+            hit = any(alias.name.split(".", 1)[0] == "importlib" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            hit = (node.module or "").split(".", 1)[0] == "importlib"
+        elif isinstance(node, ast.Name):
+            hit = node.id in ("__import__", "importlib")
+        elif isinstance(node, ast.Attribute):
+            hit = node.attr == "__import__"
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            hit = node.value == "__import__"
+        if hit:
+            found.append(f"{path.name}:{node.lineno}")
+    return found
+
+
 def _files(path: Path) -> list[Path]:
     return sorted(
         p for p in path.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
@@ -126,6 +150,11 @@ def list_files(source: Path) -> list[str]:
                 missing.append(f"{name} -> {target}")
     if missing:
         raise SystemExit("serve code imports modules the bundle would not ship: " + ", ".join(sorted(missing)))
+    dynamic = [
+        hit for origin in loaded.values() if origin.suffix == ".py" for hit in _dynamic_imports(origin)
+    ]
+    if dynamic:
+        raise SystemExit("serve code imports by string (importlib or __import__): " + ", ".join(sorted(dynamic)))
     # Data directories inside a loaded package (no __init__.py of their own).
     for name, origin in loaded.items():
         if origin.name != "__init__.py":

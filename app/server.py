@@ -28,7 +28,6 @@ Security choices:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -48,7 +47,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+# ``uv run app/server.py`` puts app/ on the path, not the root.
+if str(ROOT) not in sys.path:
+    sys.path.insert(1, str(ROOT))
 
+from app.bundle import (  # noqa: E402, F401
+    BUILD_STAMP,
+    BUNDLE_MARKERS,
+    ONNX_ROOT_ENV,
+    bundle_problem,
+    is_bundle,
+    onnx_dir_problem,
+)
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
@@ -124,6 +134,11 @@ MAX_BODY = 4096
 HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 CONTENT_LENGTH = re.compile(r"[ \t]*[0-9]{1,10}[ \t]*")
 MAX_HEADER_BYTES = 8192
+# RFC 9110 5.5: a field value is visible characters, SP and HTAB. NUL, CR,
+# LF and every other control character are refused. The request line may
+# carry none at all, apart from its CRLF ending.
+HEADER_VALUE_BAD = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+REQUEST_LINE_BAD = re.compile(rb"[\x00-\x1f\x7f]")
 REQUEST_TIMEOUT_S = 15
 # One deadline for the request line and all headers together. A per-read
 # timeout let a client drip one header line at a time and hold a thread.
@@ -626,10 +641,15 @@ class App:
         church_sample: bool | None = None,
         church_note: str | None = None,
         classic_label: str | None = None,
+        frozen: bool = False,
     ):
         """``servable(connection)`` raises SystemExit when the file may not be
         served (main passes ``check_servable``). It runs again before every
-        searcher a reload builds; None skips it (tests)."""
+        searcher a reload builds; None skips it (tests).
+
+        ``frozen`` (main sets it when serving from a bundle): the index was
+        hashed at start, so any change after start is refused with 503 until
+        the process restarts. It is never reloaded."""
         self.connection = connection
         self._servable = servable
         # Why the index is refused, or None. While set, nothing is served.
@@ -696,10 +716,21 @@ class App:
         # Always "none" for church libraries (Patrick's decision). Tests may set
         # the attribute to exercise the other values; no flag, env or TOML can.
         self.flagged_audio = resolve_flagged_audio(default_config().flagged_audio)
+        self.frozen = frozen
+        # Set once in a frozen App when the index changed; never cleared.
+        self._frozen_refusal = None
+        self._data_version = self._read_data_version() if frozen else None
         self._stamp = self._capture_stamp()
         # A failed read must not let the next success adopt a stamp without
         # reloading. Init counts: the searcher was built before this read.
         self._status_failed = self._stamp is None
+
+    def _read_data_version(self):
+        try:
+            return self.connection.execute("PRAGMA data_version").fetchone()[0]
+        except Exception:
+            logging.exception("could not read the index data_version")
+            return None
 
     def _capture_stamp(self):
         try:
@@ -720,6 +751,9 @@ class App:
     def _refuse_unless_servable(self) -> bool:
         """Re-run the serve gate on the open file. On failure drop every
         cached row and serve nothing (fail closed); True when refused."""
+        if self._frozen_refusal is not None:
+            self.refused = self._frozen_refusal
+            return True
         if self._servable is None:
             self.refused = None
             return False
@@ -733,13 +767,16 @@ class App:
             self.refused = None
             return False
         logging.error("refusing to serve after reload: %s", problem)
+        self._drop(problem)
+        return True
+
+    def _drop(self, problem: str) -> None:
         self.refused = problem
         self.searcher = None
         self.encode = None
         self.model_name = None
         self.backend = None
         self.floor = None
-        return True
 
     def _serve_keyword_only(self, note: str) -> None:
         self.searcher = self._searcher()
@@ -786,7 +823,19 @@ class App:
         the open file. A refusal keeps ``_status_failed`` set, so the gate
         runs again on the next request.
         """
+        if self._frozen_refusal is not None:
+            self.refused = self._frozen_refusal
+            return
         stamp = self._capture_stamp()
+        if self.frozen and (
+            stamp is None or stamp != self._stamp or self._read_data_version() != self._data_version
+        ):
+            # A bundle's index was hashed at start. Any change, or a status
+            # read that fails, is refused until restart; it is not reloaded.
+            self._frozen_refusal = "the bundled index changed after start; restart the server"
+            logging.error("refusing to serve: %s", self._frozen_refusal)
+            self._drop(self._frozen_refusal)
+            return
         if stamp is None:
             self._status_failed = True
             if not self._refuse_unless_servable():
@@ -1071,6 +1120,7 @@ def build_app(
     church_library: str | None = None,
     church_label: str | None = None,
     church_sample: bool | None = None,
+    frozen: bool = False,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -1113,6 +1163,7 @@ def build_app(
         rate_window_s=rate_window_s,
         kill_file=kill_file,
         servable=servable,
+        frozen=frozen,
     )
 
 
@@ -1194,7 +1245,7 @@ def make_handler(app: App):
             if getattr(headers, "defects", None) or headers.get_payload():
                 return 400
             for name, value in headers.items():
-                if not HEADER_NAME.fullmatch(name) or "\r" in value or "\n" in value:
+                if not HEADER_NAME.fullmatch(name) or HEADER_VALUE_BAD.search(value):
                     return 400
             if headers.get_all("Transfer-Encoding"):
                 return 501
@@ -1246,6 +1297,16 @@ def make_handler(app: App):
                     return
                 if not self.raw_requestline:
                     self.close_connection = True
+                    return
+                line = self.raw_requestline
+                line = line[:-2] if line.endswith(b"\r\n") else line.rstrip(b"\n")
+                if REQUEST_LINE_BAD.search(line):
+                    # Never echoed or logged: the line is the attacker's bytes.
+                    self.requestline = ""
+                    self.request_version = ""
+                    self.command = ""
+                    self.close_connection = True
+                    self.send_error(400)
                     return
                 if not self.parse_request():
                     return
@@ -1769,112 +1830,6 @@ def writable_problem(index: Path) -> str | None:
     return None
 
 
-# A built bundle has these at its root. A source checkout has none of them.
-BUNDLE_MARKERS = ("MANIFEST.sha256", "index", "model", "requirements-serve.txt")
-# "<sha256>  <relative path>", as scripts/bundle_manifest.py writes it.
-MANIFEST_LINE = re.compile(r"([0-9a-f]{64})  ([^\x00-\x1f\x7f\\]+)")
-
-
-def is_bundle(root: Path = ROOT) -> bool:
-    """True when this code is running from a built bundle, not a checkout."""
-    return any(os.path.lexists(Path(root) / name) for name in BUNDLE_MARKERS)
-
-
-def _manifest_entries(manifest: Path) -> dict[str, str] | str:
-    """Path -> sha256 from MANIFEST.sha256, or why it is unusable.
-
-    Every line must be a hash and a relative path, sorted, no repeats, and
-    the file must end with a newline. There are no comment lines.
-    """
-    if manifest.is_symlink() or not manifest.is_file():
-        return f"{manifest} is missing"
-    try:
-        text = manifest.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        return f"cannot read {manifest} ({type(exc).__name__})"
-    if not text.endswith("\n") or text == "\n":
-        return f"{manifest} is not a bundle manifest"
-    entries: dict[str, str] = {}
-    previous = ""
-    for number, line in enumerate(text[:-1].split("\n"), 1):
-        match = MANIFEST_LINE.fullmatch(line)
-        if match is None:
-            return f"{manifest} line {number} is not '<sha256>  <path>'"
-        digest, rel = match.groups()
-        parts = rel.split("/")
-        if rel.startswith("/") or any(part in ("", ".", "..") for part in parts):
-            return f"{manifest} line {number} is not a plain relative path"
-        if rel <= previous:
-            return f"{manifest} line {number} is out of order or repeated"
-        previous = rel
-        entries[rel] = digest
-    return entries
-
-
-def _sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def bundle_problem(index: Path, root: Path = ROOT) -> str | None:
-    """Why a bundle may not serve ``index``, or None. A checkout returns None.
-
-    Run once at start, before the index is opened. From a bundle,
-    MANIFEST.sha256 must exist and parse, every file it lists must be a
-    regular file with that sha256, no other file may sit in the tree (only
-    ``.venv/``, ``__pycache__``, ``*.pyc`` and the kill file ``KILL`` are
-    allowed beside it), and the index must resolve to a listed file under
-    ``index/`` in this bundle. Nothing here can be switched off: there is no
-    marker, flag or environment variable that skips it.
-    """
-    root = Path(root)
-    if not is_bundle(root):
-        return None
-    root = root.resolve()
-    manifest = root / "MANIFEST.sha256"
-    entries = _manifest_entries(manifest)
-    if isinstance(entries, str):
-        return f"bundle {root}: {entries}; refusing to serve"
-    real = Path(os.path.realpath(index))
-    try:
-        rel_index = real.relative_to(root).as_posix()
-    except ValueError:
-        return f"index {index} is outside the bundle {root}; refusing to serve"
-    if not rel_index.startswith("index/") or rel_index not in entries:
-        return f"index {index} is not a bundled index listed in {manifest}; refusing to serve"
-    for rel, digest in entries.items():
-        path = root / rel
-        try:
-            st = os.lstat(path)
-        except OSError:
-            return f"bundle file {rel} is missing; refusing to serve"
-        if not stat.S_ISREG(st.st_mode):
-            return f"bundle file {rel} is not a regular file; refusing to serve"
-        try:
-            actual = _sha256_of(path)
-        except OSError as exc:
-            return f"cannot read bundle file {rel} ({type(exc).__name__}); refusing to serve"
-        if actual != digest:
-            return f"bundle file {rel} does not match {manifest}; refusing to serve"
-    for current, dirs, files in os.walk(root):
-        here = Path(current)
-        # os.walk lists a symlink to a directory under dirs and does not
-        # follow it. It is not a listed file, so it counts as unlisted.
-        # ``.venv`` at the root is uv's (a directory or a link to one).
-        dirs[:] = [name for name in dirs if not (here == root and name == ".venv")]
-        linked = [name for name in dirs if (here / name).is_symlink()]
-        dirs[:] = sorted(name for name in dirs if name not in linked and name != "__pycache__")
-        for name in files + linked:
-            rel = (here / name).relative_to(root).as_posix()
-            if rel in entries or rel in ("MANIFEST.sha256", "KILL") or name.endswith(".pyc"):
-                continue
-            return f"bundle file {rel} is not in {manifest}; refusing to serve"
-    return None
-
-
 def check_servable(connection, library: str, index: Path, *, church_gate: bool = False) -> None:
     """SystemExit unless this file may be served as ``library``.
 
@@ -2017,17 +1972,30 @@ def main(argv: list[str] | None = None) -> None:
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    # The file checked must be the file opened: same (st_dev, st_ino) before
+    # the hash below, after the open and checks, and before every reload.
+    identity = file_identity(index)
     # From a bundle: MANIFEST.sha256 must parse and match, and the index must
-    # be the bundle's own. A checkout skips this (it has no bundle markers).
+    # be the bundle's own. A checkout (.git, no build stamp) skips this; a
+    # tree that is neither is refused. serve.sh ran the same check before
+    # importing this module; this repeats it for any other launcher.
     problem = bundle_problem(index)
     if problem is not None:
         raise SystemExit(f"error: {problem}")
+    bundle = is_bundle()
+    if bundle:
+        # Only the bundle's own hashed model/, only the ONNX backend (torch
+        # and preached.embed are not shipped).
+        problem = onnx_dir_problem(ROOT, os.environ.get(ONNX_ROOT_ENV))
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
+        os.environ[ONNX_ROOT_ENV] = str(ROOT / "model")
+        backend = (args.embed_backend or os.environ.get("PREACHED_EMBED_BACKEND") or "onnx").strip().lower()
+        if backend != "onnx":
+            raise SystemExit("error: a bundle serves only the onnx embed backend")
     # Refuses wesley / spurgeon / edwards as the church. Opens nothing.
     # The church side stays empty until PR #12's gate serves it.
     prepare_church(church_index=args.church_index, church_library=church_library)
-    # The file checked must be the file opened: same (st_dev, st_ino) before
-    # the open and after the checks, and again before every reload.
-    identity = file_identity(index)
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
@@ -2061,6 +2029,7 @@ def main(argv: list[str] | None = None) -> None:
         variant=args.onnx_variant,
         library=library,
         servable=servable,
+        frozen=bundle,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)

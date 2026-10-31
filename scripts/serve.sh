@@ -97,6 +97,12 @@ HF_HUB_DISABLE_TELEMETRY=1
 TRANSFORMERS_OFFLINE=1
 TOKENIZERS_PARALLELISM=false
 PYTHONDONTWRITEBYTECODE=1
+# Bytecode in the tree is never loaded: an old __pycache__ can match a
+# source file's size and mtime (every release tar has the same mtime) and
+# run in place of the hashed source. A fresh empty prefix means Python
+# compiles from source. app/bundle.py also refuses a bundle with any
+# __pycache__ or *.pyc outside .venv.
+PYTHONPYCACHEPREFIX=$(mktemp -d "${TMPDIR:-/tmp}/preached-pycache.XXXXXX")
 PYTHONUNBUFFERED=1
 PYTHONNOUSERSITE=1
 PYTHONPATH="$ROOT/src:$ROOT"
@@ -132,6 +138,7 @@ pass HF_HUB_DISABLE_TELEMETRY
 pass TRANSFORMERS_OFFLINE
 pass TOKENIZERS_PARALLELISM
 pass PYTHONDONTWRITEBYTECODE
+pass PYTHONPYCACHEPREFIX
 pass PYTHONUNBUFFERED
 pass PYTHONNOUSERSITE
 pass PYTHONPATH
@@ -142,6 +149,11 @@ if [ -n "$PY" ]; then
 else
   CHECK=(env -i "${ENV_ARGS[@]}" uv run --project "$ROOT" --frozen --no-sync --no-dev --no-default-groups python)
 fi
+# Bundle or checkout, the manifest, no bytecode, the bundle's own model
+# directory. Stdlib only, run as a script with -I -B, so it runs before any
+# bundle module is imported and nothing else is on the path.
+"${CHECK[@]}" -I -B "$ROOT/app/bundle.py" "$ROOT" "$INDEX"
+
 "${CHECK[@]}" - "$LIBRARY" "$INDEX" <<'PY'
 import sqlite3
 import sys

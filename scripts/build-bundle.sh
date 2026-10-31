@@ -163,6 +163,13 @@ chmod 0755 "$OUT/scripts/serve.sh"
 chmod 0444 "$OUT/index/${LIBRARY}.sqlite"
 find "$OUT/model" -type f -exec chmod 0444 {} +
 
+# The build stamp marks this tree as a bundle (app/bundle.py). It is a
+# listed file, so deleting it or editing it fails the manifest check, and a
+# tree with no stamp and no .git is refused rather than run as a checkout.
+PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from app.bundle import BUILD_STAMP, stamp_text; Path(sys.argv[1], BUILD_STAMP).write_text(stamp_text(sys.argv[2], sys.argv[3]))' \
+  "$OUT" "$LIBRARY" "$REVISION"
+chmod 0644 "$OUT/PREACHED_BUNDLE"
+
 PYTHONPATH="$SOURCE" "$PY" "$SOURCE/scripts/bundle_manifest.py" "$OUT" >/dev/null
 chmod 0644 "$OUT/MANIFEST.sha256"
 
