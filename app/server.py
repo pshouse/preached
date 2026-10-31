@@ -2728,7 +2728,10 @@ class PreachedServer(ThreadingHTTPServer):
 
     def server_close(self) -> None:
         super().server_close()
-        self.refusals.flush()
+        # refusals is set after bind; a failed bind (port busy) closes before it exists.
+        refusals = getattr(self, "refusals", None)
+        if refusals is not None:
+            refusals.flush()
 
     def _reject_over_cap(self, request) -> None:
         body = b'{"error":"unavailable"}'
