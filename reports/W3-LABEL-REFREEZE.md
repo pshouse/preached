@@ -220,3 +220,13 @@ uv lock --check
 - Labels are applied for all 10 ruled rows. Nothing runs on them until the CTO signs off.
 - `eval/apply_grades.py` can no longer rewrite `eval/questions.jsonl` while p-013 holds a confirmed label. Any future re-grade of plain-blind items needs a merge rule from the CTO first.
 - No dependencies added.
+
+## 9. W3-LABEL-MF5 (CTO #50 r2), 2026-10-31
+
+No label line changed and nothing was run on the labels. Tests and docs only.
+
+- **c2 ruling:** CTO ruling 2026-10-31: c2 is the shortest-whole-word-span reading as recorded in 575bb4e. No relabel. Appended to the 2026-10-31 c2 amendment in `reports/W3-FUSION-PREREG.md`.
+- **S4:** the prereg now has a "Confirmatory run steps" section: run `test_eval_leak` with `PREACHED_CACHE` set, confirm 0 skips for that test, record the output in the run report. CI does not fail on the skip.
+- **MF5:** `test_partial_verdicts_are_verdict_1_labels_with_exact_mirrors` now also checks, for every non-mirror line on a question with `rewrite_of`, that exactly one line exists with `question_id == rewrite_of`, `mirrored_from` that question and the same `sheet_row`; and that no question has two lines for one `sheet_row`. Mutations (each reverted): delete L11's `q-money` mirror line: **FAIL** `0 != 1 : q-money-plain L11: needs exactly one mirror on q-money`. Duplicate the L06 line: **FAIL** `duplicate line: p-030 L06`.
+- **S5 (done, trivial):** new `test_key_segment_quotes_are_key_segments_of_their_row`: every `key-segment` quote is one of the quoted KEY segments (split at ` ... `) of its `sheet_row` in `reports/W3-LABEL-SHEET-KEY.md`. Passes on the current labels.
+- **Results:** `uv run python -m unittest discover -s tests`: **Ran 979 tests, OK** (978 + 1 new, `tests/test_eval_leak.py` now 19). `uv lock --check`: OK (79 packages). No dependencies added.
