@@ -138,20 +138,28 @@ from app.bundle import (  # noqa: E402, F401
     onnx_dir_problem,
 )
 from preached import env  # noqa: E402, F401
-from preached.abstain import floor_for, search_with_confidence  # noqa: E402
+from preached.abstain import church_confidence, compute_signals, floor_for, search_with_confidence  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.library import (  # noqa: E402
     CHURCH_EMPTY,
     CHURCH_LABEL,
     CLASSIC_LABEL,
+    ChurchPaused,
+    ChurchRefused,
+    church_file_problem,
     classic_church_refusal,
+    is_busy,
+    is_classic_slug,
+    is_sample_library,
+    open_church_readonly,
     read_label,
 )
 from preached.models import DEFAULT_MODEL, MODELS, RUNTIME_MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
     Searcher,
+    api_search,
     display_excerpt,
     play_start,
     sermon_flagged,
@@ -595,7 +603,7 @@ def parse_search_args(
     """Query, k, mode, and the library slug this search is scoped to.
 
     ``libraries`` is the files this process has open (classic, then church).
-    A slug outside that list is a 400. The default slug is the classic one,
+    A slug outside that list is a 400 that names only the classic library. The default slug is the classic one,
     so a request that omits ``library`` stays on the library the page already
     asks for.
     """
@@ -628,7 +636,10 @@ def parse_search_args(
     raw_library = _first(args, "library")
     chosen = allowed[0] if raw_library is None or raw_library.strip() == "" else raw_library.strip()
     if chosen not in allowed:
-        raise BadRequest("library must be " + " or ".join(allowed))
+        # One message whether or not a church side is open (PR #37 r1
+        # should-fix 3): it names only the classic library, so it is the same
+        # as main's and does not change when the church side drops.
+        raise BadRequest(f"library must be {allowed[0]}")
     return query, k, mode, chosen
 
 
@@ -820,20 +831,24 @@ def load_search(
     return searcher, encode, None
 
 
-def load_church_searcher(connection, model_key: str, *, bm25_only: bool):
+def load_church_searcher(connection, model_key: str, *, bm25_only: bool, variant: str | None = None):
     """Searcher for the church file, plus a note when that side is BM25 only.
 
     Always built through #12's publish gate (``gated=True``, no slug, so the
-    public-domain exemption never applies): only approved sermons are
-    visible, checked per call. A bad or missing church vector file does not
-    take the classic side down with it. The church column falls back to
-    keyword search and says so.
+    public-domain exemption never applies): only approved sermons whose ASR
+    coverage check found nothing open are visible (``store.visible_sql``),
+    checked per call. A bad or missing church vector file does not take the
+    classic side down with it. The church column falls back to keyword
+    search and says so. ``variant`` is the query embedder's; stored vectors
+    must be fp32 (``store.check_query_variant``), as on the classic side.
     """
     gate = {"gated": True, "library": None}
     if bm25_only:
         return Searcher(connection, **gate), None
     try:
-        return Searcher(connection, model=model_key, **gate), None
+        searcher = Searcher(connection, model=model_key, **gate)
+        check_query_variant(connection, model_key, variant)
+        return searcher, None
     except EmbeddingMismatch:
         logging.exception("church vectors do not match search/models.toml; that side is BM25 only")
         return Searcher(connection, **gate), STALE_NOTE
@@ -869,6 +884,7 @@ class App:
         church_label: str | None = None,
         church_sample: bool | None = None,
         church_note: str | None = None,
+        church_check=None,
         classic_label: str | None = None,
         frozen: bool = False,
     ):
@@ -878,7 +894,16 @@ class App:
 
         ``frozen`` (main sets it when serving from a bundle): the index was
         hashed at start, so any change after start is refused with 503 until
-        the process restarts. It is never reloaded."""
+        the process restarts. It is never reloaded.
+
+        ``church_searcher`` (with ``church_connection`` and ``church_library``)
+        is the church side. It is kept only behind #12's publish gate: the
+        gate is turned on here whatever the caller built, and its slug is
+        cleared so the public-domain exemption cannot apply. ``church_check(connection)``
+        returns why the church file may not be searched now, or None; main
+        passes ``library.church_file_problem``. It runs before every church
+        search, and a problem drops the church side until restart (fail
+        closed). None skips it (tests)."""
         self.connection = connection
         self._servable = servable
         # Why the index is refused, or None. While set, nothing is served.
@@ -934,32 +959,48 @@ class App:
         self.classic_label = classic_label or read_label(connection) or (
             CLASSIC_LABEL if library == LIBRARY else library
         )
-        # The church file is not served until PR #12's publish gate is on main.
-        # Arguments are accepted so a caller can still pass the connection it
-        # opened; they are not stored, so /healthz "church" stays null and
-        # /api/side matches the no-church response (no present:true flag).
-        # TODO(post-#12): keep the searcher once #12 is on main. It must use
-        # #12's gate and per-request visible_sql, withhold audio on flagged
-        # passages, apply the source_url rule to hits, and reload with #10's
-        # index stamp. A church file passed as --library is refused by
-        # check_servable (libraries.classic_index_problem for spurgeon and
-        # edwards). Do not add a second serve check. Church confidence stays
-        # unrated (abstain.church_confidence) until a floor is fitted on a
-        # church library.
-        del church_connection, church_searcher, church_library, church_label, church_sample, church_note
+        # The church side: absent unless a gated searcher, its connection and
+        # a slug that is not a classic all arrive together. Anything else is
+        # the no-church state, so /api/side and /api/search match a process
+        # started without one.
         self.church_connection = None
         self.church_searcher = None
         self.church_library = None
         self.church_label = CHURCH_LABEL
         self.church_sample = False
         self.church_note = None
+        self._church_check = None
+        self._church_paused = False  # logged once at pause start and once at its end
+        if church_searcher is not None or church_connection is not None or church_library is not None:
+            problem = None
+            if church_searcher is None or church_connection is None or not church_library:
+                problem = "church side needs a searcher, its connection and a slug"
+            elif church_library == library or is_classic_slug(church_library):
+                problem = f"{church_library!r} is a classic library and cannot be your church"
+            elif getattr(church_searcher, "connection", church_connection) is not church_connection:
+                problem = "church searcher is not on the church connection"
+            if problem is not None:
+                logging.error("church side refused: %s", problem)
+            else:
+                church_searcher.gate_on()
+                church_searcher.library = None
+                if church_searcher.gated is not True:
+                    logging.error("church side refused: the publish gate did not turn on")
+                else:
+                    self.church_connection = church_connection
+                    self.church_searcher = church_searcher
+                    self.church_library = church_library
+                    self.church_label = church_label or read_label(church_connection) or CHURCH_LABEL
+                    self.church_sample = bool(church_sample) or is_sample_library(church_library, church_connection)
+                    self.church_note = church_note
+                    self._church_check = church_check
         # Any library but wesley is gated, except an allow-listed public-domain
         # library's own file (store.public_domain_file, keyed on the slug).
         # The gate is checked per request in SQL (preached.store.visible_sql),
         # so an import, --redo or approval made while this process runs
-        # applies to the next request.
-        self.gated = library != LIBRARY
-        if self.gated and hasattr(searcher, "gate_on"):
+        # applies to the next request. Fixed here: ``gated`` is read-only.
+        self._gated = library != LIBRARY
+        if self._gated and hasattr(searcher, "gate_on"):
             searcher.gate_on()
         if hasattr(searcher, "library"):
             searcher.library = library
@@ -976,6 +1017,13 @@ class App:
         # A failed read must not let the next success adopt a stamp without
         # reloading. Init counts: the searcher was built before this read.
         self._status_failed = self._stamp is None
+
+    @property
+    def gated(self) -> bool:
+        """Read-only, set once from the slug in ``__init__``: ``app.gated = False``
+        and ``setattr`` raise AttributeError. It drives ``visible_sql``,
+        ``visible_count`` and every Searcher ``_searcher`` builds on reload."""
+        return self._gated
 
     def _read_data_version(self):
         try:
@@ -1207,7 +1255,9 @@ class App:
             "abstain_calibrated": self.floor is not None,
             "index_version": index_version,
             "model_sha256": model_sha,
-            "church": self.church_library,
+            # Constant, with or without a church side: /healthz says nothing
+            # about the church file (not its slug, not whether one is open).
+            "church": None,
         }
         if pending is not None:
             # A count only: sermons imported but not approved. Never ids or titles.
@@ -1222,15 +1272,24 @@ class App:
         return names
 
     def search(self, query: str, k: int, mode: str, *, library: str | None = None) -> dict:
-        """Search the classic library. A church slug is not open.
+        """Search one library: the classic one, or the church side when it is open.
 
-        Until PR #12's gate is on main, a church library is refused the same
-        way as any slug this process did not open. There is no church searcher
-        to consult, so the response matches a server started with no church file.
+        A church slug this process did not open, or whose file was refused,
+        is the same 400 as any other slug, so the response matches a server
+        started with no church file.
         """
         chosen = self.library if library is None else library
         if chosen != self.library:
-            raise BadRequest("library must be " + " or ".join(self.library_names()))
+            if self.church_library is not None and chosen == self.church_library:
+                # The process-wide refusal (classic index refused, frozen
+                # bundle changed) stops the church side too.
+                with self.lock:
+                    self._refresh_if_stale()
+                    self._check_refused()
+                payload = self.church_search(query, k, mode)
+                if payload is not None:
+                    return payload
+            raise BadRequest(f"library must be {self.library}")
         started = time.perf_counter()
         note = None
         effective = mode
@@ -1264,13 +1323,125 @@ class App:
             "confidence": confidence.as_dict(),
         }
 
-    def side(self, query: str, k: int, mode: str) -> dict:
-        """Top ``k`` hits from the classic library, and an empty church side.
+    def _church_ready(self) -> bool:
+        """True when the church side may be searched now. Call with ``self.lock`` held.
 
-        The church column is the same object a process with no church file
-        returns. Church passages are not searched until PR #12's gate is on
-        main, so this response has no church hit, no timed watch link, and
-        no ``present: true`` flag.
+        Runs ``church_check`` on the open file. A problem, or an exception,
+        drops the church side for the life of the process and logs
+        ``church side dropped: <reason>`` (startup problems log ``church side
+        refused:``). ``ChurchPaused`` (the file is in WAL mode or locked
+        while ``--ack-review`` writes it) skips the church side for this
+        request only; the pause is logged when it starts and, by
+        ``_church_search``, when a church search next completes.
+        """
+        if self.church_searcher is None:
+            return False
+        if self._church_check is None:
+            return True
+        try:
+            problem = self._church_check(self.church_connection)
+        except ChurchPaused as exc:
+            # Not a refusal: skipped for this request only, nothing read.
+            self._church_pause(exc)
+            return False
+        except Exception as exc:
+            problem = f"the church file could not be checked ({exc})"
+        if problem is None:
+            return True
+        logging.error("church side dropped: %s", problem)
+        self._drop_church()
+        return False
+
+    def _church_pause(self, reason) -> None:
+        """Log the start of a pause once, not once per skipped request. Call with ``self.lock`` held."""
+        if not self._church_paused:
+            self._church_paused = True
+            logging.info("church side paused: %s", reason)
+
+    def _drop_church(self) -> None:
+        self._church_paused = False
+        self.church_searcher = None
+        self.church_library = None
+        self.church_label = CHURCH_LABEL
+        self.church_sample = False
+        self.church_note = None
+
+    def church_search(self, query: str, k: int, mode: str) -> dict | None:
+        """The church side's hits, shaped like ``search``; None when there is no church side."""
+        found = self._church_search(query, k, mode)
+        return None if found is None else found[0]
+
+    def _church_search(self, query: str, k: int, mode: str) -> tuple[dict, dict] | None:
+        """``(payload, column)``: the hits and the column's library, label and
+        sample flag, read under the same lock. None when there is no church side.
+
+        Only the gated church searcher is consulted (``store.visible_sql``
+        per call: approved, ``status = 'ok'``, ASR coverage checked with
+        nothing open). Cards follow the same flagged-audio and source_url
+        rules as the classic side, read from the church file. Confidence is
+        ``abstain.church_confidence`` (unrated); Wesley's floor is not
+        applied. Any failure here is logged and gives None, never an error
+        on the classic side.
+        """
+        started = time.perf_counter()
+        try:
+            with self.lock:
+                if not self._church_ready():
+                    return None
+                searcher = self.church_searcher
+                connection = self.church_connection
+                note = None
+                effective = mode
+                if self.encode is None or searcher._matrix is None:
+                    if mode != "bm25":
+                        if self.church_note:
+                            note = self.church_note
+                        elif self.encode is None and self.fallback_note:
+                            note = self.fallback_note
+                        else:
+                            note = BM25_ONLY_NOTE
+                    effective = "bm25"
+                vector = None if effective == "bm25" else self.encode(query)
+                kept = api_search(searcher, query, vector, effective, k)
+                signals = compute_signals(searcher, query, vector, kept)
+                confidence = church_confidence(signals, has_results=bool(kept))
+                nears = [self.flagged_audio == "none" and touches_flagged(connection, hit) for hit in kept]
+                flagged = {sid: sermon_flagged(connection, sid) for sid in {hit.sermon_id for hit in kept}}
+                results = [
+                    hit_dict(hit, self.flagged_audio, near, flagged[hit.sermon_id]) for hit, near in zip(kept, nears)
+                ]
+                column = {"library": self.church_library, "label": self.church_label, "sample": self.church_sample}
+                if self._church_paused:
+                    # Logged once a church search has run again, not when the
+                    # check alone passes (the search can still find the lock).
+                    self._church_paused = False
+                    logging.info("church side resumed")
+        except Exception as exc:
+            if not is_busy(exc):
+                logging.exception("church search failed; that side is empty")
+                return None
+            # A writer took its lock after the check: a pause, like the check's.
+            with self.lock:
+                if self.church_searcher is not None:
+                    self._church_pause(f"the church file is locked by a writer ({exc})")
+            return None
+        payload = {
+            "query": query,
+            "mode": effective,
+            "took_ms": int(round((time.perf_counter() - started) * 1000)),
+            "results": results,
+            "note": note,
+            "abstain": confidence.abstain,
+            "confidence": confidence.as_dict(),
+        }
+        return payload, column
+
+    def side(self, query: str, k: int, mode: str) -> dict:
+        """Top ``k`` hits from the classic library, and the church side.
+
+        The church column comes only from ``church_search`` (the gated
+        searcher). With no church side, or when it was refused or failed,
+        it is the same object a process with no church file returns.
         """
         started = time.perf_counter()
         classic = _side_body(
@@ -1281,19 +1452,24 @@ class App:
             present=True,
             empty_message=None,
         )
-        church = {
-            "library": None,
-            "label": CHURCH_LABEL,
-            "sample": False,
-            "present": False,
-            "empty": True,
-            "message": CHURCH_EMPTY,
-            "mode": None,
-            "results": [],
-            "note": None,
-            "abstain": False,
-            "confidence": None,
-        }
+        found = self._church_search(query, k, mode)
+        if found is not None:
+            payload, column = found
+            church = _side_body(payload, present=True, empty_message=CHURCH_EMPTY, **column)
+        else:
+            church = {
+                "library": None,
+                "label": CHURCH_LABEL,
+                "sample": False,
+                "present": False,
+                "empty": True,
+                "message": CHURCH_EMPTY,
+                "mode": None,
+                "results": [],
+                "note": None,
+                "abstain": False,
+                "confidence": None,
+            }
         return {
             "query": query,
             "mode": mode,
@@ -1404,9 +1580,17 @@ def build_app(
     church_library: str | None = None,
     church_label: str | None = None,
     church_sample: bool | None = None,
+    church_check=None,
     frozen: bool = False,
 ) -> App:
-    """``floor`` overrides search/abstain.toml (tests); None reads the file."""
+    """``floor`` overrides search/abstain.toml (tests); None reads the file.
+
+    ``church_connection`` (a read-only connection from
+    ``library.open_church_readonly``) and ``church_library`` turn the church
+    side on. Its searcher is built only by ``load_church_searcher`` (the
+    publish gate), with the classic side's query embedder; it is keyword
+    only when that embedder is not loaded. A failure here leaves the church
+    side empty and is logged; the classic side is unaffected."""
     if model_key not in RUNTIME_MODELS:
         # Same refusal as main(); never fall back to keyword search quietly,
         # whether the key is eval-only or a typo.
@@ -1435,9 +1619,19 @@ def build_app(
             # keeps any other surprise from stopping the server.
             logging.exception("abstain calibration unusable; abstain floor disabled")
             floor = None
-    # church_* are accepted so existing callers still type-check. They are
-    # not opened into a searcher. Serving waits on PR #12. See App.__init__.
-    del church_connection, church_library, church_label, church_sample
+    church_searcher = None
+    church_note = None
+    if church_connection is not None:
+        try:
+            church_searcher, church_note = load_church_searcher(
+                church_connection,
+                model_key,
+                bm25_only=encode is None,
+                variant=getattr(encode, "variant", None),
+            )
+        except Exception:
+            logging.exception("church side refused: its searcher could not be built")
+            church_searcher = None
     return App(
         floor=floor,
         connection=connection,
@@ -1452,6 +1646,13 @@ def build_app(
         rate_window_s=rate_window_s,
         kill_file=kill_file,
         servable=servable,
+        church_connection=church_connection if church_searcher is not None else None,
+        church_searcher=church_searcher,
+        church_library=church_library if church_searcher is not None else None,
+        church_label=church_label,
+        church_sample=church_sample,
+        church_note=church_note,
+        church_check=church_check,
         frozen=frozen,
     )
 
@@ -2400,6 +2601,23 @@ def serve_forever(server: PreachedServer) -> None:
     server.serve_forever()
 
 
+# The deploy switch for the church side (PR #37 r1 should-fix 4). Without
+# exactly this value in the server's environment, a named church is refused
+# and only the classic side is served. serve.sh does not pass it.
+CHURCH_SIDE_ENV = "PREACHED_CHURCH_SIDE"
+CHURCH_SIDE_ON = "enabled"
+
+
+def church_side_problem() -> str | None:
+    """Why the deploy config does not allow a church side, or None."""
+    if os.environ.get(CHURCH_SIDE_ENV) != CHURCH_SIDE_ON:
+        return (
+            f"{CHURCH_SIDE_ENV} is not {CHURCH_SIDE_ON!r}; the church side is off unless the deploy "
+            "config turns it on (docs/DEPLOY.md, church gate)"
+        )
+    return None
+
+
 def prepare_church(*, church_index: Path | None, church_library: str | None) -> None:
     """Refuse an explicit classic as the church. Open nothing, log nothing.
 
@@ -2409,15 +2627,64 @@ def prepare_church(*, church_index: Path | None, church_library: str | None) -> 
     beside it. The index directory is not scanned for a ``role=church``
     mark. Startup output is the same with or without a church.
 
-    TODO(post-#12): open the church file through #12's gate and per-request
-    ``visible_sql`` (``search.Searcher(gated=True)``), withhold audio on
-    flagged passages, apply the source_url rule to hits, and reload it with
-    #10's index stamp. Church confidence is ``abstain.church_confidence``
-    (unrated) until a church floor exists.
+    The church file itself is opened later, by ``open_church``.
     """
     refusal = classic_church_refusal(church_library, church_index)
     if refusal:
         raise SystemExit(refusal)
+
+
+def church_path_for(church_index: Path | None, church_library: str | None) -> Path | None:
+    """The church file named on the command line, or None when none was named."""
+    if church_index is not None:
+        return Path(church_index)
+    if church_library:
+        return INDEX_DIR / f"{church_library}.sqlite"
+    return None
+
+
+def open_church(path: Path, *, slug: str | None, classic_library: str, classic_index: Path):
+    """``(connection, slug, check)`` for the church side, or None after a logged refusal.
+
+    Read-only through ``library.open_church_readonly`` (#33's sidecar-checked
+    ``store.open_readonly``, privacy config required, church-shaped, publish-gate
+    columns present, not a symlink, owner and mode of the real file and
+    directory checked, DELETE journal mode). The file and its directory must
+    not be group- or world-writable (``writable_problem``, the classic side's
+    rule). ``check``
+    repeats the file checks before every church search. A refusal never
+    stops the classic side.
+
+    Refused first unless ``$PREACHED_CHURCH_SIDE`` is ``enabled``
+    (``church_side_problem``), from a checkout or a bundle.
+    """
+    problem = church_side_problem()
+    if problem is not None:
+        logging.error("church side refused: %s", problem)
+        return None
+    try:
+        connection, identity = open_church_readonly(path, classic=classic_index)
+    except ChurchRefused as exc:
+        logging.error("church side refused: %s", exc)
+        return None
+    problem = writable_problem(path)
+    if problem is None:
+        if slug is None:
+            stem = Path(path).stem
+            slug = stem if LIBRARY_SLUG.fullmatch(stem) else "church"
+        if slug == classic_library or is_classic_slug(slug):
+            problem = f"{slug!r} is a classic library name and cannot be your church"
+    if problem is not None:
+        connection.close()
+        logging.error("church side refused: %s", problem)
+        return None
+
+    def check(conn) -> str | None:
+        # church_file_problem raises ChurchPaused while the file is in WAL mode.
+        return writable_problem(path) or church_file_problem(conn, path, identity)
+
+    logging.info("church side: %s, read-only, through the publish gate", slug)
+    return connection, slug, check
 
 
 # The Wesley index schema (store.connect), lower-cased: every table and view
@@ -2587,13 +2854,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--church-library",
         default=None,
-        help="Your church's library slug. Accepted and checked (never a classic); not served until the publish gate is wired",
+        help="Your church's library slug (/cache/index/<slug>.sqlite). Never a classic. Searched read-only, "
+        "approved sermons only (publish gate); needs $PREACHED_PRIVACY",
     )
     parser.add_argument(
         "--church-index",
         type=Path,
         default=None,
-        help="SQLite file for your church. Accepted and checked (never a classic); not opened",
+        help="SQLite file for your church. Never a classic. Searched read-only, approved sermons only "
+        "(publish gate); needs $PREACHED_PRIVACY",
     )
     parser.add_argument(
         "--hosts",
@@ -2669,7 +2938,6 @@ def main(argv: list[str] | None = None) -> None:
         if backend != "onnx":
             raise SystemExit("error: a bundle serves only the onnx embed backend")
     # Refuses wesley / spurgeon / edwards as the church. Opens nothing.
-    # The church side stays empty until PR #12's gate serves it.
     prepare_church(church_index=args.church_index, church_library=church_library)
     try:
         connection = open_readonly(index, check_same_thread=False)
@@ -2691,6 +2959,13 @@ def main(argv: list[str] | None = None) -> None:
     except BaseException:
         connection.close()
         raise
+    # The church side, only when one was named. Any problem is logged and
+    # leaves that side empty; the classic side serves either way.
+    church_side = None
+    church_path = church_path_for(args.church_index, church_library)
+    if church_path is not None:
+        church_side = open_church(church_path, slug=church_library, classic_library=library, classic_index=index)
+    church_connection, church_slug, church_check = church_side if church_side is not None else (None, None, None)
     hosts = {part.strip().lower() for part in args.hosts.split(",") if part.strip()}
     bound = args.host.strip().lower()
     if bound not in {"0.0.0.0", "::", ""}:
@@ -2706,6 +2981,9 @@ def main(argv: list[str] | None = None) -> None:
         variant=args.onnx_variant,
         library=library,
         servable=servable,
+        church_connection=church_connection,
+        church_library=church_slug,
+        church_check=church_check,
         frozen=bundle,
     )
     if app.fallback_note:
@@ -2758,6 +3036,8 @@ def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
         else:
             server.server_close()
             connection.close()
+            if app.church_connection is not None:
+                app.church_connection.close()
             app.close_embedder()
     if stuck:
         raise SystemExit(1)

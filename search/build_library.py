@@ -34,7 +34,7 @@ import manifest  # noqa: E402
 from preached.corpus import load_chunk_config  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, audio_url, is_public_domain, load_provenance  # noqa: E402
 from preached.paths import CACHE_ROOT, INDEX_DIR  # noqa: E402
-from preached.store import open_readonly  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 from preached.youtube.chunking import chunk_words  # noqa: E402
 from preached.youtube.library import imported_ok, index_video, open_library  # noqa: E402
 from preached.youtube.pipeline import _embed_on_cpu  # noqa: E402
@@ -107,7 +107,7 @@ def check_target(path: Path, slug: str) -> None:
     """Refuse a file that is not this library's: another library's, or a Wesley-style index."""
     if not path.is_file():
         return
-    connection = open_readonly(path)
+    connection = open_readonly_or_exit(path)
     try:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         marker = connection.execute("SELECT value FROM meta WHERE key = 'library'").fetchone() if "meta" in tables else None

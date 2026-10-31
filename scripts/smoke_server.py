@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from app.server import build_app, make_server  # noqa: E402
 from preached.models import DEFAULT_MODEL  # noqa: E402
 from preached.paths import INDEX_PATH  # noqa: E402
-from preached.store import open_readonly  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     args = parser.parse_args(argv)
 
-    connection = open_readonly(args.index, check_same_thread=False)
+    connection = open_readonly_or_exit(args.index, check_same_thread=False)
     app = build_app(
         connection,
         model_key=args.model,

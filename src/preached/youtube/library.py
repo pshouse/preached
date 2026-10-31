@@ -129,6 +129,36 @@ def checkpoint(connection: sqlite3.Connection) -> None:
     )
 
 
+class StillWal(RuntimeError):
+    """The church file could not be left in DELETE journal mode."""
+
+
+def leave_delete_mode(connection: sqlite3.Connection) -> None:
+    """After publishing: switch the church file back to DELETE journal mode, checked.
+
+    ``store.connect`` turns WAL on for every write. The server opens the
+    church file read-only, and a read-only open of a WAL file creates -wal
+    and -shm beside it, so the server refuses a WAL-mode church file
+    (``library.open_church_readonly``) and skips it while it is in WAL mode.
+    The switch fails while another connection has the file open in WAL mode
+    (a reader that is not the server); then ``StillWal``.
+    """
+    checkpoint(connection)
+    previous = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+    connection.execute(f"PRAGMA busy_timeout = {int(CHECKPOINT_BUSY_MS)}")
+    try:
+        mode = connection.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+    except sqlite3.OperationalError:
+        mode = "wal"
+    finally:
+        connection.execute(f"PRAGMA busy_timeout = {int(previous)}")
+    if str(mode).lower() != "delete":
+        raise StillWal(
+            f"the church file is still in {mode} journal mode (another connection has it open in WAL mode); "
+            "the server does not search it until it is in DELETE mode. Close that reader and run --ack-review again"
+        )
+
+
 def scrub(connection: sqlite3.Connection) -> None:
     """After a delete: merge the FTS index, commit, then a checked checkpoint.
 

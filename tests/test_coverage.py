@@ -357,6 +357,61 @@ class ApprovalTests(unittest.TestCase):
         self.assertEqual(gaps, "[]")
         self.assertIsNotNone(approved)
 
+    def test_approval_leaves_the_church_file_in_delete_mode(self) -> None:
+        # PR #37 r1 should-fix 6: the server's read-only open then makes no -wal/-shm.
+        from preached.library import open_church_readonly, wal_mode
+
+        index = self.root / "cov.sqlite"
+        _import_err, code, err = self.import_and_approve([(1, 59)], words_for((1, 59)))
+        self.assertEqual(code, 0, err)
+        self.assertIs(wal_mode(index), False)
+        for suffix in ("-wal", "-shm"):
+            self.assertFalse(Path(f"{index}{suffix}").exists(), suffix)
+        connection, _identity = open_church_readonly(index)
+        try:
+            self.assertEqual(connection.execute("SELECT count(*) FROM videos").fetchone()[0], 1)
+        finally:
+            connection.close()
+        for suffix in ("-wal", "-shm"):
+            self.assertFalse(Path(f"{index}{suffix}").exists(), suffix)
+
+    def test_approval_with_another_wal_reader_warns_and_the_server_refuses_the_file(self) -> None:
+        import sqlite3
+
+        from preached.library import ChurchRefused, open_church_readonly, wal_mode
+
+        index = self.root / "cov.sqlite"
+
+        def downloader(_video, dest):
+            dest.mkdir(parents=True, exist_ok=True)
+            return write_wav(dest / "covvideo001.wav", synth(60.0, [(1, 59)]))
+
+        code, err = self.run_main(
+            ["https://www.youtube.com/watch?v=covvideo001", "--library", "cov"],
+            lister=lambda _url: [self.video],
+            metadata=lambda _v: {"license": "Creative Commons Attribution license (reuse allowed)", "title": "On Mercy", "duration": 60},
+            downloader=downloader,
+            transcriber=lambda _path: words_for((1, 59)),
+            embedder=embedder,
+        )
+        self.assertEqual(code, 0, err)
+        reader = sqlite3.connect(index)  # another WAL reader, idle between reads
+        self.addCleanup(reader.close)
+        reader.execute("SELECT count(*) FROM chunks").fetchone()
+        code, err = self.run_main(["--library", "cov", "--ack-review", "covvideo001"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("warning: the church file is still in wal journal mode", err)
+        self.assertIsNotNone(self.stored()[1])  # the approval stands
+        self.assertIs(wal_mode(index), True)
+        with self.assertRaises(ChurchRefused) as caught:
+            open_church_readonly(index)
+        self.assertIn("WAL journal mode", str(caught.exception))
+        reader.close()
+        code, err = self.run_main(["--library", "cov", "--ack-review", "covvideo001"])
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("warning", err)
+        self.assertIs(wal_mode(index), False)
+
     def test_unchecked_import_is_refused(self) -> None:
         self.import_and_approve([(1, 59)], words_for((1, 59)))
         connection = open_library(self.root / "cov.sqlite")

@@ -34,7 +34,7 @@ from preached.corpus import read_jsonl  # noqa: E402
 from preached.models import MODELS  # noqa: E402
 from preached.paths import INDEX_PATH, questions_path  # noqa: E402
 from preached.search import Searcher  # noqa: E402
-from preached.store import open_readonly  # noqa: E402
+from preached.store import UnsafeSidecar, open_readonly  # noqa: E402
 
 POOL_K = 20
 CANDIDATES = ROOT / "eval" / "plain_candidates.jsonl"
@@ -74,6 +74,8 @@ def main() -> None:
         connection = open_readonly(args.index)
     except FileNotFoundError as error:
         sys.exit(f"pool.py: {error}. Build the index first (see reports/ for the ingest commands) or pass --index PATH.")
+    except UnsafeSidecar as error:
+        sys.exit(str(error))
     items = load_items()
     if args.family:
         items = [i for i in items if i["family"] in args.family]
