@@ -559,9 +559,15 @@ class BundleTests(unittest.TestCase):
             source, onnx_root, index = self._fixture_source(root)
             first = root / "one"
             second = root / "two"
+            inputs = []
             for dest in (first, second):
                 result = self._build(source, dest, onnx_root, index)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                inputs.append([line for line in result.stdout.splitlines() if line.startswith("input ")])
+            # The build inputs are printed, and two builds of the same inputs agree.
+            self.assertEqual(inputs[0], inputs[1])
+            for name in ("source", "index-file", "index-bundled", "model-revision", "python", "uv", "tar", "gzip"):
+                self.assertTrue(any(line.startswith(f"input {name} ") for line in inputs[0]), (name, inputs[0]))
             manifest_a = (first / "MANIFEST.sha256").read_bytes()
             manifest_b = (second / "MANIFEST.sha256").read_bytes()
             self.assertEqual(manifest_a, manifest_b)
@@ -814,6 +820,12 @@ class BundleTests(unittest.TestCase):
         self.assertIn("120 requests per 60 seconds", text)
         for field in ("`disabled`", "`index_version`", "`model_sha256`"):
             self.assertIn(field, text[text.index("## Release notes"):])
+        # Round 5: the direct-start guarantees, the import-by-string limit,
+        # and the build inputs.
+        self.assertIn("### What a direct start does and does not guarantee", text)
+        self.assertIn("python -m app.server", text)
+        self.assertIn("Known limit: this is a text check", text)
+        self.assertIn("### Reproducing a bundle hash", text)
         script = (ROOT / "scripts" / "serve.sh").read_text()
         self.assertNotIn("chmod", script)
         self.assertGreaterEqual(script.count("env -i"), 2)

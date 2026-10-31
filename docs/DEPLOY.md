@@ -129,6 +129,13 @@ The build also fails if any shipped module uses `importlib` or
 `__import__`. An import by string is invisible to the import scan above, so
 it is not allowed in serve code at all.
 
+Known limit: this is a text check for accidental lazy imports, not a
+security boundary. It is easy to get around: `getattr(builtins, "__imp" +
+"ort__")`, `exec("import x")`, `runpy`, or `sys.modules` lookups all pass it.
+A module loaded that way at request time is not in the bundle list and
+fails with `ModuleNotFoundError` when it runs, not at build time. Code
+review is the control for serve code.
+
 The build writes a stamp, `PREACHED_BUNDLE` (format line, library, model
 revision), and lists it in `MANIFEST.sha256`. The tree is classified
 explicitly (`app/bundle.py`):
@@ -156,11 +163,52 @@ From a bundle the server refuses to start unless all of these hold:
   directory (an older revision, or an empty one that drops search to BM25)
   is refused. The embed backend must be `onnx`; torch is not shipped.
 
-`scripts/serve.sh` runs this check as `python -I -B app/bundle.py ROOT INDEX`
-before anything imports bundle code. `app/bundle.py` uses the standard
-library only. `app/server.py` repeats it in `main` for any other launcher.
-`serve.sh` also sets `PYTHONPYCACHEPREFIX` to a fresh empty directory, so
-in-tree bytecode is never read, in a checkout as well.
+`scripts/serve.sh` is the supported launcher. It runs this check as
+`python -I -B app/bundle.py ROOT INDEX` before anything imports bundle code.
+`app/bundle.py` uses the standard library only. Its preflight (which
+imports `app.server`) runs with `PYTHONPYCACHEPREFIX` set to a fresh empty
+directory, so in-tree bytecode is never read, in a checkout as well. That
+directory is removed before the server starts, or on a failed preflight.
+
+`app/server.py` repeats the check in `main` for any other launcher.
+
+### What a direct start does and does not guarantee
+
+A direct start is `python app/server.py`, `python -B app/server.py`, or
+`uv run app/server.py`, run without `serve.sh`.
+
+It does guarantee:
+
+- no bytecode is read from the tree or written to it. The first lines of
+  `app/server.py`, before any `app` or `preached` import, set
+  `sys.dont_write_bytecode` and point `sys.pycache_prefix` at a new private
+  empty directory (`tempfile.mkdtemp`). `app/__init__.py`, `app/bundle.py`
+  and every `preached` module are compiled from their source files. A
+  planted `__pycache__` (for example one that makes `bundle_problem` return
+  None) is not read; `main` then finds it and refuses to start. The
+  directory is removed at exit, and SIGTERM stops the server cleanly so
+  that removal runs.
+- `main` runs the whole bundle check (`bundle_problem`, then the model
+  directory check) before it opens the index or binds the port.
+
+It does not guarantee:
+
+- that the check runs before bundle code. `app.bundle` and `preached.*`
+  are imported, from their `.py` files, before `main` hashes those files.
+  An edited `.py` in the tree runs first and is only refused afterwards.
+  `serve.sh` runs only `app/bundle.py` itself before the check.
+- anything about a planted extension module. Python prefers
+  `bundle.cpython-312-x86_64-linux-gnu.so` (or any extension suffix) over
+  `bundle.py` in the same directory, and it is loaded before the check.
+  `serve.sh` runs `app/bundle.py` by path with `-I`, so its check refuses
+  that unlisted file before anything imports it.
+- anything for `python -m app.server`. `runpy` imports `app` and
+  `app.server` through the normal import system before the first line of
+  `app/server.py` runs, so their in-tree bytecode can be read. Do not start
+  the server that way.
+- anything about `.venv` or the interpreter (next section).
+- a clean exit on SIGKILL. The private bytecode directory (empty, mode
+  0700) is left in `$TMPDIR`.
 
 While serving, a bundle's index is frozen. If the open index changes after
 start (chunks, vectors, any commit from another connection, or a status
@@ -169,6 +217,29 @@ It is not reloaded. A checkout still reloads in place.
 
 Hashing the bundle (index plus fp32 model) adds a few seconds to start, and
 `serve.sh` hashes it twice (the stdlib check, then `main`).
+
+### Reproducing a bundle hash
+
+The tar bytes depend on the source tree, the bundled index copy, the model
+files, and the versions of the tools that write them. `build-bundle.sh`
+prints every one of these as `input ...` lines after the `tar` line:
+
+- `input source`: the git commit of the source tree, with `dirty` if
+  `git status --porcelain` is not empty. A dirty build is not reproducible
+  from the repo.
+- `input index-file` and `input index-bundled`: sha256 of the index named
+  by `PREACHED_INDEX` and of the copy in the bundle. The index is not in
+  git; it lives in `/cache`. The bundled copy (SQLite backup API) is what
+  the tar holds.
+- `input model-revision`: the ONNX revision. The files are pinned by sha256
+  in `src/preached/artifacts.py`.
+- `input python` (with the SQLite library version), `input uv` (it writes
+  `requirements-serve.txt`), `input tar`, `input gzip`.
+
+Two builds with the same `input` lines give the same tar. Someone without
+this machine's `/cache` cannot rebuild the same tar: they need an index
+file with the same `index-bundled` sha256 and the pinned model files. The
+W3-DEPLOY-PREP report records the inputs of each published hash.
 
 ### `.venv` is a trust boundary
 

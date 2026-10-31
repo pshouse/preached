@@ -26,6 +26,13 @@ Security choices:
   and model/ must be the bundle's own, or the server does not start
   (app/bundle.py). A tree that is neither a bundle nor a .git checkout is
   refused
+- scripts/serve.sh runs that check, stdlib only, before any bundle code is
+  imported. Started directly (python app/server.py, python -B, uv run), no
+  bytecode is read or written: the first lines below set a private
+  sys.pycache_prefix before app.bundle and preached.* are imported. Those
+  modules still run from their .py files before main() checks them, so an
+  edited .py or a planted extension module runs first. python -m app.server
+  is not covered (docs/DEPLOY.md)
 - a bundle's index is frozen: a change after start is 503 until restart
 - a NUL or control character in the request line or a header value is a 400
 """
