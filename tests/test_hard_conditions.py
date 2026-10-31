@@ -185,8 +185,15 @@ class ScriptReadOnlyOpenTests(_PlantedWesley):
         self.assertEqual(self.wesley_state(), before)
 
 
-# Raw sqlite3.connect calls left outside tests/, each with why it is not open_readonly.
+# Files outside tests/ that may import sqlite3, and how many raw opens each
+# makes (sqlite3.connect / sqlite3.Connection(...) / dbapi2 / getattr on the
+# module), each with why it is not open_readonly. Any other file that imports
+# sqlite3 in any form fails RawConnectGuardTests.
 RAW_CONNECTS = {
+    "app/server.py": 0,  # exceptions and type hints only
+    "search/query.py": 0,  # exceptions only
+    "src/preached/exclusions.py": 0,  # type hints only
+    "src/preached/youtube/library.py": 0,  # type hints only
     "src/preached/store.py": 2,  # connect() (the writer) and open_readonly itself
     "src/preached/library.py": 1,  # _Checked: mode=rw, sidecars and the opened descriptor checked
     "src/preached/search.py": 1,  # ":memory:"
@@ -195,27 +202,157 @@ RAW_CONNECTS = {
     "scripts/gate_leak_sweep.py": 1,  # writer: the synthetic temp index the sweep just built
 }
 
+# Uses of the writer ``store.connect`` (WAL, schema, migrations; no sidecar
+# check) outside tests/. Reading an index through it bypasses open_readonly.
+WRITER_CONNECTS = {
+    "search/build_index.py": 1,  # builds the classic index
+    "search/bench.py": 1,  # writes benchmark vectors into a copy
+    "scripts/measure_parity.py": 1,  # writes vectors into its _copy_index copy
+    "src/preached/youtube/library.py": 1,  # open_library: the church importer and approver
+}
+
+# sqlite3 attributes that cannot open a database. ``Connection`` is safe only
+# as a type hint; a call to it is counted as a raw open.
+SQLITE3_SAFE = frozenset({
+    "Connection", "Cursor", "Row", "Error", "DatabaseError", "OperationalError", "IntegrityError",
+    "ProgrammingError", "NotSupportedError", "InterfaceError", "Warning", "sqlite_version",
+    "sqlite_version_info", "SQLITE_OK",
+})
+
+
+def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
+    """``(imports sqlite3, raw opens, store.connect uses, unknown)`` for one file's source.
+
+    Any import counts: ``import sqlite3``, ``import sqlite3 as db``,
+    ``import sqlite3.dbapi2``, ``from sqlite3 import ...``, and a
+    ``"sqlite3"`` string (``__import__``, ``importlib.import_module``). Raw
+    opens: any reference to ``connect`` or ``dbapi2`` on a sqlite3 name, a
+    call to ``Connection``, ``getattr`` on a sqlite3 name, and every name
+    imported ``from sqlite3`` other than a safe one. ``unknown`` lists other
+    sqlite3 attributes, so a new one is reviewed before it is allowed.
+    """
+    tree = ast.parse(source)
+    imports = False
+    modules: set[str] = set()  # local names bound to the sqlite3 module (or sqlite3.dbapi2)
+    raw = 0
+    writer_names: set[str] = set()  # local names bound to preached.store.connect
+    store_modules: set[str] = set()  # local names bound to preached.store
+    unknown: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "sqlite3":
+                    imports = True
+                    modules.add(alias.asname or "sqlite3")
+                    if alias.name != "sqlite3":
+                        raw += 1  # sqlite3.dbapi2: a second door to connect
+                elif alias.name in ("preached.store", "store") and alias.asname:
+                    store_modules.add(alias.asname)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.split(".")[0] == "sqlite3":
+                imports = True
+                for alias in node.names:
+                    if alias.name not in SQLITE3_SAFE or alias.name == "Connection":
+                        raw += 1
+            elif module in ("preached.store", "store"):
+                for alias in node.names:
+                    if alias.name == "connect":
+                        writer_names.add(alias.asname or "connect")
+            elif module == "preached":
+                for alias in node.names:
+                    if alias.name == "store":
+                        store_modules.add(alias.asname or "store")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value == "sqlite3" or node.value.startswith("sqlite3."):
+                imports = True
+                raw += 1
+    writer = 0
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id in modules:
+                if node.attr in ("connect", "dbapi2"):
+                    raw += 1
+                elif node.attr not in SQLITE3_SAFE:
+                    unknown.append(node.attr)
+            elif node.value.id in store_modules and node.attr == "connect":
+                writer += 1
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id in modules and func.attr == "Connection"
+            ):
+                raw += 1
+            elif (
+                isinstance(func, ast.Name) and func.id in ("getattr", "vars")
+                and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in modules
+            ):
+                raw += 1
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in writer_names:
+            writer += 1
+    return imports, raw, writer, unknown
+
+
+def scan_repo() -> tuple[dict[str, int], dict[str, int], dict[str, list[str]]]:
+    raw: dict[str, int] = {}
+    writers: dict[str, int] = {}
+    unknown: dict[str, list[str]] = {}
+    for path in sorted(ROOT.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        if rel.startswith((".venv/", "tests/", ".worktrees/")) or "/." in f"/{rel}":
+            continue
+        imports, opens, writer, odd = scan_sqlite_use(path.read_text(encoding="utf-8"))
+        if imports:
+            raw[rel] = opens
+        if writer:
+            writers[rel] = writer
+        if odd:
+            unknown[rel] = odd
+    return raw, writers, unknown
+
 
 class RawConnectGuardTests(unittest.TestCase):
-    """Hard condition 1, repo-wide: no new raw connect slips past open_readonly."""
+    """Hard condition 1, repo-wide: no new raw connect slips past open_readonly.
 
-    def test_only_the_listed_raw_connects_remain(self) -> None:
-        found: dict[str, int] = {}
-        for path in sorted(ROOT.rglob("*.py")):
-            rel = path.relative_to(ROOT).as_posix()
-            if rel.startswith((".venv/", "tests/", ".worktrees/")) or "/." in f"/{rel}":
-                continue
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "connect"
-                    and isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "sqlite3"
-                ):
-                    found[rel] = found.get(rel, 0) + 1
-        self.assertEqual(found, RAW_CONNECTS)
+    An AST check on every sqlite3 import outside tests/ (PR #37 r1 should-fix
+    1): only the files in ``RAW_CONNECTS`` may import sqlite3, each with its
+    count of raw opens, and only ``WRITER_CONNECTS`` may use the writer
+    ``store.connect``.
+    """
+
+    def test_only_the_listed_files_import_sqlite3_and_open_it(self) -> None:
+        raw, _writers, unknown = scan_repo()
+        self.assertEqual(raw, RAW_CONNECTS)
+        self.assertEqual(unknown, {})
+
+    def test_only_the_listed_files_use_the_writer_connect(self) -> None:
+        self.assertEqual(scan_repo()[1], WRITER_CONNECTS)
+
+    def test_every_bypass_form_is_seen(self) -> None:
+        cases = {
+            "from sqlite3 import connect\nconnect('x')": (True, 1, 0),
+            "import sqlite3 as db\ndb.connect('x')": (True, 1, 0),
+            "import sqlite3\nsqlite3.dbapi2.connect('x')": (True, 1, 0),
+            "import sqlite3.dbapi2\n": (True, 1, 0),
+            "from sqlite3 import dbapi2\n": (True, 1, 0),
+            "import sqlite3\ngetattr(sqlite3, 'connect')('x')": (True, 1, 0),
+            "import sqlite3\nsqlite3.Connection('x')": (True, 1, 0),
+            "from sqlite3 import Connection\n": (True, 1, 0),
+            "import sqlite3\nf = sqlite3.connect\n": (True, 1, 0),
+            "m = __import__('sqlite3')\n": (True, 1, 0),
+            "import importlib\nm = importlib.import_module('sqlite3.dbapi2')\n": (True, 1, 0),
+            "import sqlite3\ndef f(c: sqlite3.Connection) -> None:\n    raise sqlite3.Error\n": (True, 0, 0),
+            "from preached.store import connect\nconnect('x')": (False, 0, 1),
+            "from preached.store import connect as c\nc('x')": (False, 0, 1),
+            "from preached import store\nstore.connect('x')": (False, 0, 1),
+            "import preached.store as s\nopen_it = s.connect\n": (False, 0, 1),
+            "from preached.store import open_readonly\nopen_readonly('x')": (False, 0, 0),
+        }
+        for source, want in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(scan_sqlite_use(source)[:3], want)
+        self.assertEqual(scan_sqlite_use("import sqlite3\nsqlite3.complete_statement('x')")[3], ["complete_statement"])
 
 
 class RealpathSidecarTests(_PlantedWesley):
