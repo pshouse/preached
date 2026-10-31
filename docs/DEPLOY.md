@@ -336,6 +336,13 @@ In the process:
   stay mode `0444`, which is what the table above says. The owner of the
   tree has to already be the service user. A root-owned tree is not chmod'd
   by the start script.
+- The `model/` directory and every file in it must be owned by the service
+  user (or root) and must not be group- or world-writable. `check_servable`
+  does not look at `model/`; the ONNX loader does, and it does not stop the
+  server. A graph it refuses (for example, a tar extracted under
+  `umask 002`, which leaves `model/` mode `0775`) is logged and the server
+  falls back to BM25-only search with `/healthz` `dense: false`. Extract
+  under `umask 022`, run the `chmod` lines above, and check step 6.
 - Bind `PREACHED_HOST=127.0.0.1`. Leave `PREACHED_HOSTS` at
   `127.0.0.1,localhost` unless the operator is reaching the process through
   an existing tailnet. Then bind the tailscale address (or keep loopback and
@@ -383,7 +390,7 @@ call it and does not publish a public hostname.
 2. **HUMAN.** Upload `/tmp/preached-bundle.tar.gz` to the Sprite, into a new
    directory named with that manifest sha256, for example
    `/srv/preached/<manifest-sha>/`. Leave the previous directory in place.
-3. **HUMAN.** Extract the tar as the service user. Confirm
+3. **HUMAN.** Extract the tar as the service user under `umask 022`. Confirm
    `sha256sum -c MANIFEST.sha256` in that directory. Apply the `chown` and
    `chmod` in the hardening section. `PREACHED_CACHE` is the bundle root
    when `serve.sh` sees `index/`.
@@ -410,6 +417,10 @@ call it and does not publish a public hostname.
    the fp32 pin above. `index_version` should match `chunks_sha256` in the
    Wesley index (`198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`
    as of this branch's `/cache` copy). Then one Wesley search.
+   `dense: false` (or `model_sha256` null or not the pin) is a failed
+   go-live even though `ok` is true and search still answers: the server
+   fell back to BM25-only. Stop it, fix the `model/` owner and modes per the
+   hardening section, and start again.
 
 ## Roll back
 
