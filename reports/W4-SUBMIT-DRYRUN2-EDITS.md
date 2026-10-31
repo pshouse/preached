@@ -67,5 +67,8 @@ Finish run: `uv run python -m unittest tests.test_deploy_alerts tests.test_deplo
 Docs-only. CTO wording check found no changes needed; this commit adds the check to the report.
 
 ```
-PLACEHOLDER_STAT
+ docs/DEMO-SCRIPT.md                |  9 ++---
+ docs/SUBMISSION-DRAFT.md           | 10 +++---
+ reports/W4-SUBMIT-DRYRUN2-EDITS.md | 71 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 81 insertions(+), 9 deletions(-)
 ```
