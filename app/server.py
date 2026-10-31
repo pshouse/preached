@@ -143,6 +143,7 @@ from app.bundle import (  # noqa: E402, F401
 )
 from preached import env  # noqa: E402, F401
 from preached.abstain import church_confidence, compute_signals, floor_for, search_with_confidence  # noqa: E402
+from preached.artifacts import ArtifactMissing  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.library import (  # noqa: E402
@@ -294,9 +295,21 @@ BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
 MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"
 UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"
+# Loud on purpose: a fresh clone without the export otherwise looks like a
+# working server that finds nothing.
+MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"
+MISSING_GRAPH_NOTE = "The search model has not been built; results are BM25 only."
 INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 REFUSED_ERROR = "index unavailable"
+# /healthz search_mode_reason when search_mode is bm25. A code, never a path.
+SEARCH_MODE_REASONS = {
+    None: "bm25_only",
+    MISSING_GRAPH_NOTE: "onnx_graph_not_built",
+    FALLBACK_NOTE: "model_unavailable",
+    STALE_NOTE: "stale_vectors",
+    INDEX_READ_NOTE: "index_unreadable",
+}
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -849,6 +862,12 @@ def load_search(
         # Never pair new query vectors with old document vectors.
         logging.exception(MISMATCH_LOG)
         return Searcher(connection), None, STALE_NOTE
+    except ArtifactMissing as exc:
+        # The alert line first (it still pages), then exc: the missing path
+        # and EXPORT_COMMAND.
+        logging.error(UNAVAILABLE_LOG)
+        logging.error(MISSING_GRAPH_LOG, exc)
+        return Searcher(connection), None, MISSING_GRAPH_NOTE
     except Exception:
         logging.exception(UNAVAILABLE_LOG)
         return Searcher(connection), None, FALLBACK_NOTE
@@ -1314,8 +1333,10 @@ class App:
             pending = pending_review_count(self.connection) if gated else None
             index_version = self._index_version()
         model_sha = None
+        reason = SEARCH_MODE_REASONS.get(self.fallback_note, "fallback")
         if self.encode is not None:
             model_sha = public_sha256(getattr(self.encode, "model_sha256", None))
+            reason = None
         payload = {
             "ok": True,
             "disabled": False,
@@ -1324,6 +1345,8 @@ class App:
             "model": self.model_name,
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
+            "search_mode": "hybrid" if self.encode is not None else "bm25",
+            "search_mode_reason": reason,
             "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
             "index_version": index_version,
