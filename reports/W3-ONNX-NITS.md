@@ -36,7 +36,7 @@ Each check removed or broken in `onnx_embed.py`, full `tests.test_embed_backend`
 - `tests/test_embed_backend.py`: 55 tests, OK (was 49 on the reviewed head; +5 new, +1 from main).
 - Full suite (`unittest discover -s tests`): 733 tests, OK.
 - `uv lock --check`: passes (79 packages resolved, no new deps).
-- Head SHA: see the PR / `git rev-parse chore/w3-onnx-nits`.
+- Head SHA of the code commit: bea4ad2626fecc617fa1b18c0e73299898d26cc6 (the report is committed on top).
 
 ## PR
 
