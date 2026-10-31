@@ -849,6 +849,31 @@ class DocAndScriptTests(unittest.TestCase):
         self.assertLess(gate.index("Patrick's approval"), gate.index("kill-switch drill"))
         self.assertNotIn("0.0.0.0", section)
 
+    def test_go_public_gate_has_the_round_one_items_before_sign_off(self) -> None:
+        text = (ROOT / "docs" / "DEPLOY.md").read_text()
+        for heading in ("## Going public", "### Remaining go-public gate items"):
+            start = text.index(heading)
+            gate = text[start : text.index("\n## ", start + 1) if heading.startswith("## ") else text.index("\n## ", start)]
+            sign_off = gate.index("CTO sign-off")
+            for item in ("RSS fix (#26)", "1.62 GB", "Audit logging (", "tailscale funnel", "/64 IPv6 keying ("):
+                with self.subTest(heading=heading, item=item):
+                    self.assertLess(gate.index(item), sign_off)
+            self.assertIn("PREACHED_TRUSTED_PROXIES=127.0.0.1", gate)
+            self.assertIn("direct", gate[gate.index("PREACHED_TRUSTED_PROXIES=127.0.0.1") - 200 :])
+        start = text.index("### Known gaps")
+        gaps = text[start : text.index("\n### ", start + 1)]
+        for item in ("32-address lockout", "65 of 65", "PR #18 behaves the same", "forge `X-Forwarded-For`", "socket peer, not the client"):
+            with self.subTest(item=item):
+                self.assertIn(item, gaps)
+        self.assertNotIn("keyed per address, not per /64", gaps)
+        logs = next(line for line in text.splitlines() if line.startswith("| Logs |"))
+        self.assertIn("`peer key method path status`", logs)
+        self.assertIn("suppressed=N", logs)
+
+    def test_serve_sh_passes_the_health_reserve(self) -> None:
+        script = (ROOT / "scripts" / "serve.sh").read_text()
+        self.assertIn("pass PREACHED_HEALTH_RESERVED_CONNECTIONS\n", script)
+
 
 if __name__ == "__main__":
     unittest.main()
