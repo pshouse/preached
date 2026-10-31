@@ -5,9 +5,10 @@ SIGTERM, and require exit 0 with the private bytecode directory removed.
 Before the drain (PR #36 r1) bm25 segfaulted (sqlite closed under a handler)
 and hybrid aborted in ONNX Runtime on most runs.
 
-Runs per mode: PREACHED_SHUTDOWN_RUNS (default 3). bm25 uses the real Wesley
-index when /cache has it, else a generated one. hybrid needs the real index
-and the pinned ONNX model; it is skipped without them.
+Runs per mode: PREACHED_SHUTDOWN_RUNS (default 3). bm25 uses the Wesley
+index under PREACHED_CACHE when that file is present, else a generated one.
+hybrid needs that index and the pinned ONNX model; it is skipped without
+them. An unset PREACHED_CACHE does not fall back onto /cache.
 """
 
 from __future__ import annotations
@@ -31,8 +32,21 @@ from preached.store import connect  # noqa: E402
 
 SERVER = ROOT / "app" / "server.py"
 PYTHON = ROOT / ".venv" / "bin" / "python"
-REAL_INDEX = Path("/cache/index/wesley.sqlite")
-ONNX_DIR = Path(os.environ.get("PREACHED_ONNX_DIR", "/cache/models/granite-english-r2-onnx"))
+
+
+def _cache_root() -> Path:
+    """Shared cache for this process. Unset PREACHED_CACHE stays off /cache."""
+    raw = os.environ.get("PREACHED_CACHE")
+    if raw:
+        return Path(raw)
+    return Path(tempfile.gettempdir()) / "preached-shutdown-nocache"
+
+
+_CACHE = _cache_root()
+REAL_INDEX = _CACHE / "index" / "wesley.sqlite"
+ONNX_DIR = Path(os.environ["PREACHED_ONNX_DIR"]) if os.environ.get("PREACHED_ONNX_DIR") else (
+    _CACHE / "models" / "granite-english-r2-onnx"
+)
 RUNS = int(os.environ.get("PREACHED_SHUTDOWN_RUNS", "3"))
 CLIENTS = 16
 WORDS = "grace faith love sin holy spirit law gospel heart repentance mercy prayer".split()
@@ -170,7 +184,10 @@ class LoadedSigtermTests(unittest.TestCase):
             index = REAL_INDEX if REAL_INDEX.is_file() else _fixture_index(Path(tmp) / "wesley.sqlite")
             self._loaded_runs("bm25", index, ["--bm25-only"])
 
-    @unittest.skipUnless(REAL_INDEX.is_file() and (ONNX_DIR).is_dir(), "needs /cache/index/wesley.sqlite and the pinned ONNX model")
+    @unittest.skipUnless(
+        REAL_INDEX.is_file() and ONNX_DIR.is_dir(),
+        "needs the Wesley index and the pinned ONNX model under PREACHED_CACHE",
+    )
     def test_sigterm_under_hybrid_load_exits_zero_and_cleans_up(self) -> None:
         self._loaded_runs("hybrid", REAL_INDEX, [])
 
