@@ -45,7 +45,7 @@ uv run search/query.py "what did Wesley say about worry" --mode bm25 --side
 
 The Preached code is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Copyright 2026 Patrick Shouse.
 
-This does not relicense third-party data. Sermon texts and audio keep their own licences, as recorded in `ingest/manifest/{wesley,spurgeon,edwards}.provenance.json`: the Wesley, Spurgeon, and Edwards texts (via CCEL or the Spurgeon Archive) are public domain, and the LibriVox recordings are dedicated to the public domain in the US only. Check your own jurisdiction before redistributing the audio. Embedding model weights are downloaded separately and keep their own licences (see `search/models.toml`).
+This does not relicense third-party data. Sermon texts and audio keep their own licences, as recorded in `ingest/manifest/{wesley,spurgeon,edwards}.provenance.json`: the Wesley, Spurgeon, and Edwards texts (via CCEL or the Spurgeon Archive) are public domain. The Wesley First Series audio is marked CC0 1.0 (worldwide); the Wesley Second and Third-Fifth Series audio is marked Public Domain Mark 1.0, as are the Spurgeon and Edwards recordings; LibriVox states its recordings are public domain in the US. Check your own jurisdiction before redistributing the audio. Embedding model weights are downloaded separately and keep their own licences (see `search/models.toml`).
 
 ## YouTube channel import
 

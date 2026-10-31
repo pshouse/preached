@@ -2,9 +2,9 @@
  "slug": "wesley",
  "creator": "John Wesley",
  "title": "Sermons on Several Occasions",
- "license_note": "LibriVox recording, dedicated to the public domain (US); text by John Wesley (d. 1791) is public domain. Read by a volunteer LibriVox reader, NOT Wesley's voice.",
+ "license_note": "LibriVox recording (First Series audio: CC0 1.0; Second and Third-Fifth Series: Public Domain Mark 1.0; LibriVox states public domain in the US); text by John Wesley (d. 1791) is public domain. Read by a volunteer LibriVox reader, NOT Wesley's voice.",
  "text_source_url": "https://www.ccel.org/ccel/wesley/sermons",
- "note": "Generated from ingest/manifest/wesley.jsonl (fields ia_identifier, ia_url, librivox_url, license_url, license_note, text_source_url). Nothing here is added beyond that manifest. LibriVox dedication is US-only.",
+ "note": "Generated from ingest/manifest/wesley.jsonl (fields ia_identifier, ia_url, librivox_url, license_url, license_note, text_source_url). Per-item tracks and licenseurl are counted from that manifest (checked by tests/test_licenses.py).",
  "ia_items": [
   {
    "ia_identifier": "sermonsfirstseries_1307_librivox",

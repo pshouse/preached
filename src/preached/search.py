@@ -105,6 +105,8 @@ class Searcher:
         fingerprint: str | None = None,
         gated: bool = False,
         library: str | None = None,
+        *,
+        allow_eval_only: bool = False,
     ):
         """model: a key in search/models.toml. Its stored document vectors
         must carry the fingerprint the config gives now (or `fingerprint`,
@@ -116,7 +118,11 @@ class Searcher:
 
         library: the slug this file is served as. Only an allow-listed
         public-domain library's own file is exempt from the gate
-        (``store.public_domain_file``, re-checked per call)."""
+        (``store.public_domain_file``, re-checked per call).
+
+        allow_eval_only: only the evaluation harnesses (search/bench.py,
+        eval/pool.py, scripts/check_*.py) pass this, to score eval-only
+        models. The product never does."""
         self.connection = connection
         self.model = model
         self.gated = gated
@@ -131,8 +137,9 @@ class Searcher:
             from preached.models import MODELS
 
             # An explicit fingerprint is for fixture models that are not in
-            # models.toml; a configured eval-only model is refused either way.
-            if model in MODELS and MODELS[model].eval_only:
+            # models.toml; a configured eval-only model is refused unless the
+            # evaluation harness opts in.
+            if not allow_eval_only and model in MODELS and MODELS[model].eval_only:
                 raise RuntimeError(f"model {model!r} is eval-only and cannot be used by the product")
             if fingerprint is None:
                 if model not in MODELS:
