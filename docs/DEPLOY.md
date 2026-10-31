@@ -222,8 +222,11 @@ In the process:
 | Control characters | A NUL or any other control character in the request line (apart from its CRLF ending), or in a header value (HTAB is allowed, RFC 9110 5.5), is a `400` and the connection is closed. The line is not logged. |
 | Request size | Path at most 2048 bytes, headers at most 8192, body at most 4096. No chunked bodies. A 405, or any earlier error, that leaves a body unread closes the connection, so those bytes are not parsed as a second request. |
 | Header deadline | 15 seconds for the request line and all headers together. A slow byte does not reset the clock. |
-| Connections | At most 32 concurrent connections, and at most 4 from one socket IP. Over the cap the accept thread returns 503 and does not start a handler thread. `PREACHED_MAX_CONNECTIONS` and `PREACHED_MAX_CLIENT_CONNECTIONS` override the numbers. |
-| Rate limit | 60 requests per 60 seconds per socket IP in `serve.sh` (the code default is 120, so the unit tests fit). `/healthz` uses the same bucket. `X-Forwarded-For` is ignored. A full table of live keys refuses a new IP. `429` and `Retry-After`. |
+| Connections | At most 32 concurrent connections, and at most 4 from one socket IP (a trusted proxy is exempt from the per-IP cap). Over the cap the accept thread returns 503 and does not start a handler thread. `PREACHED_MAX_CONNECTIONS` and `PREACHED_MAX_CLIENT_CONNECTIONS` override the numbers. |
+| Slot fairness | When all 32 are taken, a new connection takes the slot of the longest-idle connection (between requests, or still sending headers) of the peer holding the most, if that peer holds at least two more than the newcomer. A request being handled is never closed. Once 8 or fewer slots are free, a connection waiting for its next request gets 2 seconds, not 15 (`PREACHED_SCARCE_IDLE_S`). At most 4 requests in flight per client key (`PREACHED_MAX_CLIENT_REQUESTS`); over that is `503`, `Retry-After: 1`, and the connection closes. |
+| Client key | The socket peer. `X-Forwarded-For` is read only when the peer is in `PREACHED_TRUSTED_PROXIES` (comma-separated addresses or networks, default empty). Then the key is the right-most hop that is not a trusted proxy. Hops to its left are never read. A hop that does not parse keys on the nearest trusted address. A malformed `PREACHED_TRUSTED_PROXIES` entry stops the server. `Forwarded` (RFC 7239) is ignored. |
+| Rate limit | 60 requests per 60 seconds per client key in `serve.sh` (the code default is 120, so the unit tests fit). Behind that, a global backstop of 600 per 60 seconds across all clients in `serve.sh` (code default 1200, `PREACHED_GLOBAL_RATE_LIMIT`). A client over its own cap does not spend the backstop. A full table of live keys refuses a new key. `429` and `Retry-After`. |
+| `/healthz` bucket | Its own per-client bucket (60 per 60 seconds, `PREACHED_HEALTH_RATE_LIMIT`) and its own global backstop (600, `PREACHED_HEALTH_GLOBAL_RATE_LIMIT`). Health checks never spend the search budget, and a search flood does not starve them. The connection caps above still apply, before the path is known. |
 | Socket timeout | 15 seconds on a read or a write after the headers. |
 | Headers | CSP, `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, `Server: Preached`. CSP is unchanged. |
 | Logs | Access log is IP, method, path, status. The query string is not logged. Control characters are escaped. A bad request line does not crash the process. A failed request logs the exception type, not the message. |
@@ -268,9 +271,11 @@ In the process:
   path. If the host can mount them read-only, do that. A DELETE-mode index
   opens read-only from a directory the process cannot write.
 - The in-app rate limit keys on the socket address. `X-Forwarded-For` is
-  ignored. A trusted-proxy mode, and a global backstop in front of that, are
-  not implemented. Do not put this process behind a public proxy until that
-  exists.
+  ignored unless the peer is listed in `PREACHED_TRUSTED_PROXIES`, which is
+  empty by default. With `tailscale serve` in front, the peer is loopback;
+  list `127.0.0.1` only if that proxy is the only thing that can reach the
+  port, and check that it appends `X-Forwarded-For`. Otherwise leave it
+  empty: every proxied client then shares one bucket, which fails closed.
 - Do not enable directory listings, a debug console, or a shell on the
   listening port.
 - One ONNX thread is the right default for a 1-vCPU box. `reports/W3-CPU.md`
@@ -283,13 +288,90 @@ entry, or a public bind as part of standing the server up.
 
 Before any of that happens, all of the following have to be done, in order:
 
-1. A written threat model for the public process.
+1. A written threat model for the public process. A draft is below; it is
+   not final.
 2. CTO sign-off on that threat model.
 3. Patrick's approval.
 4. A kill-switch drill: `touch KILL`, confirm `/healthz` is 503, remove the
    regular file, confirm `/healthz` is 200 again, without restarting.
 
 Until those are done, the process stays on loopback or Tailscale.
+
+## Threat model (DRAFT, not final)
+
+Status: draft from W3-EXPOSURE-HARDEN. It is not signed off and does not
+authorise a public bind. Nothing here changes the "Going public" order.
+
+### Assets
+
+- Availability of search and `/healthz` on a one-vCPU Sprite (CPU, the
+  32 connection slots, memory for the ONNX model).
+- Integrity of what is served: the bundle (code, `MANIFEST.sha256`, build
+  stamp), the frozen index, and the pinned fp32 model.
+- The rule that only public-domain classic libraries are served. Church
+  libraries, YouTube imports, `cc-speech.sqlite` and Gaston Community
+  Church stay unpublished (`check_servable`).
+- The Sprite admin credential and any token in the operator's shell. The
+  app holds no secret of its own.
+- Searchers' queries. The access log drops the query string; no query is
+  stored.
+
+### Attackers
+
+- Anonymous internet clients: floods, many source addresses, slow senders,
+  idle keep-alive holders.
+- Clients that forge `X-Forwarded-For` to get fresh rate buckets or to frame
+  another address.
+- HTTP parser abuse: request smuggling, control characters, oversize
+  headers, bodies on GET-only routes.
+- A local user, or anything that can write the bundle, `.venv/`, or the
+  index on the host. Out of scope for the in-app gates; covered by
+  ownership and modes (see `.venv` is a trust boundary).
+- Anyone holding the Sprite admin credential. Out of scope for the app;
+  covered by rotation.
+
+### Entry points
+
+- The listening socket: `GET`/`HEAD` on `/`, `/static/<allowlisted>`,
+  `/api/search`, `/api/side`, `/api/sermon/<id>`, `/healthz`. Every other
+  method is `405`; no route reads a body.
+- Request headers that change behaviour: `Host` (allowlist), `Content-Length`
+  and `Transfer-Encoding` (refused unless plain), `X-Forwarded-For` (only
+  from a trusted proxy).
+- Process environment, set by `scripts/serve.sh` through `env -i`.
+- The kill file at `PREACHED_KILL_FILE`.
+- The bundle on disk, checked once at start.
+
+### Controls in place
+
+The Hardening table above: Host allowlist, size limits, framing and
+control-character refusal, header deadline, connection caps and slot
+fairness, trusted-proxy keying, per-client and global rate limits, the
+separate `/healthz` bucket, the kill file, the frozen bundle index, the
+manifest gate, root refusal, and the scrubbed environment.
+
+### Known gaps
+
+- Thread per connection. Caps and eviction bound it, but a distributed
+  flood of real requests up to the global backstop still costs CPU, and
+  32 busy searches fill every slot (busy requests are never closed).
+- The connection caps run before the path is known, so `/healthz` has no
+  reserved connection slot. Eviction of idle connections is what keeps a
+  slot free for it.
+- No TLS in the process. TLS has to come from the proxy or Tailscale.
+- IPv6 clients are keyed per address, not per /64.
+- A garbage `X-Forwarded-For` hop written by a trusted proxy keys on that
+  proxy, so those clients share one bucket.
+
+### Remaining go-public gate items
+
+Not done, and required, in this order:
+
+1. CTO sign-off on this threat model, once it is final.
+2. Patrick's approval.
+3. A kill-switch drill on the Sprite: `touch KILL`, confirm `/healthz` is
+   503, remove the regular file, confirm `/healthz` is 200 again, without
+   restarting.
 
 ## Update the Sprite
 
@@ -377,8 +459,9 @@ Behaviour changes for anyone already running `app/server.py`:
   **120 requests per 60 seconds** (`DEFAULT_RATE_LIMIT`,
   `DEFAULT_RATE_WINDOW_S`), even when started directly. Before this there
   was no limit. `scripts/serve.sh` sets 60 per 60 seconds. Override with
-  `PREACHED_RATE_LIMIT` and `PREACHED_RATE_WINDOW_S`. `/healthz` counts
-  toward the same bucket. Over the limit is `429` with `Retry-After`.
+  `PREACHED_RATE_LIMIT` and `PREACHED_RATE_WINDOW_S`. Over the limit is
+  `429` with `Retry-After`. (`/healthz` shared this bucket in PR #18; see
+  the exposure-hardening notes below.)
 - **New `/healthz` fields.** `disabled` (false while serving),
   `index_version` (the index's `chunks_sha256`, 64 hex, or null) and
   `model_sha256` (sha256 of the loaded ONNX graph, or null). No paths. With
@@ -388,3 +471,21 @@ Behaviour changes for anyone already running `app/server.py`:
   `400` and closes the connection.
 - From a bundle: the start-up checks above (build stamp, manifest, no
   bytecode, own index, own `model/`, onnx only).
+
+## Release notes (W3 exposure hardening)
+
+- `/healthz` has its own per-client bucket (60 per 60 seconds) and global
+  backstop (600). It no longer counts toward the search limit.
+- Search has a global backstop: 1200 per 60 seconds in code, 600 in
+  `serve.sh`.
+- `PREACHED_TRUSTED_PROXIES` (default empty) turns on `X-Forwarded-For`
+  keying for listed peers only.
+- A full server closes an idle connection of the peer holding the most to
+  admit a new client. Keep-alive idle time drops to 2 seconds when 8 or
+  fewer slots are free. At most 4 requests in flight per client key.
+- New variables, all passed by `serve.sh`: `PREACHED_TRUSTED_PROXIES`,
+  `PREACHED_GLOBAL_RATE_LIMIT`, `PREACHED_HEALTH_RATE_LIMIT`,
+  `PREACHED_HEALTH_GLOBAL_RATE_LIMIT`, `PREACHED_MAX_CLIENT_REQUESTS`,
+  `PREACHED_SCARCE_IDLE_S`.
+- Search, side, sermon, page and static responses are unchanged byte for
+  byte (Date, `took_ms` and Content-Length masked).

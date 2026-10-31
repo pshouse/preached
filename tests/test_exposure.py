@@ -522,5 +522,33 @@ class HealthBucketTests(_Served):
         self.assertEqual(_get(port, "/healthz", source="127.0.0.2", headers={"X-Forwarded-For": "198.51.100.4"})[0], 429)
 
 
+class DocAndScriptTests(unittest.TestCase):
+    def test_serve_sh_passes_the_new_settings(self) -> None:
+        script = (ROOT / "scripts" / "serve.sh").read_text()
+        for name in (
+            "PREACHED_TRUSTED_PROXIES",
+            "PREACHED_GLOBAL_RATE_LIMIT",
+            "PREACHED_HEALTH_RATE_LIMIT",
+            "PREACHED_HEALTH_GLOBAL_RATE_LIMIT",
+            "PREACHED_MAX_CLIENT_REQUESTS",
+            "PREACHED_SCARCE_IDLE_S",
+        ):
+            self.assertIn(f"pass {name}\n", script)
+        self.assertIn("PREACHED_GLOBAL_RATE_LIMIT=${PREACHED_GLOBAL_RATE_LIMIT:-600}", script)
+        # Never defaulted to a value: empty means XFF is ignored.
+        self.assertNotIn("PREACHED_TRUSTED_PROXIES=", script)
+
+    def test_threat_model_draft_lists_the_gate(self) -> None:
+        text = (ROOT / "docs" / "DEPLOY.md").read_text()
+        start = text.index("## Threat model (DRAFT, not final)")
+        section = text[start : text.index("\n## ", start + 1)]
+        for heading in ("### Assets", "### Attackers", "### Entry points", "### Remaining go-public gate items"):
+            self.assertIn(heading, section)
+        gate = section[section.index("### Remaining go-public gate items") :]
+        self.assertLess(gate.index("CTO sign-off"), gate.index("Patrick's approval"))
+        self.assertLess(gate.index("Patrick's approval"), gate.index("kill-switch drill"))
+        self.assertNotIn("0.0.0.0", section)
+
+
 if __name__ == "__main__":
     unittest.main()
