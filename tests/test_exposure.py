@@ -108,6 +108,43 @@ def _wait(predicate, timeout: float = 2.0) -> bool:
     return predicate()
 
 
+def _read_final(sock: socket.socket) -> int | None:
+    """The final status, after any interim 1xx. None means EOF or a reset first.
+
+    A 100 Continue and the final response can arrive in one read, so this
+    keeps its own buffer rather than calling ``_read_response`` twice.
+    """
+    data = b""
+    while True:
+        head, sep, rest = data.partition(b"\r\n\r\n")
+        if sep:
+            status = int(head.split(b"\r\n", 1)[0].split()[1])
+            if status >= 200:
+                return status
+            data = rest
+            continue
+        try:
+            chunk = sock.recv(4096)
+        except (ConnectionResetError, TimeoutError):
+            chunk = b""
+        if not chunk:
+            return None
+        data += chunk
+
+
+def _hold_after_finish(test: unittest.TestCase, server, seconds: float) -> None:
+    """Hold each handler after ``finish`` and before its socket is closed."""
+    handler = server.RequestHandlerClass
+    real_finish = handler.finish
+
+    def slow_finish(self) -> None:
+        real_finish(self)
+        time.sleep(seconds)
+
+    handler.finish = slow_finish
+    test.addCleanup(setattr, handler, "finish", real_finish)
+
+
 class _Served(unittest.TestCase):
     def _serve(
         self,
@@ -401,8 +438,8 @@ class SlotFairnessTests(_Served):
             self.assertTrue(entered.acquire(timeout=3))
         # Nothing can be closed: a search is refused, /healthz gets the reserve.
         self.assertEqual(_get(port, "/api/search?q=grace", source="127.0.0.4")[0], 503)
-        # The reserve was freed before that 503 was sent, not after the close.
-        self.assertEqual(server._reserved_total, 0)
+        # The reserve is freed once that 503 is flushed, before the close.
+        self.assertTrue(_wait(lambda: server._reserved_total == 0))
         status, headers, _ = _get(port, "/healthz", source="127.0.0.4")
         self.assertEqual(status, 200)
         self.assertEqual(headers["connection"], "close")
@@ -412,26 +449,18 @@ class SlotFairnessTests(_Served):
 
     def test_slot_is_free_once_a_closing_response_is_read(self) -> None:
         port, _app, server = self._serve(max_connections=4, max_per_client=1)
-        # Hold each handler after its response is written and before the
+        # Hold each handler after its response is flushed and before the
         # socket is closed: the window a fast client reconnects in.
-        handler = server.RequestHandlerClass
-        real_finish = handler.finish
-
-        def slow_finish(self) -> None:
-            time.sleep(0.3)
-            real_finish(self)
-
-        handler.finish = slow_finish
-        self.addCleanup(setattr, handler, "finish", real_finish)
+        _hold_after_finish(self, server, 1.0)
         for path in ("/healthz", "/api/search?q=grace", "/nope"):
             with self.subTest(path=path):
                 sock = _connect(port, "127.0.0.2")
                 self.addCleanup(sock.close)
                 _send(sock, path, close=True)
                 self.assertIsNotNone(_read_response(sock)[0])
-                # No wait: the slot went before the first byte of the response.
-                self.assertEqual(server._conn_total, 0)
-                self.assertEqual(server._conn_by_ip, {})
+                # The slot goes once the body is flushed, before the close.
+                self.assertTrue(_wait(lambda: server._conn_total == 0 and server._conn_by_ip == {}, 0.5))
+                self.assertFalse(_is_closed(sock, 0.05))
                 # The same peer, at its cap of 1, gets straight back in.
                 self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 200)
 
@@ -916,6 +945,118 @@ class RefundAndHealthSlotTests(_Served):
         for sock in socks:
             self.assertEqual(_read_response(sock)[0], 200)
         self.assertTrue(_wait(lambda: server._slots_by_key == {} and server._health_slots_by_key == {}))
+
+
+# Round 3 of the PR #29 review: when a closing connection gives up its slot.
+
+
+class SlotReleaseTests(_Served):
+    """M1 r3: a slot is held until the last response is flushed, freed before the close."""
+
+    def test_expect_continue_with_close_keeps_its_slot(self) -> None:
+        # The CTO's probe scaled down: global cap 4, 2 per peer, held searches,
+        # every request with Expect: 100-continue and Connection: close.
+        port, app, server = self._serve(max_connections=4, max_per_client=2, max_requests=8, header_deadline_s=10)
+        release, entered = self._block_search(app)
+        socks = []
+        for n in range(2, 7):
+            for _ in range(2):
+                sock = _connect(port, f"127.0.0.{n}")
+                self.addCleanup(sock.close)
+                _send(sock, "/api/search?q=hold", {"Expect": "100-continue"}, close=True)
+                socks.append(sock)
+        running = 0
+        while entered.acquire(timeout=0.5):
+            running += 1
+        # The interim 100 Continue does not free the slot: four searches run.
+        self.assertEqual(running, 4)
+        self.assertEqual(server._conn_total, 4)
+        self.assertEqual(sum(server._conn_by_ip.values()), 4)
+        release.set()
+        statuses = [_read_final(sock) for sock in socks]
+        self.assertEqual(statuses.count(200), 4)
+        # The rest were refused: a 503, or closed before their headers were
+        # in (evicted for a newcomer, or reset after an accept-time 503).
+        self.assertEqual(set(statuses) - {200}, set(statuses) & {503, None})
+        self.assertTrue(_wait(lambda: server._conn_total == 0 and server._conn_by_ip == {}))
+
+    def test_a_slow_reader_holds_its_slot_until_the_body_is_flushed(self) -> None:
+        port, _app, server = self._serve(max_connections=4, max_per_client=1)
+        handler = server.RequestHandlerClass
+        real_send = handler._send
+        real_setup = handler.setup
+        finished = threading.Event()
+        real_finish = handler.finish
+
+        def big_send(self, status, body, *args, **kwargs):
+            if self.path == "/healthz":
+                body = b" " * 4_000_000
+            return real_send(self, status, body, *args, **kwargs)
+
+        def small_buffer_setup(self) -> None:
+            self.request.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
+            real_setup(self)
+
+        def noted_finish(self) -> None:
+            real_finish(self)
+            finished.set()
+
+        handler._send = big_send
+        handler.setup = small_buffer_setup
+        handler.finish = noted_finish
+        self.addCleanup(setattr, handler, "_send", real_send)
+        self.addCleanup(setattr, handler, "setup", real_setup)
+        self.addCleanup(setattr, handler, "finish", real_finish)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(sock.close)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        sock.bind(("127.0.0.2", 0))
+        sock.settimeout(5)
+        sock.connect(("127.0.0.1", port))
+        _send(sock, "/healthz", close=True)
+        # Headers are out and the body is stuck behind a client that reads
+        # nothing: the connection still counts, so the peer is at its cap.
+        self.assertFalse(finished.wait(0.5))
+        self.assertEqual(server._conn_total, 1)
+        self.assertEqual(server._conn_by_ip, {"127.0.0.2": 1})
+        self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 503)
+        status, _, body = _read_response(sock)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body), 4_000_000)
+        self.assertTrue(finished.wait(3))
+        self.assertTrue(_wait(lambda: server._conn_total == 0 and server._conn_by_ip == {}))
+        self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 200)
+
+    def _assert_freed_before_close(self, server, sock, port: int) -> None:
+        # The handler is held after finish: the slot must already be free
+        # while the socket is still open.
+        self.assertTrue(_wait(lambda: server._conn_total == 0 and server._conn_by_ip == {}, 0.5))
+        self.assertFalse(_is_closed(sock, 0.05))
+        sock.settimeout(3)
+        # The same peer, at its cap of 1, gets straight back in.
+        self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 200)
+
+    def test_header_deadline_close_frees_the_slot_before_the_close(self) -> None:
+        port, _app, server = self._serve(max_connections=4, max_per_client=1, header_deadline_s=0.3)
+        _hold_after_finish(self, server, 1.5)
+        sock = _connect(port, "127.0.0.2")
+        self.addCleanup(sock.close)
+        sock.sendall(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n")
+        self.assertTrue(_wait(lambda: server._conn_total == 1))
+        time.sleep(0.4)
+        self._assert_freed_before_close(server, sock, port)
+
+    def test_idle_close_frees_the_slot_before_the_close(self) -> None:
+        port, _app, server = self._serve(max_connections=4, max_per_client=1, header_deadline_s=0.3)
+        _hold_after_finish(self, server, 1.5)
+        sock = _connect(port, "127.0.0.2")
+        self.addCleanup(sock.close)
+        _send(sock, "/healthz")
+        status, headers, _ = _read_response(sock)
+        self.assertEqual(status, 200)
+        self.assertNotEqual(headers.get("connection"), "close")
+        time.sleep(0.4)
+        self._assert_freed_before_close(server, sock, port)
 
 
 class DocAndScriptTests(unittest.TestCase):
