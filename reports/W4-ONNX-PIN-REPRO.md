@@ -96,7 +96,7 @@ This evidence was not re-run in this task (the pin did not move); it is stated a
 
 ## 5. Tests (hard requirement 3)
 
-`tests/test_onnx_pin_repro.py` (28 tests). No test downloads, exports for real, or writes under `/cache`, except `ExportIsByteIdenticalTests`, which exports for real but only into a TMPDIR temp dir and only reads the snapshot. Tests that run the script as `__main__` do it in a subprocess with a scratch environment: `PREACHED_CACHE`, `PREACHED_ONNX_DIR` and `HF_HOME` under a temp dir, `HF_HUB_OFFLINE=1`, no `PYTHONHASHSEED`, `os.execv` stubbed, and fake `torch` / `huggingface_hub` modules that stop `main()` at its first import. Each such test also asserts the temp dir is still empty afterwards.
+`tests/test_onnx_pin_repro.py` (31 tests). No test downloads. Only `ExportIsByteIdenticalTests` exports for real, into a TMPDIR temp dir, and it only reads the snapshot. Every test points its outputs at temp dirs. Only `ExportMainTests` also checks each destructive call: it resolves the path and refuses anything outside the temp root and its temp cache (r3, §12). The other tests are kept off `/cache` by their temp environment alone, not by a check. In r2 the guard was lexical, and a `..` path or a symlinked `models` dir got past it (§12). Tests that run the script as `__main__` do it in a subprocess with a scratch environment: `PREACHED_CACHE`, `PREACHED_ONNX_DIR` and `HF_HOME` under a temp dir, `HF_HUB_OFFLINE=1`, no `PYTHONHASHSEED`, `os.execv` stubbed, and fake `torch` / `huggingface_hub` modules that stop `main()` at its first import. Each such test also asserts the temp dir is still empty afterwards.
 
 | Class | What it proves |
 | --- | --- |
@@ -104,7 +104,7 @@ This evidence was not re-run in this task (the pin did not move); it is stated a
 | `HealthzSearchModeTests` (3) | `/healthz` `search_mode` / `search_mode_reason` for a missing graph, another load failure, `--bm25-only`, and hybrid. |
 | `Avx2GuardTests` (4) | Importing the script sets `ATEN_CPU_CAPABILITY=avx2` (over `default`) before torch is imported. Non-x86-64 hosts, cpuinfo without `avx2`, and a missing cpuinfo are refused. Run as `__main__` on a faked `arm64` in the sandbox above, the script exits non-zero with the AVX2 message, and neither the execv stub nor `main()` is reached. |
 | `MainOrderTests` (2) | `runpy` of the script as `__main__` (sandboxed; `platform.machine` and `/proc/cpuinfo` faked to an AVX2 x86-64 host; `sys.argv` carries `--extra-arg` and `x y`). With the seed unset, `0` or `random`, the output is exactly `AVX2` followed by one `EXEC` whose argv is `[script, "--extra-arg", "x y"]`. Under seed `1` it is `AVX2` then `MAIN`. |
-| `ExportMainTests` (2) | `main()` in-process with torch, the Hub, the model load, the export, the ORT check and the quantizer stubbed, `PREACHED_CACHE` set to a temp dir and `PREACHED_ONNX_DIR` unset. A graph that is not the pin exits with "is not the pin" and leaves no manifest. With the pin patched to the stub graph's digest, all five files land in `$PREACHED_CACHE/models/granite-english-r2-onnx/<rev>/`. A stale file there is removed, a neighbour directory is kept, every recorded `rmtree` / `copyfile` / `mkdir` / `write_text` / `write_bytes` is inside that directory, and the server's default `verify_manifest()` reads the same directory. The test refuses to call `main()` at all unless `artifact_dir()` is inside the temp cache. |
+| `ExportMainTests` (5) | `main()` in-process with torch, the Hub, the model load, the export, the ORT check and the quantizer stubbed, `PREACHED_CACHE` set to a temp dir and `PREACHED_ONNX_DIR` unset. A graph that is not the pin exits with "is not the pin" and leaves no manifest. With the pin patched to the stub graph's digest, all five files land in `$PREACHED_CACHE/models/granite-english-r2-onnx/<rev>/`. A stale file there is removed, a neighbour directory is kept, every recorded `rmtree` / `copyfile` / `mkdir` / `write_text` / `write_bytes` is inside that directory, and the server's default `verify_manifest()` reads the same directory. Before `main()` is called, `artifact_dir()` is resolved and must be under `tempfile.gettempdir()` and the resolved temp cache. Every recorded `rmtree`, `copyfile` (destination), `mkdir`, `write_text` and `write_bytes` gets the same check before it runs. Three tests show the guard holds: a `..` export dir, a `models` dir that is a symlink out of the temp cache, and an export that writes outside it from inside `main()`. In each, a canary beside the temp cache survives and nothing is written there. |
 | `OnnxRootTests` (2) | `onnx_root()` precedence: `PREACHED_ONNX_DIR`, else `$PREACHED_CACHE/models/granite-english-r2-onnx`, else `/cache/models/granite-english-r2-onnx`. With a custom `PREACHED_CACHE`, `load_search` names the manifest path under it and writes nothing but the test's own index there. |
 | `HfCacheDefaultTests` (4) | HF cache follows `PREACHED_CACHE`, falls back to `/cache`, an explicit `HF_HOME` wins, and an explicit hub cache under either name (`HF_HUB_CACHE` or `HUGGINGFACE_HUB_CACHE`) wins, with both names set equal. |
 | `MutantGraphTests` (1) | One flipped mantissa bit, with a manifest rewritten to agree, is refused by `verify_manifest` and `OnnxEmbedder.load`. The 597 MB copy now goes to TMPDIR, not beside the cache. Skips when `artifact_dir()` has no graph. |
@@ -116,31 +116,31 @@ This evidence was not re-run in this task (the pin did not move); it is stated a
 
 ## 6. Existing exports and the demo box
 
-The pin did not move, so **no re-export is needed anywhere**. `/cache/models/granite-english-r2-onnx/47ea…/model.fp32.onnx` hashes to `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` and `verify_manifest(variant="fp32")` passes with pins enforced (checked 2026-10-31 16:30, after the restore in §9). Migration note for the PR: no action after merge. A host that sets `PREACHED_CACHE` to something other than `/cache` and relied on the old hardcoded `/cache/models/...` ONNX path must now set `PREACHED_ONNX_DIR=/cache/models/granite-english-r2-onnx` or move the export under `$PREACHED_CACHE/models/`. With `PREACHED_CACHE` unset or `/cache`, nothing changes. `scripts/build-bundle.sh` and `tests/test_shutdown.py` still default to `/cache/models/...` when `PREACHED_ONNX_DIR` is unset. They are out of this PR's scope and are listed under open issues.
+The pin did not move, so **no re-export is needed anywhere**. `/cache/models/granite-english-r2-onnx/47ea…/model.fp32.onnx` hashes to `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` and `verify_manifest(variant="fp32")` passes with pins enforced (checked 2026-10-31 16:30 ET, after the restore in §9). Migration note for the PR: no action after merge. A host that sets `PREACHED_CACHE` to something other than `/cache` and relied on the old hardcoded `/cache/models/...` ONNX path must now set `PREACHED_ONNX_DIR=/cache/models/granite-english-r2-onnx` or move the export under `$PREACHED_CACHE/models/`. With `PREACHED_CACHE` unset or `/cache`, nothing changes. `scripts/build-bundle.sh` and `tests/test_shutdown.py` still default to `/cache/models/...` when `PREACHED_ONNX_DIR` is unset. They are out of this PR's scope and are listed under open issues.
 
 ## 7. DEPLOY.md cites, merge, full suite, scope
 
 ### Standing rule 4: `app/server.py` changed in this PR, so its cites are re-pinned
 
-This PR changes `app/server.py` (+23 lines vs main: the `ArtifactMissing` import, the `MISSING_GRAPH_*` and `SEARCH_MODE_REASONS` constants, the `except ArtifactMissing` branch, and the two `/healthz` fields). Every `app/server.py` cite in `docs/DEPLOY.md` and `tests/test_deploy_alerts.py` `CITED` was re-pinned for that change in 96. FIX1 does not edit `app/server.py` further, so those pins stand. FIX1 adds new cites for SF1 (§10), each pinned in `CITED` and checked by reading `app/server.py` at this head (`sed -n`):
+This PR changes `app/server.py` (+23 lines vs main: the `ArtifactMissing` import, the `MISSING_GRAPH_*` and `SEARCH_MODE_REASONS` constants, the `except ArtifactMissing` branch, and the two `/healthz` fields). Every `app/server.py` cite in `docs/DEPLOY.md` and `tests/test_deploy_alerts.py` `CITED` was re-pinned for that change in 96, and again in `ad50b77` after merging #72 (keep-alive, +55 lines in `app/server.py`) moved them. The SF1 cites (§10) on the merged `app/server.py`, each read off the file with `sed -n` (r3 re-read all 68 `CITED` pins; table in §12):
 
 | Cite | Line at head |
 | --- | --- |
-| `:286` | `UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"` |
-| `:289` | `MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"` |
-| `:295-301` | `SEARCH_MODE_REASONS = {` … `}` |
-| `:857` | `logging.error(UNAVAILABLE_LOG)` |
-| `:858` | `logging.error(MISSING_GRAPH_LOG, exc)` |
-| `:861` | `logging.exception(UNAVAILABLE_LOG)` |
-| `:1337-1338` | `"search_mode": "hybrid" if self.encode is not None else "bm25",` / `"search_mode_reason": reason,` |
+| `:297` | `UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"` |
+| `:300` | `MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"` |
+| `:306-312` | `SEARCH_MODE_REASONS = {` … `}` |
+| `:868` | `logging.error(UNAVAILABLE_LOG)` |
+| `:869` | `logging.error(MISSING_GRAPH_LOG, exc)` |
+| `:872` | `logging.exception(UNAVAILABLE_LOG)` |
+| `:1348-1349` | `"search_mode": "hybrid" if self.encode is not None else "bm25",` / `"search_mode_reason": reason,` |
 
 The full suite has zero `test_every_cited_file_line_holds_its_string` failures. `tests/test_deploy_regex.py` (PR #75) is not on main (`abdada3`), so there was nothing of it to re-pin.
 
 ### Merge, lock, suite
 
-`git fetch && git merge origin/main` (merge commit, no rebase): main was `abdada3` (#68), 4 commits ahead of the branch. It merged cleanly, adding only `reports/W4-FRESH-CLONE-QA.md`. The branch is now **0 behind, 23 ahead** of `origin/main` `abdada3`. `uv lock --check`: `Resolved 79 packages`, OK. No new dependencies.
+`git fetch && git merge origin/main` (merge commit, no rebase): main was `abdada3` (#68), 4 commits ahead of the branch. It merged cleanly, adding only `reports/W4-FRESH-CLONE-QA.md`. After that merge the branch was 0 behind, 23 ahead of `origin/main` `abdada3`. For the current counts, see §12. `uv lock --check`: `Resolved 79 packages`, OK. No new dependencies.
 
-Full suite, exact command, on `9af1484` (code identical to the head; the later commits touch only this report and the ADR), with scratch caches:
+Full suite, exact command, on `9af1484`, with scratch caches. This run predates later code changes: `031f7cb` changed `EXPORT_COMMAND` in `src/preached/artifacts.py`, the `scripts/export_onnx.py` docstring and the DEPLOY.md D2 detail row, `ad50b77` merged #72, and r3 changed the tests and the export script's CUDA message. The r3 run on the current head is in §12.
 
 `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/tmp/onnxfix-suite/pc HF_HOME=/tmp/onnxfix-suite/hf uv run python -m unittest discover -s tests`
 
@@ -148,7 +148,7 @@ Full suite, exact command, on `9af1484` (code identical to the head; the later c
 
 Those two `test_onnx_pin_repro` tests were run separately against the real cache, with the network off and `/cache` mounted read-only (`unshare -rmn`, then `mount -o remount,bind,ro /cache`): `PREACHED_CACHE=/cache .venv/bin/python -m unittest discover -s tests -p test_onnx_pin_repro.py -k ExportIsByteIdentical -k MutantGraph`. Result: **`Ran 2 tests in 41.327s`, `OK`.** The three real exports wrote the pin into TMPDIR. Because `/cache` was read-only, they cannot have written there.
 
-Not attributable to these tests, stated plainly: during the read-only run, `/cache/models`' mtime changed (16:31:23). My mount namespace could not write there (a `mkdtemp` probe in the same setup fails with EROFS), so another process on this host did it. During the full-suite run, `/cache/xdg/...` (deno and onnxruntime caches; the sandbox sets `XDG_CACHE_HOME=/cache/xdg`), `/cache/index/cc-speech.sqlite-shm` and the `/cache` directory mtime changed. I did not trace those. No test in this PR names them.
+Not attributable to these tests, stated plainly: during the read-only run, `/cache/models`' mtime changed (2026-10-31 16:31:23 ET). My mount namespace could not write there (a `mkdtemp` probe in the same setup fails with EROFS), so another process on this host did it. During the full-suite run, `/cache/xdg/...` (deno and onnxruntime caches; the sandbox sets `XDG_CACHE_HOME=/cache/xdg`), `/cache/index/cc-speech.sqlite-shm` and the `/cache` directory mtime changed. I did not trace those. No test in this PR names them.
 
 ## 8. Diff scope
 
@@ -190,11 +190,11 @@ None.
 | MF1: `onnx_root()` ignores `PREACHED_CACHE` | `ExportMainTests`, `OnnxRootTests` | FAIL ×4. ExportMain: `export dir /cache/models/... is not under PREACHED_CACHE ...; main() not run`. OnnxRoot: wrong path. |
 | nit: `HF_HUB_CACHE` ignored | `HfCacheDefaultTests` | FAIL (`HF_HUB_CACHE` subtest) |
 
-**Incident during the first MF1 mutant run. I deleted the shared `/cache` ONNX export, then restored it.** The first pass ran these mutants without the read-only mount, and `ExportMainTests` had no guard. Under the MF1 mutant, `artifact_dir()` resolved to the real `/cache/models/granite-english-r2-onnx/47ea…/`. The stubbed `main()` then `rmtree`d that directory and wrote stub files into it. Afterwards it held only a 10-byte `model.fp32.onnx` ("stub graph"). It happened at 16:29, and I found it at once from the run's `/cache` check ("newer than marker: 3").
+**Incident during the first MF1 mutant run. I deleted the shared `/cache` ONNX export, then restored it.** The first pass ran these mutants without the read-only mount, and `ExportMainTests` had no guard. Under the MF1 mutant, `artifact_dir()` resolved to the real `/cache/models/granite-english-r2-onnx/47ea…/`. The stubbed `main()` then `rmtree`d that directory and wrote stub files into it. Afterwards it held only a 10-byte `model.fp32.onnx` ("stub graph"). It happened at 2026-10-31 16:29 ET, and I found it at once from the run's `/cache` check ("newer than marker: 3").
 
-- **Restore (16:30):** I removed the stub and copied (`cp`, real copies, not links) the five files from `/cache/w4-onnx-seed1/avx2-1/47ea…/`. That directory is one of the 21 §1b script exports, all of which produced identical manifests. Resulting sha256 values: fp32 `3861025a…` (the pin), tokenizer `6c8aaa9a…` (pinned), int8 `220d6de9…`, pooling `bf147696…`, manifest `96f276e6…`. `PREACHED_CACHE=/cache` `verify_manifest(variant="fp32")` with pins enforced: OK. The later read-only run (§7) loaded that graph and passed.
+- **Restore (2026-10-31 16:30 ET):** I removed the stub and copied (`cp`, real copies, not links) the five files from `/cache/w4-onnx-seed1/avx2-1/47ea…/`. That directory is one of the 21 §1b script exports, all of which produced identical manifests. Resulting sha256 values: fp32 `3861025a…` (the pin), tokenizer `6c8aaa9a…` (pinned), int8 `220d6de9…`, pooling `bf147696…`, manifest `96f276e6…`. `PREACHED_CACHE=/cache` `verify_manifest(variant="fp32")` with pins enforced: OK. The later read-only run (§7) loaded that graph and passed.
 - **What is not known:** the pre-incident int8, pooling and manifest bytes were never recorded (see Open issues). If the directory held any other files besides the export's five, they are gone.
-- **Why it cannot recur:** `ExportMainTests._main` now refuses to call `main()` unless `artifact_dir()` is inside the test's temp cache. That is how the MF1 mutant fails above, without touching anything. All mutant runs after the incident also mounted `/cache` read-only.
+- **Guard since the incident:** in FIX1, `ExportMainTests._main` refused to call `main()` unless `artifact_dir()` was lexically inside the test's temp cache. That check stopped the MF1 mutant above. It did not stop a `..` path or a symlinked `models` dir (CTO mutants F2 and F3). r3 makes the check resolved, adds it to every destructive call in the test, and adds tests for both cases (§12). All mutant runs after the incident also mounted `/cache` read-only. A guard in one test class can still be bypassed, so this is a mitigation, not a guarantee.
 
 **Infra Ops verification (2026-10-31, ET; 99-W7-ONNX-INCIDENT).**
 
@@ -212,7 +212,7 @@ None.
   The export produces exactly these 5 files; nothing is missing, so the "if the directory held any other files" worry above is closed. Perms are 0755 and 0644, owner uid 1000.
 - **Live demo.** Its process started at 13:50 and loads the graph once at startup, so it never loaded the damaged folder. `/healthz` at 4:49 PM: 200, `dense` true, `fallback` false, `model_sha256` `3861025a`. No restart was needed.
 - **Church index.** The main db file is unchanged (ctime from Oct 30, no `-wal` growth). Only its `-shm` changed, at 4:50:31 PM ET, from a WAL open by a concurrent test suite. No leftover temp copies remain under `/cache/models`. The 597 MB in-cache test copy is being fixed by a separate PR (`fix/w5-cache-readonly-tests`).
-- **Guard, as it is in the tree.** `ExportMainTests._main` (`tests/test_onnx_pin_repro.py`) resolves `artifact_dir()` and calls `self.fail(...)` unless `folder.is_relative_to(cache)`, where `cache` is a `tempfile.TemporaryDirectory()` the test created; `main()` (the only caller of `rmtree`) runs only after that check, so a mutant that sends the export to the real `/cache` fails without touching it. All mutant runs after the incident also mounted `/cache` read-only. **Gap against standing rule 5:** the check is against the test's own temp cache, not a call to `Path.resolve()` plus an assertion under `tempfile.gettempdir()`, and it covers `main()` in `ExportMainTests` only. It is not a general guard on every destructive call. This task is report-only, so the stricter assertion is not added here; it is a candidate follow-up.
+- **Guard, as it is in the tree.** `ExportMainTests._main` (`tests/test_onnx_pin_repro.py`) resolves `artifact_dir()` and calls `self.fail(...)` unless `folder.is_relative_to(cache)`, where `cache` is a `tempfile.TemporaryDirectory()` the test created; `main()` (the only caller of `rmtree`) runs only after that check, so a mutant that sends the export to the real `/cache` fails without touching it. All mutant runs after the incident also mounted `/cache` read-only. **Gap against standing rule 5:** the check is against the test's own temp cache, not a call to `Path.resolve()` plus an assertion under `tempfile.gettempdir()`, and it covers `main()` in `ExportMainTests` only. It is not a general guard on every destructive call. This task is report-only, so the stricter assertion is not added here; it is a candidate follow-up. *(r3: added; see §12.)*
 
 ## 10. FIX1: DEPLOY.md D2 (SF1)
 
@@ -230,11 +230,197 @@ None.
 - Nit, `HF_HUB_CACHE`: an ambient `HF_HUB_CACHE` (which huggingface_hub 2.4.0 prefers) or `HUGGINGFACE_HUB_CACHE` now wins, and both are set to the one in use.
 - Nit, equivalence figures: the §1a/§4 scripts were never committed and no longer exist. The JSON outputs exist only under `/cache` on this host. I am stating that plainly rather than committing a reconstructed script.
 
-## PR BODY
+## PR BODY and diff stat
 
-(Replacement for PR #71's body. The coordinator pastes it.)
+The current PR body and diff stat are in §12 (r3).
 
-```markdown
+## R2 (99-W4-ONNX-R2)
+
+- Parity hashes recorded in §3 and the ADR (the `/healthz` keys change three reference hashes).
+- `EXPORT_COMMAND` (`src/preached/artifacts.py`), the `scripts/export_onnx.py` docstring, the DEPLOY.md D2 detail row and the §3 log line no longer recommend `CUDA_VISIBLE_DEVICES=""`; the script sets it before torch and the bytes are identical either way. The line in §1 and W3/W4-QA reports are records of commands actually run and stay.
+- Verified, no edits: DEPLOY.md cites and `CITED` pins hold at HEAD (the edits above change text within cited lines, not line numbers; zero `test_every_cited_file_line_holds_its_string` failures). *(r3 correction: "No test writes under `/cache`" overclaimed. The ExportMainTests guard was lexical; see §12.)*
+- Suite: `Ran 1033 tests`, `OK`, merge of `origin/main` was a no-op.
+
+## 12. r3 (99-W7Z-ONNX-R3): CTO r2 on 27ed9cb, must-fixes MF-A, MF-B, MF-C and S1-S3
+
+Head: code at `5f6a8fe` (merge of `origin/main` `ebffabb`). The report commit on top of it changes only this file. Branch vs `origin/main` `ebffabb`: **0 behind, 28 ahead** (the 28 include the report commit). Commits, add-only (merges, no rebase or force-push):
+
+- `7d94518` resolved-path guard in `ExportMainTests`, three new tests, CUDA leftovers (S3).
+- `5f6a8fe` merge of `origin/main` (#69 port-busy, `ebffabb`), cites re-pinned +3.
+- this report commit.
+
+Worktree: `/work/preached/.worktrees/onnx-pin` (branch `fix/w4-onnx-pin-repro`). I fast-forwarded it to the pushed head `ad50b77` (99-W7-ONNX-INCIDENT) first. Status was clean.
+
+### MF-A: merge with main, re-pin
+
+`ad50b77` (99-W7) had already merged `f75bbcb` (#72) and re-pinned the server cites. While this task ran, main moved to `ebffabb` (#69, deno hard-fail and port-busy). `git merge origin/main` conflicted again in `docs/DEPLOY.md` (10 hunks) and `tests/test_deploy_alerts.py` (`CITED`). With digits masked, #69's DEPLOY and `CITED` changes are line numbers only, plus the tree sentence. So I took this branch's side and moved every `app/server.py` cite at or after line 2731 by +3. #69 replaced `self.refusals.flush()` in `PreachedServer.server_close` (this branch's 2731) with four lines. That is 12 `CITED` pins, matching #69's own "+3 on 12" note, and 18 DEPLOY.md lines. The PR's own cites (`:297 :300 :302 :306-312 :863 :868 :869 :872 :1348-1349`) are above 2731 and did not move. I read each pin off the merged file (script that prints the line, plus `sed -n 3277,3296p` for the drain range). The full table is below.
+
+### MF-B: the guard resolves, and it covers every destructive call in the test
+
+`tests/test_onnx_pin_repro.py`:
+
+- `_inside_scratch(path, cache)` resolves the path. It raises unless the result is under `Path(tempfile.gettempdir()).resolve()` and under `cache.resolve()`, and the scratch cache itself is under the temp root.
+- `ExportMainTests._main` calls it on `artifact_dir()` before `main()`. It replaces the lexical `folder.is_relative_to(cache)`.
+- Each recorded `shutil.rmtree`, `shutil.copyfile` (destination), `Path.mkdir`, `Path.write_text` and `Path.write_bytes` calls it **before** the real call runs.
+- New tests: `test_a_dotdot_export_dir_is_refused_before_main` (a `PREACHED_ONNX_DIR` of `$cache/../real/models/...`), `test_a_symlinked_models_dir_is_refused_before_main` (`$cache/models` is a symlink to a sibling stand-in), and `test_a_write_that_escapes_inside_main_is_refused` (the pre-check passes; the stubbed export writes outside). In each, a canary in the stand-in survives and nothing new appears there. 28 → 31 tests in the file.
+
+Mutants, each in a throwaway `git archive` copy under `/tmp/r3mut*`, with `unshare -rmn`, `/cache` bind-mounted read-only, and a fake `/cache/models` holding only `granite-english-r2-onnx/47ea…/canary` bind-mounted over the real one. Scratch `PREACHED_CACHE` and `HF_HOME`, `PREACHED_ONNX_DIR` unset, `ExportMainTests`:
+
+- **F2** ('..' traversal): `onnx_root()`'s default branch returns `$PREACHED_CACHE/../../../../../../../../../../../../cache/models/...`.
+- **F3** (symlinked `$PREACHED_CACHE/models`): the fixture makes `$cache/models` a symlink to `/cache/models` before the guard.
+
+| Mutant | Guard | Result | Fake `/cache/models` afterwards |
+| --- | --- | --- | --- |
+| F2 | r2 (lexical, `ad50b77`) | 1 FAIL, 1 ERROR, but only after `main()` ran | **canary deleted**; `manifest.json`, `model.fp32.onnx`, `model.int8.onnx`, `pooling.json`, `tokenizer.json` written |
+| F2 | r3 (`7d94518`, and again on `5f6a8fe`) | FAIL ×2: `… resolves to /cache/models/granite-english-r2-onnx/47ea…, outside the scratch cache /tmp/tmp…/pc under /tmp` | canary only |
+| F3 | r2 | **OK** (escape not detected) | **canary deleted**; `model.fp32.onnx` written |
+| F3 | r3 (`7d94518`, and again on `5f6a8fe`) | FAIL: `/tmp/tmp…/pc/models/granite-english-r2-onnx/47ea… resolves to /cache/models/…, outside the scratch cache` | canary only |
+
+This reproduces the CTO's finding on r2 and shows r3 catches both mutants before anything is touched.
+
+What the guard does not do: it lives in `ExportMainTests` only. Other tests in the file keep off `/cache` through their temp environment (and the `__main__` tests through fake `torch`/hub modules), not through a check. Code outside this file is not covered.
+
+### MF-C: tree-relative wording
+
+DEPLOY.md no longer names `b224281` (`grep -rn b224281 docs tests app scripts src`: no hits). The alert-table sentence reads "The line numbers below are this tree: main with the keep-alive hand-over (#72) and the port-busy hard fail (#69), plus the ONNX pin fix, in `app/server.py`." The "Other lines this runbook names" table says "all read off this tree". There is no sha in either.
+
+### S1-S3
+
+- S1: §7 now gives the old counts as "at that merge" and points here. The `9af1484` suite run is no longer called code-identical to the head: `031f7cb` changed `EXPORT_COMMAND`, the export-script docstring and the DEPLOY.md D2 detail row. The R2 note's "No test writes under `/cache`" is marked as an overclaim.
+- S2: §9's 16:29 and 16:30 (and §6's 16:30 and §7's 16:31:23) now carry 2026-10-31 ET. "Why it cannot recur" is replaced by "Guard since the incident", which states the r2 gap and the r3 fix and makes no non-recurrence claim. Infra Ops' byte-identical result (99-W7) is kept as written, and its "Gap against standing rule 5" bullet is marked closed here.
+- S3: `scripts/export_onnx.py:307` now reads "CUDA is visible even though the exporter hides it; export runs on CPU only". `reports/W3-CPU.md:39-40` loses the `CUDA_VISIBLE_DEVICES=""` prefixes. The test-module docstring and §5 no longer say "no test … writes under /cache".
+
+### Suite, lock
+
+On `5f6a8fe`, all output caches temp, `/cache` read-only, tests run as uid 1000. A nested user namespace is needed because `unshare -r` alone runs the tests as root, and the server refuses to serve as root.
+
+```
+S=/tmp/r3suite/g; PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=$S/pc HF_HOME=$S/hf PREACHED_ONNX_DIR=$S/onnx \
+  XDG_CACHE_HOME=$S/xdg TORCH_HOME=$S/torch UV_CACHE_DIR=$S/uv \
+  unshare -rm sh -c 'mount --bind /cache /cache && mount -o remount,bind,ro /cache && exec unshare --user --map-user=1000 --map-group=1000 "$@"' \
+  sh .venv/bin/python -m unittest discover -s tests -v
+```
+
+**`Ran 1043 tests in 230.138s`, `OK (skipped=9)`**: 0 failures, 0 errors. `test_every_cited_file_line_holds_its_string` and `test_the_runbook_cites_exactly_the_pinned_lines` pass. The 9 skips all need real artifacts that a scratch cache lacks:
+
+- 6 in `test_embed_backend` ("granite onnx artifacts are not in /cache")
+- 1 in `test_eval_leak` (chunked corpus)
+- `ExportIsByteIdenticalTests` and `MutantGraphTests` in this file
+
+The scratch `pc`, `hf` and `onnx` dirs were empty afterwards. Those two tests in this file then ran against the real cache, read-only, network off (`PREACHED_CACHE=/cache`, `HF_HOME` and `PREACHED_ONNX_DIR` unset, outputs in TMPDIR): `Ran 2 tests in 41.231s`, `OK`. `UV_CACHE_DIR=<tmp> uv lock --check`: `Resolved 79 packages`, OK. No new dependencies.
+
+Before the #69 merge, `7d94518` gave `Ran 1042 tests`, `OK (skipped=9)`, the same 9 skips. Two earlier attempts are not results; I list them so the numbers are not mistaken for regressions:
+
+- `unshare -r` alone, tests as root: 97 failures and 24 errors, mostly "refusing to serve as root".
+- uid 1000 but `UV_CACHE_DIR` on the read-only `/cache/uv`: 24 `test_deploy.BundleTests` failures ("Could not acquire lock … Read-only file system"). The same class with a temp `UV_CACHE_DIR`: 46 tests OK.
+
+### Cache snapshot (standing rule 5)
+
+`find /cache -printf '%p\t%s\t%T@\n' | sort`. 132,573 entries at 17:24 ET (before anything ran), 132,584 at the end. 67 lines differ. Every test and mutant process of mine ran with `/cache` read-only (a `touch` probe in the same setup gets EROFS). None pointed `PREACHED_CACHE`, `PREACHED_ONNX_DIR` or `HF_HOME` at `/cache` for output. The only real-cache reads were the two tests above, with outputs in TMPDIR. So none of the differences can be my processes' writes. They are, all 2026-10-31 ET:
+
+- 17:29:46-17:30:31: a `uv` install of `preached` into `/cache/venvs/demo-main` (11 entries), `/cache/uv` archive/sdist entries (16), then `/cache/index/wesley.sqlite-shm`, `/cache/xdg/.../onnxruntime.db-wal/-shm` and `/cache/demo-kill`. This looks like a demo redeploy and restart by another process.
+- 17:26:51 and 17:46:28 `/cache/index/cc-speech.sqlite-shm`; 17:27:23 and 17:47:00 the `/cache/models` directory mtime (its listing is unchanged); 17:28:33 and 17:48:28 `/cache/xdg/deno/*` caches. Each pattern shows up twice, about 20 minutes apart. It looks like another suite running elsewhere on the host with `XDG_CACHE_HOME=/cache/xdg` (mine used a temp one). I did not trace it.
+
+`/cache/models/granite-english-r2-onnx/47ea…/` is unchanged: same five files, mtimes 16:30:10 ET (the §9 restore), sha256 prefixes fp32 `3861025a186e` (the pin), int8 `220d6de96c78`, tokenizer `6c8aaa9a5420`, pooling `bf1476968368`, manifest `96f276e6b10d`.
+
+### Cite table (merged `app/server.py` at `5f6a8fe`; every `CITED` pin; "string found" is the text on that line, or the first … last line of a range)
+
+| Cite | Line | String found | Holds |
+| --- | --- | --- | --- |
+| `app/server.py:238` | 238 | `REQUEST_TIMEOUT_S = 15` | yes |
+| `app/server.py:244` | 244 | `DRAIN_TIMEOUT_S = 10.0` | yes |
+| `app/server.py:285-286` | 285-286 | `CHURCH_RETRY_FIRST_S = 1.0 … CHURCH_RETRY_MAX_S = 30.0` | yes |
+| `app/server.py:296` | 296 | `MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"` | yes |
+| `app/server.py:297` | 297 | `UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"` | yes |
+| `app/server.py:300` | 300 | `MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"` | yes |
+| `app/server.py:306-312` | 306-312 | `SEARCH_MODE_REASONS = { … }` | yes |
+| `app/server.py:302` | 302 | `INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"` | yes |
+| `app/server.py:506` | 506 | `logging.warning("refused %s %s suppressed=%d", kind, detail, suppressed)` | yes |
+| `app/server.py:518` | 518 | `logging.warning("refused %s flush suppressed=%d", kind, suppressed)` | yes |
+| `app/server.py:863` | 863 | `logging.exception(MISMATCH_LOG)` | yes |
+| `app/server.py:868` | 868 | `logging.error(UNAVAILABLE_LOG)` | yes |
+| `app/server.py:869` | 869 | `logging.error(MISSING_GRAPH_LOG, exc)` | yes |
+| `app/server.py:872` | 872 | `logging.exception(UNAVAILABLE_LOG)` | yes |
+| `app/server.py:896` | 896 | `logging.exception("church vectors do not match search/models.toml; that side is BM25 only")` | yes |
+| `app/server.py:901` | 901 | `logging.exception("church vectors unavailable; that side is BM25 only")` | yes |
+| `app/server.py:919` | 919 | `raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc` | yes |
+| `app/server.py:922` | 922 | `logging.error("church side refused: its searcher could not be built (%s: %s)", exc.__class__.__name__, reason)` | yes |
+| `app/server.py:1121` | 1121 | `logging.log(level, "could not read the index stamp", exc_info=True)` | yes |
+| `app/server.py:1152` | 1152 | `logging.error("refusing to serve after reload: %s", problem)` | yes |
+| `app/server.py:1169` | 1169 | `logging.error("%s", message)` | yes |
+| `app/server.py:1201` | 1201 | `self._serve_keyword_only(STALE_NOTE, MISMATCH_LOG)` | yes |
+| `app/server.py:1235` | 1235 | `logging.error("refusing to serve: %s", self._frozen_refusal)` | yes |
+| `app/server.py:1244` | 1244 | `self._serve_keyword_only(INDEX_READ_NOTE, INDEX_STATUS_LOG if self._weights_ok else None)` | yes |
+| `app/server.py:1348-1349` | 1348-1349 | `"search_mode": "hybrid" if self.encode is not None else "bm25", … "search_mode_reason": reason,` | yes |
+| `app/server.py:1444` | 1444 | `logging.error("church side refused: %s", problem)` | yes |
+| `app/server.py:1449` | 1449 | `logging.error("church side refused: the publish gate did not turn on")` | yes |
+| `app/server.py:1482` | 1482 | `logging.error("church side refused: the church file could not be opened (%s)", exc)` | yes |
+| `app/server.py:1489` | 1489 | `logging.info("church side pause ended: refused")` | yes |
+| `app/server.py:1490` | 1490 | `self._church_paused = False` | yes |
+| `app/server.py:1521` | 1521 | `logging.error("church side dropped: %s", problem)` | yes |
+| `app/server.py:1532` | 1532 | `logging.info("church side paused: %s", reason)` | yes |
+| `app/server.py:1540` | 1540 | `logging.info("%s", held)` | yes |
+| `app/server.py:1599` | 1599 | `logging.info("church side resumed")` | yes |
+| `app/server.py:1602` | 1602 | `logging.exception("church search failed; that side is empty")` | yes |
+| `app/server.py:1607` | 1607 | `self._church_pause(f"the church file is locked by a writer ({exc})")` | yes |
+| `app/server.py:1808` | 1808 | `logging.exception("abstain calibration unusable; abstain floor disabled")` | yes |
+| `app/server.py:1814` | 1814 | `def start():` | yes |
+| `app/server.py:2031` | 2031 | `logging.error("request failed: %s", "TimeoutError")` | yes |
+| `app/server.py:2036` | 2036 | `logging.error("request failed: %s", type(exc).__name__)` | yes |
+| `app/server.py:2081` | 2081 | `logging.error("request failed: %s", "TimeoutError")` | yes |
+| `app/server.py:2083` | 2083 | `logging.error("request failed: %s", type(exc).__name__)` | yes |
+| `app/server.py:2143` | 2143 | `logging.error("request failed: %s", "LogError")` | yes |
+| `app/server.py:2383` | 2383 | `logging.error("request failed: %s", type(exc).__name__)` | yes |
+| `app/server.py:2404` | 2404 | `logging.error("request failed: %s", type(exc).__name__)` | yes |
+| `app/server.py:2840` | 2840 | `logging.info("listening on http://%s:%s", host, port)` | yes |
+| `app/server.py:2844` | 2844 | `app.log_startup_pause()` | yes |
+| `app/server.py:2912` | 2912 | `logging.error("church side refused: %s", problem)` | yes |
+| `app/server.py:2919` | 2919 | `logging.error("church side refused: %s", exc)` | yes |
+| `app/server.py:2930` | 2930 | `logging.error("church side refused: %s", problem)` | yes |
+| `app/server.py:2937` | 2937 | `logging.info("church side: %s, read-only, through the publish gate", slug)` | yes |
+| `app/server.py:3099` | 3099 | `logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")` | yes |
+| `app/server.py:3277` | 3277 | `logging.info("stopping")` | yes |
+| `app/server.py:3278-3296` | 3278-3296 | `stuck = server.drain() … raise SystemExit(1)` | yes |
+| `app/server.py:3282` | 3282 | `logging.error("%d handler thread(s) still running after %.0fs; index left open", len(stuck), DRAIN_TIMEOUT_S)` | yes |
+| `app/server.py:3292` | 3292 | `app.church_connection.close()` | yes |
+| `app/server.py:3294` | 3294 | `logging.info("stopped cleanly")` | yes |
+| `scripts/build-bundle.sh:239` | 239 | `echo "tar exited 1 (file changed as we read it?); attempt ${attempt} of 3" >&2` | yes |
+| `scripts/build-bundle.sh:243` | 243 | `echo "tar failed (tar ${TAR_STATUS}, gzip ${GZIP_STATUS}); no archive written" >&2` | yes |
+| `scripts/build-bundle.sh:247` | 247 | `echo "tar.gz does not match MANIFEST.sha256; no archive written" >&2` | yes |
+| `src/preached/library.py:468` | 468 | `raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc` | yes |
+| `src/preached/library.py:883-884` | 883-884 | `f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it", … f"{path.name} is in WAL journal mode",` | yes |
+| `src/preached/library.py:895-896` | 895-896 | `reason = f"the church file is locked by a writer ({exc})" … raise ChurchStartPaused(f"{reason}; it is not opened", reason) from exc` | yes |
+| `src/preached/library.py:915` | 915 | `problem, paused = f"{exc}; it is not opened", str(exc)` | yes |
+| `src/preached/library.py:921-922` | 921-922 | `paused = f"the church file is locked by a writer ({exc})" … problem = f"{paused}; it is not opened"` | yes |
+| `src/preached/library.py:962` | 962 | `raise ChurchPaused(f"{path.name} is in WAL journal mode")` | yes |
+| `src/preached/youtube/library.py:157` | 157 | `f"the church file is still in {mode} journal mode (another connection has it open in WAL mode); "` | yes |
+| `src/preached/youtube/pipeline.py:333` | 333 | `print(f"warning: {exc}", file=sys.stderr)` | yes |
+
+### Diff scope
+
+`git diff --stat origin/main..HEAD` (`origin/main` = `ebffabb`):
+
+```
+ app/server.py                            |  23 +
+ docs/DEPLOY.md                           | 118 ++---
+ docs/adr/0001-onnx-export-determinism.md |  54 ++
+ reports/W3-CPU.md                        |   4 +-
+ reports/W4-ONNX-PIN-REPRO.md             | 472 ++++++++++++++++++
+ scripts/export_onnx.py                   | 127 ++++-
+ src/preached/artifacts.py                |  31 +-
+ tests/test_deploy_alerts.py              |  97 ++--
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 822 +++++++++++++++++++++++++++++++
+ 10 files changed, 1631 insertions(+), 121 deletions(-)
+```
+
+All files are in scope: the export script, `artifacts.py`, the server's missing-graph and `/healthz` lines, their tests, the ADR, this report, DEPLOY.md with its `CITED` pins, and `reports/W3-CPU.md` (S3). The `test_embed_backend.py` change is the earlier rounds' artifact-dir fix.
+
+### PR BODY
+
+(Replacement for PR #71's body. CoS pastes it.)
+
+````markdown
 ## W4-ONNX-PIN-REPRO: a fresh export reproduces the pinned ONNX graph
 
 Fixes fresh-clone BLOCKER 2 (#68 finding 2). The pin stays `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`; there is no re-pin.
@@ -246,64 +432,41 @@ Two independent variables, and each one alone changes the exported fp32 graph (m
 Four digests come out, one per (order, dispatch) pair: `3861025a` (avx2, sliding first: the pin), `aed7adba` (avx2, full first), `44038d45` and `d99ba823` (default dispatch). Neither variable is "the" cause; both must be fixed. Raw AVX512 cannot run on this host (SIGILL); the CTO's AVX512 cells are not re-verified.
 
 ### Fix
-- `scripts/export_onnx.py`: sets `ATEN_CPU_CAPABILITY=avx2` before importing torch; refuses non-x86-64 or non-AVX2 hosts; re-execs under `PYTHONHASHSEED=1` (argv kept); checks the trace order; exits non-zero with no manifest if the graph is not the pin. Through the script, all 21 ambient cells (seed unset/0-5 × default/avx2/avx512) write the pin.
+- `scripts/export_onnx.py`: sets `ATEN_CPU_CAPABILITY=avx2` before importing torch; refuses non-x86-64 or non-AVX2 hosts; re-execs under `PYTHONHASHSEED=1` (argv kept); checks the trace order; exits non-zero with no manifest if the graph is not the pin. It hides CUDA itself, so the export command has no `CUDA_VISIBLE_DEVICES` prefix. Through the script, all 21 ambient cells (seed unset/0-5 × default/avx2/avx512) write the pin.
 - ONNX outputs and the server default follow `PREACHED_CACHE`: `PREACHED_ONNX_DIR`, else `$PREACHED_CACHE/models/granite-english-r2-onnx`, else `/cache/...`. The HF cache defaults to `$PREACHED_CACHE/huggingface` (an explicit `HF_HOME` / `HF_HUB_CACHE` / `HUGGINGFACE_HUB_CACHE` wins).
 - `app/server.py`: a missing graph logs the D2 line `ERROR embedding model unavailable; serving BM25 only` (no traceback), then `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; …` with the path and export command. `/healthz` gains `search_mode` (`hybrid`/`bm25`) and `search_mode_reason` (a code, never a path).
-- `docs/DEPLOY.md`: D2 row covers both forms, new "D2 detail" row for the NOT BUILT line and the `/healthz` fields; cites pinned in `tests/test_deploy_alerts.py`.
+- `docs/DEPLOY.md`: D2 row covers both forms, new "D2 detail" row for the NOT BUILT line and the `/healthz` fields; every `app/server.py` cite re-pinned on the tree merged with #72 and #69 (tree-relative wording) and pinned in `tests/test_deploy_alerts.py`.
 - ADR: `docs/adr/0001-onnx-export-determinism.md`.
 
 ### Tests
-`tests/test_onnx_pin_repro.py` (28 tests). No test downloads or writes under `/cache`. `__main__` runs are sandboxed (scratch caches, offline, stubbed `os.execv` and `main`). The three-export byte-identity test writes to TMPDIR and only reads the snapshot. Mutants (each fails, then reverted): avx2 guard removed from `__main__`, seed restart removed, restart drops argv, `_check_pin` removed, `onnx_root` ignoring `PREACHED_CACHE`, `HF_HUB_CACHE` ignored.
+`tests/test_onnx_pin_repro.py` (31 tests). No test downloads; only the three-export byte-identity test exports for real, into TMPDIR, reading the snapshot. Every test points its outputs at temp dirs; `__main__` runs are sandboxed (scratch caches, offline, stubbed `os.execv` and `main`). `ExportMainTests`, which runs `main()` (it `rmtree`s the export dir), resolves the export dir and every `rmtree`/copy/write/mkdir target and refuses anything not under `tempfile.gettempdir()` and its temp cache, before acting; tests cover a `..` path, a symlinked `models` dir and an escaping write. The other tests rely on their temp environment, not a check. Mutants (each fails, then reverted): avx2 guard removed from `__main__`, seed restart removed, restart drops argv, `_check_pin` removed, `onnx_root` ignoring `PREACHED_CACHE`, `HF_HUB_CACHE` ignored, and the CTO's F2 (`..` traversal) and F3 (symlinked `$PREACHED_CACHE/models`), which got past the earlier lexical guard and are now refused with a decoy cache untouched.
 
-Full suite, final head (R2): `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests` → `Ran 1033 tests`, `OK`, 0 failures, 0 skips (real artifacts present; an earlier scratch-cache run gave `OK (skipped=9)`). The two real-artifact tests in this file, run separately against `/cache` mounted read-only with the network off: `Ran 2 tests`, `OK`. `uv lock --check` OK. No new dependencies.
+Full suite on the merge with main: `PREACHED_REQUIRE_DENO=1`, all output caches in temp dirs, `/cache` mounted read-only → `Ran 1043 tests`, `OK (skipped=9)` (the 9 need real artifacts). The two real-artifact tests in this file, against `/cache` read-only with the network off: `Ran 2 tests`, `OK`. `uv lock --check` OK. No new dependencies.
 
 ### Migration
 None for `/cache` hosts: the existing `3861025a` export stays valid. A host with `PREACHED_CACHE` other than `/cache` that kept the export at `/cache/models/...` must set `PREACHED_ONNX_DIR` or move it.
 
 ### Incident
-While running a mutant, a test removed and rewrote the shared `/cache/models/granite-english-r2-onnx/47ea…/`. It was restored from an identical script export (fp32 and tokenizer match their pins; `verify_manifest` OK). The test now refuses to run `main()` outside its temp cache. Infra Ops re-ran the export and found the restored folder byte-identical to a fresh export (all 5 files); the live demo never loaded the damaged folder and needed no restart; the church index main db is unchanged. Details: `reports/W4-ONNX-PIN-REPRO.md` §9.
+On 2026-10-31 at 16:29 ET, during a mutant run, a test removed and rewrote the shared `/cache/models/granite-english-r2-onnx/47ea…/`. It was restored at 16:30 ET from an identical script export (fp32 and tokenizer match their pins; `verify_manifest` OK). Infra Ops re-ran the export and found the restored folder byte-identical to a fresh export (all 5 files); the live demo never loaded the damaged folder and needed no restart; the church index main db is unchanged. The guard added after the incident was lexical and was later shown to miss `..` and symlinked paths; it now resolves paths (above). Mutant and real-artifact runs mount `/cache` read-only. Details: `reports/W4-ONNX-PIN-REPRO.md` §9 and §12.
 
 ### Branch state
-0 behind, 23 ahead of `origin/main` (`abdada3`).
+0 behind, 28 ahead of `origin/main` (`ebffabb`).
 
 `git diff --stat origin/main..HEAD`:
 
 ```
  app/server.py                            |  23 +
- docs/DEPLOY.md                           | 114 ++---
- docs/adr/0001-onnx-export-determinism.md |  54 +++
- reports/W4-ONNX-PIN-REPRO.md             | 291 ++++++++++++
- scripts/export_onnx.py                   | 125 ++++-
+ docs/DEPLOY.md                           | 118 ++---
+ docs/adr/0001-onnx-export-determinism.md |  54 ++
+ reports/W3-CPU.md                        |   4 +-
+ reports/W4-ONNX-PIN-REPRO.md             | 472 ++++++++++++++++++
+ scripts/export_onnx.py                   | 127 ++++-
  src/preached/artifacts.py                |  31 +-
  tests/test_deploy_alerts.py              |  97 ++--
  tests/test_embed_backend.py              |   4 +-
- tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
- 9 files changed, 1383 insertions(+), 116 deletions(-)
+ tests/test_onnx_pin_repro.py             | 822 +++++++++++++++++++++++++++++++
+ 10 files changed, 1631 insertions(+), 121 deletions(-)
 ```
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
-```
-
-## Diff stat
-
-`git diff --stat origin/main..HEAD`:
-
-```
- app/server.py                            |  23 +
- docs/DEPLOY.md                           | 114 ++---
- docs/adr/0001-onnx-export-determinism.md |  54 +++
- reports/W4-ONNX-PIN-REPRO.md             | 291 ++++++++++++
- scripts/export_onnx.py                   | 125 ++++-
- src/preached/artifacts.py                |  31 +-
- tests/test_deploy_alerts.py              |  97 ++--
- tests/test_embed_backend.py              |   4 +-
- tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
- 9 files changed, 1383 insertions(+), 116 deletions(-)
-```
-
-## R2 (99-W4-ONNX-R2)
-
-- Parity hashes recorded in §3 and the ADR (the `/healthz` keys change three reference hashes).
-- `EXPORT_COMMAND` (`src/preached/artifacts.py`), the `scripts/export_onnx.py` docstring, the DEPLOY.md D2 detail row and the §3 log line no longer recommend `CUDA_VISIBLE_DEVICES=""`; the script sets it before torch and the bytes are identical either way. The line in §1 and W3/W4-QA reports are records of commands actually run and stay.
-- Verified, no edits: DEPLOY.md cites and `CITED` pins hold at HEAD (the edits above change text within cited lines, not line numbers; zero `test_every_cited_file_line_holds_its_string` failures). No test writes under `/cache`.
-- Suite: `Ran 1033 tests`, `OK`, merge of `origin/main` was a no-op.
+````
