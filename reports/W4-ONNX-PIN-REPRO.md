@@ -153,9 +153,11 @@ Full suite **after the merge**, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED
 
 The same command with `PREACHED_ONNX_DIR=/cache/w4-onnx-avx2/final`, a complete export by this branch (log `suite4.log`): `Ran 1023 tests in 260.085s`, **`OK`**, 0 skipped. So the 5 clear once the box is re-exported after merge. The pre-merge runs gave the same counts (`suite1.log`: 3 failures / 2 errors; `suite2.log`: OK; 1023 tests each).
 
+**Second merge.** While I pushed, main gained #70 (`b2c7b77`: docs only, `AGENTS.md`, `docs/DEPLOY.md` text, a report). It merged cleanly in `2225151`, and that merge was pushed before I re-ran anything, so I re-ran on it. `test_deploy_alerts`: OK. Full suite (`suite5.log`): `Ran 1023 tests in 257.976s`, `FAILED (failures=3, errors=2)`, the same 5 box-graph tests. With `PREACHED_ONNX_DIR=/cache/w4-onnx-avx2/final` (`suite6.log`): `Ran 1023 tests in 256.846s`, `OK`. `uv lock --check`: OK.
+
 ## 8. Diff scope
 
-`git diff --stat origin/main..HEAD` at `cbe962b`, before this report's final edit:
+`git diff --stat origin/main..HEAD` at `cbe962b`, before this report's final edits. It is unchanged in file list after the #70 merge; only this report grew:
 
 ```
  app/server.py                            |  23 ++
