@@ -41,6 +41,12 @@ uv run search/query.py "what did Wesley say about worry" --mode bm25 --side
 - Text: John Wesley, *Sermons on Several Occasions* (public domain), via the [Christian Classics Ethereal Library (CCEL)](https://ccel.org/ccel/wesley/sermons).
 - Recordings: [LibriVox](https://librivox.org/) volunteers (public domain), streamed from the [Internet Archive](https://archive.org/).
 
+## License
+
+The Preached code is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Copyright 2026 Patrick Shouse.
+
+This does not relicense third-party data. Sermon texts and audio keep their own licences, as recorded in their provenance files: Wesley's sermons (text via CCEL) and the LibriVox recordings are public domain. Embedding model weights are downloaded separately and keep their own licences (see `search/models.toml`).
+
 ## YouTube channel import
 
 Paste a channel (or one watch URL) and build a library the search server can read. Audio is downloaded only as a working file under `/cache/youtube/<slug>/` and deleted after the video is indexed. `--keep-audio` leaves the file. The index stores the transcript excerpt and the exact start and end seconds. The watch URL's `t=` starts 0.75 s before that start (never below 0) and is truncated to a whole second. The video stays on YouTube. `text_source` is `asr`. `reader` is left empty.

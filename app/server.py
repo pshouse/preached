@@ -43,7 +43,7 @@ from preached.library import (  # noqa: E402
     classic_church_refusal,
     read_label,
 )
-from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
+from preached.models import DEFAULT_MODEL, MODELS, RUNTIME_MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
     Searcher,
@@ -1274,8 +1274,9 @@ def main(argv: list[str] | None = None) -> None:
         resolve_flagged_audio(default_config().flagged_audio)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"flagged audio policy: {exc}") from exc
-    if args.model not in MODELS:
-        raise SystemExit(f"unknown model {args.model}")
+    if args.model not in RUNTIME_MODELS:
+        why = "eval-only, not available to the server" if args.model in MODELS else "unknown"
+        raise SystemExit(f"model {args.model}: {why}")
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")

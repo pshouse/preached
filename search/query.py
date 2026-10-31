@@ -29,7 +29,7 @@ from preached.library import (  # noqa: E402
     classic_heading,
     church_heading,
 )
-from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
+from preached.models import DEFAULT_MODEL, MODELS, RUNTIME_MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start, sermon_flagged, touches_flagged  # noqa: E402
@@ -378,7 +378,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("query")
     parser.add_argument("--mode", choices=("bm25", "dense", "hybrid"), default="hybrid")
     parser.add_argument("-k", type=int, default=5)
-    parser.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(MODELS))
+    parser.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(RUNTIME_MODELS))
     parser.add_argument("--fusion", choices=("rrf", "weighted"), default="rrf")
     parser.add_argument("--rrf-k", type=int, default=60)
     parser.add_argument("--dense-weight", type=float, default=0.5)
