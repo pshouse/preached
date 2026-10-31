@@ -14,7 +14,7 @@ Last run: 2026-10-30 (America/New_York), task EVAL-DELEAK, on the 60-question gr
 
 ## Decisions (Patrick, Oct 30 2026)
 
-- Excluded from the product by Patrick, Oct 30 2026; kept in the eval for re-runs. This is Arctic Embed v1 (`arctic-embed-l`). It is marked `eval_only = true` in `search/models.toml`, so the server (`--model`), `search/query.py` (`--model`) and `Searcher` refuse it. `search/bench.py` still runs it, and its results below stay as measured.
+- Excluded from the product by Patrick, Oct 30 2026; kept in the eval for re-runs. This is Arctic Embed v1 (`arctic-embed-l`). It is marked `eval_only = true` in `search/models.toml`, so the server (`--model`), `search/query.py` (`--model`), `load_embedder`, `TorchEmbedder.load` and `Searcher` refuse it. Only the eval harness (`search/bench.py`, `eval/pool.py`, `scripts/check_*.py`) opens it, through `Searcher(..., allow_eval_only=True)`; its results below stay as measured.
 - The default stays IBM Granite English R2 (Patrick, Oct 30 2026). EmbeddingGemma 2 tied once correctly configured (the `title: none | text: ` prefix) and remains in the eval.
 
 ## Question and constraints

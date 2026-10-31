@@ -1304,6 +1304,11 @@ def build_app(
     publish gate), with the classic side's query embedder; it is keyword
     only when that embedder is not loaded. A failure here leaves the church
     side empty and is logged; the classic side is unaffected."""
+    if model_key not in RUNTIME_MODELS:
+        # Same refusal as main(); never fall back to keyword search quietly,
+        # whether the key is eval-only or a typo.
+        reason = "eval-only, not available to the server" if model_key in MODELS else "unknown model"
+        raise ValueError(f"model {model_key}: {reason}")
     searcher, encode, note = load_search(
         connection,
         model_key,

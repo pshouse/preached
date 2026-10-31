@@ -351,7 +351,14 @@ def stated_duration(value: object) -> float:
 
     Without it a download cut short after the last word would pass the check.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise Unchecked("no usable stated duration")
+    try:
+        usable = math.isfinite(value) and value > 0
+        value = float(value)
+    except OverflowError:  # an integer too large for a float
+        usable = False
+    if not usable:
         raise Unchecked("no usable stated duration")
     return float(value)
 

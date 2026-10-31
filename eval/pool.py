@@ -89,7 +89,7 @@ def main() -> None:
         spec = MODELS[key]
         loaded = bench.load_model(spec, device="cpu", batch_size=1)
         try:
-            searcher = Searcher(connection, model=key)
+            searcher = Searcher(connection, model=key, allow_eval_only=True)
             for item in items:
                 vector = bench.encode_query(loaded, item["query"])
                 for mode in bench.MODES:
