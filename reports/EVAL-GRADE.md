@@ -19,7 +19,7 @@ hit@10 means at least one labelled passage is in the top 10. Strict counts grade
 - **On `plain`, the 0.028 is mostly narrow labels.** Counting every passage a reader judged acceptable, the default puts one in the top 10 for 18 of 25 `plain` questions (0.72 [0.52, 0.88]). Strict, it does so for 2. Lenient nDCG@10 is 0.132, still low, because these questions now have 3 to 22 acceptable passages each, which raises the ideal.
 - **On questions written blind to the corpus, retrieval really is failing.** The default finds an acceptable passage in the top 10 for 3 of 28 answerable `plain-blind` questions (0.11 [0.00, 0.21]), and the right sermon in the top 10 for 10 of 28. sermon@50 is 0.82, so the material is reachable but ranked too low. These labels were picked from the same rankers' top 20 plus the grader's own corpus search, so this is not a pooling artefact.
 - **BM25 is what drags the default down on blind questions.** Granite dense alone has lenient hit@10 0.39 vs 0.11 for the default on `plain-blind`: +0.29 [+0.14, +0.46], with 8 wins and 0 losses. On `plain` the two are tied (−0.04 [−0.20, +0.12]). On `names-topic` dense alone is worse on lenient nDCG (−0.064 [−0.12, −0.01]). **I did not change anything.** Patrick decides, after confirming labels.
-- **The 0.8129 abstain floor holds on the old set but not with `plain-blind`.** The shipped `search/abstain.toml` on main had file (blob) hash `adb419ec`, not a commit; PR #10 replaced the earlier file, blob `73d86bda`. (Neither hash resolves in the current clone; the blob on main now is `38e5d4bc`, from `git rev-parse HEAD:search/abstain.toml`.) The Granite floor is unchanged at 0.8129. This PR does not edit `search/abstain.toml`.
+- **The 0.8129 abstain floor holds on the old set but not with `plain-blind`.** `adb419ec` is the sha256 (first 8 hex) of the shipped `search/abstain.toml` on main, which is the current file (git blob `38e5d4bc`; its bytes are unchanged). `73d86bda` is the sha256 of the previous version of that file (git blob `8d51609c`, last in commit `86ec71a`), which PR #10 replaced. Neither is a git object name. The shipped calibration did not change; the Granite floor is unchanged at 0.8129. This PR does not edit `search/abstain.toml`.
   - Refit on the 63 questions without `plain-blind`: 0.8129, unchanged.
   - Refit on all 93: 0.7753, with abstain recall 0 on the unanswerable questions.
   - With the shipped floor, 2 answerable blind questions would show "nothing found" (`p-016` "help i messed up bad", `p-017` "why wont he answer"). The 2 blind unanswerable questions score above the floor.
@@ -289,7 +289,7 @@ CTO verdict on `fdde6ea` was CHANGES. One doc-only must-fix, three should-fixes.
 | item | commit |
 | --- | --- |
 | Proposed labels are `found_by` `llm-proposed:claude`; the 30 blind questions are `provenance` `llm-written:grok`; README, `docs/research/embeddings.md`, and the review-sheet note say so and that a human has not confirmed them | `9e911a78185450723f64d893dda96055ef2d46bd` |
-| Dense sermon@10/@50 gap: the bench counts only grade-2 sermons; the whole gap is `q-perfection-plain`. Shipped `search/abstain.toml` on main is `adb419ec` (PR #10 replaced `73d86bda`). Granite floor unchanged at 0.8129 | `82f7aca4895b28e08bab6bb8c10be683dbe87f59` |
+| Dense sermon@10/@50 gap: the bench counts only grade-2 sermons; the whole gap is `q-perfection-plain`. The shipped `search/abstain.toml` is sha256 `adb419ec` (git blob `38e5d4bc`, unchanged); PR #10 replaced the earlier version, sha256 `73d86bda` (blob `8d51609c`). Granite floor unchanged at 0.8129 | `82f7aca4895b28e08bab6bb8c10be683dbe87f59` |
 | `eval/pool.py` shuffles the grader's pool and drops ranker and rank | `133d932652379e3a5e145ddb4b92253d81b75722` |
 | `.gitignore` keeps `eval/review/review-*.csv` only | `8a1b20401157276c6e8cfd8b54eab811a2017e5f` |
 | Leak lint: modern verse wording, a single distinctive word, and "fell away", with tests | `7b9673d277b1c0992942004fb595ec498f9cecc5` |
@@ -342,7 +342,7 @@ PR #17: https://github.com/pshouse/preached/pull/17. After pushing `565ede0`, Gi
 
 ## EVAL-NITS (CTO should-fixes from PR #17 round 3)
 
-Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/check_title_leak.py` (with a test); its docstring now says 3+ letter content words, matching `tokens()`; `eval/pool.py` opens the index with `open_readonly`; the abstain.toml hashes above are labelled file (blob) hashes; the 17/24 note is added to the CTO cross-check. No label status, question, search, fusion, or dependency changed. No LLM, no re-grading.
+Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/check_title_leak.py` (with a test); its docstring was meant to say 3+ letter content words, matching `tokens()` (that edit did not land; fixed in the fix-up below); `eval/pool.py` opens the index with `open_readonly`; the abstain.toml hashes above are relabelled (they are sha256 file hashes, corrected in the fix-up below); the 17/24 note is added to the CTO cross-check. No label status, question, search, fusion, or dependency changed. No LLM, no re-grading.
 
 **Rewrite (director-authorised, Oct 30).** The new `trick` synonym made `q-satan-plain` leak the title of wesley-042, so the question was reworded instead of adding a lint exemption. Same intent (resisting deceptions and temptations that look good); no title words and no synonym-map words for any sermon. No other question, label, or grading changed.
 
@@ -351,5 +351,3 @@ Changes: `enemy` and `trick` added to the `wesley-042` synonyms in `scripts/chec
 - The same text was updated in `eval/pool/pool-2026-10-30.jsonl` and `eval/review/review-2026-10-30.csv`. `reports/EVAL-DELEAK.md` still quotes the old wording as history.
 
 **Tests.** `uv run python -m unittest discover -s tests`: 529 tests, 0 failures. `uv lock --check`: `Resolved 79 packages`, exit 0.
-
-**PR.** Not opened: `gh` is not installed in this environment. Branch `feat/eval-nits` is pushed; open the PR to main titled "EVAL-NITS: CTO should-fixes from #17 r3 (synonyms, docstring, read-only pool, report notes)". PR number: pending.
