@@ -50,3 +50,41 @@ uv run python -m unittest discover -s tests && uv lock --check
 ## Dependencies
 
 None added.
+
+## Severity rulings (70-W3-DEPLOY-SEVERITIES)
+
+CTO's final rulings (10:16 ET), applied to docs/DEPLOY.md; every "severity pending CTO ruling" line is gone. Yaml: `church-alerts.yaml` sha256 `c1841274aed5d778b9fa3b9b417a456c53a38555fb9403cb072deba68b676f0e` (21 rules, all `enabled: false`, pinned to `76990e8`; supersedes `fdbf36ff`).
+
+| Row | Line | Rule id | Final severity |
+| --- | --- | --- | --- |
+| 1 | church side refused | `church-refused` | PAGE |
+| 2 | refused: searcher could not be built | `church-refused` | PAGE |
+| 3 | refused: file could not be opened | `church-refused` | PAGE |
+| 4 | church side dropped | `church-dropped` | PAGE (same effect as refused) |
+| 5 | paused -> stuck (30 s confirm) | `church-paused-stuck` | PAGE |
+| 5 | paused, no church traffic | `church-paused-unverified` | INFO |
+| 5 | paused (start), resumed, `pause ended: refused` (new, `:1431`) | `church-paused` | INFO |
+| 6 | church search failed | `church-search-failed` | TICKET (max 1/hour) |
+| 7 | church vectors mismatch, BM25 | `church-vectors-mismatch-bm25` | TICKET |
+| 8 | church vectors unavailable, BM25 | `church-vectors-unavailable-bm25` | TICKET |
+| D1 | stored vectors mismatch, BM25 | `deploy-stored-vectors-mismatch-bm25` | PAGE |
+| D2 | embedding model unavailable, BM25 | `deploy-embedding-unavailable-bm25` | PAGE |
+| D3 | refusing to serve after reload | `deploy-refusing-after-reload` | PAGE |
+| D4 | refusing to serve (frozen bundle) | `deploy-refusing-frozen-bundle` | PAGE |
+| D5 | stuck stop | `deploy-stuck-stop` | PAGE |
+| D6 | request failed, server-side types | `deploy-request-failed-server` | TICKET (max 1 per rolling hour) |
+| D6 | request failed: TimeoutError, ConnectionResetError, BrokenPipeError, ConnectionAbortedError | `deploy-request-failed-client` | INFO |
+| D7 | abstain calibration unusable | (none) | TICKET (unchanged) |
+| - | listening on / stopping / church opened / refusal warning and flush / tar flake | `process-restart`, `deploy-stopping`, `church-opened`, `deploy-refusal-warning`, `deploy-refusal-flush`, `build-tar-flake-retry`, `build-tar-flake-exhausted` | INFO |
+
+Rows 7-8 and D1-D6: rule drafted, disabled (Infra Ops). OPEN in DEPLOY.md: an idle keep-alive timeout should not log at ERROR (code nit, later). Known gaps: silent BM25 fallback on reload is a HARD CONDITION before any public exposure (W3-OBS-GAPS); no clean-stop exit line is a should-fix until W3-OBS-GAPS lands. HD1 is MET (fixed in #48).
+
+### Post-#48 refresh
+
+Merged origin/main `76990e8` into this branch (merge commit, no conflicts). Every `app/server.py` citation in DEPLOY.md and `CITED` in `tests/test_deploy_alerts.py` was re-pinned against the merged tree, with `:1431`, `:1482` and `:2745` added. A final re-pin follows 71-W3-OBS-GAPS.
+
+### Full suite, 3 runs (outputs in `cache/full-suite-run{1,2,3}.txt`)
+
+- Run 1: 978 tests, 1 failure: `test_embed_backend.FdLoadTests.test_graph_owned_by_another_uid_is_refused` (`AssertionError: 19 != 34`, an open-fd count). Not touched by this change.
+- Run 2: OK. Run 3: OK.
+- `uv lock --check`: OK. No dependencies added.
