@@ -42,3 +42,12 @@ The 10 skips (from the `-v` run): 6 in `test_embed_backend.py` (ONNX artifacts a
 Same size; a WAL shared-memory file whose mtime moved. It fell during my second (`-v`) suite run, but no test I can find opens `/cache/index/cc-speech.sqlite` (the `cc-speech` tests use temp dirs), so I cannot attribute it to this run; another process on the host may have opened it. No index, model or data file changed. Nothing to repair.
 
 Temp dirs removed only after asserting the resolved path is under `tempfile.gettempdir()`.
+
+## Diff stat (`git diff --stat origin/main..HEAD`, before this line was added)
+
+```
+ docs/DEMO-SCRIPT.md                |  9 ++++----
+ docs/SUBMISSION-DRAFT.md           | 10 ++++-----
+ reports/W4-SUBMIT-DRYRUN2-EDITS.md | 44 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 54 insertions(+), 9 deletions(-)
+```
