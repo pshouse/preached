@@ -304,7 +304,7 @@ def main() -> None:
     from huggingface_hub import snapshot_download
 
     if torch.cuda.is_available():
-        raise SystemExit("CUDA is visible; export must run with CUDA_VISIBLE_DEVICES=''")
+        raise SystemExit("CUDA is visible even though the exporter hides it; export runs on CPU only")
     capability = torch.backends.cpu.get_cpu_capability()
     if capability != EXPORT_CPU_CAPABILITY.upper():
         raise SystemExit(f"torch CPU dispatch is {capability}, expected {EXPORT_CPU_CAPABILITY.upper()}")

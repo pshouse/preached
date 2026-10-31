@@ -10,7 +10,9 @@ ExportIsByteIdenticalTests runs the real exporter three times (about a minute
 each on CPU). It skips only when the Granite weights are not in
 PREACHED_CACHE, and it only reads them: outputs and the HF cache it uses are
 under a TMPDIR temp dir. Every other test here stubs os.execv and the export
-itself, so none downloads, exports, or writes under /cache.
+itself and points its outputs at temp dirs. ExportMainTests also resolves
+every removal, copy, write and mkdir and refuses any outside its temp cache;
+the other tests rely on their temp environment alone.
 """
 
 from __future__ import annotations
@@ -47,6 +49,20 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path(os.environ.get("PREACHED_CACHE", "/cache"))
 # Granite R2's pattern: one full layer, then two sliding.
 LAYER_TYPES = ["full_attention", "sliding_attention", "sliding_attention"] * 7 + ["full_attention"]
+TEMP_ROOT = Path(tempfile.gettempdir()).resolve()
+
+
+def _inside_scratch(path: str | os.PathLike, cache: Path) -> Path:
+    """Resolve path; raise unless it is under the temp root and the scratch cache.
+
+    Resolved, not lexical: '..' and a symlinked parent can both lead a path
+    that reads as $PREACHED_CACHE/... into the real cache.
+    """
+    resolved = Path(path).resolve()
+    scratch = cache.resolve()
+    if not (scratch.is_relative_to(TEMP_ROOT) and resolved.is_relative_to(TEMP_ROOT) and resolved.is_relative_to(scratch)):
+        raise AssertionError(f"{path} resolves to {resolved}, outside the scratch cache {scratch} under {TEMP_ROOT}")
+    return resolved
 
 
 def _manifest(folder: Path, files: dict[str, dict]) -> None:
@@ -371,7 +387,9 @@ class MainOrderTests(unittest.TestCase):
 class ExportMainTests(unittest.TestCase):
     """main() with torch, the Hub and the export stubbed: where it writes, and the pin check."""
 
-    def _main(self, cache: Path, *, pin: str | None = None) -> tuple[Path, list[tuple[str, str]]]:
+    def _main(
+        self, cache: Path, *, pin: str | None = None, onnx_dir: str | None = None, export=None
+    ) -> tuple[Path, list[tuple[str, str]]]:
         exporter = _load_exporter()
         snapshot = cache.parent / "snapshot"
         (snapshot / "1_Pooling").mkdir(parents=True)
@@ -385,25 +403,30 @@ class ExportMainTests(unittest.TestCase):
         hub = SimpleNamespace(snapshot_download=lambda *a, **k: str(snapshot))
         touched: list[tuple[str, str]] = []
 
-        def record(kind, original):
+        def record(kind, original, target=0):
+            # Every removal, copy, write and mkdir must land in the scratch
+            # cache once resolved; refuse before acting, not after.
             def wrapper(*args, **kwargs):
-                touched.append((kind, str(args[0])))
+                _inside_scratch(args[target], cache)
+                touched.append((kind, str(args[target])))
                 return original(*args, **kwargs)
 
             return wrapper
 
         env = {k: v for k, v in os.environ.items() if k != "PREACHED_ONNX_DIR"}
         env["PREACHED_CACHE"] = str(cache)
+        if onnx_dir is not None:
+            env["PREACHED_ONNX_DIR"] = onnx_dir
         with (
             mock.patch.dict(os.environ, env, clear=True),
             mock.patch.dict(sys.modules, {"torch": torch, "huggingface_hub": hub}),
             mock.patch.object(exporter, "_load_encoder", lambda _snapshot: object()),
-            mock.patch.object(exporter, "_export", lambda _model, path: path.write_bytes(b"stub graph")),
+            mock.patch.object(exporter, "_export", export or (lambda _model, path: path.write_bytes(b"stub graph"))),
             mock.patch.object(exporter, "_check_export", lambda _model, _path: None),
             mock.patch.object(exporter, "_quantize", lambda _src, dst: dst.write_bytes(b"stub int8")),
             mock.patch.object(exporter, "FP32_ONNX_SHA256", pin or FP32_ONNX_SHA256),
             mock.patch.object(shutil, "rmtree", record("rmtree", shutil.rmtree)),
-            mock.patch.object(shutil, "copyfile", record("copy", shutil.copyfile)),
+            mock.patch.object(shutil, "copyfile", record("copy", shutil.copyfile, target=1)),
             mock.patch.object(Path, "write_text", autospec=True, side_effect=record("write", Path.write_text)),
             mock.patch.object(Path, "write_bytes", autospec=True, side_effect=record("write", Path.write_bytes)),
             mock.patch.object(Path, "mkdir", autospec=True, side_effect=record("mkdir", Path.mkdir)),
@@ -412,9 +435,9 @@ class ExportMainTests(unittest.TestCase):
             folder = artifact_dir()
             # main() removes this directory. Never let it run anywhere but the
             # scratch cache, even when onnx_root is broken (a mutant once let
-            # it remove the real /cache export).
-            if not folder.is_relative_to(cache):
-                self.fail(f"export dir {folder} is not under PREACHED_CACHE {cache}; main() not run")
+            # it remove the real /cache export). The check is on the resolved
+            # path: a lexical one let '..' and a symlinked models dir through.
+            _inside_scratch(folder, cache)
             try:
                 exporter.main()
             finally:
@@ -461,6 +484,45 @@ class ExportMainTests(unittest.TestCase):
                 verified = verify_manifest(variant="fp32", enforce_pins=False)
             self.assertEqual(verified.manifest["files"]["model.fp32.onnx"]["sha256"], pin)
 
+    def _assert_refused(self, cache: Path, canary: Path, **kwargs) -> None:
+        with self.assertRaisesRegex(AssertionError, "outside the scratch cache"):
+            self._main(cache, **kwargs)
+        self.assertEqual(canary.read_text(), "real")
+        self.assertEqual(sorted(p.name for p in canary.parent.iterdir()), ["canary"])
+
+    def _outside(self, tmp: str) -> Path:
+        # Stands in for the real cache's export: beside the scratch cache, not in it.
+        canary = Path(tmp) / "real" / "models" / "granite-english-r2-onnx" / GRANITE_REVISION / "canary"
+        canary.parent.mkdir(parents=True)
+        canary.write_text("real")
+        return canary
+
+    def test_a_dotdot_export_dir_is_refused_before_main(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pc"
+            cache.mkdir()
+            canary = self._outside(tmp)
+            # Reads as under the scratch cache; resolves to the stand-in.
+            self._assert_refused(cache, canary, onnx_dir=str(cache / ".." / "real" / "models" / "granite-english-r2-onnx"))
+
+    def test_a_symlinked_models_dir_is_refused_before_main(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pc"
+            cache.mkdir()
+            canary = self._outside(tmp)
+            (cache / "models").symlink_to(canary.parents[2], target_is_directory=True)
+            self._assert_refused(cache, canary)
+
+    def test_a_write_that_escapes_inside_main_is_refused(self) -> None:
+        # The pre-check passes; a write main() makes elsewhere is still refused.
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pc"
+            canary = self._outside(tmp)
+            escape = canary.parent / "model.fp32.onnx"
+            with self.assertRaisesRegex(AssertionError, "outside the scratch cache"):
+                self._main(cache, export=lambda _model, _path: escape.write_bytes(b"stub graph"))
+            self.assertFalse(escape.exists())
+            self.assertEqual(canary.read_text(), "real")
 
 class OnnxRootTests(unittest.TestCase):
     """The ONNX root: PREACHED_ONNX_DIR, else $PREACHED_CACHE/models/..., else /cache/models/..."""
