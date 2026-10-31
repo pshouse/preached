@@ -190,9 +190,15 @@ It does guarantee:
   and every `preached` module are compiled from their source files. A
   planted `__pycache__` (for example one that makes `bundle_problem` return
   None) is not read; `main` then finds it and refuses to start. The
-  directory is removed at exit. A SIGTERM handler is installed on the line
-  after the directory is made, so SIGTERM during start-up imports, and
-  later during serving, still removes it.
+  directory is removed at exit. When `app/server.py` runs as a script,
+  SIGTERM is blocked from before the directory is made until its atexit
+  hook and handler are installed, so a SIGTERM at any point removes it.
+  Importing the module installs no handler.
+- **Exit codes.** SIGTERM is a requested stop and always exits 0, in every
+  phase (imports, start-up checks, serving), with no traceback. So a unit
+  needs no `SuccessExitStatus=143`. Ctrl-C (SIGINT) before the server is
+  listening exits 130; during serving it logs "stopping" and exits 0. Any
+  refusal (`error: ...`) exits 1.
 - `main` runs the whole bundle check (`bundle_problem`, then the model
   directory check) before it opens the index or binds the port.
 

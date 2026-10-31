@@ -50,12 +50,21 @@ import tempfile
 # bundle_problem. An old __pycache__ in the tree can match a source file's
 # size and mtime and would run in place of that source. A fresh, private,
 # empty prefix means every one of those modules is compiled from source,
-# and nothing is written. Removed at exit; SIGTERM becomes an exit from here
-# on (main later turns it into a clean stop of the serve loop).
+# and nothing is written. Removed at exit. Run as a script, SIGTERM is a
+# clean stop (exit 0) from here on; it is blocked from before the directory
+# exists until the atexit hook and handler are in place, so no SIGTERM can
+# leak it. An importer (tests, scripts) gets the directory and atexit hook
+# but no signal handler.
 sys.dont_write_bytecode = True
+_SCRIPT = __name__ == "__main__"
+if _SCRIPT and hasattr(signal, "pthread_sigmask"):
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
 sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
 atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
-signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(128 + signal.SIGTERM))
+if _SCRIPT:
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(0))
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -1927,17 +1936,13 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
         raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
 
 
-def _stop_on_sigterm(_signum, _frame) -> None:
-    raise KeyboardInterrupt
-
-
 def main(argv: list[str] | None = None) -> None:
     # No PREACHED_ALLOW_ROOT. Root is refused here, not only in serve.sh.
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         raise SystemExit("refusing to serve as root")
-    # SIGTERM (systemd stop, serve.sh's parent) stops like Ctrl-C, so the
-    # socket and index close and atexit removes the bytecode prefix above.
-    signal.signal(signal.SIGTERM, _stop_on_sigterm)
+    # SIGTERM (systemd stop, serve.sh's parent) is handled at the top of this
+    # file as SystemExit(0) in every phase, so the socket and index close and
+    # atexit removes the bytecode prefix.
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -2083,7 +2088,7 @@ def main(argv: list[str] | None = None) -> None:
     server = make_server(app, args.host, args.port)
     try:
         serve_forever(server)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         logging.info("stopping")
     finally:
         server.server_close()
@@ -2091,4 +2096,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:  # Ctrl-C before serving: no traceback
+        sys.exit(130)
