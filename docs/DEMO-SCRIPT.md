@@ -3,11 +3,11 @@
 Hard limit is 5:00 (BRIEF.md). This plan totals **4:40**, leaving 20 s of slack. Patrick records and narrates. Nothing here is submitted or deployed.
 
 **Rules for the recording**
-- Show only what is on `main` today. Church library wiring and public exposure are **coming**; they are named in narration once and never shown.
+- Show only what is on `main` today. The side-by-side church column and public exposure are **coming**; they are named in narration once and never shown.
 - Use only the public-domain Wesley library on screen. No Gaston Community Church audio, titles or transcripts. No real names of members anywhere.
 - Every result shown is the preacher's own words. Never imply the app wrote an answer.
 
-All results below were produced by running the real code on `main` (`180a0a4`) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
+All results below were produced by running the real code on `main` (`efdf8ab`) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
 
 ## Shots
 
@@ -39,19 +39,19 @@ All results below were produced by running the real code on `main` (`180a0a4`) a
 
 ### 4. Side by side: a classic preacher and your own pastor (2:25 to 3:05, 40 s)
 - **On screen:** set View = "Side by side", re-run `how should a Christian use money`.
-- **Expected result (verified through `/api/side`):** the left column is **John Wesley** with the same passages. The right column is **"Your church"** and says: "Nothing from your church yet." This is honest: church libraries are not served on `main` yet (coming, once the publish gate is wired).
-- **Narration:** "This is the part I'm most excited about. On the left, how the question was answered through church history. On the right, your own pastor. Right now that column is empty, because I won't show a single church sermon until the pastor has given permission and a person has listened through every recording. When that's done, a member can hear Wesley and their own pastor on the same question, side by side."
+- **Expected result (verified through `/api/side`):** the left column is **John Wesley** with the same passages. The right column is **"Your church"** and says: "Nothing from your church yet." This is honest: the side-by-side church column is not wired on `main` yet (a church library alone is served behind the publish gate).
+- **Narration:** "This is the part I'm most excited about. On the left, how the question was answered through church history. On the right, your own pastor. Right now that column is empty, because I won't show a single church sermon until the pastor has given permission and a person has reviewed every recording. When that's done, a member can hear Wesley and their own pastor on the same question, side by side."
 - **Do not** narrate this as working with a real church. If you want sample data, say "sample data" aloud and show only the empty state; no sample church library is served by `main` today.
 
 ### 5. Privacy and keeping people in the loop (3:05 to 3:45, 40 s)
 - **On screen:** the README "YouTube channel import" paragraph, scrolled to the sentences about names, announcements, prayer requests and testimonies (a terminal or editor is fine). Do not open any real review file.
 - **Query:** none.
 - **Expected result:** n/a.
-- **Narration:** "Sermons are public teaching, but a pastor tells stories about real people. So when a church imports its sermons, names are redacted and those passages get no play button. Announcements, prayer requests and testimonies are never indexed at all. And nothing goes live until a person has listened to the whole recording. I tested the automatic rules and they're not enough alone; they caught about 87 percent of the words on a small test set I wrote. That's why the human listen is the real safeguard, not the software."
+- **Narration:** "Sermons are public teaching, but a pastor tells stories about real people. So when a church imports its sermons, names are redacted and those passages get no play button. Announcements, prayer requests and testimonies are never indexed at all. And my process is that nothing goes live until a person has listened to the whole recording. I tested the automatic rules and they're not enough alone; they caught about 87 percent of the words on a small synthetic test set written by an AI. That's why the human listen is the real safeguard, not the software."
 - Backing: `reports/W3-PRIV-SKIP.md` (635 of 730 words, 0.870, synthetic test set).
 
 ### 6. Any church can import its YouTube channel (3:45 to 4:10, 25 s)
-- **On screen:** a terminal in a scratch directory outside the repo.
+- **On screen:** a terminal at the repo root (paths below are repo-relative).
 - **Command (verified, dry run, no writes):**
   `uv run --extra youtube import/youtube.py "https://www.youtube.com/watch?v=BGoD6CIpLWQ" --library demo --privacy privacy.example.toml --dry-run`
 - **Expected result (verified):** one tab-separated line: `BGoD6CIpLWQ	Are speeches public domain?	2012-08-06	322`. That is a Creative Commons test clip from a non-church channel (`reports/W2-YT.md`).
@@ -62,7 +62,7 @@ All results below were produced by running the real code on `main` (`180a0a4`) a
 - **On screen:** `reports/W3-CPU.md` pick table, or a terminal running `curl localhost:PORT/healthz` showing `"backend": "onnx"`, `"chunks": 8383`.
 - **Expected result (verified `/healthz`):** `ok: true, library: wesley, chunks: 8383, model: granite-english-r2, backend: onnx, dense: true, fallback: false`.
 - **Narration:** "No GPU, no chat model, no vector database. One SQLite file and one small embedding model on a CPU. A search takes about 56 milliseconds on a single thread. A church doesn't need a server room."
-- Backing: `reports/W3-CPU.md` (56 ms p50 on one pinned CPU of a desktop i9; RSS 946 MiB in that harness). Say "on my desktop CPU, limited to one core" if asked; it has not been measured on a Sprite.
+- Backing: `reports/W3-CPU.md` (56 ms p50 on one pinned CPU of a desktop i9; RSS about 683 MiB after the #26 fix, `reports/W3-RSS.md`). Say "on my desktop CPU, limited to one core" if asked; it has not been measured on a Sprite.
 
 ### 8. Why it matters to a church (4:30 to 4:40, 10 s; trim to fit)
 - **On screen:** back to the results page with the Wesley card playing, or the title card.
@@ -74,8 +74,8 @@ All results below were produced by running the real code on `main` (`180a0a4`) a
 
 Do this the day before and again right before recording.
 
-- [ ] Branch: `main` at or after `180a0a4`; `git status` clean.
-- [ ] **Index:** `/cache/index/wesley.sqlite` (default; do not use `wesley-onnx-*.sqlite` copies or `cc-speech.sqlite`). `curl http://HOST:PORT/healthz` must show `"chunks": 8383`, `"index_version": "198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2"`, `"backend": "onnx"`, `"fallback": false`, `"church": null`. If `fallback` is true the server is on BM25 only and the results above will differ.
+- [ ] Branch: `main` at or after `efdf8ab`; `git status` clean.
+- [ ] **Index:** `/cache/index/wesley.sqlite` (default; do not use `wesley-onnx-*.sqlite` copies or `cc-speech.sqlite`). `curl http://HOST:PORT/healthz` must show `"chunks": 8383`, `"index_version": "198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2"` (Patrick's `/cache` build; update if the index is rebuilt), `"backend": "onnx"`, `"fallback": false`, `"church": null`. If `fallback` is true the server is on BM25 only and the results above will differ.
 - [ ] **Start the server** (loopback, from the repo): `uv run app/server.py` (default 127.0.0.1:8000). For the Tailscale URL, follow `docs/DEPLOY.md` ("Bind `PREACHED_HOST=127.0.0.1`... `tailscale serve` to that loopback port, add the tailscale hostname to `PREACHED_HOSTS`"). **URL over Tailscale:** `http://<this machine's tailnet name>:PORT` (the actual name is not recorded anywhere in the repo; fill in: ______ ). Open it once from the recording browser and run one search before hitting record. No tailnet was running on the machine used to write this draft.
 - [ ] Do not record the public Sprite URL; there is no public exposure (`docs/DEPLOY.md`, "Going public").
 - [ ] Rate limit: 120 requests per 60 s by default, 60 per 60 s via `scripts/serve.sh`. Don't hammer the page between takes; if you see 429 wait a minute.
@@ -92,9 +92,9 @@ All run on the same index through the page path. Verified from `search/query.py`
 
 | Instead of | Try | Expected top result |
 | --- | --- | --- |
-| money | `What did Wesley say about money?` (the "Money" button) | The Use of Money, `wesley-050-c0006`, 0:04:47 (287.16); then The Danger of Riches, 0:10:37 (637.22). Level not recorded for this one; check for a banner. |
+| money | `What did Wesley say about money?` (the "Money" button) | The Use of Money, `wesley-050-c0006`, 0:04:47 (287.16); then The Danger of Riches, 0:10:37 (637.22). Level `strong`. |
 | assurance | `the witness of the Spirit` | THE WITNESS OF THE SPIRIT, Discourse I, `wesley-010-c0005`, 0:02:49 (169.96): "What is this witness or testimony of our spirit; what is the testimony of God's Spirit ..." Score 0.0308. |
-| assurance | `Romans 8:16` (the "Romans 8:16" button) | Not run for this draft. Try it in pre-flight. |
+| assurance | `Romans 8:16` (the "Romans 8:16" button) | Level `strong`; top hit The Witness of the Spirit, Discourse II. |
 | worry | `take no thought for tomorrow` | Upon our Lord's Sermon on the Mount, Discourse 9, `wesley-029-c0002`, 0:01:52 (112.32): "...shall he not much more clothe you, O ye of little faith? Therefore take no thought, saying, What shall we eat?..." Score 0.0325 (both rankers agree). Use this instead of the "Worry" button. |
 | forgiveness | `What has Wesley taught about forgiving someone who wronged me` | Upon our Lord's Sermon on the Mount, Discourse 6, `wesley-026-c0072`, 0:37:19 (2239.57): "If," saith he, "ye forgive men their trespasses, your heavenly Father will also forgive you ..." Second: Justification By Faith, 0:18:10 (1090.4). |
 | prayer | `I don't know how to pray anymore` | Sermon on the Mount, Discourse 6, `wesley-026-c0027`, 0:13:17 (797.8) ("the end of your praying is not to inform God ..."); second On Visiting the Sick, 0:16:23 (983.96). Mixed quality; use only if you need a third question. |
@@ -103,7 +103,7 @@ All run on the same index through the page path. Verified from `search/query.py`
 
 ## Things not to say
 
-- Don't say "accuracy" or "percent correct" about search. The only quality numbers are Recall@5 0.614, MRR@10 0.497 and nDCG@10 0.546 on 35 questions whose labels an AI drafted and a human has not yet reviewed (`eval/README.md`).
+- Don't say "accuracy" or "percent correct" about search. Recall@5 0.614, MRR@10 0.497 and nDCG@10 0.546 (35 questions, AI-drafted labels, human review pending; bench script with de-duplication, not the web page) mostly measure title lookup (`reports/EVAL-DELEAK.md:7`). On plain-language questions nDCG@10 is 0.028; on blind-written ones the default finds an acceptable passage for 3 of 28 (`reports/EVAL-GRADE.md:20`). Demo with the preacher's own vocabulary or topics, not everyday phrasing.
 - Don't say the app is live for any church, public, or deployed. It is not.
 - Don't say the audio is Wesley's voice. It is a modern volunteer reading (LibriVox).
 - Don't say it "summarizes" or "answers". It finds.

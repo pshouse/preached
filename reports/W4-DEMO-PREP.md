@@ -44,3 +44,18 @@ Project description: **247 words** (limit 250), counted with a whitespace split 
 ## Push
 
 `gh` is not installed in this sandbox, so the branch is pushed and no PR was opened. Open it against `main` titled "W4: demo script + submission draft (for Patrick's review)".
+
+## CTO r1 fixes
+
+Merged `origin/main` (`efdf8ab`) into the branch (merge commit). Docs only.
+
+| Item | Change |
+| --- | --- |
+| Must-fix 1 | Kept the retrieval row; added a caveat in the draft's claims table and the demo script's "Things not to say": headline mostly measures title lookup; plain-language nDCG@10 0.028, R@5 0.040 (`EVAL-DELEAK.md:7`); blind questions 3 of 28, 0.11 (`EVAL-GRADE.md:20`); demo works best in the preacher's own vocabulary or by topic. Caveat text is 58 words. Row also notes 0.614 comes from the bench script with dedupe, not the web page. |
+| Must-fix 2 | RSS now 683 MiB (`W3-RSS.md`), measured 722.7 MiB at start / about 728 MiB after queries on `efdf8ab` (figures as given in the review; not independently re-measured). Tests 693 -> 729 (re-run: OK). References 180a0a4 -> efdf8ab. |
+| Must-fix 3 | Anchoring citation -> `W1-C.md:190`; 8,383 chunks -> `W1-C.md:192` and `W1-B.md`. The 0.42 s / 0.76 s figures are dropped (no measurement data in the repo). |
+| Must-fix 4 | Shot 5 narration: "a small synthetic test set written by an AI". |
+| Must-fix 5 | Description sentence replaced with the suggested wording. |
+| Should-fix | "church serving not wired" narrowed to the side-by-side column (`README.md:37`); shot 6 runs from repo root; pre-flight index_version marked "update if the index is rebuilt"; fallback rows filled (Romans 8:16 strong, top hit Witness of the Spirit II; Money button strong); "must listen" reworded as process (`--ack-review` is all the software enforces); 0.614 source noted. |
+
+Final description word count: **245** (limit 250), same whitespace-split method. Head SHA: see the commit pushed after this report (stated in the hand-off).
