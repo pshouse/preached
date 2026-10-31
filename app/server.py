@@ -36,6 +36,13 @@ from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
+from preached.library import (  # noqa: E402
+    CHURCH_EMPTY,
+    CHURCH_LABEL,
+    CLASSIC_LABEL,
+    classic_church_refusal,
+    read_label,
+)
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.search import (  # noqa: E402
@@ -179,7 +186,16 @@ def _first(args: dict, name: str) -> str | None:
     return values[0]
 
 
-def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, str]:
+def parse_search_args(
+    args: dict, *, library: str = LIBRARY, libraries: list[str] | None = None
+) -> tuple[str, int, str, str]:
+    """Query, k, mode, and the library slug this search is scoped to.
+
+    ``libraries`` is the files this process has open (classic, then church).
+    A slug outside that list is a 400. The default slug is the classic one,
+    so a request that omits ``library`` stays on the library the page already
+    asks for.
+    """
     raw_q = _first(args, "q")
     if raw_q is None:
         raise BadRequest("q is required")
@@ -205,11 +221,12 @@ def parse_search_args(args: dict, *, library: str = LIBRARY) -> tuple[str, int, 
     if mode not in MODES:
         raise BadRequest("mode must be hybrid, bm25, or dense")
 
+    allowed = list(libraries) if libraries else [library]
     raw_library = _first(args, "library")
-    chosen = library if raw_library is None or raw_library.strip() == "" else raw_library.strip()
-    if chosen != library:
-        raise BadRequest(f"library must be {library}")
-    return query, k, mode
+    chosen = allowed[0] if raw_library is None or raw_library.strip() == "" else raw_library.strip()
+    if chosen not in allowed:
+        raise BadRequest("library must be " + " or ".join(allowed))
+    return query, k, mode, chosen
 
 
 def _youtube_like(url) -> bool:
@@ -301,6 +318,33 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_f
     return result
 
 
+def _side_body(
+    payload: dict,
+    *,
+    library: str,
+    label: str,
+    sample: bool,
+    present: bool,
+    empty_message: str | None,
+) -> dict:
+    """One column of /api/side. Hit fields are the same object ``search`` returns."""
+    results = payload["results"]
+    empty = not results
+    return {
+        "library": library,
+        "label": label,
+        "sample": sample,
+        "present": present,
+        "empty": empty,
+        "message": empty_message if empty and empty_message else None,
+        "mode": payload["mode"],
+        "results": results,
+        "note": payload["note"],
+        "abstain": payload["abstain"],
+        "confidence": payload["confidence"],
+    }
+
+
 def default_loader(
     connection,
     model_key: str,
@@ -371,6 +415,28 @@ def load_search(
     return searcher, encode, None
 
 
+def load_church_searcher(connection, model_key: str, *, bm25_only: bool):
+    """Searcher for the church file, plus a note when that side is BM25 only.
+
+    Always built through #12's publish gate (``gated=True``, no slug, so the
+    public-domain exemption never applies): only approved sermons are
+    visible, checked per call. A bad or missing church vector file does not
+    take the classic side down with it. The church column falls back to
+    keyword search and says so.
+    """
+    gate = {"gated": True, "library": None}
+    if bm25_only:
+        return Searcher(connection, **gate), None
+    try:
+        return Searcher(connection, model=model_key, **gate), None
+    except EmbeddingMismatch:
+        logging.exception("church vectors do not match search/models.toml; that side is BM25 only")
+        return Searcher(connection, **gate), STALE_NOTE
+    except Exception:
+        logging.exception("church vectors unavailable; that side is BM25 only")
+        return Searcher(connection, **gate), STALE_NOTE
+
+
 class App:
     def __init__(
         self,
@@ -385,6 +451,13 @@ class App:
         backend=None,
         library: str = LIBRARY,
         servable=None,
+        church_connection=None,
+        church_searcher=None,
+        church_library: str | None = None,
+        church_label: str | None = None,
+        church_sample: bool | None = None,
+        church_note: str | None = None,
+        classic_label: str | None = None,
     ):
         """``servable(connection)`` raises SystemExit when the file may not be
         served (main passes ``check_servable``). It runs again before every
@@ -410,6 +483,28 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
+        self.classic_label = classic_label or read_label(connection) or (
+            CLASSIC_LABEL if library == LIBRARY else library
+        )
+        # The church file is not served until PR #12's publish gate is on main.
+        # Arguments are accepted so a caller can still pass the connection it
+        # opened; they are not stored, so /healthz "church" stays null and
+        # /api/side matches the no-church response (no present:true flag).
+        # TODO(post-#12): keep the searcher once #12 is on main. It must use
+        # #12's gate and per-request visible_sql, withhold audio on flagged
+        # passages, apply the source_url rule to hits, and reload with #10's
+        # index stamp. A church file passed as --library is refused by
+        # check_servable (libraries.classic_index_problem for spurgeon and
+        # edwards). Do not add a second serve check. Church confidence stays
+        # unrated (abstain.church_confidence) until a floor is fitted on a
+        # church library.
+        del church_connection, church_searcher, church_library, church_label, church_sample, church_note
+        self.church_connection = None
+        self.church_searcher = None
+        self.church_library = None
+        self.church_label = CHURCH_LABEL
+        self.church_sample = False
+        self.church_note = None
         # Any library but wesley is gated, except an allow-listed public-domain
         # library's own file (store.public_domain_file, keyed on the slug).
         # The gate is checked per request in SQL (preached.store.visible_sql),
@@ -557,27 +652,47 @@ class App:
             "dense": self.encode is not None,
             "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
+            "church": self.church_library,
         }
         if pending is not None:
             # A count only: sermons imported but not approved. Never ids or titles.
             payload["pending_review"] = pending
         return payload
 
-    def search(self, query: str, k: int, mode: str) -> dict:
+    def library_names(self) -> list[str]:
+        """Slugs this process will search. Classic first, then the church file."""
+        names = [self.library]
+        if self.church_library and self.church_library not in names:
+            names.append(self.church_library)
+        return names
+
+    def search(self, query: str, k: int, mode: str, *, library: str | None = None) -> dict:
+        """Search the classic library. A church slug is not open.
+
+        Until PR #12's gate is on main, a church library is refused the same
+        way as any slug this process did not open. There is no church searcher
+        to consult, so the response matches a server started with no church file.
+        """
+        chosen = self.library if library is None else library
+        if chosen != self.library:
+            raise BadRequest("library must be " + " or ".join(self.library_names()))
         started = time.perf_counter()
         note = None
         effective = mode
         with self.lock:
             self._refresh_if_stale()
             self._check_refused()
-            if self.encode is None:
-                if self.fallback_note:
+            searcher = self.searcher
+            # No query encoder, or this file has no usable vectors: keyword
+            # search, same rule as a BM25-only process.
+            if self.encode is None or searcher._matrix is None:
+                if self.encode is None and self.fallback_note:
                     note = self.fallback_note
                 elif mode != "bm25":
                     note = BM25_ONLY_NOTE
                 effective = "bm25"
             vector = None if effective == "bm25" else self.encode(query)
-            kept, confidence = search_with_confidence(self.searcher, query, vector, effective, k, self.floor)
+            kept, confidence = search_with_confidence(searcher, query, vector, effective, k, self.floor)
             nears = [self.flagged_audio == "none" and touches_flagged(self.connection, hit) for hit in kept]
             flagged = {sid: sermon_flagged(self.connection, sid) for sid in {hit.sermon_id for hit in kept}}
         return {
@@ -592,6 +707,45 @@ class App:
             # closest passages stay in results so a person can still look.
             "abstain": confidence.abstain,
             "confidence": confidence.as_dict(),
+        }
+
+    def side(self, query: str, k: int, mode: str) -> dict:
+        """Top ``k`` hits from the classic library, and an empty church side.
+
+        The church column is the same object a process with no church file
+        returns. Church passages are not searched until PR #12's gate is on
+        main, so this response has no church hit, no timed watch link, and
+        no ``present: true`` flag.
+        """
+        started = time.perf_counter()
+        classic = _side_body(
+            self.search(query, k, mode, library=self.library),
+            library=self.library,
+            label=self.classic_label,
+            sample=False,
+            present=True,
+            empty_message=None,
+        )
+        church = {
+            "library": None,
+            "label": CHURCH_LABEL,
+            "sample": False,
+            "present": False,
+            "empty": True,
+            "message": CHURCH_EMPTY,
+            "mode": None,
+            "results": [],
+            "note": None,
+            "abstain": False,
+            "confidence": None,
+        }
+        return {
+            "query": query,
+            "mode": mode,
+            "k": k,
+            "took_ms": int(round((time.perf_counter() - started) * 1000)),
+            "classic": classic,
+            "church": church,
         }
 
     def sermon(self, sermon_id: str) -> dict | None:
@@ -688,6 +842,10 @@ def build_app(
     variant: str | None = None,
     library: str = LIBRARY,
     servable=None,
+    church_connection=None,
+    church_library: str | None = None,
+    church_label: str | None = None,
+    church_sample: bool | None = None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -713,6 +871,9 @@ def build_app(
             # keeps any other surprise from stopping the server.
             logging.exception("abstain calibration unusable; abstain floor disabled")
             floor = None
+    # church_* are accepted so existing callers still type-check. They are
+    # not opened into a searcher. Serving waits on PR #12. See App.__init__.
+    del church_connection, church_library, church_label, church_sample
     return App(
         floor=floor,
         connection=connection,
@@ -810,13 +971,18 @@ def make_handler(app: App):
             if path == "/healthz":
                 self._send_json(200, app.health(), include_body)
                 return
-            if path == "/api/search":
+            if path in ("/api/search", "/api/side"):
                 try:
                     args = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=32)
                 except ValueError as exc:
                     raise BadRequest("request too large", 414) from exc
-                query, k, mode = parse_search_args(args, library=app.library)
-                self._send_json(200, app.search(query, k, mode), include_body)
+                query, k, mode, chosen = parse_search_args(args, libraries=app.library_names())
+                if path == "/api/side":
+                    # Both columns. ``library`` is still checked so a bad slug
+                    # cannot widen what this process is willing to open.
+                    self._send_json(200, app.side(query, k, mode), include_body)
+                else:
+                    self._send_json(200, app.search(query, k, mode, library=chosen), include_body)
                 return
             if path.startswith("/api/sermon/"):
                 self._send_sermon(path[len("/api/sermon/") :], include_body)
@@ -928,6 +1094,26 @@ def serve_forever(server: PreachedServer) -> None:
     print(f"PREACHED_LISTENING http://{host}:{port}", flush=True)
     logging.info("listening on http://%s:%s", host, port)
     server.serve_forever()
+
+
+def prepare_church(*, church_index: Path | None, church_library: str | None) -> None:
+    """Refuse an explicit classic as the church. Open nothing, log nothing.
+
+    ``--church-library`` and ``--church-index`` are checked by name and path
+    only (``library.classic_church_refusal``: slug, realpath, inode,
+    hardlink count); no file is opened, so no ``-shm`` or ``-wal`` appears
+    beside it. The index directory is not scanned for a ``role=church``
+    mark. Startup output is the same with or without a church.
+
+    TODO(post-#12): open the church file through #12's gate and per-request
+    ``visible_sql`` (``search.Searcher(gated=True)``), withhold audio on
+    flagged passages, apply the source_url rule to hits, and reload it with
+    #10's index stamp. Church confidence is ``abstain.church_confidence``
+    (unrated) until a church floor exists.
+    """
+    refusal = classic_church_refusal(church_library, church_index)
+    if refusal:
+        raise SystemExit(refusal)
 
 
 # The Wesley index schema (store.connect), lower-cased: every table and view
@@ -1050,8 +1236,19 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Serve Preached search on this machine.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--library", default=LIBRARY, help="Library slug. Index defaults to /cache/index/<slug>.sqlite")
+    parser.add_argument("--library", default=LIBRARY, help="Classic library slug. Index defaults to /cache/index/<slug>.sqlite")
     parser.add_argument("--index", type=Path, default=None, help="SQLite index. Defaults to /cache/index/<library>.sqlite")
+    parser.add_argument(
+        "--church-library",
+        default=None,
+        help="Your church's library slug. Accepted and checked (never a classic); not served until the publish gate is wired",
+    )
+    parser.add_argument(
+        "--church-index",
+        type=Path,
+        default=None,
+        help="SQLite file for your church. Accepted and checked (never a classic); not opened",
+    )
     parser.add_argument(
         "--hosts",
         default="127.0.0.1,localhost",
@@ -1082,6 +1279,9 @@ def main(argv: list[str] | None = None) -> None:
     library = args.library.strip()
     if not LIBRARY_SLUG.fullmatch(library):
         raise SystemExit("library must be a short slug: lowercase letters, digits, and hyphens")
+    church_library = args.church_library.strip() if args.church_library else None
+    if church_library is not None and not LIBRARY_SLUG.fullmatch(church_library):
+        raise SystemExit("church library must be a short slug: lowercase letters, digits, and hyphens")
     # Every library but wesley is gated (App.gated, no switch turns it off).
     # A church library is served only with a privacy config loaded.
     church = library != LIBRARY and not is_public_domain(library)
@@ -1100,6 +1300,9 @@ def main(argv: list[str] | None = None) -> None:
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    # Refuses wesley / spurgeon / edwards as the church. Opens nothing.
+    # The church side stays empty until PR #12's gate serves it.
+    prepare_church(church_index=args.church_index, church_library=church_library)
     # The file checked must be the file opened: same (st_dev, st_ino) before
     # the open and after the checks, and again before every reload.
     identity = file_identity(index)

@@ -18,11 +18,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 
 from preached import env  # noqa: F401, E402
-from preached.abstain import compute_signals, decide, floor_for  # noqa: E402
+from preached.abstain import church_confidence, compute_signals, decide, floor_for  # noqa: E402
 from preached.artifacts import ArtifactError  # noqa: E402
 from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND, load_embedder  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
+from preached.library import (  # noqa: E402
+    CHURCH_EMPTY,
+    classic_church_refusal,
+    classic_heading,
+    church_heading,
+)
 from preached.models import DEFAULT_MODEL, MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
@@ -235,22 +241,139 @@ def print_hits(query: str, mode: str, model: str | None, hits, policy: str = "no
         print("Nothing found in the indexed sermons.")
         return
     for rank, hit in enumerate(hits, start=1):
-        # A flagged chunk under none shows no exact chunk start (see audio_policy.public_times).
-        start_s, _, _ = public_times(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
-        near = connection is not None and policy == "none" and touches_flagged(connection, hit)
-        in_flagged = connection is not None and sermon_flagged(connection, hit.sermon_id)
-        if near:
-            start_s = None
-        print(
-            f"\n[{rank}] {clean(hit.sermon_title)}  (score {hit.score:.4f}, {clean(hit.chunk_id)})\n"
-            f"    at {fmt_time(start_s)} (start_s={start_s})  read by {clean(hit.reader or 'n/a')}\n"
-            f"    play: {hit_play(hit, policy, near, in_flagged)}\n"
-            f"    text: {hit_text_link(hit, policy, near, in_flagged)}\n"
-            f"    \"{clean(hit.text)}\""
+        print(format_hit(rank, hit, policy, connection))
+
+
+def format_hit(rank: int, hit, policy: str = "none", connection=None) -> str:
+    # A flagged chunk under none shows no exact chunk start (see audio_policy.public_times).
+    start_s, _, _ = public_times(hit.start_s, getattr(hit, "end_s", None), getattr(hit, "flag_end_s", None), policy)
+    near = connection is not None and policy == "none" and touches_flagged(connection, hit)
+    in_flagged = connection is not None and sermon_flagged(connection, hit.sermon_id)
+    if near:
+        start_s = None
+    return (
+        f"\n[{rank}] {clean(hit.sermon_title)}  (score {hit.score:.4f}, {clean(hit.chunk_id)})\n"
+        f"    at {fmt_time(start_s)} (start_s={start_s})  read by {clean(hit.reader or 'n/a')}\n"
+        f"    play: {hit_play(hit, policy, near, in_flagged)}\n"
+        f"    text: {hit_text_link(hit, policy, near, in_flagged)}\n"
+        f"    \"{clean(hit.text)}\""
+    )
+
+
+def format_side_section(
+    heading: str,
+    hits,
+    confidence,
+    *,
+    hide_low: bool,
+    empty_message: str | None,
+    mode_note: str | None = None,
+    policy: str = "none",
+    connection=None,
+) -> str:
+    """One column of ``--side``, as text. No hits uses ``empty_message`` when set."""
+    lines = [f"## {heading}"]
+    if mode_note:
+        lines.append(mode_note)
+    shown = hits
+    if confidence is not None and confidence.abstain and hits and hide_low:
+        shown = []
+    if confidence is not None:
+        lines.append(f"confidence: {confidence.level}")
+    if not shown:
+        if confidence is not None and confidence.abstain and hits and hide_low:
+            lines.append(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
+        elif empty_message:
+            lines.append(empty_message)
+        else:
+            lines.append("Nothing found in the indexed sermons.")
+    else:
+        lines.extend(format_hit(rank, hit, policy, connection) for rank, hit in enumerate(shown, start=1))
+        if confidence is not None and confidence.note:
+            lines.append(f"note: {confidence.note}")
+    return "\n".join(lines)
+
+
+def search_index(
+    connection,
+    args,
+    vector,
+    model_name: str | None,
+    *,
+    fallback_bm25: bool,
+    backend: str | None = None,
+    variant: str | None = None,
+    church: bool = False,
+    library: str | None = None,
+):
+    """Hits and confidence for one library file. Same rule as a single query.
+
+    ``fallback_bm25`` is for the church file: a vector mismatch prints keyword
+    hits instead of stopping the classic side. The floor is the one fitted
+    for this query embedder (backend and variant), same as a single search.
+
+    ``church=True`` does not apply that floor. Church confidence is unrated
+    until a floor is fitted on a church library (``abstain.church_confidence``).
+    The CLI does not call this for the church side until PR #12's gate is on
+    main; the flag is the rule that side will use.
+
+    Every Searcher here goes through #12's publish gate (``search.Searcher``
+    ``gated``/``library``). ``church=True`` is always gated, with no slug, so
+    an approved-sermon check applies even if the file was named like a
+    classic. A classic is gated unless it is wesley or a public-domain
+    library's own file, as in ``main``.
+    """
+    if church:
+        gate = {"gated": True, "library": None}
+    else:
+        gate = {"gated": library not in (None, "wesley"), "library": library}
+    used_vector = vector
+    used_model = model_name
+    used_mode = args.mode
+    note = None
+    try:
+        if args.mode == "bm25":
+            searcher = Searcher(connection, **gate)
+            hits = searcher.bm25(args.query, args.k)
+            used_vector = None
+            used_model = None
+        else:
+            searcher = Searcher(connection, model=model_name, **gate)
+            if args.mode == "dense":
+                hits = searcher.dense(vector, args.k)
+            else:
+                hits = searcher.hybrid(
+                    args.query,
+                    vector,
+                    args.k,
+                    fusion=args.fusion,
+                    rrf_k=args.rrf_k,
+                    dense_weight=args.dense_weight,
+                )
+    except EmbeddingMismatch:
+        if not fallback_bm25:
+            raise
+        searcher = Searcher(connection, **gate)
+        hits = searcher.bm25(args.query, args.k)
+        used_vector = None
+        used_model = None
+        used_mode = "bm25"
+        note = "Stored passage vectors do not match the configured model; results are BM25 only."
+    signals = compute_signals(searcher, args.query, used_vector, hits)
+    if church:
+        # Wesley's floor does not apply. Unrated until a church floor exists.
+        confidence = church_confidence(signals, has_results=bool(hits))
+    else:
+        floor = (
+            floor_for(used_model, backend=backend or "torch", variant=variant)
+            if used_vector is not None
+            else None
         )
+        confidence = decide(signals, floor, has_results=bool(hits))
+    return hits, confidence, used_mode, used_model, note
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Search Wesley's sermons.")
     parser.add_argument("query")
     parser.add_argument("--mode", choices=("bm25", "dense", "hybrid"), default="hybrid")
@@ -276,12 +399,34 @@ def main() -> None:
     parser.add_argument("--ort-threads", type=int, default=None, help="ONNX Runtime intra-op threads")
     parser.add_argument("--hide-low-confidence", action="store_true",
                         help="hide the passages when the (heuristic) abstain rule rates them low confidence")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--side",
+        action="store_true",
+        help="Print the classic library and your church, one section each",
+    )
+    parser.add_argument(
+        "--church-index",
+        type=Path,
+        default=None,
+        help="Church library SQLite. Default: the single index marked role=church",
+    )
+    parser.add_argument(
+        "--church-library",
+        default=None,
+        help="Church library slug under the index directory, when --church-index is omitted",
+    )
+    args = parser.parse_args(argv)
     try:
         # Always none (Patrick's decision); a stale shifted/play setting stops here.
         policy = resolve_flagged_audio(default_config().flagged_audio)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"error: {exc}") from exc
+    refusal = classic_church_refusal(args.church_library, args.church_index)
+    if refusal:
+        raise SystemExit(refusal)
+    if args.side and args.library not in (None, "wesley") and not is_public_domain(args.library):
+        # The first --side column is the classic library; a church slug is not one.
+        raise SystemExit(f"error: --side --library {args.library!r} refused: the first column is a classic library")
 
     # Read-only, and it does not sync (main #10: a text-only chunks.jsonl
     # matches the aligned index on ids and text; syncing it would null every
@@ -349,6 +494,20 @@ def main() -> None:
         )
     confidence = decide(compute_signals(searcher, args.query, vector, hits), floor, has_results=bool(hits))
     mode_label = args.mode if args.fusion == "rrf" or args.mode != "hybrid" else f"hybrid-{args.fusion}"
+    if args.side:
+        print_side(
+            args,
+            connection,
+            hits,
+            confidence,
+            mode_label,
+            model_name,
+            vector,
+            backend=getattr(embedder, "backend", None),
+            variant=getattr(embedder, "variant", None),
+            policy=policy,
+        )
+        return
     if confidence.abstain and hits and args.hide_low_confidence:
         print_hits(args.query, mode_label, model_name, [], policy)
         print(f"({len(hits)} low-confidence passages hidden by --hide-low-confidence.)")
@@ -356,6 +515,79 @@ def main() -> None:
     print_hits(args.query, mode_label, model_name, hits, policy, connection)
     if confidence.note and hits:
         print(f"\nnote: {confidence.note}")
+
+
+def print_side(
+    args,
+    connection,
+    hits,
+    confidence,
+    mode_label: str,
+    model_name: str | None,
+    vector,
+    *,
+    backend: str | None = None,
+    variant: str | None = None,
+    policy: str = "none",
+) -> None:
+    """Classic section, then an empty church section.
+
+    The church file is not opened. Until PR #12's gate is on main the section
+    matches a missing church file: ``Nothing from your church yet.`` and no
+    confidence line. ``backend`` and ``variant`` are kept for the post-#12
+    call to ``search_index(..., church=True)``, which rates that side unrated.
+    """
+    del backend, variant, vector
+    # --library spurgeon/edwards is the classic column. --index defaults to
+    # the Wesley file when it is omitted (open_index treats None that way).
+    if args.library:
+        classic_slug = args.library
+    else:
+        classic_slug = connection_slug(args.index if args.index is not None else INDEX_PATH, "wesley")
+    # TODO(post-#12): open the church file and search_index(..., church=True)
+    # under #12's gate. Do not print hits before that. Confidence is unrated.
+    church_hits: list = []
+    church_confidence = None
+    church_note = None
+    church_mode = None
+    church_title = church_heading(None, None)
+    print(f"query: {clean(args.query)}")
+    print(f"mode: {mode_label}" + (f"  model: {model_name}" if model_name else ""))
+    print()
+    print(
+        format_side_section(
+            classic_heading(connection, classic_slug),
+            hits,
+            confidence,
+            hide_low=args.hide_low_confidence,
+            empty_message=None,
+            policy=policy,
+            connection=connection,
+        )
+    )
+    print()
+    mode_note = None
+    if church_note:
+        mode_note = church_note
+    elif church_mode is not None and church_mode != args.mode:
+        mode_note = f"mode: {church_mode}"
+    print(
+        format_side_section(
+            church_title,
+            church_hits,
+            church_confidence,
+            hide_low=args.hide_low_confidence,
+            empty_message=CHURCH_EMPTY,
+            mode_note=mode_note,
+        )
+    )
+
+
+def connection_slug(path: Path, default: str) -> str:
+    stem = Path(path).stem
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", stem):
+        return stem
+    return default
 
 
 if __name__ == "__main__":
