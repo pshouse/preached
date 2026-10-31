@@ -575,7 +575,7 @@ class ChurchPathTests(unittest.TestCase):
     def test_no_stated_duration_stores_null(self) -> None:
         # CTO round 2 S-d: without meta.duration_s a download cut short after the last word would pass.
         write_wav(self.audio / "church-1.wav", synth(60.0, [(1, 59)]))
-        for duration in (None, 0, -5, "60", True, 2**1024, -(2**1024)):
+        for duration in (None, 0, -5, "60", True):
             with self.subTest(duration=duration):
                 err = self.chunk(self.transcript(words_for((1, 59)), meta={"duration_s": duration}), audio_dir=self.audio)
                 self.assertIsNone(self.stored()[0])
@@ -598,9 +598,11 @@ class ChurchPathTests(unittest.TestCase):
                     stated_duration(huge)
         self.assertEqual(stated_duration(2**1000), float(2**1000))
         write_wav(self.audio / "church-1.wav", synth(60.0, [(1, 59)]))
-        err = self.chunk(self.transcript(words_for((1, 59)), meta={"duration_s": 2**1024}), audio_dir=self.audio)
-        self.assertIsNone(self.stored()[0])
-        self.assertIn("no usable stated duration", err)
+        for huge in (2**1024, -(2**1024)):
+            with self.subTest(church_huge=huge):
+                err = self.chunk(self.transcript(words_for((1, 59)), meta={"duration_s": huge}), audio_dir=self.audio)
+                self.assertIsNone(self.stored()[0])
+                self.assertIn("no usable stated duration", err)
         self.chunk(self.transcript(words_for((1, 59))), audio_dir=self.audio)
         self.assertEqual(self.stored()[0], "[]")
 
