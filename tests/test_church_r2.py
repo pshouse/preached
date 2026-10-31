@@ -428,5 +428,41 @@ class AlertStringTests(_Root):
         self.assertNotIn("refused:", logs.output[0])
 
 
+class ChurchSigtermTests(_Root):
+    """MF1: with a church side open, SIGTERM drains, closes both connections, and exits 0."""
+
+    def test_church_server_exits_zero_on_sigterm(self) -> None:
+        import http.client
+        import json
+
+        import test_shutdown
+
+        index = test_shutdown._fixture_index(self.root / "wesley-fixture.sqlite", rows=20)
+        church = self.root / "sample.sqlite"
+        build_church(church)
+        base_env = test_shutdown._env
+        extra = {"PREACHED_PRIVACY": str(PRIVACY), **CHURCH_ON}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            test_shutdown, "_env", side_effect=lambda t: {**base_env(t), **extra}
+        ):
+            running = test_shutdown._Server(
+                tmp, ["--index", str(index), "--bm25-only", "--church-index", str(church), "--church-library", "sample"]
+            )
+            self.assertIsNotNone(running.port, "server did not start")
+            conn = http.client.HTTPConnection("127.0.0.1", running.port, timeout=10)
+            conn.request("GET", "/api/search?q=approvedtoken&mode=bm25&library=sample")
+            response = conn.getresponse()
+            body = json.loads(response.read())
+            conn.close()
+            rc, err = running.stop()
+        self.assertEqual(response.status, 200, err[-2000:])
+        self.assertTrue(body["results"], err[-2000:])
+        self.assertEqual(rc, 0, err[-2000:])
+        self.assertIn("church side: sample, read-only, through the publish gate", err)
+        self.assertIn("stopping", err)
+        self.assertNotIn("Traceback", err)
+        self.assertNotIn("church side refused", err)
+
+
 if __name__ == "__main__":
     unittest.main()
