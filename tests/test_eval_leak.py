@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import csv
+import importlib.util
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -12,11 +15,51 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_title_leak as lint  # noqa: E402
 
+# By path, so eval/ (pool.py, timestamps.py) never goes on sys.path.
+_spec = importlib.util.spec_from_file_location("eval_validate", ROOT / "eval" / "validate.py")
+validate = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(validate)
+
 GROUPS = {"plain", "plain-blind", "names-topic", "title-keyword", "scripture-keyword", "unanswerable"}
 
 
 def load() -> list[dict]:
     return [json.loads(line) for line in (ROOT / "eval" / "questions.jsonl").read_text().splitlines() if line.strip()]
+
+
+def load_verdicts() -> dict[str, str]:
+    with (ROOT / "reports" / "W3-LABEL-VERDICTS.csv").open(newline="", encoding="utf-8") as handle:
+        return {row["row id"]: row["verdict"] for row in csv.DictReader(handle)}
+
+
+def load_partials() -> list[dict]:
+    return [json.loads(line) for line in (ROOT / "eval" / "partial_verdicts.jsonl").read_text().splitlines() if line.strip()]
+
+
+def load_sheet_chunks() -> dict[str, str]:
+    """Sheet row id -> real chunk id, from the KEY table."""
+    rows = {}
+    for line in (ROOT / "reports" / "W3-LABEL-SHEET-KEY.md").read_text().splitlines():
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) > 6 and cells[0].startswith("L") and cells[0][1:].isdigit():
+            rows[cells[0]] = cells[6]
+    return rows
+
+
+def load_key_segments() -> dict[str, list[str]]:
+    """Sheet row id -> the quoted KEY segments (split at ` ... `) for that row."""
+    rows = {}
+    for line in (ROOT / "reports" / "W3-LABEL-SHEET-KEY.md").read_text().splitlines():
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) > 8 and cells[0].startswith("L") and cells[0][1:].isdigit():
+            rows[cells[0]] = [s for q in re.findall(r'"([^"]+)"', cells[8]) for s in q.split(" ... ")]
+    return rows
+
+
+def confirmed_labels() -> list[dict]:
+    """Every confirmed label: primary ones in questions.jsonl and the sensitivity-only partial file."""
+    return ([p for q in load() for p in q["relevant"] if p.get("status") == "confirmed"]
+            + [line["label"] for line in load_partials()])
 
 
 class TitleLeakTest(unittest.TestCase):
@@ -32,23 +75,110 @@ class TitleLeakTest(unittest.TestCase):
             else:
                 self.assertEqual(q["group"] == "unanswerable", q["type"] == "unanswerable", q["id"])
 
+    def check_label(self, p: dict, verdicts: dict[str, str], primary: bool = True) -> None:
+        if p.get("status") == "proposed":
+            self.assertTrue(p.get("reason"), p["passage_id"])
+            self.assertEqual(p.get("found_by"), "llm-proposed:claude", p["passage_id"])
+        elif p.get("status") == "confirmed":
+            # Patrick's blind verdict: the sheet row must exist and carry this grade.
+            self.assertEqual(p.get("found_by"), "human:patrick-blind-w3", p["passage_id"])
+            self.assertIn(p.get("sheet_row"), verdicts, p["passage_id"])
+            self.assertEqual(verdicts[p["sheet_row"]], str(p["grade"]), p["passage_id"])
+            self.assertIn(p.get("quote_source"), ("key-segment", "chunk-unique"), p["passage_id"])
+            if primary:
+                # Ruling (a): only verdict 2 becomes a scored label; verdict 1 lives in eval/partial_verdicts.jsonl.
+                self.assertEqual(p["grade"], 2, p["passage_id"])
+                self.assertEqual(verdicts[p["sheet_row"]], "2", p["passage_id"])
+        else:
+            self.assertNotIn("found_by", p, p["passage_id"])
+        # Existing labels carry no status; grading adds "proposed", blind verdicts "confirmed".
+        self.assertIn(p.get("status"), (None, "proposed", "confirmed"), p["passage_id"])
+
     def test_proposed_labels_are_marked_and_explained(self):
+        verdicts = load_verdicts()
         for q in load():
             for p in q["relevant"]:
-                if p.get("status") == "proposed":
-                    self.assertTrue(p.get("reason"), p["passage_id"])
-                    self.assertEqual(p.get("found_by"), "llm-proposed:claude", p["passage_id"])
-                else:
-                    self.assertNotIn("found_by", p, p["passage_id"])
-                # Existing labels carry no status; only grading adds "proposed".
-                self.assertIn(p.get("status"), (None, "proposed"), p["passage_id"])
+                self.check_label(p, verdicts)
             if q["group"] == "plain-blind":
                 self.assertEqual(q.get("provenance"), "llm-written:grok", q["id"])
-                self.assertTrue(all(p.get("status") == "proposed" for p in q["relevant"]), q["id"])
+                self.assertTrue(all(p.get("status") in ("proposed", "confirmed") for p in q["relevant"]), q["id"])
         candidates = [json.loads(line) for line in (ROOT / "eval" / "plain_candidates.jsonl").read_text().splitlines() if line.strip()]
         self.assertEqual(len(candidates), 30)
         for cand in candidates:
             self.assertEqual(cand.get("provenance"), "llm-written:grok", cand["id"])
+
+    def test_confirmed_label_needs_a_valid_sheet_row(self):
+        verdicts = load_verdicts()
+        good = {"passage_id": "x", "grade": 2, "status": "confirmed", "found_by": "human:patrick-blind-w3", "sheet_row": "L02",
+                "quote_source": "key-segment"}
+        self.check_label(good, verdicts)
+        self.check_label({**good, "quote_source": "chunk-unique"}, verdicts)
+        partial = {**good, "grade": 1, "sheet_row": "L06"}
+        self.check_label(partial, verdicts, primary=False)
+        for bad in ({"sheet_row": None}, {"sheet_row": "L99"}, {"sheet_row": "L01"}, {"found_by": "human:someone"},
+                    {"found_by": "human:patrick-blind-w3\n"}, {"quote_source": None}, {"quote_source": "picked"},
+                    {"grade": 1, "sheet_row": "L06"}, {"grade": 1}, {"sheet_row": "L06"}):
+            with self.subTest(bad=bad), self.assertRaises(AssertionError):
+                self.check_label({**good, **bad}, verdicts)
+        with self.assertRaises(AssertionError):
+            self.check_label({k: v for k, v in good.items() if k != "sheet_row"}, verdicts)
+
+    def test_partial_verdicts_are_verdict_1_labels_with_exact_mirrors(self):
+        verdicts = load_verdicts()
+        by_id = {q["id"]: q for q in load()}
+        lines = load_partials()
+        self.assertTrue(lines)
+        sources = {}
+        seen = set()
+        for line in lines:
+            label, where = line["label"], f'{line["question_id"]} {line["sheet_row"]}'
+            self.assertIn(line["question_id"], by_id, where)
+            self.assertEqual(line["verdict"], 1, where)
+            self.assertEqual(verdicts.get(line["sheet_row"]), "1", where)
+            self.assertEqual(label.get("grade"), 1, where)
+            self.assertEqual(label.get("sheet_row"), line["sheet_row"], where)
+            self.assertEqual(label.get("status"), "confirmed", where)
+            self.check_label(label, verdicts, primary=False)
+            self.assertNotIn((line["question_id"], line["sheet_row"]), seen, f"duplicate line: {where}")
+            seen.add((line["question_id"], line["sheet_row"]))
+            if "mirrored_from" not in line:
+                sources[(line["question_id"], line["sheet_row"])] = line
+        for line in lines:
+            if "mirrored_from" in line:
+                where = f'{line["question_id"]} {line["sheet_row"]}'
+                source = sources.get((line["mirrored_from"], line["sheet_row"]))
+                self.assertIsNotNone(source, where)
+                self.assertEqual(line["label"], source["label"], where)
+                # The mirror goes on the original of that -plain rewrite.
+                self.assertEqual(by_id[line["mirrored_from"]].get("rewrite_of"), line["question_id"], where)
+        # And the other way: every non-mirror line on a -plain rewrite has exactly one mirror on its original.
+        for (qid, row), line in sources.items():
+            original = by_id[qid].get("rewrite_of")
+            if original:
+                mirrors = [m for m in lines if m["question_id"] == original and m.get("mirrored_from") == qid
+                           and m["sheet_row"] == row]
+                self.assertEqual(len(mirrors), 1, f"{qid} {row}: needs exactly one mirror on {original}")
+
+    def test_key_segment_quotes_are_key_segments_of_their_row(self):
+        segments = load_key_segments()
+        self.assertEqual(len(segments), 24)
+        for p in confirmed_labels():
+            if p["quote_source"] == "key-segment":
+                self.assertIn(p["quote"], segments[p["sheet_row"]], f'{p["passage_id"]} {p["sheet_row"]}')
+
+    @unittest.skipUnless(validate.CHUNKS_JSONL.is_file(), "needs the chunked corpus in /cache")
+    def test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk(self):
+        sheet = load_sheet_chunks()
+        self.assertEqual(len(sheet), 24)
+        chunks = validate.read_jsonl(validate.CHUNKS_JSONL)
+        labels = confirmed_labels()
+        self.assertTrue(labels)
+        for p in labels:
+            with self.subTest(passage=p["passage_id"], sheet_row=p["sheet_row"]):
+                hits = [c["chunk_id"] for c in chunks if validate.contains_quote(c["text"], p["quote"])]
+                self.assertEqual(hits, [sheet[p["sheet_row"]]])
+                self.assertEqual(p["chunk_ids"], hits)
+                self.assertIn(p["quote_source"], ("key-segment", "chunk-unique"))
 
     def test_each_names_topic_question_has_a_plain_rewrite_with_the_same_labels(self):
         by_id = {q["id"]: q for q in load()}

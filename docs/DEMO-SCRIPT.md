@@ -3,11 +3,11 @@
 Hard limit is 5:00 (BRIEF.md). This plan totals **4:40**, leaving 20 s of slack. Patrick records and narrates. Nothing here is submitted or deployed.
 
 **Rules for the recording**
-- Show only what is on `main` today. The side-by-side church column and public exposure are **coming**; they are named in narration once and never shown.
+- Show only what is on `main` today. Real church sermons in the side-by-side column and public exposure are **coming**; they are named in narration once and never shown.
 - Use only the public-domain Wesley library on screen. No Gaston Community Church audio, titles or transcripts. No real names of members anywhere.
 - Every result shown is the preacher's own words. Never imply the app wrote an answer.
 
-All results below were produced by running the real code on `main` (`cd3ad8f`) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
+All results below were produced by running the real code on `main` (`bbdb1ba`; results re-checked live on it) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
 
 ## Shots
 
@@ -39,9 +39,9 @@ All results below were produced by running the real code on `main` (`cd3ad8f`) a
 
 ### 4. Side by side: a classic preacher and your own pastor (2:25 to 3:05, 40 s)
 - **On screen:** set View = "Side by side", re-run `how should a Christian use money`.
-- **Expected result (verified through `/api/side`):** the left column is **John Wesley** with the same passages. The right column is **"Your church"** and says: "Nothing from your church yet." This is honest: the side-by-side church column is not wired on `main` yet (a church library alone is served behind the publish gate).
+- **Expected result (verified through `/api/side`):** the left column is **John Wesley** with the same passages. The right column is **"Your church"** and says: "Nothing from your church yet." This is honest: since PR #37 `main` can fill that column from a church library, but only through the publish gate (approved, reviewed sermons) and only when a church library is named and `PREACHED_CHURCH_SIDE=enabled` is set. No real church data is loaded, and the church path has only been run on synthetic fixtures (`tests/test_church_wire.py`), so this server has no church and shows the empty state.
 - **Narration:** "This is the part I'm most excited about. On the left, how the question was answered through church history. On the right, your own pastor. Right now that column is empty, because I won't show a single church sermon until the pastor has given permission and a person has reviewed every recording. When that's done, a member can hear Wesley and their own pastor on the same question, side by side."
-- **Do not** narrate this as working with a real church. If you want sample data, say "sample data" aloud and show only the empty state; no sample church library is served by `main` today.
+- **Do not** narrate this as working with a real church. If you want sample data, say "sample data" aloud and show only the empty state; this server serves no sample church library.
 
 ### 5. Privacy and keeping people in the loop (3:05 to 3:45, 40 s)
 - **On screen:** the README "YouTube channel import" paragraph, scrolled to the sentences about names, announcements, prayer requests and testimonies (a terminal or editor is fine). Do not open any real review file.
@@ -62,7 +62,7 @@ All results below were produced by running the real code on `main` (`cd3ad8f`) a
 - **On screen:** `reports/W3-CPU.md` pick table, or a terminal running `curl localhost:PORT/healthz` showing `"backend": "onnx"`, `"chunks": 8383`.
 - **Expected result (verified `/healthz`):** `ok: true, library: wesley, chunks: 8383, model: granite-english-r2, backend: onnx, dense: true, fallback: false`.
 - **Narration:** "No GPU, no chat model, no vector database. One SQLite file and one small embedding model on a CPU. A search takes about 56 milliseconds on my desktop, on one core. A church doesn't need a server room."
-- Backing: `reports/W3-CPU.md` (56 ms p50 on one pinned CPU of a desktop i9; RSS about 683 MiB after the #26 fix, `reports/W3-RSS.md`; peak (VmHWM) about 969 MiB during model load, so it needs roughly 1 GiB of RAM). Say "on my desktop CPU, limited to one core" if asked; it has not been measured on a Sprite.
+- Backing: `reports/W3-CPU.md` (56 ms p50 on one pinned CPU of a desktop i9; embedder alone: RSS 683 MiB, peak (VmHWM) 903 MiB, `reports/W3-RSS.md`; full server with the Wesley index: 722.7 MiB at start, peak about 969 MiB, CTO review in `reports/W4-DEMO-PREP.md`, so it needs roughly 1 GiB of RAM). Say "on my desktop CPU, limited to one core" if asked; it has not been measured on a Sprite.
 
 ### 8. Why it matters to a church (4:30 to 4:40, 10 s; trim to fit)
 - **On screen:** back to the results page with the Wesley card playing, or the title card.
@@ -74,7 +74,7 @@ All results below were produced by running the real code on `main` (`cd3ad8f`) a
 
 Do this the day before and again right before recording.
 
-- [ ] Branch: `main` at or after `cd3ad8f`; `git status` clean.
+- [ ] Branch: `main` at or after `bbdb1ba`; `git status` clean.
 - [ ] **Index:** `/cache/index/wesley.sqlite` (default; do not use `wesley-onnx-*.sqlite` copies or `cc-speech.sqlite`). `curl http://HOST:PORT/healthz` must show `"chunks": 8383`, `"index_version": "198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2"` (Patrick's `/cache` build; update if the index is rebuilt), `"backend": "onnx"`, `"fallback": false`, `"church": null`. If `fallback` is true the server is on BM25 only and the results above will differ.
 - [ ] **Start the server** (loopback, from the repo): `uv run app/server.py` (default 127.0.0.1:8000). For the Tailscale URL, follow `docs/DEPLOY.md` ("Bind `PREACHED_HOST=127.0.0.1`... `tailscale serve` to that loopback port, add the tailscale hostname to `PREACHED_HOSTS`"). **URL over Tailscale:** `http://<this machine's tailnet name>:PORT` (the actual name is not recorded anywhere in the repo; fill in: ______ ). Open it once from the recording browser and run one search before hitting record. No tailnet was running on the machine used to write this draft.
 - [ ] Do not record the public Sprite URL; there is no public exposure (`docs/DEPLOY.md`, "Going public").

@@ -181,6 +181,10 @@ function seekWhenReady(audio) {
 
 function playClip(url, start, button, caption) {
   var audio = document.getElementById("player");
+  /* The bar stays hidden until the first Play, so on a phone it does not
+     cover the page before there is anything to play. */
+  var bar = document.getElementById("player-bar");
+  if (bar) bar.hidden = false;
   var token = ++playToken;
   var seconds = playStart(start);
   audio.dataset.token = String(token);
@@ -195,7 +199,7 @@ function playClip(url, start, button, caption) {
   audio.play().catch(function () {
     if (Number(audio.dataset.token) !== token) return;
     document.getElementById("now-playing").textContent =
-      caption + " Press play on the bar if the browser held the audio.";
+      caption + ". Press play on the bar if the browser held the audio.";
   });
   var playing = document.querySelector(".play.is-playing");
   if (playing) playing.classList.remove("is-playing");
@@ -247,6 +251,7 @@ function renderCard(hit) {
       watch.href = youtube;
       watch.target = "_blank";
       watch.rel = "noopener noreferrer";
+      watch.setAttribute("aria-label", "Watch on YouTube at " + playLabel + " (opens in a new tab)");
       card.appendChild(watch);
     } else if (audioHref && playLabel) {
       var button = el("button", "play", "Play from " + playLabel);
@@ -279,6 +284,9 @@ function renderCard(hit) {
 
   return item;
 }
+
+/* Longest question the server accepts. Same as the input's maxlength. */
+var MAX_QUERY = 300;
 
 /* Page copy for each search state. Plain words; inserted with textContent. */
 var MESSAGES = {
@@ -512,6 +520,17 @@ function showFailure(message) {
   document.getElementById("retry").hidden = !lastSearch;
 }
 
+/* On a phone the results start below the form and the chips. Scroll them
+   into view so a tap on Search visibly does something. No scroll when the
+   top of the results is already on screen (wide screens, Try again). */
+function revealResults() {
+  var section = document.getElementById("results-section");
+  if (!section || typeof section.getBoundingClientRect !== "function") return;
+  var top = section.getBoundingClientRect().top;
+  if (top >= 0 && top < window.innerHeight * 0.6) return;
+  if (typeof section.scrollIntoView === "function") section.scrollIntoView({ block: "start" });
+}
+
 function selectedView() {
   var viewEl = document.getElementById("view");
   return viewEl && viewEl.value === "side" ? "side" : "classic";
@@ -532,6 +551,7 @@ async function runSearch(query) {
   resetState();
   setBusy(true);
   statusEl.textContent = MESSAGES.loading;
+  revealResults();
 
   var params = new URLSearchParams();
   params.set("q", query);
@@ -592,6 +612,8 @@ function init() {
       input.focus();
       return;
     }
+    /* Close the phone keyboard so the results are not hidden behind it. */
+    if (document.activeElement === input) input.blur();
     runSearch(query);
   });
 
@@ -618,7 +640,7 @@ function init() {
   if (viewEl && initialParams.get("view") === "side") viewEl.value = "side";
   var initial = initialParams.get("q");
   if (initial && initial.trim()) {
-    input.value = initial.trim();
+    input.value = initial.trim().slice(0, MAX_QUERY);
     runSearch(input.value);
   }
 }
