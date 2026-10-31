@@ -402,18 +402,18 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--side",
         action="store_true",
-        help="Print the classic library and your church, one section each",
+        help="Print the classic library, then an empty church section (not searched until the publish gate is wired)",
     )
     parser.add_argument(
         "--church-index",
         type=Path,
         default=None,
-        help="Church library SQLite. Default: the single index marked role=church",
+        help="SQLite file for your church. Accepted and checked (never a classic); not opened",
     )
     parser.add_argument(
         "--church-library",
         default=None,
-        help="Church library slug under the index directory, when --church-index is omitted",
+        help="Your church's library slug. Accepted and checked (never a classic); not opened",
     )
     args = parser.parse_args(argv)
     try:

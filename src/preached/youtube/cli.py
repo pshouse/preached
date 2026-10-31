@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         from preached.library import mark_your_church_exclusive
 
         try:
-            mark_your_church_exclusive(
+            skipped = mark_your_church_exclusive(
                 settings.index_path,
                 index_root,
                 sample=args.library == "sample",
@@ -174,4 +174,9 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
+        for sibling, why in skipped:
+            print(
+                f"warning: {sibling.name} is still marked as your church; it {why}, so the mark was not cleared",
+                file=sys.stderr,
+            )
     return code

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import stat
 from pathlib import Path
 
 from preached.libraries import PUBLIC_DOMAIN, canonical_index, classic_index_problem
-from preached.store import connect, open_readonly
+from preached.store import migrate, open_readonly
 
 # meta.key. One file holds role=church. Import --your-church clears the others.
 ROLE_KEY = "role"
@@ -35,6 +36,13 @@ def classic_names() -> tuple[str, ...]:
 def _classic_church_error(name: str) -> str:
     listed = ", ".join(classic_names())
     return f"error: {name} is a classic library ({listed}) and cannot be your church"
+
+
+def _hardlink_church_error(name: str, links: int) -> str:
+    return (
+        f"error: {name} has {links} hard links, so another name may point at the same file; "
+        "a church library must have exactly one. It is not marked"
+    )
 
 
 def set_meta(connection: sqlite3.Connection, key: str, value: str) -> None:
@@ -120,15 +128,22 @@ def classic_church_refusal(slug: str | None, path: Path | None = None) -> str | 
     """Error text when this target cannot be the church, else None.
 
     An explicit ``--church-library wesley`` (or spurgeon, edwards) and a
-    church index whose name or canonical path is one of those libraries are
-    both refused. Spurgeon and edwards go through ``libraries.PUBLIC_DOMAIN``
-    and ``classic_index_problem``. The caller raises ``SystemExit`` for an
-    explicit request and leaves the side empty when the path was only
-    auto-detected.
+    church index whose name, canonical path, or inode is one of those
+    libraries are refused as a classic. Spurgeon and edwards go through
+    ``libraries.PUBLIC_DOMAIN`` and ``classic_index_problem``. A church index
+    with more than one link gets its own hardlink message. The file is not
+    opened. The server and ``search/query.py`` raise ``SystemExit`` with
+    this text; neither scans the index directory for a mark.
     """
-    if is_classic_slug(slug) or (path is not None and is_protected_classic(path)):
-        name = slug or Path(path).name
-        return _classic_church_error(name)
+    if is_classic_slug(slug):
+        return _classic_church_error(slug)
+    if path is None:
+        return None
+    reason = _protection(path)
+    if reason == "classic":
+        return _classic_church_error(slug or Path(path).name)
+    if reason is not None:
+        return _hardlink_church_error(slug or Path(path).name, _links(path))
     return None
 
 
@@ -231,35 +246,79 @@ def mark_your_church_exclusive(
     *,
     sample: bool = False,
     label: str | None = None,
-) -> None:
+) -> list[tuple[Path, str]]:
     """Mark ``path`` as the church and clear that mark on any sibling file.
 
+    Returns the sibling files still marked ``role=church`` that were not
+    cleared, each with the reason, so the importer can say so.
+
     Classic libraries (wesley, spurgeon, edwards: by name, path, or the same
-    inode through a hardlink) are not opened for writing. Nor is any file
-    that does not look like a church import (``church_shaped``): a
-    Wesley-shaped file, or one whose ``meta.library`` names a classic, is
-    never written. ``store.connect`` migrates the schema and sets
-    ``journal_mode=WAL``; a mistaken mark on a copy of wesley.sqlite used to
-    rewrite that file. Siblings that do get cleared are opened with a plain
-    ``sqlite3`` connection, which does not migrate and does not change the
-    journal mode. The target itself is the church file this import just
-    wrote, so it still goes through ``store.connect``.
+    inode through a hardlink) are not opened for writing. Nor is a file with
+    more than one link, or one that does not look like a church import
+    (``church_shaped``): a Wesley-shaped file, or one whose ``meta.library``
+    names a classic. Those checks name a path, and the name can be swapped
+    for a link to wesley.sqlite before the file is opened. So every write
+    goes through ``_open_checked``: the descriptor SQLite actually opened
+    must have one link and must not be a classic file, and the church shape
+    is read again through that connection, before the first write.
+
+    Siblings are cleared with a plain ``sqlite3`` connection, which does not
+    migrate and does not change the journal mode. The target is the church
+    file this import just wrote, so it is migrated (``store.migrate``).
     """
     target = Path(path).resolve()
-    if is_protected_classic(target):
+    reason = _protection(target)
+    if reason == "classic":
         raise ValueError(_classic_church_error(target.name))
+    if reason is not None:
+        raise ValueError(_hardlink_church_error(target.name, _links(target)))
     if not church_shaped(target):
         raise ValueError(f"error: {target.name} is not a church import (no videos table); it is not marked")
+    skipped = _marked_siblings_not_cleared(index_dir, target)
     for candidate in church_index_matches(index_dir, exclude=target):
         if is_protected_classic(candidate) or not church_shaped(candidate):
             continue
-        _clear_church_mark(candidate)
-    connection = connect(target)
+        problem = _clear_church_mark(candidate)
+        if problem is not None:
+            skipped.append((candidate, problem))
+    connection = _open_checked(target)
     try:
+        problem = _church_shape_problem(connection)
+        if problem is not None:
+            raise ValueError(f"error: {target.name} {problem}; it is not marked")
+        migrate(connection)
         mark_your_church(connection, label=label, sample=sample)
         connection.commit()
     finally:
         connection.close()
+    return sorted(skipped)
+
+
+def _marked_siblings_not_cleared(index_dir: Path, target: Path) -> list[tuple[Path, str]]:
+    """Marked files ``church_index_matches`` leaves out, other than classics.
+
+    A classic library is never opened. A hardlinked or non-church-shaped file
+    is opened read-only to see whether it carries ``role=church``.
+    """
+    root = Path(index_dir)
+    if not root.is_dir():
+        return []
+    found: list[tuple[Path, str]] = []
+    for candidate in sorted(root.glob("*.sqlite")):
+        if not candidate.is_file() or _resolve(candidate) == target:
+            continue
+        reason = _protection(candidate)
+        if reason == "classic":
+            continue
+        if reason is not None:
+            why = f"has {_links(candidate)} hard links"
+        elif not church_shaped(candidate):
+            why = "is not a church import"
+        else:
+            continue
+        if _is_church_file(candidate):
+            found.append((candidate, why))
+    return found
 
 
 def _classic_files() -> list[Path]:
@@ -269,6 +328,21 @@ def _classic_files() -> list[Path]:
     from preached import paths
 
     return [paths.INDEX_PATH, paths.INDEX_DIR / "wesley.sqlite", *(canonical_index(slug) for slug in PUBLIC_DOMAIN)]
+
+
+def _classic_ids() -> set[tuple[int, int]]:
+    """(st_dev, st_ino) of every classic file that exists now."""
+    ids = set()
+    for candidate in _classic_files():
+        ident = _file_id(candidate)
+        if ident is not None:
+            ids.add(ident[:2])
+    return ids
+
+
+def _links(path: Path) -> int:
+    ident = _file_id(path)
+    return ident[2] if ident is not None else 0
 
 
 def _file_id(path: Path) -> tuple[int, int, int] | None:
@@ -290,68 +364,150 @@ def is_protected_classic(path: Path) -> bool:
     protected too: its other name may be a classic this process does not
     know about. The file is not opened.
     """
+    return _protection(path) is not None
+
+
+def _protection(path: Path) -> str | None:
+    """``"classic"``, ``"hardlink"`` (more than one link, no known classic), or None."""
     if is_classic_slug(Path(path).stem):
-        return True
+        return "classic"
     resolved = _resolve(path)
     if resolved is None:
-        return False
+        return None
     ident = _file_id(path)
-    if ident is not None and ident[2] > 1:
-        return True
     for candidate in _classic_files():
         canonical = _resolve(candidate)
         if canonical is not None and resolved == canonical:
-            return True
+            return "classic"
         other = _file_id(candidate)
         if ident is not None and other is not None and ident[:2] == other[:2]:
-            return True
+            return "classic"
     for slug in PUBLIC_DOMAIN:
         # None means #14 would serve this path as that classic library.
         if classic_index_problem(slug, path) is None:
-            return True
-    return False
+            return "classic"
+    if ident is not None and ident[2] > 1:
+        return "hardlink"
+    return None
 
 
 def church_shaped(path: Path) -> bool:
-    """True when ``path`` holds a church import: a ``videos`` table and a
-    ``chunks.video_id`` column, with no ``meta.library`` naming a classic.
+    """True when ``path`` holds a church import (``_church_shape_problem``).
 
-    Wesley's index has neither table nor column; build_library.py records
-    its slug in ``meta.library``. Read-only (``store.open_readonly``).
-    Anything unreadable is not church-shaped, so it is not written.
+    Read-only (``store.open_readonly``). Anything unreadable is not
+    church-shaped, so it is not written.
     """
     try:
         connection = open_readonly(Path(path))
     except (OSError, sqlite3.Error):
         return False
     try:
-        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        if "videos" not in tables or "chunks" not in tables:
-            return False
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
-        if "video_id" not in columns:
-            return False
-        return not is_classic_slug(get_meta(connection, "library"))
-    except sqlite3.Error:
-        return False
+        return _church_shape_problem(connection) is None
     finally:
         connection.close()
 
 
-def _clear_church_mark(path: Path) -> None:
+def _church_shape_problem(connection: sqlite3.Connection) -> str | None:
+    """None when the open file has a ``videos`` table and a ``chunks.video_id``
+    column, with no ``meta.library`` naming a classic.
+
+    Wesley's index has neither table nor column; build_library.py records
+    its slug in ``meta.library``.
+    """
+    try:
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        if "videos" not in tables or "chunks" not in tables:
+            return "is not a church import (no videos table)"
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(chunks)")}
+        if "video_id" not in columns:
+            return "is not a church import (no chunks.video_id)"
+        if is_classic_slug(get_meta(connection, "library")):
+            return "is a classic library build (meta.library)"
+    except sqlite3.Error as exc:
+        return f"cannot be read ({exc})"
+    return None
+
+
+def _open_descriptors() -> set[int]:
+    """Descriptors open in this process. The one ``listdir`` used is closed
+    by the time it returns, so ``fstat`` drops it."""
+    found = set()
+    for name in os.listdir("/dev/fd"):
+        try:
+            os.fstat(int(name))
+        except (OSError, ValueError):
+            continue
+        found.add(int(name))
+    return found
+
+
+class UnsafeOpen(ValueError):
+    """The file SQLite opened is not one this module may write. ``why`` has no file name."""
+
+    def __init__(self, path: Path, why: str) -> None:
+        super().__init__(f"error: {Path(path).name} {why}; it is not written")
+        self.why = why
+
+
+def _open_checked(path: Path) -> sqlite3.Connection:
+    """A plain connection to ``path``, refused unless the file SQLite opened is safe.
+
+    SQLite opens the main database file when it connects, before any read
+    (the -wal and -shm files come later). The descriptors that appeared
+    across ``sqlite3.connect`` are fstat'ed: each must be a regular file
+    with one link whose ``(st_dev, st_ino)`` is not a classic file
+    (``_classic_ids``). That is the file every later write goes to, whatever
+    the name points at by then. No new descriptor means nothing could be
+    checked, which is refused too. Raises ``UnsafeOpen``.
+    """
+    before = _open_descriptors()
+    connection = sqlite3.connect(path)
+    try:
+        opened = []
+        for fd in sorted(_open_descriptors() - before):
+            try:
+                st = os.fstat(fd)
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode):
+                opened.append(st)
+        if not opened:
+            raise UnsafeOpen(path, "could not be checked once opened (no new descriptor)")
+        classic = _classic_ids()
+        for st in opened:
+            if st.st_nlink != 1:
+                raise UnsafeOpen(path, f"has {st.st_nlink} hard links once opened")
+            if (st.st_dev, st.st_ino) in classic:
+                raise UnsafeOpen(path, "is a classic library file once opened")
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
+def _clear_church_mark(path: Path) -> str | None:
     """Drop ``role=church`` without migrating the file or enabling WAL.
 
     ``store.connect`` runs the schema script and ``PRAGMA journal_mode=WAL``.
     A plain connection does neither. The journal mode already on the file
     stays as it is. Callers check ``is_protected_classic`` and
-    ``church_shaped`` first.
+    ``church_shaped`` first; the open file is checked again here
+    (``_open_checked``, ``_church_shape_problem``) before the delete.
+    Returns why the mark was left in place, or None when it was cleared.
     """
-    connection = sqlite3.connect(path)
     try:
+        connection = _open_checked(path)
+    except UnsafeOpen as exc:
+        return exc.why
+    try:
+        problem = _church_shape_problem(connection)
+        if problem is not None:
+            return problem
         clear_church_role(connection)
         connection.commit()
     finally:
         connection.close()
+    return None
 
 
 def _resolve(path: Path | None) -> Path | None:

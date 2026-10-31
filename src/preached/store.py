@@ -82,7 +82,11 @@ END;
 def connect(path: Path | None = None) -> sqlite3.Connection:
     index_path = path or INDEX_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(index_path)
+    return migrate(sqlite3.connect(index_path))
+
+
+def migrate(connection: sqlite3.Connection) -> sqlite3.Connection:
+    """What ``connect`` does after opening: Row factory, WAL, schema, triggers."""
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.executescript(SCHEMA)

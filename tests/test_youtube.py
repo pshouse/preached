@@ -1090,6 +1090,55 @@ class ImportTests(unittest.TestCase):
             finally:
                 cleared.close()
 
+    def test_your_church_reports_sibling_marks_it_did_not_clear(self) -> None:
+        """A marked sibling with a second hard link is not cleared, and the importer says so."""
+        video = Video(
+            "samplevid01",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid01",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            other = connect(root / "other.sqlite")
+            ensure_library(other)
+            mark_your_church(other)
+            other.commit()
+            other.close()
+            (root / "elsewhere").mkdir()
+            (root / "elsewhere" / "other-link.sqlite").hardlink_to(root / "other.sqlite")
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                ],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertIn(
+                "warning: other.sqlite is still marked as your church; it has 2 hard links, so the mark was not cleared",
+                err,
+            )
+            kept = open_readonly(root / "other.sqlite")
+            try:
+                self.assertTrue(is_your_church(kept))
+            finally:
+                kept.close()
+
     def test_failed_import_does_not_mark_the_church(self) -> None:
         video = Video(
             "samplevid01",
