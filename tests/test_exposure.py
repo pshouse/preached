@@ -145,6 +145,58 @@ def _hold_after_finish(test: unittest.TestCase, server, seconds: float) -> None:
     test.addCleanup(setattr, handler, "finish", real_finish)
 
 
+class _Gate:
+    """Holds the first call to ``server.<name>`` until ``open`` is set.
+
+    ``entered`` is set when that call arrives, ``done`` once it has run.
+    Later calls pass straight through.
+    """
+
+    def __init__(self, test: unittest.TestCase, server, name: str) -> None:
+        self.entered = threading.Event()
+        self.open = threading.Event()
+        self.done = threading.Event()
+        real = getattr(server, name)
+        lock = threading.Lock()
+        first = [True]
+
+        def gated(*args, **kwargs):
+            with lock:
+                hold, first[0] = first[0], False
+            if not hold:
+                return real(*args, **kwargs)
+            self.entered.set()
+            self.open.wait(5)
+            try:
+                return real(*args, **kwargs)
+            finally:
+                self.done.set()
+
+        setattr(server, name, gated)
+        test.addCleanup(self.open.set)
+
+
+class _Releases:
+    """Counts ``release_slot`` calls so a test can wait for one, not sleep."""
+
+    def __init__(self, server) -> None:
+        self.count = 0
+        self._cond = threading.Condition()
+        real = server.release_slot
+
+        def counted(*args, **kwargs):
+            real(*args, **kwargs)
+            with self._cond:
+                self.count += 1
+                self._cond.notify_all()
+
+        server.release_slot = counted
+
+    def wait_for(self, n: int, timeout: float = 3.0) -> bool:
+        with self._cond:
+            return self._cond.wait_for(lambda: self.count >= n, timeout)
+
+
 class _Served(unittest.TestCase):
     def _serve(
         self,
@@ -509,6 +561,7 @@ class SlotFairnessTests(_Served):
             trusted_proxies=_nets("127.0.0.9/32"),
         )
         release, entered = self._block_search(app)
+        releases = _Releases(server)
         # The proxy is not held to the per-peer connection cap.
         first = _connect(port, "127.0.0.9")
         self.addCleanup(first.close)
@@ -531,7 +584,13 @@ class SlotFairnessTests(_Served):
         )
         self.assertEqual(status, 503)
         # Three more open proxy connections at once, over the per-peer cap of 2.
-        self._hold_idle(port, "127.0.0.9", 3, server)
+        # They share the proxy's own key and its one /healthz request slot,
+        # which is held until each response is written. Wait for each
+        # release before the next request, or it is a correct busy 503
+        # (RequestSlotRaceTests).
+        for n in range(1, 4):
+            self._hold_idle(port, "127.0.0.9", 1, server)
+            self.assertTrue(releases.wait_for(n))
         self.assertTrue(_wait(lambda: server._conn_by_ip.get("127.0.0.9") == 4))
         # Another client through the same proxy, on several more connections.
         others = [
@@ -541,7 +600,10 @@ class SlotFairnessTests(_Served):
         self.assertEqual(others, [200] * 4)
         release.set()
         self.assertEqual(_read_response(first)[0], 200)
-        self.assertTrue(_wait(lambda: server._slots_by_key == {}))
+        # 3 + 4 /healthz and the held search.
+        self.assertTrue(releases.wait_for(8))
+        self.assertEqual(server._slots_by_key, {})
+        self.assertEqual(server._health_slots_by_key, {})
 
     def test_direct_peer_request_slots(self) -> None:
         port, app, server = self._serve(max_connections=16, max_per_client=4, max_requests=2, header_deadline_s=10)
@@ -1095,6 +1157,124 @@ class SlotReleaseTests(_Served):
         self.assertNotEqual(headers.get("connection"), "close")
         time.sleep(0.4)
         self._assert_freed_before_close(server, sock, port)
+
+
+class RequestSlotRaceTests(_Served):
+    """PR #29 r4 (b): a per-key request slot is held until its response is written.
+
+    The formerly flaky step was a same-key request sent the instant the last
+    response was read, before that handler's ``release_slot`` ran. These
+    tests hold the handler in that window with an event, not a sleep.
+    """
+
+    def test_slot_is_held_until_after_the_response_is_written(self) -> None:
+        for path in ("/healthz", "/api/search?q=grace"):
+            with self.subTest(path=path):
+                port, _app, server = self._serve(max_connections=16, max_per_client=4, max_requests=1)
+                gate = _Gate(self, server, "release_slot")
+                health = path == "/healthz"
+                table = server._health_slots_by_key if health else server._slots_by_key
+                sock = _connect(port, "127.0.0.2")
+                self.addCleanup(sock.close)
+                _send(sock, path)
+                self.assertEqual(_read_response(sock)[0], 200)
+                # The whole response is read, and its handler has not yet
+                # given the slot back: the request is still in flight.
+                self.assertTrue(gate.entered.wait(3))
+                self.assertEqual(table, {"127.0.0.2": 1})
+                status, headers, body = _get(port, path, source="127.0.0.2")
+                self.assertEqual(status, 503)
+                self.assertEqual(json.loads(body), {"error": "unavailable"})
+                self.assertEqual(headers["retry-after"], "1")
+                self.assertEqual(headers["connection"], "close")
+                # Another key is not affected.
+                self.assertEqual(_get(port, path, source="127.0.0.3")[0], 200)
+                # Released: the same key gets straight back in, on the old
+                # keep-alive connection and on a new one.
+                gate.open.set()
+                self.assertTrue(gate.done.wait(3))
+                self.assertEqual(table, {})
+                _send(sock, path)
+                self.assertEqual(_read_response(sock)[0], 200)
+                self.assertEqual(_get(port, path, source="127.0.0.2")[0], 200)
+
+    def test_in_flight_never_exceeds_the_cap_and_every_slot_comes_back(self) -> None:
+        # Production invariant under contention: at most max_requests in
+        # flight per key, every refusal is a busy 503 with Retry-After: 1,
+        # and no slot leaks. Counted inside acquire and release, so the
+        # result does not depend on how the threads interleave.
+        port, _app, server = self._serve(max_connections=32, max_per_client=16, max_requests=2)
+        lock = threading.Lock()
+        state = {"now": 0, "peak": 0, "acquired": 0, "released": 0}
+        real_acquire, real_release = server.acquire_slot, server.release_slot
+
+        def acquire(key, *, health=False):
+            ok = real_acquire(key, health=health)
+            if ok and not health:
+                with lock:
+                    state["now"] += 1
+                    state["acquired"] += 1
+                    state["peak"] = max(state["peak"], state["now"])
+            return ok
+
+        def release(key, *, health=False):
+            if not health:
+                with lock:
+                    state["now"] -= 1
+                    state["released"] += 1
+            real_release(key, health=health)
+
+        server.acquire_slot, server.release_slot = acquire, release
+        start = threading.Barrier(8)
+        outcomes = []
+
+        def client() -> None:
+            start.wait(3)
+            for _ in range(15):
+                status, headers, _ = _get(port, "/api/search?q=grace", source="127.0.0.2")
+                with lock:
+                    outcomes.append((status, headers.get("retry-after")))
+
+        threads = [threading.Thread(target=client) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        self.assertEqual(len(outcomes), 120)
+        self.assertLessEqual(state["peak"], 2)
+        self.assertLessEqual(set(outcomes), {(200, None), (503, "1")})
+        self.assertIn((200, None), outcomes)
+        # Every handler has run release_slot once its last response is out.
+        self.assertTrue(_wait(lambda: state["released"] == state["acquired"]))
+        self.assertEqual(state["now"], 0)
+        self.assertEqual(server._slots_by_key, {})
+
+
+class ReconnectRetryAfterTests(_Served):
+    """PR #29 r4 (a): an at-cap peer reconnecting before its closing response's
+    connection slot is freed gets 503 with Retry-After: 1."""
+
+    def test_at_cap_reconnect_before_release_gets_retry_after(self) -> None:
+        port, _app, server = self._serve(max_connections=4, max_per_client=1)
+        # Hold the closing handler after its body is flushed, before it frees
+        # its connection slot.
+        gate = _Gate(self, server, "closing")
+        sock = _connect(port, "127.0.0.2")
+        self.addCleanup(sock.close)
+        _send(sock, "/healthz", close=True)
+        self.assertEqual(_read_response(sock)[0], 200)
+        self.assertTrue(gate.entered.wait(3))
+        self.assertEqual(server._conn_by_ip, {"127.0.0.2": 1})
+        status, headers, body = _get(port, "/healthz", source="127.0.0.2")
+        self.assertEqual(status, 503)
+        self.assertEqual(headers["retry-after"], "1")
+        self.assertEqual(headers["connection"], "close")
+        self.assertEqual(json.loads(body), {"error": "unavailable"})
+        # No grace period: the slot is the peer's own until it is freed.
+        gate.open.set()
+        self.assertTrue(gate.done.wait(3))
+        self.assertEqual(server._conn_by_ip, {})
+        self.assertEqual(_get(port, "/healthz", source="127.0.0.2")[0], 200)
 
 
 class DocAndScriptTests(unittest.TestCase):
