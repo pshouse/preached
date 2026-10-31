@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import atexit
 import shutil
+import signal
 import sys
 import tempfile
 
@@ -55,10 +56,12 @@ import tempfile
 # bundle_problem. An old __pycache__ in the tree can match a source file's
 # size and mtime and would run in place of that source. A fresh, private,
 # empty prefix means every one of those modules is compiled from source,
-# and nothing is written. Removed at exit (main turns SIGTERM into one).
+# and nothing is written. Removed at exit; SIGTERM becomes an exit from here
+# on (main later turns it into a clean stop of the serve loop).
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
 atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(128 + signal.SIGTERM))
 
 import argparse  # noqa: E402
 import ipaddress  # noqa: E402
@@ -66,7 +69,6 @@ import json  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
-import signal  # noqa: E402
 import socket  # noqa: E402
 import sqlite3  # noqa: E402
 import stat  # noqa: E402
@@ -121,6 +123,7 @@ from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E
 from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.store import (  # noqa: E402
     EmbeddingMismatch,
+    UnsafeSidecar,
     check_query_variant,
     index_stamp,
     open_readonly,
@@ -895,8 +898,8 @@ class App:
         # so an import, --redo or approval made while this process runs
         # applies to the next request.
         self.gated = library != LIBRARY
-        if hasattr(searcher, "gated"):
-            searcher.gated = searcher.gated or self.gated
+        if self.gated and hasattr(searcher, "gate_on"):
+            searcher.gate_on()
         if hasattr(searcher, "library"):
             searcher.library = library
         if is_public_domain(library) and not public_domain_file(connection, library):
@@ -2499,6 +2502,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+    except UnsafeSidecar as exc:
         raise SystemExit(str(exc)) from exc
 
     def servable(conn) -> None:

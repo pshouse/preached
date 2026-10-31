@@ -1106,7 +1106,9 @@ class BundleTests(unittest.TestCase):
             target = b"# Large data never lives in the git tree. HF_HOME is set in preached.env"
         self.assertIn(target, original)
         if code is None:
-            code = f"open({str(canary)!r}, 'w').close()  #".encode()
+            # Relative: a long $TMPDIR path would not fit the comment. The
+            # probes run from the directory that holds the canary.
+            code = b"open('canary', 'w').close()  #"
         self.assertLessEqual(len(code), len(target))
         modified = original.replace(target, code + b"x" * (len(target) - len(code)), 1)
         self.assertEqual(len(modified), len(original))
@@ -1147,6 +1149,7 @@ class BundleTests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertIn("bytecode", log)
             self.assertFalse(canary.exists())
+            self.assertFalse((out / "canary").exists())
             # A lone .pyc with no __pycache__ directory is refused too.
             loose = self._copy_without_bytecode(out)
             (loose / "src" / "preached" / "paths.pyc").write_bytes(b"")
@@ -1185,6 +1188,23 @@ class BundleTests(unittest.TestCase):
                     proc.kill()
                     proc.wait(timeout=5)
 
+    def test_sigterm_during_startup_imports_removes_bytecode_dir(self) -> None:
+        # A shadow argparse (first import after the prefix is made) sends the
+        # process SIGTERM, as systemd would during a slow start.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shim = root / "shim"
+            shim.mkdir()
+            (shim / "argparse.py").write_text("import os, signal, time\nos.kill(os.getpid(), signal.SIGTERM)\ntime.sleep(30)\n")
+            scratch = root / "tmp"
+            scratch.mkdir()
+            env = {"PATH": os.environ["PATH"], "PYTHONPATH": str(shim), "TMPDIR": str(scratch)}
+            proc = subprocess.run(
+                [sys.executable, str(ROOT / "app" / "server.py")], cwd=root, env=env, capture_output=True, timeout=60
+            )
+            self.assertEqual(proc.returncode, 143, proc.stderr[-2000:])
+            self.assertEqual(list(scratch.glob("preached-pycache-*")), [])
+
     def test_direct_start_ignores_planted_bundle_bytecode(self) -> None:
         # Bytecode for app/bundle.py whose bundle_problem returns None. A
         # direct start imports app.bundle before main() runs the check, so
@@ -1193,9 +1213,9 @@ class BundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             out = self._built_bundle(root)
-            canary = root / "canary"
+            canary = out / "canary"
             target = b'    kind = layout(root)\n    if kind == "checkout":\n        return None\n    root = root.resolve()'
-            code = f"    return open({str(canary)!r}, 'w').close()  #".encode()
+            code = b"    return open('canary', 'w').close()  #"
             pyc = self._plant_bytecode(out, canary, rel="app/bundle.py", target=target, code=code)
             self.assertTrue(pyc.is_file())
             # Control: a plain import does load the planted bytecode.

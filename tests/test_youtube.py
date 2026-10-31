@@ -365,6 +365,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: videos,
                 downloader=self._boom,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
                 metadata=self._boom,
             )
             self.assertEqual(code, 0)
@@ -438,6 +439,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: videos,
                 downloader=downloader,
                 transcriber=transcriber,
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -466,6 +468,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: videos,
                 downloader=downloader,
                 transcriber=transcriber,
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -503,6 +506,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: [inside, escaped, linked],
                 downloader=downloader,
                 transcriber=lambda _path: sample_words(),
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -534,6 +538,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: [video],
                 downloader=downloader,
                 transcriber=transcriber,
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -566,6 +571,7 @@ class ImportTests(unittest.TestCase):
                 lister=lambda _url: [video],
                 downloader=downloader,
                 transcriber=lambda _path: sample_words(),
+                coverage=lambda *_a, **_k: [],
                 metadata=lambda _video: {},
                 embedder=embedder,
             )
@@ -600,6 +606,7 @@ class ImportTests(unittest.TestCase):
                 metadata=metadata,
                 downloader=downloader,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
             )
             self.assertEqual(code, 0, err)
             self.assertIn("not Creative Commons", err)
@@ -611,9 +618,68 @@ class ImportTests(unittest.TestCase):
                 metadata=metadata,
                 downloader=downloader,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
             )
             self.assertEqual(code, 0, err)
             self.assertEqual(seen["meta"], 1)
+
+    def test_bad_stated_duration_is_unchecked(self) -> None:
+        # A missing, zero, negative, non-numeric or non-finite duration stores NULL coverage (never approvable),
+        # as the church path does; a valid duration is the control. True reaches Video.duration_s directly; a string
+        # or an integer too large for a float is only ever metadata (the Video keeps None), so those rows check the
+        # metadata is ignored rather than crashing the import.
+        for duration, checked in (
+            (None, False),
+            (0, False),
+            (-5, False),
+            ("40", False),
+            (True, False),
+            (2**1024, False),
+            (float("nan"), False),
+            (float("inf"), False),
+            (40, True),
+        ):
+            with self.subTest(duration=duration):
+                video = Video("samplevid01", "On Mercy", None if isinstance(duration, str) or duration == 2**1024 else duration, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
+                seen = []
+
+                def coverage(_path, _words, *, duration_s=None):
+                    seen.append(duration_s)
+                    return []
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    code, _out, err = self._run(
+                        ["https://www.youtube.com/watch?v=samplevid01", "--library", "sample"],
+                        root,
+                        lister=lambda _url: [video],
+                        metadata=lambda _video: {
+                            "license": "Creative Commons Attribution license (reuse allowed)",
+                            "upload_date": "20240602",
+                            "title": "On Mercy",
+                            "duration": duration if duration != 40 else None,
+                        },
+                        downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                        transcriber=lambda _path: sample_words(12.2),
+                        coverage=coverage,
+                        embedder=embedder,
+                    )
+                    self.assertEqual(code, 0, err)
+                    connection = open_readonly(root / "sample.sqlite", check_same_thread=False)
+                    try:
+                        stored = connection.execute("SELECT coverage_gaps FROM videos").fetchone()[0]
+                    finally:
+                        connection.close()
+                    if checked:
+                        self.assertEqual(stored, "[]")
+                        self.assertEqual(seen, [40.0])
+                        self.assertNotIn("NOT checked", err)
+                    else:
+                        self.assertIsNone(stored)
+                        self.assertEqual(seen, [])
+                        self.assertIn("NOT checked (no usable stated duration)", err)
+                        code, _out, err = self._run(["--library", "sample", "--ack-review", "samplevid01"], root)
+                        self.assertNotEqual(code, 0)
 
     def test_schema_matches_the_search_server(self) -> None:
         video = Video("samplevid01", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
@@ -632,6 +698,7 @@ class ImportTests(unittest.TestCase):
                 },
                 downloader=lambda _video, dest: dest / "samplevid01.m4a",
                 transcriber=lambda _path: sample_words(12.2),
+                coverage=lambda *_a, **_k: [],
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
@@ -733,6 +800,7 @@ class ImportTests(unittest.TestCase):
                 },
                 downloader=lambda _video, dest: dest / "samplevid02.m4a",
                 transcriber=lambda _path: sample_words(12.2),
+                coverage=lambda *_a, **_k: [],
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
@@ -934,6 +1002,7 @@ class ImportTests(unittest.TestCase):
                 },
                 downloader=lambda _video, dest: dest / f"{video_id}.m4a",
                 transcriber=lambda _path: sample_words(12.2),
+                coverage=lambda *_a, **_k: [],
                 embedder=embedder,
             )
             self.assertEqual(code, 0, err)
@@ -1003,6 +1072,7 @@ class ImportTests(unittest.TestCase):
                 lister=lister,
                 downloader=self._boom,
                 transcriber=self._boom,
+                coverage=lambda *_a, **_k: [],
                 metadata=self._boom,
             )
         self.assertEqual(code, 2, err)
@@ -1089,6 +1159,55 @@ class ImportTests(unittest.TestCase):
                 self.assertFalse(is_your_church(cleared))
             finally:
                 cleared.close()
+
+    def test_your_church_reports_sibling_marks_it_did_not_clear(self) -> None:
+        """A marked sibling with a second hard link is not cleared, and the importer says so."""
+        video = Video(
+            "samplevid01",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid01",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            other = connect(root / "other.sqlite")
+            ensure_library(other)
+            mark_your_church(other)
+            other.commit()
+            other.close()
+            (root / "elsewhere").mkdir()
+            (root / "elsewhere" / "other-link.sqlite").hardlink_to(root / "other.sqlite")
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                ],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertIn(
+                "warning: other.sqlite may still be marked as your church; it has 2 hard links, so the mark was not cleared",
+                err,
+            )
+            kept = open_readonly(root / "other.sqlite")
+            try:
+                self.assertTrue(is_your_church(kept))
+            finally:
+                kept.close()
 
     def test_failed_import_does_not_mark_the_church(self) -> None:
         video = Video(

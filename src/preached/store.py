@@ -82,7 +82,11 @@ END;
 def connect(path: Path | None = None) -> sqlite3.Connection:
     index_path = path or INDEX_PATH
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(index_path)
+    return migrate(sqlite3.connect(index_path))
+
+
+def migrate(connection: sqlite3.Connection) -> sqlite3.Connection:
+    """What ``connect`` does after opening: Row factory, WAL, schema, triggers."""
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
     connection.executescript(SCHEMA)
@@ -94,16 +98,32 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return connection
 
 
+class UnsafeSidecar(ValueError):
+    """A -wal, -shm or -journal file next to the index is unsafe (``library._sidecar_problem``)."""
+
+
 def open_readonly(path: Path | None = None, *, check_same_thread: bool = True) -> sqlite3.Connection:
     """Open an existing index without creating or writing it.
 
     ``mode=ro`` plus ``query_only`` so the web server cannot migrate the
     file out from under the ingest job. Missing audio columns stay missing;
-    callers read them with ``row_value``.
+    callers read them with ``row_value``. Before the connect, the sidecars
+    are checked by name (``library._sidecar_problem``: regular file, not a
+    symlink, one link, not a classic file); an unsafe one raises
+    ``UnsafeSidecar`` and nothing is opened. That check is by name, so a
+    link planted between it and the first read is not caught.
     """
     index_path = path or INDEX_PATH
     if not index_path.is_file():
         raise FileNotFoundError(f"missing index {index_path}")
+    # SQLite opens -wal/-shm/-journal by name and writes the shm index even
+    # in mode=ro, so a sidecar hardlinked to wesley.sqlite would be written.
+    # Imported here: library imports this module.
+    from preached.library import _sidecar_problem
+
+    problem = _sidecar_problem(index_path)
+    if problem is not None:
+        raise UnsafeSidecar(f"error: {index_path} {problem}; it is not opened")
     uri = index_path.resolve().as_uri() + "?mode=ro"
     connection = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread)
     connection.row_factory = sqlite3.Row
@@ -558,7 +578,10 @@ def visible_sql(
     on the next request. A church library's chunks carry a ``video_id``; they
     are served only when that sermon's ``videos`` row is ``ok`` and a human
     approved the review file whose sha256 is stored (``approved_sha256 ==
-    review_sha256``). A row with a NULL ``video_id`` is never served. A
+    review_sha256``) and its ASR coverage check found nothing open
+    (``coverage_gaps = '[]'``; NULL, never checked, is not served, so a
+    sermon approved before the check existed stays hidden until it is
+    re-imported). A row with a NULL ``video_id`` is never served. A
     library file without the gate columns fails closed (``"0"``). Wesley's
     index has no ``video_id`` column and no ``videos`` table and is not gated,
     unless ``gated`` says this file must be (any library but wesley).
@@ -572,13 +595,13 @@ def visible_sql(
     video_cols = _columns(connection, "videos")
     if "video_id" not in chunk_cols and not video_cols and not gated:
         return None
-    if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+    if "video_id" not in chunk_cols or not {"review_sha256", "approved_sha256", "status", "coverage_gaps"} <= video_cols:
         return "0"
     return (
         f"{alias}.video_id IS NOT NULL AND EXISTS ("
         f"SELECT 1 FROM videos v WHERE v.video_id = {alias}.video_id AND v.status = 'ok' "
         "AND v.approved_sha256 IS NOT NULL AND v.review_sha256 IS NOT NULL "
-        "AND v.approved_sha256 = v.review_sha256)"
+        "AND v.approved_sha256 = v.review_sha256 AND v.coverage_gaps = '[]')"
     )
 
 
@@ -605,13 +628,21 @@ def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = Fals
 
 
 def pending_review_count(connection: sqlite3.Connection) -> int:
-    """Imported sermons waiting for approval (a count; never ids or titles)."""
+    """Imported sermons waiting for approval (a count; never ids or titles).
+
+    Agrees with ``visible_sql``: a file missing any gate column serves
+    nothing, so every imported sermon in it is pending, not 0.
+    """
     video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
-    if not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+    if not video_cols:
         return 0
+    status = " WHERE status = 'ok'" if "status" in video_cols else ""
+    if not {"review_sha256", "approved_sha256", "status", "coverage_gaps"} <= video_cols:
+        return int(connection.execute(f"SELECT count(*) FROM videos{status}").fetchone()[0])
     row = connection.execute(
         "SELECT count(*) FROM videos WHERE status = 'ok' "
-        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256)"
+        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256 "
+        "OR coverage_gaps IS NOT '[]')"
     ).fetchone()
     return int(row[0])
 
