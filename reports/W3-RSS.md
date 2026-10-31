@@ -131,3 +131,58 @@ tests (Wesley-query parity and unit norm) pass.
 - Loading still needs Linux `/proc/self/fd`.
 - The sticky bit is not exempt, matching the index rules. A model folder must not sit
   directly in `/tmp`, but a private folder under `/tmp` works.
+
+## Merge with main (CTO merged-tree check, 33-W3-RSS-MERGE-FIX)
+
+Merged origin/main `b01c1f0` (which includes #18 W3-DEPLOY-PREP) into `feat/w3-rss` with a merge
+commit, `2cc3bf7`. No rebase, no force-push, no new dependencies.
+
+### M1: model_sha256 was null after the obvious resolution
+#18 added `VerifiedArtifacts.digests`, and `OnnxEmbedder.load` set `model_sha256` (the value
+`/healthz` reports) from `verified.digests.get(filename)`. This branch loads with
+`verify_manifest(hash_graph=False)`, so the graph never gets an entry in `digests`. It is hashed
+later, in `_open_hashed_graph`, and that digest was thrown away (`fd, _ = ...`).
+
+Resolution:
+- `src/preached/artifacts.py` (the only textual conflict): `digests[name] = actual` for every
+  file that is hashed, and `verified[name] = data` only when `data is not None` (the graph is
+  streamed, so its bytes are never kept). The two `VerifiedArtifacts` docstrings are merged. The
+  docstring says the graph has no `digests` entry when `hash_graph=False`.
+- `src/preached/onnx_embed.py`: `fd, graph_sha = _open_hashed_graph(...)`. Removed
+  `graph_sha = verified.digests.get(filename)`. `model_sha256` is now the digest of the bytes
+  read through the fd that ORT loads. The `_open_hashed_graph` docstring says it returns that
+  digest.
+
+### Test
+`tests/test_embed_backend.py::FdLoadTests::test_load_reports_the_sha256_of_the_graph_it_loaded`
+is hermetic, so it runs on a box without `/cache`. It writes a tiny ONNX graph, a tokenizer, and a
+manifest, patches the fp32 pin to the graph's digest, and replaces `onnxruntime.InferenceSession`
+with a stub. Then it asserts that `OnnxEmbedder.load(...).model_sha256` equals the sha256 of the
+graph file.
+
+With the wrong resolution (`fd, _ = ...` plus `graph_sha = verified.digests.get(filename)`), the
+test fails: `AssertionError: None != 'c0c67da9…'`. On this machine the model is in `/cache`, so
+the existing `RealOnnxTests.test_fp32_directory_without_int8_loads` fails as well
+(`None != '3861025a…'`). That test is skipped wherever the model is missing, which is how the
+merged tree passed the suite. The new test does not depend on `/cache`.
+
+### Docs (should-fix)
+`docs/DEPLOY.md`:
+- Hardening section: `model/` and its files must be owned by the service user (or root) and must
+  not be group- or world-writable. `check_servable` does not check `model/`. The ONNX loader
+  refuses such a graph, and the server logs it and falls back to BM25-only. A tar extracted under
+  `umask 002` is enough to cause that.
+- Go-live step 3 extracts under `umask 022`. Step 6 now says that `dense: false`, or a
+  `model_sha256` that is null or not the pin, is a failed go-live even though `ok` is true.
+
+### Checks on the merged tree
+- Full suite: 692 tests OK, 0 skipped (`uv run python -m unittest discover -s tests`).
+- `uv lock --check`: OK (Resolved 79 packages).
+- Live server: `PREACHED_HOST=127.0.0.1 PREACHED_PORT=8765 PREACHED_HOSTS=127.0.0.1,localhost
+  PREACHED_LIBRARY=wesley PREACHED_ORT_THREADS=1 scripts/serve.sh`, then `GET /healthz`:
+  `ok: true`, `dense: true`, `backend: onnx`, `fallback: false`,
+  `model_sha256: 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (the fp32
+  pin), and `index_version: 198339132f68…`. A hybrid Wesley search returned results. RSS after
+  load was 761212928 bytes (726 MiB).
+- Head: merge commit `2cc3bf7`, followed by the commit that adds this report section.
+- Not deployed.
