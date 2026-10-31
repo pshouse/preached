@@ -608,14 +608,21 @@ def visible_rowids(connection: sqlite3.Connection, rowids, *, gated: bool = Fals
 
 
 def pending_review_count(connection: sqlite3.Connection) -> int:
-    """Imported sermons waiting for approval (a count; never ids or titles)."""
+    """Imported sermons waiting for approval (a count; never ids or titles).
+
+    Agrees with ``visible_sql``: a file missing any gate column serves
+    nothing, so every imported sermon in it is pending, not 0.
+    """
     video_cols = {row[1] for row in connection.execute("PRAGMA table_info(videos)")}
-    if not {"review_sha256", "approved_sha256", "status"} <= video_cols:
+    if not video_cols:
         return 0
-    open_coverage = " OR coverage_gaps IS NOT '[]'" if "coverage_gaps" in video_cols else ""
+    status = " WHERE status = 'ok'" if "status" in video_cols else ""
+    if not {"review_sha256", "approved_sha256", "status", "coverage_gaps"} <= video_cols:
+        return int(connection.execute(f"SELECT count(*) FROM videos{status}").fetchone()[0])
     row = connection.execute(
         "SELECT count(*) FROM videos WHERE status = 'ok' "
-        f"AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256{open_coverage})"
+        "AND (approved_sha256 IS NULL OR review_sha256 IS NULL OR approved_sha256 != review_sha256 "
+        "OR coverage_gaps IS NOT '[]')"
     ).fetchone()
     return int(row[0])
 

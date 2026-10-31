@@ -17,7 +17,8 @@ if it is one of ``SAFE_VALUES``, exactly as written; anything else raises.
 MKL ignores a value it does not recognise and keeps AMX on: its verbose
 output on the CTO's AMX box showed ``AVX512_E4``, ``AVX512_E5``, lowercase
 ``avx512`` and a typo all still running the AMX kernels. The coverage gate
-(``preached.youtube.coverage``) still checks every transcript, since other faults can corrupt ASR the same way.
+(``preached.youtube.coverage``) still checks every transcript, since other
+faults can corrupt ASR the same way.
 """
 
 from __future__ import annotations

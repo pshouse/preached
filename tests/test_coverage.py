@@ -392,6 +392,27 @@ class ApprovalTests(unittest.TestCase):
                 self.assertEqual(self.visible(), (0, 1))
 
 
+class PendingCountTests(unittest.TestCase):
+    """CTO round 2 S-e: /healthz pending_review must agree with the gate when columns are missing."""
+
+    def test_missing_gate_columns_count_every_import_as_pending(self) -> None:
+        import sqlite3
+
+        connection = sqlite3.connect(":memory:")
+        self.assertEqual(pending_review_count(connection), 0)  # no videos table: nothing imported
+        # A pre-#20 file: approved, but no coverage_gaps column. visible_sql serves nothing.
+        connection.execute("CREATE TABLE videos (video_id TEXT, status TEXT, review_sha256 TEXT, approved_sha256 TEXT)")
+        connection.executemany("INSERT INTO videos VALUES (?, ?, 'sha', 'sha')", [("a", "ok"), ("b", "ok"), ("c", "error")])
+        self.assertEqual(pending_review_count(connection), 2)
+        connection.execute("CREATE TABLE chunks (video_id TEXT)")
+        self.assertEqual(visible_count(connection, gated=True), 0)
+        # Older still: no review columns either.
+        connection.execute("DROP TABLE videos")
+        connection.execute("CREATE TABLE videos (video_id TEXT, status TEXT)")
+        connection.execute("INSERT INTO videos VALUES ('a', 'ok')")
+        self.assertEqual(pending_review_count(connection), 1)
+
+
 class ChurchPathTests(unittest.TestCase):
     """M4: align/asr_chunks.py through the real coverage check (no stub), then --ack-review."""
 
