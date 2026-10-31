@@ -4,7 +4,7 @@
  "title": "Sermons on Several Occasions",
  "license_note": "LibriVox recording (First Series audio: CC0 1.0; Second and Third-Fifth Series: Public Domain Mark 1.0; LibriVox states public domain in the US); text by John Wesley (d. 1791) is public domain. Read by a volunteer LibriVox reader, NOT Wesley's voice.",
  "text_source_url": "https://www.ccel.org/ccel/wesley/sermons",
- "note": "Generated from ingest/manifest/wesley.jsonl (fields ia_identifier, ia_url, librivox_url, license_url, license_note, text_source_url). Per-item tracks and licenseurl are counted from that manifest (checked by tests/test_licenses.py).",
+ "note": "ia_items are generated from ingest/manifest/wesley.jsonl (ia_identifier, ia_url, librivox_url, work, series, license_url as licenseurl, audio_format, and the track count); tests/test_licenses.py compares every one of those fields and text_source_url. The top-level license_note is hand-written to name the per-series licences; it is not generated from the per-row license_note in wesley.jsonl, which reads 'dedicated to the public domain (US)'.",
  "ia_items": [
   {
    "ia_identifier": "sermonsfirstseries_1307_librivox",

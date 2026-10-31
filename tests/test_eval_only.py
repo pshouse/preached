@@ -77,3 +77,21 @@ class FlagScanTests(unittest.TestCase):
         self.assertEqual(hits, [])
         self.assertIn("allow_eval_only", (ROOT / "src" / "preached" / "search.py").read_text())
         self.assertIn("allow_eval_only=True", (ROOT / "search" / "bench.py").read_text())
+
+    def test_abstain_rows_passes_the_flag(self) -> None:
+        import bench
+
+        seen: list[dict] = []
+        real = bench.Searcher
+
+        def spy(*args, **kwargs):
+            seen.append(kwargs)
+            return real(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            connection = arctic_index(Path(tmp) / "i.db")
+            with patch.object(bench, "Searcher", spy):
+                bench.abstain_rows(MODELS["arctic-embed-l"], connection, [],
+                                   encode=lambda _q: np.array([1, 0], dtype=np.float32))
+            connection.close()
+        self.assertEqual([k.get("allow_eval_only") for k in seen], [True])

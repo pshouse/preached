@@ -73,11 +73,24 @@ def _env(tmp: str) -> dict:
 class _Server:
     """app/server.py as a script; ``port`` once it prints PREACHED_LISTENING."""
 
-    def __init__(self, tmp: str, args: list[str]) -> None:
+    def __init__(self, tmp: str, args: list[str], setup: str = "") -> None:
+        """``setup`` runs first, in the same interpreter, and the script then runs as __main__ (runpy)."""
+        if setup:
+            code = (
+                "import os, runpy, sys, time\n"
+                f"sys.argv = ['server.py', '--port', '0', *{args!r}]\n"
+                + setup
+                + f"runpy.run_path({str(SERVER)!r}, run_name='__main__')\n"
+            )
+            command = [_python(), "-c", code]
+            env = {**_env(tmp), "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+        else:
+            command = [_python(), str(SERVER), "--port", "0", *args]
+            env = _env(tmp)
         self.proc = subprocess.Popen(
-            [_python(), str(SERVER), "--port", "0", *args],
+            command,
             cwd=ROOT,
-            env=_env(tmp),
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -94,8 +107,8 @@ class _Server:
         self._errt = threading.Thread(target=lambda: self._err.append(self.proc.stderr.read()), daemon=True)
         self._errt.start()
 
-    def stop(self, timeout: float = 60) -> tuple[object, str]:
-        self.proc.send_signal(signal.SIGTERM)
+    def stop(self, timeout: float = 60, sig: int = signal.SIGTERM) -> tuple[object, str]:
+        self.proc.send_signal(sig)
         try:
             rc = self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -200,6 +213,122 @@ class ServingSigtermTests(unittest.TestCase):
             self.assertEqual(list(Path(tmp).glob("preached-pycache-*")), [])
             conn.close()
             idle.close()
+
+
+# Holds every search for HOLD_S after it starts: touches $MARK, sleeps, then searches.
+HOLD = (
+    "import preached.abstain as _abs\n"
+    "_real = _abs.search_with_confidence\n"
+    "def _held(*a, **k):\n"
+    "    open(os.environ['MARK'], 'w').close()\n"
+    "    time.sleep(HOLD_S)\n"
+    "    return _real(*a, **k)\n"
+    "_abs.search_with_confidence = _held\n"
+)
+
+
+def _held_search(tmp: str, index: Path, hold_s: float):
+    """A bm25 server whose searches take ``hold_s``; the first request is in flight when this returns."""
+    mark = Path(tmp) / "in-flight"
+    server = _Server(tmp, ["--index", str(index), "--bm25-only"], setup=f"HOLD_S = {hold_s}\nos.environ['MARK'] = {str(mark)!r}\n" + HOLD)
+    result: dict = {}
+
+    def request() -> None:
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=40)
+            conn.request("GET", "/api/search?q=grace&mode=bm25")
+            response = conn.getresponse()
+            response.read()
+            result["status"] = response.status
+            conn.close()
+        except (OSError, http.client.HTTPException) as exc:
+            result["error"] = repr(exc)
+
+    client = threading.Thread(target=request, daemon=True)
+    client.start()
+    deadline = time.monotonic() + 20
+    while not mark.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert mark.exists(), "the search never started"
+    return server, client, result
+
+
+class InFlightTests(unittest.TestCase):
+    """Deterministic: a search is held open across the stop, on any machine."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = self._tmp.name
+        self.index = _fixture_index(Path(self.tmp) / "wesley.sqlite", rows=20)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_search_in_flight_at_sigterm_finishes_before_the_index_closes(self) -> None:
+        server, client, result = _held_search(self.tmp, self.index, 1.5)
+        rc, err = server.stop()
+        client.join(15)
+        self.assertEqual(result, {"status": 200}, err[-2000:])
+        self.assertEqual(rc, 0, err[-2000:])
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(list(Path(self.tmp).glob("preached-pycache-*")), [])
+
+    def test_ctrl_c_while_serving_exits_zero(self) -> None:
+        server = _Server(self.tmp, ["--index", str(self.index), "--bm25-only"])
+        self.assertIsNotNone(server.port)
+        rc, err = server.stop(sig=signal.SIGINT)
+        self.assertEqual(rc, 0, err[-2000:])
+        self.assertIn("stopping", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(list(Path(self.tmp).glob("preached-pycache-*")), [])
+
+    def test_stuck_handler_exits_one_leaves_the_index_open_and_ignores_a_second_ctrl_c(self) -> None:
+        # Held past DRAIN_TIMEOUT_S (10 s). The process then waits for that thread and exits 1.
+        server, client, _result = _held_search(self.tmp, self.index, 13)
+        server.proc.send_signal(signal.SIGTERM)
+        time.sleep(1)
+        server.proc.send_signal(signal.SIGINT)  # a second stop request does not force an exit
+        try:
+            rc = server.proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            server.proc.kill()
+            server.proc.wait()
+            rc = "hang"
+        server._errt.join(10)
+        server._out.join(10)
+        server.proc.stdout.close()
+        server.proc.stderr.close()
+        err = "".join(server._err)
+        client.join(15)
+        self.assertEqual(rc, 1, err[-2000:])
+        self.assertIn("still running", err)
+        self.assertIn("index left open", err)
+        # The held search woke to an open index and completed (its socket was shut at half the bound).
+        self.assertIn("GET /api/search 200", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(list(Path(self.tmp).glob("preached-pycache-*")), [])
+
+
+class DrainingGateTests(unittest.TestCase):
+    def test_a_connection_accepted_after_drain_began_is_not_served(self) -> None:
+        sys.path.insert(0, str(ROOT))
+        from app.server import PreachedServer
+
+        served: list = []
+
+        class Recording:
+            def __init__(self, request, client_address, server) -> None:
+                served.append(request)
+
+        server = PreachedServer(("127.0.0.1", 0), Recording)
+        try:
+            server.finish_request("before", ("127.0.0.1", 1))
+            self.assertEqual(served, ["before"])  # the control: served until drain begins
+            self.assertEqual(server.drain(timeout_s=1), [])
+            server.finish_request("after", ("127.0.0.1", 2))
+            self.assertEqual(served, ["before"])
+        finally:
+            server.server_close()
 
 
 class _ScriptRun:
