@@ -68,3 +68,34 @@ Branch `chore/w3-nits-batch3` off origin/main ad78a75. The name `chore/w3-nits-b
 - Full suite with `PREACHED_CACHE=/cache`: 996 tests OK, no skips reported.
 - `uv lock --check`: resolved, clean.
 - gitleaks is not installed here; not run. It was since run by the CTO and is clean.
+
+## Round 4 (92-W3-NITS-BATCH4), branch `chore/w3-nits-batch4` off 048e72f
+
+Tests and reports only. Each item was checked against current main first.
+
+| Item | Result | Where |
+|---|---|---|
+| #65 S1 | Fixed. The disk snapshot assertion moved into the `finally`, after `conn.close()`. | `tests/test_eval_leak.py` `ReadonlyUriTest` |
+| #65 N1 | Fixed. Comment on `NAMES`: `'a b'` documents that a space is fine (SQLite accepts it) and is not a regression guard. | `tests/test_eval_leak.py` `ReadonlyUriTest.NAMES` |
+| #50 r3 S6 | Already on main, unchanged. `load_chunk_texts()` falls back to the index sqlite opened read-only (`immutable=1`). | `tests/test_eval_leak.py:47-60` |
+| #50 N2 | Already on main, unchanged. Literal `PINNED_KEY_SHA256`, asserted against `gen.KEY`. | `tests/test_label_sheet.py:25`, `:43` |
+| #50 N3 | Already on main, unchanged. `self.fail(f"mirror has no source line: {where}")`. | `tests/test_eval_leak.py:209` |
+| #42 r5 N1 | Already on main, unchanged. `from _sqlite3 import connect` and `__import__('_sqlite3')` cases. | `tests/test_hard_conditions.py:519-522` |
+| #43 N2 | Already on main, unchanged. Recomputes `random.Random(PINNED_SEED).shuffle` and checks row order and the KEY `orig #` order. | `tests/test_label_sheet.py:105-117` |
+| #43 N3 | Already on main, unchanged. Last line says the chunk id column is now opaque (`C01`..). | `reports/W3-LABEL-SHEET-BLIND.md` (last line) |
+| #40 N1 | Already on main, unchanged. Duplicate `ia_items` and extra-key tests. | `tests/test_licenses.py:72-85` |
+| #40 N4 | Already on main, unchanged. `DrainingGateTests` saves and restores `sys.path`, and asserts the restore. | `tests/test_shutdown.py:318-326` |
+| #40 N6 | Already on main, unchanged. 4301-digit int fails closed and the loop continues. | `tests/test_youtube.py:713` |
+
+No item needed a non-test code change, so nothing is waiting on the CTO.
+
+### Mutant checks (recorded, then reverted)
+
+- #65 S1: URI built as `f"file:{index.resolve()}?mode=ro&immutable=1"` with the SELECT assertion also removed. `ReadonlyUriTest` fails on `'h#frag'` (parent listing `['h', 'h#frag']` vs `['h#frag']`) and on `'all %?# x'` (`['all %', 'all %?# x']`). It also errors on `'pct%41'` and `'q?mode=rw'`. So the disk guard stands alone. Unmutated, the test passes.
+- #65 N1 is a comment only; no behaviour to mutate.
+- The "already on main" items add no new tests in this round, so there is nothing new to mutate.
+
+### Checks
+
+- Full suite with `PREACHED_CACHE=/cache`: Ran 997 tests, OK, 0 skips.
+- `uv lock --check`: resolved 79 packages, clean.

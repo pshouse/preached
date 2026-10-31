@@ -89,6 +89,7 @@ def confirmed_labels() -> list[dict]:
 class ReadonlyUriTest(unittest.TestCase):
     """The index URI must stay read-only whatever characters the path holds."""
 
+    # "a b" documents that a space is fine (SQLite accepts it); it is not a regression guard, the other names are.
     NAMES = ("a b", "pct%41", "q?mode=rw", "h#frag", "all %?# x")
 
     def test_odd_paths_open_read_only_and_leave_the_disk_untouched(self):
@@ -117,7 +118,8 @@ class ReadonlyUriTest(unittest.TestCase):
                         conn.execute("INSERT INTO chunks VALUES ('c2', 'x')")
                 finally:
                     conn.close()
-                self.assertEqual(snapshot(), before)
+                    # In the finally so the disk guard still runs, alone, when the SELECT assertion raises.
+                    self.assertEqual(snapshot(), before)
 
 
 class TitleLeakTest(unittest.TestCase):
