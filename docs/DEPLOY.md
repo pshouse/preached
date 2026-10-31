@@ -277,6 +277,19 @@ scripts/smoke-bundle.sh
 
 It builds a temp bundle, syncs a fresh venv, and does not leave the server
 running. The numbers from the last run are in `reports/W3-DEPLOY-PREP.md`.
+
+Run the test suite on the build machine before step 3 as well:
+
+```bash
+PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests
+```
+
+`PREACHED_REQUIRE_DENO=1` turns a missing `deno` from a skip into a failure
+for the deno-backed tests that honor it (the set grows as more
+tests adopt it). Without it, a machine with no `deno` would skip the
+withheld-card scan, the touch-only blur check and the code-point cap check,
+and the suite would still pass.
+
 To run a checkout or a bundle by hand on loopback:
 `PREACHED_HOST=127.0.0.1 PREACHED_PORT=8000 scripts/serve.sh`.
 
@@ -516,7 +529,8 @@ bm25 index (3 runs, no hybrid) it misses the old crash about half the time,
 so the deterministic in-flight test (a search held open across SIGTERM) is
 the CI gate. The gate for a change to the drain is the real-index loaded
 run, `PREACHED_SHUTDOWN_RUNS=30 python -m unittest tests.test_shutdown`,
-with `/cache` present (bm25 and hybrid).
+with `/cache` present (bm25 and hybrid). That run does not need deno; the
+pre-deploy full-suite command in "Local smoke test" does.
 
 ### `.venv` is a trust boundary
 
