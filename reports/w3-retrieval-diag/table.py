@@ -1,7 +1,7 @@
 """Render the per-question table and category counts for reports/W3-RETRIEVAL-DIAG.md (scratch).
-Usage: python3 table.py [WORKDIR]  (WORKDIR holds diag.json, categories.json, flags.json; default cwd; table.md and legend.md are written there)"""
-import json, collections, os, sys
-W = sys.argv[1] if len(sys.argv) > 1 else "."
+Usage: python3 table.py [WORKDIR]  (WORKDIR holds diag.json, categories.json, flags.json; default $TMPDIR/w3-retrieval-diag, never the repo; table.md and legend.md are written there)"""
+import json, collections, os, sys, tempfile
+W = sys.argv[1] if len(sys.argv) > 1 else os.path.join(tempfile.gettempdir(), "w3-retrieval-diag")
 d = json.load(open(os.path.join(W, "diag.json"))); cat = json.load(open(os.path.join(W, "categories.json"))); flags = json.load(open(os.path.join(W, "flags.json")))
 titles = {}
 def short(c): return c.split("-")[1] + "·" + str(int(c.split("-c")[1]))

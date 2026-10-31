@@ -1,6 +1,6 @@
 """Per-question signals from diag.json (scratch). python3 stats.py diag.json [chunks.jsonl] [out_stats.json]
-chunks.jsonl defaults to $PREACHED_CACHE/corpus/wesley/chunks.jsonl (/cache by default); out defaults to stats.json in cwd."""
-import json, os, re, sys, statistics as st
+chunks.jsonl defaults to $PREACHED_CACHE/corpus/wesley/chunks.jsonl (/cache by default); out defaults to $TMPDIR/w3-retrieval-diag/stats.json (never the repo)."""
+import json, os, re, sys, tempfile, statistics as st
 d = json.load(open(sys.argv[1]))
 chunks = {}
 chunks_path = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("PREACHED_CACHE", "/cache") + "/corpus/wesley/chunks.jsonl"
@@ -25,7 +25,9 @@ for r in d:
                      gold_words=st.median([len(chunks[c].split()) for c in gold if c in chunks]),
                      bm25=b, dense=de, hybrid=h, fusion_loss=bool(de and de <= 10 and not (h and h <= 10)),
                      fusion_gain=bool(h and h <= 10 and not (de and de <= 10)), nbm25=r["n_bm25_hits"]))
-json.dump(rows, open(sys.argv[3] if len(sys.argv) > 3 else "stats.json", "w"), indent=1)
+out_path = sys.argv[3] if len(sys.argv) > 3 else os.path.join(tempfile.gettempdir(), "w3-retrieval-diag", "stats.json")
+os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+json.dump(rows, open(out_path, "w"), indent=1)
 print("corpus chunk words median", st.median(lens))
 for g in ("plain", "plain-blind"):
     R = [x for x in rows if x["group"] == g]

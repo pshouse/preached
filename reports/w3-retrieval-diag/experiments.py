@@ -2,7 +2,7 @@
 Raw ranker top 10, Granite English R2 on CPU, same labels/metrics as search/bench.py (bench.score).
 Usage (from the worktree root):
   uv run --group bench python reports/w3-retrieval-diag/experiments.py OUT.json
-Index path: $PREACHED_CACHE/index/wesley.sqlite (default /cache), via preached.paths.
+Index path: $PREACHED_CACHE/index/wesley.sqlite (default /cache), via preached.paths, opened read-only.
 """
 import json, re, sys
 from pathlib import Path
@@ -13,7 +13,7 @@ import preached.fts as fts
 from preached.models import MODELS
 from preached.embed import load_model, encode_query
 from preached.search import Searcher
-from preached.store import connect, bm25_search
+from preached.store import open_readonly, bm25_search  # mode=ro + query_only: no WAL pragma, DDL or ALTER
 from preached.paths import INDEX_PATH
 from preached.rank import dense_scores, reciprocal_rank_fusion
 from preached.stats import bootstrap_ci, paired_bootstrap
@@ -53,7 +53,7 @@ questions = bench.load_questions()
 groups = bench.question_groups(questions)
 spec = MODELS["granite-english-r2"]
 loaded = load_model(spec, device="cpu", batch_size=1)
-con = connect(INDEX_PATH)
+con = open_readonly(INDEX_PATH)
 s = Searcher(con, model=spec.key)
 rowids, M = s._rowids, s._matrix
 cid = {int(r[0]): r[1] for r in con.execute("select rowid, chunk_id from chunks")}
