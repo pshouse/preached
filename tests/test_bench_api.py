@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
+import os
+import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +81,86 @@ class BenchApiQueryTests(unittest.TestCase):
         self.assertNotEqual(h([("a", "x\ny")]), h([("a", "x"), ("b", "y")]))
         self.assertNotEqual(h([("a", "x")]), h([("b", "x")]))
         self.assertEqual(h([("a", "x")]), h([("a", "x")]))
+
+    def test_u2028_inside_a_query_does_not_split_the_row(self) -> None:
+        row = {"id": "a", "query": "before\u2028after\x85end"}
+        path = self.write(json.dumps(row, ensure_ascii=False) + '\n{"id": "b", "query": "y"}\n')
+        self.assertEqual(self.module.queries(path), [("a", row["query"]), ("b", "y")])
+
+
+FAKE_SERVER = r"""
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+open(os.environ["FAKE_ENV_OUT"], "w").write(json.dumps({k: os.environ.get(k) for k in ("PREACHED_RATE_LIMIT", "PREACHED_GLOBAL_RATE_LIMIT")}))
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def reply(self, code, body):
+        data = json.dumps(body).encode()
+        self.send_response(code); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+    def do_GET(self):
+        if self.path.startswith("/healthz"):
+            self.reply(200, {"dense": True, "model": "m", "backend": "b", "chunks": 1})
+        elif os.environ.get("FAKE_MODE") == "429":
+            self.reply(429, {"error": "rate limited"})
+        else:
+            self.reply(200, {"mode": "hybrid"})
+srv = HTTPServer(("127.0.0.1", 0), H)
+print("PREACHED_LISTENING 127.0.0.1:%d" % srv.server_address[1], flush=True)
+srv.serve_forever()
+"""
+
+
+class BenchApiMainTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        (self.root / "app").mkdir()
+        (self.root / "app" / "server.py").write_text(FAKE_SERVER)
+        self.module = load_module()
+        self.module.ROOT = self.root
+        self.module.queries = lambda: [("a", "q")]
+        self.env_out = self.root / "env.json"
+
+    def run_main(self, env: dict[str, str]) -> tuple[str, str]:
+        full = {"FAKE_ENV_OUT": str(self.env_out), "TMPDIR": str(self.root), **env}
+        out, err = io.StringIO(), io.StringIO()
+        base = {k: v for k, v in os.environ.items() if not k.startswith("PREACHED_")}
+        with (
+            mock.patch.dict(os.environ, {**base, **full}, clear=True),
+            mock.patch.object(sys, "argv", ["bench_api.py"]),
+            contextlib.redirect_stdout(out),
+            contextlib.redirect_stderr(err),
+        ):
+            try:
+                self.module.main()
+                code = None
+            except SystemExit as exc:
+                code = str(exc)
+        return out.getvalue(), code or ""
+
+    def child_env(self) -> dict[str, str]:
+        return json.loads(self.env_out.read_text())
+
+    def test_unset_and_empty_rate_limits_are_lifted(self) -> None:
+        for name, env in (("unset", {}), ("empty", {"PREACHED_RATE_LIMIT": "", "PREACHED_GLOBAL_RATE_LIMIT": "  "})):
+            with self.subTest(name):
+                out, code = self.run_main(env)
+                self.assertEqual(code, "")
+                self.assertEqual(self.child_env(), {"PREACHED_RATE_LIMIT": "1000000", "PREACHED_GLOBAL_RATE_LIMIT": "1000000"})
+                self.assertEqual(json.loads(out)["n_queries"], 1)
+
+    def test_explicit_rate_limit_is_kept(self) -> None:
+        self.run_main({"PREACHED_RATE_LIMIT": "7"})
+        self.assertEqual(self.child_env()["PREACHED_RATE_LIMIT"], "7")
+
+    def test_http_error_exits_with_status_body_and_stderr_path(self) -> None:
+        _, code = self.run_main({"FAKE_MODE": "429"})
+        self.assertIn("HTTP 429", code)
+        self.assertIn("rate limited", code)
+        self.assertRegex(code, r"see \S*preached-bench-\S*\.stderr")
+        for leftover in self.root.glob("preached-bench-*.stderr"):
+            leftover.unlink()
 
 
 if __name__ == "__main__":

@@ -119,7 +119,7 @@ class Searcher:
         (``store.public_domain_file``, re-checked per call)."""
         self.connection = connection
         self.model = model
-        self.gated = gated
+        self._gated = bool(gated)
         self.library = library
         self._fingerprint = fingerprint
         self._rowids: list[int] | None = None
@@ -138,6 +138,16 @@ class Searcher:
                 self._fingerprint = MODELS[model].fingerprint()
             self._load_vectors()
         self._version = self._data_version()
+
+    @property
+    def gated(self) -> bool:
+        """Read-only: ``s.gated = False`` and ``setattr`` raise AttributeError.
+        ``gate_on`` turns it on; nothing turns it off."""
+        return self._gated
+
+    def gate_on(self) -> None:
+        """Apply the publish gate from now on (``App`` does this for every library but wesley)."""
+        self._gated = True
 
     # The publish gate is checked on every call, in SQL, against the file as
     # it is now (store.visible_sql): nothing cached here decides what is
