@@ -115,6 +115,7 @@ from preached.audio_policy import public_times, resolve_flagged_audio  # noqa: E
 from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.store import (  # noqa: E402
     EmbeddingMismatch,
+    UnsafeSidecar,
     check_query_variant,
     index_stamp,
     open_readonly,
@@ -736,8 +737,8 @@ class App:
         # so an import, --redo or approval made while this process runs
         # applies to the next request.
         self.gated = library != LIBRARY
-        if hasattr(searcher, "gated"):
-            searcher.gated = searcher.gated or self.gated
+        if self.gated and hasattr(searcher, "gate_on"):
+            searcher.gate_on()
         if hasattr(searcher, "library"):
             searcher.library = library
         if is_public_domain(library) and not public_domain_file(connection, library):
@@ -2036,6 +2037,8 @@ def main(argv: list[str] | None = None) -> None:
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from exc
+    except UnsafeSidecar as exc:
         raise SystemExit(str(exc)) from exc
 
     def servable(conn) -> None:

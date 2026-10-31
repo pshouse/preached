@@ -33,7 +33,13 @@ from preached.models import DEFAULT_MODEL, MODELS, RUNTIME_MODELS  # noqa: E402
 from preached.paths import INDEX_DIR, INDEX_PATH  # noqa: E402
 from preached.privacy import MissingConfig, default_config, required_config  # noqa: E402
 from preached.search import PREROLL_S, Searcher, play_start, sermon_flagged, touches_flagged  # noqa: E402
-from preached.store import EmbeddingMismatch, check_query_variant, classic_file_problem, open_readonly  # noqa: E402
+from preached.store import (  # noqa: E402
+    EmbeddingMismatch,
+    UnsafeSidecar,
+    check_query_variant,
+    classic_file_problem,
+    open_readonly,
+)
 from preached.youtube.listing import chunk_video_id, policy_watch_url, youtube_watch_url  # noqa: E402
 from manifest import check_audio_url  # noqa: E402
 
@@ -57,7 +63,10 @@ def is_library_file(path: Path) -> bool:
     """
     if not path.is_file():
         return False
-    connection = open_readonly(path)
+    try:
+        connection = open_readonly(path)
+    except UnsafeSidecar as exc:
+        raise SystemExit(str(exc)) from exc
     try:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         if "videos" in tables:
@@ -122,6 +131,8 @@ def open_target(path: Path):
         connection = open_readonly(path)
     except FileNotFoundError as exc:
         raise SystemExit(f"error: {exc}") from exc
+    except UnsafeSidecar as exc:
+        raise SystemExit(str(exc)) from exc
     try:
         has_chunks = connection.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks'"
