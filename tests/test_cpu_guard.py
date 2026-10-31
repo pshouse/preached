@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from preached.cpu_guard import MKL_VAR, AmxUnsafe, avoid_amx, has_amx
+from preached.cpu_guard import MKL_VAR, SAFE_VALUES, AmxUnsafe, avoid_amx, has_amx
 
 XEON = """processor\t: 0
 vendor_id\t: GenuineIntel
@@ -50,6 +50,35 @@ class GuardTests(unittest.TestCase):
         env = {MKL_VAR: "AVX2"}
         self.assertFalse(avoid_amx(cpuinfo=self.cpuinfo(XEON), environ=env, modules={"ctranslate2": object()}))
         self.assertEqual(env, {MKL_VAR: "AVX2"})
+
+    def test_accepts_only_the_exact_safe_values_on_amx(self) -> None:
+        self.assertEqual(SAFE_VALUES, {"AVX512", "AVX512_E1", "AVX512_E2", "AVX512_E3", "AVX2", "AVX", "SSE4_2"})
+        for value in sorted(SAFE_VALUES):
+            env = {MKL_VAR: value}
+            with self.subTest(value=value):
+                self.assertFalse(avoid_amx(cpuinfo=self.cpuinfo(XEON), environ=env, modules={"ctranslate2": object()}))
+                self.assertEqual(env, {MKL_VAR: value})
+
+    def test_refuses_values_that_leave_amx_on(self) -> None:
+        # MKL verbose on the AMX box: all of these still ran the AMX kernels.
+        for value in ("AVX512_E4", "AVX512_E5", "avx512", "AVX521", " AVX512", "AVX512 ", "AMX", "avx2", "SSE42"):
+            env = {MKL_VAR: value}
+            for modules in ({}, {"ctranslate2": object()}):
+                with self.subTest(value=value, loaded=bool(modules)):
+                    with self.assertRaises(AmxUnsafe) as caught:
+                        avoid_amx(cpuinfo=self.cpuinfo(XEON), environ=env, modules=modules)
+                    self.assertIn(repr(value), str(caught.exception))
+                    self.assertEqual(env, {MKL_VAR: value})
+
+    def test_an_empty_value_counts_as_unset(self) -> None:
+        env = {MKL_VAR: ""}
+        self.assertTrue(avoid_amx(cpuinfo=self.cpuinfo(XEON), environ=env, modules={}))
+        self.assertEqual(env, {MKL_VAR: "AVX512"})
+
+    def test_any_value_is_fine_without_amx(self) -> None:
+        env = {MKL_VAR: "AVX512_E4"}
+        self.assertFalse(avoid_amx(cpuinfo=self.cpuinfo(DESKTOP), environ=env, modules={}))
+        self.assertEqual(env, {MKL_VAR: "AVX512_E4"})
 
     def test_refuses_when_ctranslate2_is_already_loaded(self) -> None:
         env: dict[str, str] = {}
