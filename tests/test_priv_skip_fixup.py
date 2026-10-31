@@ -408,7 +408,8 @@ class AsrOutTests(unittest.TestCase):
         out = link / "c.jsonl"
         with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             asr_chunks.main([str(self.paths[0]), "--out", str(out), "--library", "church",
-                             "--privacy", str(self.toml), "--index", str(self.index)], embedder=embedder)
+                             "--privacy", str(self.toml), "--index", str(self.index), *stub_audio(self.paths[0])],
+                            embedder=embedder, coverage=lambda *_a, **_k: [])
         self.assertIn(CANARY, (real / "c.jsonl").read_text())
         review = self.root / "church" / "review" / "church-1.review.jsonl"
         words = words_for(SERVICE)
