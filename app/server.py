@@ -142,6 +142,7 @@ from preached.library import (  # noqa: E402
     ChurchRefused,
     church_file_problem,
     classic_church_refusal,
+    is_busy,
     is_classic_slug,
     is_sample_library,
     open_church_readonly,
@@ -793,6 +794,7 @@ class App:
         self.church_sample = False
         self.church_note = None
         self._church_check = None
+        self._church_paused = False  # logged once at pause start and once at its end
         if church_searcher is not None or church_connection is not None or church_library is not None:
             problem = None
             if church_searcher is None or church_connection is None or not church_library:
@@ -1127,9 +1129,12 @@ class App:
         """True when the church side may be searched now. Call with ``self.lock`` held.
 
         Runs ``church_check`` on the open file. A problem, or an exception,
-        drops the church side for the life of the process and logs why.
-        ``ChurchPaused`` (the file is in WAL mode while ``--ack-review``
-        writes it) skips the church side for this request only.
+        drops the church side for the life of the process and logs
+        ``church side dropped: <reason>`` (startup problems log ``church side
+        refused:``). ``ChurchPaused`` (the file is in WAL mode or locked
+        while ``--ack-review`` writes it) skips the church side for this
+        request only; the pause is logged when it starts and, by
+        ``_church_search``, when a church search next completes.
         """
         if self.church_searcher is None:
             return False
@@ -1139,17 +1144,24 @@ class App:
             problem = self._church_check(self.church_connection)
         except ChurchPaused as exc:
             # Not a refusal: skipped for this request only, nothing read.
-            logging.info("church side skipped for this request: %s", exc)
+            self._church_pause(exc)
             return False
         except Exception as exc:
             problem = f"the church file could not be checked ({exc})"
         if problem is None:
             return True
-        logging.error("church side refused: %s", problem)
+        logging.error("church side dropped: %s", problem)
         self._drop_church()
         return False
 
+    def _church_pause(self, reason) -> None:
+        """Log the start of a pause once, not once per skipped request. Call with ``self.lock`` held."""
+        if not self._church_paused:
+            self._church_paused = True
+            logging.info("church side paused: %s", reason)
+
     def _drop_church(self) -> None:
+        self._church_paused = False
         self.church_searcher = None
         self.church_library = None
         self.church_label = CHURCH_LABEL
@@ -1201,8 +1213,19 @@ class App:
                     hit_dict(hit, self.flagged_audio, near, flagged[hit.sermon_id]) for hit, near in zip(kept, nears)
                 ]
                 column = {"library": self.church_library, "label": self.church_label, "sample": self.church_sample}
-        except Exception:
-            logging.exception("church search failed; that side is empty")
+                if self._church_paused:
+                    # Logged once a church search has run again, not when the
+                    # check alone passes (the search can still find the lock).
+                    self._church_paused = False
+                    logging.info("church side resumed")
+        except Exception as exc:
+            if not is_busy(exc):
+                logging.exception("church search failed; that side is empty")
+                return None
+            # A writer took its lock after the check: a pause, like the check's.
+            with self.lock:
+                if self.church_searcher is not None:
+                    self._church_pause(f"the church file is locked by a writer ({exc})")
             return None
         payload = {
             "query": query,

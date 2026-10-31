@@ -685,7 +685,9 @@ class ChurchRefusalWhileServingTests(unittest.TestCase):
     def assert_church_gone(self, app: App) -> None:
         with self.assertLogs(level="ERROR") as logs:
             side = app.side("approvedtoken", 5, "bm25")
-        self.assertIn("church side refused", "\n".join(logs.output))
+        # A mid-run drop has its own line (PR #37 r2 E); "refused" is startup only.
+        self.assertIn("ERROR:root:church side dropped: ", "\n".join(logs.output))
+        self.assertNotIn("church side refused", "\n".join(logs.output))
         self.assertFalse(side["church"]["present"])
         self.assertEqual(side["church"]["results"], [])
         self.assertIsNone(side["church"]["library"])
@@ -749,7 +751,7 @@ class ChurchRefusalWhileServingTests(unittest.TestCase):
         self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
         with self.assertLogs(level="INFO") as logs:
             side = app.side("approvedtoken", 5, "bm25")
-        self.assertIn("church side skipped for this request", "\n".join(logs.output))
+        self.assertIn("INFO:root:church side paused: sample.sqlite is in WAL journal mode", logs.output)
         self.assertNotIn("ERROR", "\n".join(logs.output))
         self.assertFalse(side["church"]["present"])
         self.assertEqual(app.church_library, "sample")  # paused, not dropped
@@ -757,7 +759,9 @@ class ChurchRefusalWhileServingTests(unittest.TestCase):
             self.assertFalse(Path(f"{self.church_path}{suffix}").exists(), suffix)  # nothing read
         self.assertEqual(writer.execute("PRAGMA journal_mode=DELETE").fetchone()[0], "delete")
         writer.close()
-        self.assertTrue(app.side("approvedtoken", 5, "bm25")["church"]["results"])
+        with self.assertLogs(level="INFO") as logs:
+            self.assertTrue(app.side("approvedtoken", 5, "bm25")["church"]["results"])
+        self.assertEqual(logs.output, ["INFO:root:church side resumed"])
 
     def test_400_text_is_the_same_with_without_and_after_a_dropped_church(self) -> None:
         # PR #37 r1 should-fix 3: the 400 does not reveal a church side.
