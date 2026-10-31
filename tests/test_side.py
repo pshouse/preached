@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -12,7 +13,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
-from contextlib import ExitStack, redirect_stdout
+from contextlib import ExitStack, closing, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,7 +35,9 @@ from preached.library import (
     mark_your_church,
     mark_your_church_exclusive,
     resolve_church_path,
+    UnsafeOpen,
 )
+import preached.library as library
 from preached.store import connect, open_readonly, save_embedding_info, write_embeddings
 from preached.youtube.library import ensure_library
 
@@ -453,6 +456,614 @@ class HardlinkTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), before[path], path.name)
 
 
+class InodeAndLinkTests(unittest.TestCase):
+    """CTO round 3: S2 (the inode compare on its own) and S3 (hardlink messages)."""
+
+    def test_same_inode_with_one_link_is_the_classic(self) -> None:
+        """Only the (st_dev, st_ino) compare can say this file is wesley.
+
+        Not the stem, not the realpath, not #14's canonical paths, and one
+        link. On one mount two names with one link cannot share an inode
+        (a bind mount can, which a test cannot make without root), so
+        ``_file_id`` reports wesley's identity for the church path.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            index_dir = Path(tmp) / "index"
+            work = Path(tmp) / "work"
+            index_dir.mkdir()
+            work.mkdir()
+            wesley = index_dir / "wesley.sqlite"
+            _plain_marked(wesley)
+            church = work / "church.sqlite"
+            _plain_marked(church, church_import=True)
+            before = church.read_bytes()
+            real = library._file_id
+            wesley_id = real(wesley)
+            self.assertEqual(wesley_id[2], 1)
+
+            def same_inode(path):
+                if Path(path).resolve() == church.resolve():
+                    return wesley_id
+                return real(path)
+
+            with (
+                patch("preached.paths.INDEX_DIR", index_dir),
+                patch("preached.paths.INDEX_PATH", wesley),
+            ):
+                self.assertFalse(is_protected_classic(church))
+                with patch.object(library, "_file_id", same_inode):
+                    self.assertEqual(library._links(church), 1)
+                    self.assertTrue(is_protected_classic(church))
+                    self.assertIn("is a classic library", classic_church_refusal(None, church))
+                    with self.assertRaises(ValueError) as caught:
+                        mark_your_church_exclusive(church, work)
+                    self.assertIn("is a classic library", str(caught.exception))
+                    self.assertEqual(church_index_matches(work), [])
+            self.assertEqual(church.read_bytes(), before)
+
+    def test_hardlinked_church_has_its_own_message_and_its_mark_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            index_dir = Path(tmp) / "index"
+            work = Path(tmp) / "work"
+            elsewhere = Path(tmp) / "elsewhere"
+            for directory in (index_dir, work, elsewhere):
+                directory.mkdir()
+            wesley = index_dir / "wesley.sqlite"
+            _plain_marked(wesley)
+            # A church import with a second name somewhere else, and a stale mark.
+            stale = work / "stale.sqlite"
+            _plain_marked(stale, church_import=True)
+            (elsewhere / "copy.sqlite").hardlink_to(stale)
+            # A sibling that is marked but is not a church import.
+            shaped = work / "notchurch.sqlite"
+            _plain_marked(shaped)
+            sample = work / "sample.sqlite"
+            rows, vectors = church_rows()
+            build_library(sample, rows[:1], vectors[:1], church_import=True)
+            before = {path: path.read_bytes() for path in (wesley, stale, shaped)}
+            with (
+                patch("preached.paths.INDEX_DIR", index_dir),
+                patch("preached.paths.INDEX_PATH", wesley),
+            ):
+                refusal = classic_church_refusal(None, stale)
+                self.assertIn("has 2 hard links", refusal)
+                self.assertNotIn("classic", refusal)
+                self.assertIn("is a classic library", classic_church_refusal(None, wesley))
+                with self.assertRaises(ValueError) as caught:
+                    mark_your_church_exclusive(stale, work)
+                self.assertIn("has 2 hard links", str(caught.exception))
+                self.assertNotIn("classic", str(caught.exception))
+                skipped = mark_your_church_exclusive(sample, work, sample=True)
+            self.assertEqual(
+                skipped,
+                [(shaped, "is not a church import"), (stale, "has 2 hard links")],
+            )
+            for path, data in before.items():
+                self.assertEqual(path.read_bytes(), data, path.name)
+
+
+class _SwapOnConnect:
+    """Swap ``name`` for ``replacement`` the moment ``sqlite3.connect`` opens it for writing.
+
+    That is after every check by name (``is_protected_classic``,
+    ``church_shaped``, the sibling scan) and before SQLite opens the file.
+    The write open is the ``file:...?mode=rw`` URI (``library._rw_uri``);
+    read-only opens (``store.open_readonly``, ``mode=ro``) pass through.
+    ``how`` is ``"link"`` (a hardlink to ``replacement``), ``"copy"`` (a
+    separate copy: one link, a new inode) or ``"symlink"`` (a symlink to
+    ``replacement``, which may not exist), renamed over the name.
+    """
+
+    def __init__(self, name: Path, replacement: Path, *, how: str = "link") -> None:
+        self.name = name
+        self.replacement = replacement
+        self.how = how
+        self.fired = False
+        self._real = sqlite3.connect
+
+    def _is_write_open(self, database, kwargs) -> bool:
+        if not kwargs.get("uri") or not isinstance(database, str):
+            return False
+        parts = urllib.parse.urlsplit(database)
+        return parts.query == "mode=rw" and urllib.parse.unquote(parts.path) == os.path.abspath(self.name)
+
+    def __call__(self, database, *args, **kwargs):
+        if not self.fired and self._is_write_open(database, kwargs):
+            self.fired = True
+            temp = self.name.with_name(self.name.name + ".swap")
+            if self.how == "link":
+                os.link(self.replacement, temp)
+            elif self.how == "copy":
+                temp.write_bytes(self.replacement.read_bytes())
+            else:
+                os.symlink(self.replacement, temp)
+            os.replace(temp, self.name)
+        return self._real(database, *args, **kwargs)
+
+    def patch(self):
+        return patch.object(library.sqlite3, "connect", self)
+
+
+class OpenRaceTests(unittest.TestCase):
+    """CTO round 3, S1: the name is swapped for a classic between the checks and the open.
+
+    Before the fix both the target write (``store.connect``: WAL, schema,
+    the mark) and the sibling clear wrote into the classic file. The fd
+    SQLite opened is now fstat'ed (one link, not a classic inode), and the
+    church shape is read through that connection, before the first write.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.work = Path(tmp.name) / "work"
+        self.index_dir.mkdir()
+        self.work.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        _plain_marked(self.wesley)
+        # Church-shaped, at a classic location: only the fd check refuses it.
+        self.archive = self.index_dir / "archive.sqlite"
+        _plain_marked(self.archive, church_import=True)
+        self.sample = self.work / "sample.sqlite"
+        rows, vectors = church_rows()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def snapshot(self, path: Path) -> tuple[bytes, int]:
+        return path.read_bytes(), path.stat().st_mtime_ns
+
+    def assert_untouched(self, path: Path, before: tuple[bytes, int]) -> None:
+        self.assertEqual(self.snapshot(path), before, path.name)
+        for suffix in ("-wal", "-shm", "-journal"):
+            self.assertFalse(Path(f"{path}{suffix}").exists(), f"{path.name}{suffix}")
+
+    def classics(self):
+        """wesley (Wesley-shaped) and a classic file that is church-shaped.
+
+        ``archive.sqlite`` is made a classic by naming it in ``_classic_files``;
+        the church shape read through the connection would pass it, so only
+        the descriptor check keeps it from being written.
+        """
+        real = library._classic_files
+        return patch.object(library, "_classic_files", lambda: [*real(), self.archive])
+
+    def test_target_swapped_for_a_classic_link_is_not_written(self) -> None:
+        with self.classics():
+            for classic in (self.wesley, self.archive):
+                with self.subTest(classic=classic.name):
+                    rows, vectors = church_rows()
+                    self.sample.unlink()
+                    build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+                    before = self.snapshot(classic)
+                    swap = _SwapOnConnect(self.sample, classic)
+                    with swap.patch(), self.assertRaises(UnsafeOpen) as caught:
+                        mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertTrue(swap.fired)
+                    self.assertIn("hard links once opened", str(caught.exception))
+                    self.assert_untouched(classic, before)
+
+    def test_sibling_swapped_for_a_classic_link_is_not_cleared(self) -> None:
+        with self.classics():
+            for classic in (self.wesley, self.archive):
+                with self.subTest(classic=classic.name):
+                    other = self.work / f"other-{classic.stem}.sqlite"
+                    _plain_marked(other, church_import=True)
+                    before = self.snapshot(classic)
+                    swap = _SwapOnConnect(other, classic)
+                    with swap.patch():
+                        skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertTrue(swap.fired)
+                    self.assertEqual(skipped, [(other, "has 2 hard links once opened")])
+                    self.assert_untouched(classic, before)
+                    other.unlink()
+                    marked = open_readonly(self.sample)
+                    try:
+                        self.assertTrue(is_your_church(marked))
+                    finally:
+                        marked.close()
+
+    def test_classic_inode_with_one_link_once_opened_is_refused(self) -> None:
+        """The inode check on the descriptor, without the link count to lean on.
+
+        A hardlink swap leaves the classic with two links, so the nlink check
+        also fires. Here fstat reports one link for the classic's inode (as a
+        bind mount would), so only the ``(st_dev, st_ino)`` compare refuses it.
+        """
+        real_fstat = os.fstat
+        with self.classics():
+            for classic in (self.wesley, self.archive):
+                ident = os.stat(classic)
+
+                def one_link(fd, ident=ident):
+                    st = real_fstat(fd)
+                    if (st.st_dev, st.st_ino) != (ident.st_dev, ident.st_ino):
+                        return st
+                    return SimpleNamespace(st_mode=st.st_mode, st_dev=st.st_dev, st_ino=st.st_ino, st_nlink=1)
+
+                with self.subTest(classic=classic.name, side="target"):
+                    before = self.snapshot(classic)
+                    swap = _SwapOnConnect(self.sample, classic)
+                    with swap.patch(), patch.object(library.os, "fstat", one_link), self.assertRaises(UnsafeOpen) as caught:
+                        mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertTrue(swap.fired)
+                    self.assertIn("is a classic library file once opened", str(caught.exception))
+                    self.assert_untouched(classic, before)
+                    rows, vectors = church_rows()
+                    self.sample.unlink()
+                    build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+                with self.subTest(classic=classic.name, side="sibling"):
+                    other = self.work / "other.sqlite"
+                    _plain_marked(other, church_import=True)
+                    before = self.snapshot(classic)
+                    swap = _SwapOnConnect(other, classic)
+                    with swap.patch(), patch.object(library.os, "fstat", one_link):
+                        skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertTrue(swap.fired)
+                    self.assertEqual(skipped, [(other, "is a classic library file once opened")])
+                    self.assert_untouched(classic, before)
+                    other.unlink()
+
+    def test_swap_for_a_wesley_shaped_copy_is_caught_by_the_shape_read_on_the_open_file(self) -> None:
+        """One link, a new inode: the descriptor check passes; the shape check on the connection does not."""
+        before = self.snapshot(self.wesley)
+        copy_source = self.work / "wesley-copy.bin"
+        copy_source.write_bytes(self.wesley.read_bytes())
+        other = self.work / "other.sqlite"
+        _plain_marked(other, church_import=True)
+        swap = _SwapOnConnect(other, copy_source, how="copy")
+        with swap.patch():
+            skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
+        self.assertTrue(swap.fired)
+        self.assertEqual(skipped, [(other, "is not a church import (no videos table)")])
+        self.assertEqual(other.read_bytes(), copy_source.read_bytes())
+        swap = _SwapOnConnect(self.sample, copy_source, how="copy")
+        with swap.patch(), self.assertRaises(ValueError) as caught:
+            mark_your_church_exclusive(self.sample, self.work, sample=True)
+        self.assertTrue(swap.fired)
+        self.assertIn("is not a church import", str(caught.exception))
+        self.assertEqual(self.sample.read_bytes(), copy_source.read_bytes())
+        self.assert_untouched(self.wesley, before)
+
+
+class SidecarTests(unittest.TestCase):
+    """CTO round 1 on PR #27, must-fix 1: a -wal, -shm or -journal name that is
+    a hardlink to wesley.sqlite.
+
+    SQLite opens those by name, after any check on the main file, so no race
+    is needed. Before the fix a -wal or -shm link made the mark (and the
+    sibling clear, and even a read-only ``church_shaped``) write the WAL or
+    the shm index into Wesley, then delete the name. Now the sidecars are
+    lstat'ed before any open: the target raises ``UnsafeOpen``, a sibling is
+    reported and not opened, and the read-only helpers say not church.
+    """
+
+    SUFFIXES = ("-wal", "-shm", "-journal")
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.work = Path(tmp.name) / "work"
+        self.index_dir.mkdir()
+        self.work.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        _plain_marked(self.wesley)
+        self.sample = self.work / "sample.sqlite"
+        self.build_sample()
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def build_sample(self) -> None:
+        for leftover in (self.sample, *(Path(f"{self.sample}{suffix}") for suffix in self.SUFFIXES)):
+            leftover.unlink(missing_ok=True)
+        rows, vectors = church_rows()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+
+    def wesley_state(self) -> tuple[str, int, int]:
+        st = self.wesley.stat()
+        return hashlib.sha256(self.wesley.read_bytes()).hexdigest(), st.st_size, st.st_mtime_ns
+
+    def plant(self, church: Path, suffix: str) -> Path:
+        # A read-only open of a WAL file leaves an empty -wal and -shm behind.
+        sidecar = Path(f"{church}{suffix}")
+        sidecar.unlink(missing_ok=True)
+        os.link(self.wesley, sidecar)
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+        return sidecar
+
+    def is_marked(self, path: Path) -> bool:
+        connection = sqlite3.connect(path)
+        try:
+            return is_your_church(connection)
+        finally:
+            connection.close()
+
+    def test_target_with_a_hardlinked_sidecar_is_refused_and_wesley_is_unchanged(self) -> None:
+        for suffix in self.SUFFIXES:
+            with self.subTest(suffix=suffix):
+                self.build_sample()
+                before = self.wesley_state()
+                sidecar = self.plant(self.sample, suffix)
+                with self.assertRaises(UnsafeOpen) as caught:
+                    mark_your_church_exclusive(self.sample, self.work, sample=True)
+                self.assertIn(f"has a {suffix} file with 2 hard links", str(caught.exception))
+                self.assertEqual(self.wesley_state(), before)
+                self.assertEqual(os.stat(self.wesley).st_nlink, 2)
+                self.assertTrue(sidecar.exists())
+                sidecar.unlink()
+                self.assertFalse(self.is_marked(self.sample))
+
+    def test_sibling_with_a_hardlinked_sidecar_is_reported_and_not_opened(self) -> None:
+        rows, vectors = church_rows()
+        for mode in ("rollback", "wal"):
+            for suffix in self.SUFFIXES:
+                with self.subTest(mode=mode, suffix=suffix):
+                    self.build_sample()
+                    other = self.work / "other.sqlite"
+                    if mode == "rollback":
+                        _plain_marked(other, church_import=True)
+                    else:
+                        build_library(other, rows[:1], vectors[:1], church=True)
+                    with closing(sqlite3.connect(other)) as probe:
+                        journal = probe.execute("PRAGMA journal_mode").fetchone()[0]
+                    self.assertEqual(journal, "wal" if mode == "wal" else "delete")
+                    other_before = other.read_bytes()
+                    before = self.wesley_state()
+                    sidecar = self.plant(other, suffix)
+                    skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertEqual(skipped, [(other, f"has a {suffix} file with 2 hard links (not opened)")])
+                    self.assertEqual(self.wesley_state(), before)
+                    self.assertEqual(other.read_bytes(), other_before)
+                    self.assertTrue(self.is_marked(self.sample))
+                    sidecar.unlink()
+                    self.assertTrue(self.is_marked(other))
+                    other.unlink()
+
+    def test_read_only_helpers_do_not_open_a_file_with_a_hardlinked_sidecar(self) -> None:
+        rows, vectors = church_rows()
+        church = self.work / "church.sqlite"
+        build_library(church, rows[:1], vectors[:1], church=True)
+        self.assertTrue(church_shaped(church))
+        self.assertTrue(library._is_church_file(church))
+        for suffix in self.SUFFIXES:
+            with self.subTest(suffix=suffix):
+                before = self.wesley_state()
+                sidecar = self.plant(church, suffix)
+                self.assertFalse(church_shaped(church))
+                self.assertFalse(library._is_church_file(church))
+                self.assertEqual(church_index_matches(self.work), [])
+                self.assertEqual(find_church_index(self.work), None)
+                self.assertEqual(self.wesley_state(), before)
+                sidecar.unlink()
+        self.assertEqual(church_index_matches(self.work), [church])
+
+    def test_symlinked_or_classic_sidecars_are_refused(self) -> None:
+        cases = {
+            "symlink": lambda sidecar: os.symlink(self.wesley, sidecar),
+            "directory": lambda sidecar: sidecar.mkdir(),
+        }
+        for what, make in cases.items():
+            with self.subTest(what=what):
+                self.build_sample()
+                sidecar = Path(f"{self.sample}-wal")
+                make(sidecar)
+                before = self.wesley_state()
+                with self.assertRaises(UnsafeOpen) as caught:
+                    mark_your_church_exclusive(self.sample, self.work)
+                self.assertIn("-wal file that is", str(caught.exception))
+                self.assertEqual(self.wesley_state(), before)
+                sidecar.rmdir() if what == "directory" else sidecar.unlink()
+        # One link on Wesley's inode (a bind mount): only the classic-id check refuses it.
+        self.build_sample()
+        Path(f"{self.sample}-shm").write_bytes(b"")
+        wesley = os.stat(self.wesley)
+        real_lstat = os.lstat
+
+        def as_wesley(name, *args, **kwargs):
+            st = real_lstat(name, *args, **kwargs)
+            if os.fspath(name) == f"{self.sample}-shm":
+                return SimpleNamespace(st_mode=st.st_mode, st_dev=wesley.st_dev, st_ino=wesley.st_ino, st_nlink=1)
+            return st
+
+        with patch.object(library.os, "lstat", as_wesley), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertIn("has a -shm file that is a classic library file", str(caught.exception))
+
+    def test_sidecar_planted_after_the_connect_is_caught_before_the_first_write(self) -> None:
+        """The name check passed; a -wal link appears once the main file is open.
+
+        The first read opens it (WAL mode), and the check on the new
+        descriptors refuses it before anything is written.
+        """
+        for side in ("target", "sibling"):
+            with self.subTest(side=side):
+                self.build_sample()
+                rows, vectors = church_rows()
+                other = self.work / "other.sqlite"
+                other.unlink(missing_ok=True)
+                build_library(other, rows[:1], vectors[:1], church=True)
+                victim = self.sample if side == "target" else other
+                real = sqlite3.connect
+                fired = []
+
+                def plant_after(database, *args, **kwargs):
+                    connection = real(database, *args, **kwargs)
+                    if not fired and kwargs.get("uri") and database.endswith("?mode=rw") and victim.name in database:
+                        fired.append(database)
+                        Path(f"{victim}-wal").unlink(missing_ok=True)
+                        os.link(self.wesley, f"{victim}-wal")
+                    return connection
+
+                before = self.wesley_state()
+                with patch.object(library.sqlite3, "connect", plant_after):
+                    if side == "target":
+                        with self.assertRaises(UnsafeOpen) as caught:
+                            mark_your_church_exclusive(self.sample, self.work)
+                        self.assertIn("2 hard links", str(caught.exception))
+                    else:
+                        skipped = mark_your_church_exclusive(self.sample, self.work)
+                        self.assertEqual([path for path, _why in skipped], [other])
+                        self.assertIn("2 hard links", skipped[0][1])
+                self.assertTrue(fired)
+                Path(f"{victim}-wal").unlink(missing_ok=True)
+                self.assertEqual(self.wesley_state(), before)
+                other.unlink()
+
+    def test_the_descriptor_recheck_refuses_a_sidecar_the_name_check_misses(self) -> None:
+        """Only the fstat of the new -wal descriptor refuses it here.
+
+        The by-name check is faked to pass once the main file is open (as if
+        the name were swapped back between the lstat and the open).
+        """
+        real_connect = sqlite3.connect
+        real_problem = library._sidecar_problem
+        opened = []
+
+        def plant_after(database, *args, **kwargs):
+            connection = real_connect(database, *args, **kwargs)
+            if kwargs.get("uri") and database.endswith("?mode=rw") and not opened:
+                opened.append(database)
+                Path(f"{self.sample}-wal").unlink(missing_ok=True)
+                os.link(self.wesley, f"{self.sample}-wal")
+            return connection
+
+        def name_check(path):
+            return real_problem(path) if not opened else None
+
+        before = self.wesley_state()
+        with (
+            patch.object(library.sqlite3, "connect", plant_after),
+            patch.object(library, "_sidecar_problem", name_check),
+            self.assertRaises(UnsafeOpen) as caught,
+        ):
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(opened)
+        self.assertIn("has a sidecar with 2 hard links once opened", str(caught.exception))
+        # SQLite drops the -wal name when the refused connection closes.
+        Path(f"{self.sample}-wal").unlink(missing_ok=True)
+        self.assertEqual(self.wesley_state(), before)
+
+
+class DescriptorTests(unittest.TestCase):
+    """CTO round 1 on PR #27, should-fixes 1, 2 and 4."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.work = Path(tmp.name) / "work"
+        self.index_dir.mkdir()
+        self.work.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        _plain_marked(self.wesley)
+        self.sample = self.work / "sample.sqlite"
+        rows, vectors = church_rows()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def test_a_reused_descriptor_number_counts_as_new(self) -> None:
+        """SQLite gets a number that was open before; a benign file opens next.
+
+        A diff of fd numbers alone saw only the benign file and passed, while
+        the main file was the classic. The ``(st_dev, st_ino)`` snapshot sees
+        both, and more than one new file is refused.
+        """
+        before = self.wesley.read_bytes()
+        held = os.open(self.work / "held.bin", os.O_CREAT | os.O_RDWR)
+        benign = []
+        reused = []
+        real = sqlite3.connect
+        wesley_ino = os.stat(self.wesley).st_ino
+
+        def reuse(database, *args, **kwargs):
+            if kwargs.get("uri") and database.endswith("?mode=rw") and not reused:
+                temp = self.work / "swap"
+                os.link(self.wesley, temp)
+                os.replace(temp, self.sample)
+                os.close(held)
+                connection = real(database, *args, **kwargs)
+                reused.append(os.fstat(held).st_ino == wesley_ino)
+                benign.append(os.open(self.work / "benign.bin", os.O_CREAT | os.O_RDWR))
+                return connection
+            return real(database, *args, **kwargs)
+
+        try:
+            with patch.object(library.sqlite3, "connect", reuse), self.assertRaises(UnsafeOpen) as caught:
+                mark_your_church_exclusive(self.sample, self.work)
+        finally:
+            for fd in benign:
+                os.close(fd)
+        self.assertEqual(reused, [True])
+        self.assertIn("2 new files, not 1", str(caught.exception))
+        self.assertEqual(self.wesley.read_bytes(), before)
+
+    def test_the_opened_file_must_be_the_one_the_name_points_at_after_the_connect(self) -> None:
+        real = sqlite3.connect
+        other = self.work / "elsewhere.sqlite"
+        other.write_bytes(self.sample.read_bytes())
+
+        def rename_after(database, *args, **kwargs):
+            connection = real(database, *args, **kwargs)
+            if kwargs.get("uri") and database.endswith("?mode=rw"):
+                # The opened inode keeps its one link, under another name.
+                os.rename(self.sample, self.work / "moved.sqlite")
+                os.rename(other, self.sample)
+            return connection
+
+        with patch.object(library.sqlite3, "connect", rename_after), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertIn("is not the file SQLite opened", str(caught.exception))
+
+    def test_a_dangling_symlink_swap_creates_no_file(self) -> None:
+        """``mode=rw`` never creates: a swap for a link to a missing classic path writes nothing there."""
+        spurgeon = self.index_dir / "spurgeon.sqlite"
+        swap = _SwapOnConnect(self.sample, spurgeon, how="symlink")
+        with swap.patch(), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(swap.fired)
+        self.assertIn("could not be opened for writing", str(caught.exception))
+        self.assertFalse(os.path.lexists(spurgeon))
+        other = self.work / "other.sqlite"
+        _plain_marked(other, church_import=True)
+        rows, vectors = church_rows()
+        self.sample.unlink()
+        build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+        swap = _SwapOnConnect(other, spurgeon, how="symlink")
+        with swap.patch():
+            skipped = mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(swap.fired)
+        self.assertEqual([path for path, _why in skipped], [other])
+        self.assertIn("could not be opened for writing", skipped[0][1])
+        self.assertFalse(os.path.lexists(spurgeon))
+
+    def test_a_target_that_fails_once_opened_clears_no_sibling(self) -> None:
+        other = self.work / "other.sqlite"
+        _plain_marked(other, church_import=True)
+        before = other.read_bytes()
+        swap = _SwapOnConnect(self.sample, self.wesley)
+        with swap.patch(), self.assertRaises(UnsafeOpen):
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(swap.fired)
+        self.assertEqual(other.read_bytes(), before)
+        with closing(sqlite3.connect(other)) as connection:
+            self.assertTrue(is_your_church(connection))
+
+
 class ChurchGateTripwireTests(unittest.TestCase):
     """Fails unless every church searcher goes through #12's publish gate.
 
@@ -545,29 +1156,112 @@ class ChurchGateTripwireTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_every_searcher_built_near_church_code_passes_the_gate(self) -> None:
-        """Source scan: a function that mentions church and builds a Searcher must pass ``gated``."""
-        import ast
+    def test_every_searcher_passes_the_gate_or_is_a_named_classic_builder(self) -> None:
+        """Source scan: every ``Searcher`` built in the server and the CLI passes ``gated=True``.
 
+        The only exceptions are ``CLASSIC_BUILDERS``, and those may not
+        mention church at all.
+        """
         repo = Path(__file__).resolve().parents[1]
         offenders = []
         for rel in ("app/server.py", "search/query.py"):
-            tree = ast.parse((repo / rel).read_text())
-            for func in ast.walk(tree):
-                if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                names = {node.id for node in ast.walk(func) if isinstance(node, ast.Name)}
-                names |= {node.arg for node in ast.walk(func) if isinstance(node, ast.arg)}
-                names |= {node.attr for node in ast.walk(func) if isinstance(node, ast.Attribute)}
-                if not any("church" in name for name in names) and "church" not in func.name:
-                    continue
-                for call in ast.walk(func):
-                    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "Searcher"):
-                        continue
-                    keywords = {kw.arg for kw in call.keywords}
-                    if "gated" not in keywords and None not in keywords:
-                        offenders.append(f"{rel}:{call.lineno} in {func.name}")
+            offenders += _ungated_searchers((repo / rel).read_text(), rel)
         self.assertEqual(offenders, [])
+
+    def test_source_scan_requires_the_constant_true(self) -> None:
+        """CTO round 1 on PR #27, should-fix 3: each of these used to pass."""
+        source = """
+import app.server as server
+from preached.search import Searcher as Finder
+
+def church_param(connection, **kwargs):
+    return Searcher(connection, **kwargs)
+
+def church_call(connection):
+    return Searcher(connection, **make_gate())
+
+def church_dict_without_gate(connection):
+    gate = {"library": None}
+    return Searcher(connection, **gate)
+
+def church_reassigned(connection, other):
+    gate = {"gated": True, "library": None}
+    gate = other
+    return Searcher(connection, **gate)
+
+def church_false_keyword(connection):
+    return Searcher(connection, gated=False)
+
+def church_false_dict(connection):
+    return Searcher(connection, **{"gated": False})
+
+def church_either(connection, flag):
+    gate = {"gated": True, "library": None} if flag else {"gated": False, "library": "wesley"}
+    return Searcher(connection, **gate)
+
+def church_updated(connection):
+    gate = {"gated": True, "library": None}
+    gate.update(gated=False)
+    return Searcher(connection, **gate)
+
+def church_item(connection):
+    gate = {"gated": True, "library": None}
+    gate["gated"] = False
+    return Searcher(connection, **gate)
+
+def church_variable(connection, flag):
+    return Searcher(connection, gated=flag)
+
+def church_positional(connection):
+    return Searcher(connection, None, None, False)
+
+def builder(connection):
+    return server.Searcher(connection)
+
+def aliased(connection):
+    make = Searcher
+    return make(connection)
+
+def imported_alias(connection):
+    return Finder(connection)
+
+def passed_around(connection):
+    return functools.partial(Searcher, connection)()
+
+def load_search(connection):
+    church = None
+    return Searcher(connection)
+
+class Holder:
+    def build(self):
+        return Searcher(self.connection, gated=self.gated)
+
+def ok(connection, flag):
+    gate = {"gated": True, "library": None}
+    if flag:
+        gate = {"gated": True, "library": None}
+    return (
+        Searcher(connection, **gate),
+        Searcher(connection, gated=True),
+        server.Searcher(connection, model="m", gated=True),
+        Finder(connection, None, None, True),
+        Searcher(connection, **{"gated": True}),
+    )
+
+def load_search(connection):
+    return Searcher(connection)
+"""
+        flagged = [entry.split(" in ")[1] for entry in _ungated_searchers(source, "x.py", classic_builders={"load_search"})]
+        self.assertEqual(
+            flagged,
+            [
+                "church_param", "church_call", "church_dict_without_gate", "church_reassigned",
+                "church_false_keyword", "church_false_dict", "church_either", "church_updated",
+                "church_item", "church_variable", "church_positional", "builder", "aliased",
+                "imported_alias", "passed_around", "load_search (a classic builder that mentions church)",
+                "Holder.build",
+            ],
+        )
 
     def test_app_does_not_keep_an_ungated_church_searcher(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -596,6 +1290,175 @@ class ChurchGateTripwireTests(unittest.TestCase):
             finally:
                 connection.close()
                 church.close()
+
+
+# Functions that build a classic-library Searcher, whose gate depends on the
+# slug (App.gated, query.classic_searcher). None of them may mention church.
+CLASSIC_BUILDERS = {
+    "app/server.py": {"default_loader", "load_search", "App._searcher"},
+    "search/query.py": {"classic_searcher"},
+}
+
+
+def _ungated_searchers(source: str, rel: str, classic_builders: set[str] | None = None) -> list[str]:
+    """``Searcher`` uses that do not pass the constant ``gated=True``.
+
+    A ``Searcher`` is the name, any alias of it (``import ... as X``,
+    ``X = Searcher``), or any ``<module>.Searcher``. A call passes with a
+    ``gated=True`` keyword, a fourth positional ``True``, ``**{"gated": True}``,
+    or ``**name`` where ``name`` is not a parameter, is never mutated
+    (``.update``, ``name[...] = ``, ``|=``), and every assignment to it in
+    that function is a dict literal whose ``"gated"`` is the constant True.
+    Any other use (``gated=flag``, ``partial(Searcher, ...)``) is flagged,
+    except inside ``classic_builders`` (default ``CLASSIC_BUILDERS[rel]``),
+    and a classic builder that mentions church is flagged too.
+    """
+    import ast
+
+    builders = CLASSIC_BUILDERS.get(rel, set()) if classic_builders is None else classic_builders
+    tree = ast.parse(source)
+    aliases = {"Searcher"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            aliases |= {alias.asname for alias in node.names if alias.name == "Searcher" and alias.asname}
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and _is_searcher(node.value, aliases):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id not in aliases:
+                        aliases.add(target.id)
+                        changed = True
+
+    def true_gate_dict(node) -> bool:
+        if not isinstance(node, ast.Dict):
+            return False
+        values = [v for k, v in zip(node.keys, node.values) if isinstance(k, ast.Constant) and k.value == "gated"]
+        return len(values) == 1 and None not in node.keys and _is_true(values[0])
+
+    def gated_true(call, func) -> bool:
+        assigned: dict[str, list] = {}
+        mutated: set[str] = set()
+        for node in ast.walk(func):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        assigned.setdefault(target.id, []).append(node.value)
+                    elif isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+                        mutated.add(target.value.id)
+                    else:
+                        mutated |= {leaf.id for leaf in ast.walk(target) if isinstance(leaf, ast.Name)}
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                target = node.target
+                if isinstance(target, ast.Subscript):
+                    target = target.value
+                if isinstance(target, ast.Name):
+                    mutated.add(target.id)
+            elif isinstance(node, ast.Delete):
+                mutated |= {leaf.id for leaf in ast.walk(node) if isinstance(leaf, ast.Name)}
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                mutated.add(node.func.value.id)
+        params = {arg.arg for arg in ast.walk(func.args) if isinstance(arg, ast.arg)} if func is not tree else set()
+        if len(call.args) > 3 and _is_true(call.args[3]):
+            return True
+        for kw in call.keywords:
+            if kw.arg == "gated" and _is_true(kw.value):
+                return True
+            if kw.arg is None and true_gate_dict(kw.value):
+                return True
+            if kw.arg is None and isinstance(kw.value, ast.Name):
+                name = kw.value.id
+                values = assigned.get(name, [])
+                if name not in params and name not in mutated and values and all(true_gate_dict(v) for v in values):
+                    return True
+        return False
+
+    def mentions_church(func) -> bool:
+        names = {func.name}
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.arg):
+                names.add(node.arg)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.keyword) and node.arg:
+                names.add(node.arg)
+        return any("church" in name.casefold() for name in names)
+
+    offenders = []
+    reported = set()
+
+    def visit(node, qualname: str, func) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = f"{qualname}.{child.name}" if qualname else child.name
+                if isinstance(child, ast.ClassDef):
+                    visit(child, name, func)
+                    continue
+                if name in builders and mentions_church(child):
+                    offenders.append(f"{rel}:{child.lineno} in {name} (a classic builder that mentions church)")
+                    continue
+                visit(child, name, child)
+                continue
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                continue
+            if isinstance(child, ast.Assign) and _is_searcher(child.value, aliases):
+                continue
+            if isinstance(child, ast.Call) and _is_searcher(child.func, aliases):
+                if qualname not in builders and not gated_true(child, func or tree):
+                    offenders.append(f"{rel}:{child.lineno} in {qualname or '<module>'}")
+                reported.add(id(child.func))
+                for part in [*child.args, *child.keywords]:
+                    visit(part, qualname, func)
+                continue
+            if _is_searcher(child, aliases) and id(child) not in reported and not _in_annotation(child, tree):
+                if qualname not in builders:
+                    offenders.append(f"{rel}:{child.lineno} in {qualname or '<module>'}")
+                continue
+            visit(child, qualname, func)
+
+    visit(tree, "", None)
+    seen = set()
+    unique = []
+    for entry in offenders:
+        if entry not in seen:
+            seen.add(entry)
+            unique.append(entry)
+    return unique
+
+
+def _is_true(node) -> bool:
+    import ast
+
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _is_searcher(node, aliases: set[str]) -> bool:
+    import ast
+
+    if isinstance(node, ast.Name):
+        return node.id in aliases
+    return isinstance(node, ast.Attribute) and node.attr == "Searcher"
+
+
+def _in_annotation(node, tree) -> bool:
+    """True when ``node`` sits in a type annotation (``-> Searcher``, ``x: Searcher``)."""
+    import ast
+
+    for parent in ast.walk(tree):
+        annotations = []
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            annotations.append(parent.returns)
+        elif isinstance(parent, ast.arg):
+            annotations.append(parent.annotation)
+        elif isinstance(parent, ast.AnnAssign):
+            annotations.append(parent.annotation)
+        for annotation in annotations:
+            if annotation is not None and any(sub is node for sub in ast.walk(annotation)):
+                return True
+    return False
 
 
 def _plain_marked(path: Path, *, church_import: bool = False) -> None:
@@ -822,18 +1685,28 @@ class SideApiTests(unittest.TestCase):
         for slug in ("spurgeon", "edwards"):
             with self.subTest(slug=slug), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
                 root = Path(tmp)
-                classic_path = root / f"{slug}.sqlite"
+                # #12 gates a public-domain slug unless the file is its own
+                # canonical owner-only build (store.public_domain_file). The
+                # temp dir is 0700 and ours; INDEX_DIR under it is 0755, so
+                # the real classic_file_problem passes INDEX_DIR/<slug>.sqlite.
+                index_dir = root / "index"
+                index_dir.mkdir(mode=0o755)
+                stack.enter_context(patch("preached.paths.INDEX_DIR", index_dir))
+                classic_path = index_dir / f"{slug}.sqlite"
                 church_path = root / "sample.sqlite"
                 build_library(classic_path, *classic_rows())
                 build_library(church_path, *church_rows(), church=True, sample=True)
-                # #12 gates a public-domain slug unless the file is its own
-                # canonical owner-only build (store.public_domain_file). A temp
-                # dir is not; stand in for that check so the classic is served.
                 marked = sqlite3.connect(classic_path)
                 marked.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('library', ?)", (slug,))
                 marked.commit()
                 marked.close()
-                stack.enter_context(patch("preached.store.classic_file_problem", return_value=None))
+                from preached.store import classic_file_problem
+
+                probe = reopen(classic_path)
+                try:
+                    self.assertIsNone(classic_file_problem(probe, slug))
+                finally:
+                    probe.close()
                 connection = reopen(classic_path)
                 app = App(
                     connection=connection,
