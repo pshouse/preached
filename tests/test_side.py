@@ -919,6 +919,40 @@ class SidecarTests(unittest.TestCase):
                 self.assertEqual(self.wesley_state(), before)
                 other.unlink()
 
+    def test_the_descriptor_recheck_refuses_a_sidecar_the_name_check_misses(self) -> None:
+        """Only the fstat of the new -wal descriptor refuses it here.
+
+        The by-name check is faked to pass once the main file is open (as if
+        the name were swapped back between the lstat and the open).
+        """
+        real_connect = sqlite3.connect
+        real_problem = library._sidecar_problem
+        opened = []
+
+        def plant_after(database, *args, **kwargs):
+            connection = real_connect(database, *args, **kwargs)
+            if kwargs.get("uri") and database.endswith("?mode=rw") and not opened:
+                opened.append(database)
+                Path(f"{self.sample}-wal").unlink(missing_ok=True)
+                os.link(self.wesley, f"{self.sample}-wal")
+            return connection
+
+        def name_check(path):
+            return real_problem(path) if not opened else None
+
+        before = self.wesley_state()
+        with (
+            patch.object(library.sqlite3, "connect", plant_after),
+            patch.object(library, "_sidecar_problem", name_check),
+            self.assertRaises(UnsafeOpen) as caught,
+        ):
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(opened)
+        self.assertIn("has a sidecar with 2 hard links once opened", str(caught.exception))
+        # SQLite drops the -wal name when the refused connection closes.
+        Path(f"{self.sample}-wal").unlink(missing_ok=True)
+        self.assertEqual(self.wesley_state(), before)
+
 
 class DescriptorTests(unittest.TestCase):
     """CTO round 1 on PR #27, should-fixes 1, 2 and 4."""
