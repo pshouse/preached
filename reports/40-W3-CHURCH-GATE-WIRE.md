@@ -208,3 +208,96 @@ Each mutation was applied to the working tree, the named tests were run, and the
 - `uv lock --check`: passed (79 packages). No dependency changes.
 - No PR body was updated: `gh` is not installed in this sandbox, so the branch was only pushed. The PR body should get this section's item table.
 - Code head before this section: `9f80703`. The commit that adds this section is `bc0969c`; the branch head is the follow-up commit that records this SHA (report text only).
+
+## CTO r1 fixes (PR #37)
+
+Task 44-W3-CHURCH-FIX. CTO r1 on PR #37 (`a1cb055`) returned CHANGES. `origin/main` at `1498182` (it includes `1215761`) was merged in first, with merge commit `4ab867a`. Merge commits only, nothing rebased or force-pushed, and no other branch pushed. No new dependencies, nothing deployed, and only synthetic church fixtures were used. `scripts/build-bundle.sh` was not touched; should-fix 5 belongs to 44-W3-BUNDLE-TAR. The review file `/workspace/reports/preached-pr37-review.md` is not in this sandbox, so this section works from the CTO text quoted in the task.
+
+### Item → commit / test
+
+| CTO item | Commit | Tests |
+| --- | --- | --- |
+| MF1: textual conflict with #25 in `build_app` | `4ab867a` (merge) | #37's docstring kept, then #25's `RUNTIME_MODELS` guard. Full suite, parity, e2e |
+| MF2 + SF7: a symlink bypasses the writable-dir rule; owner not checked | `1cfb8d9`, `a3db9c0` | `ChurchRefusalAtOpenTests`: `test_symlink_into_a_world_writable_directory_is_refused` (the CTO case; it shows that the old `writable_problem(link)` returned None), `test_symlink_to_a_safe_church_file_is_refused_too`, `test_real_directory_behind_a_symlinked_parent_is_checked`, `test_church_file_owned_by_another_user_is_refused`, `test_church_directory_owned_by_another_user_is_refused`, `test_symlink_owner_and_wal_are_refused_before_any_connect`. `ChurchRefusalWhileServingTests`: `test_name_swapped_for_a_symlink_to_the_same_file_after_start`, `test_owner_change_after_start` |
+| SF1: the raw-connect tripwire misses import forms and `store.connect` reads | `f48f89f` | `RawConnectGuardTests` (3): repo scan of every sqlite3 import, repo scan of writer `store.connect` uses, and `test_every_bypass_form_is_seen` (17 source snippets) |
+| SF2: no adjacent-chunk test for church audio withholding | `1cfb8d9` | fixture rows `c-near-flag` (name ends at 209.8 s) and `c-adjacent` (starts at 210 s). `ChurchServedTests.test_the_chunk_right_after_a_flagged_name_has_no_audio` (side + search API), `CliSideTests.test_the_chunk_right_after_a_flagged_name_prints_without_audio` |
+| SF3: the 400 text reveals the church | `1cfb8d9`, `a3db9c0` | `test_400_text_is_the_same_with_without_and_after_a_dropped_church` (covers no church, served, paused and dropped). Updated asserts in `test_side` / `test_church_wire` |
+| SF4: no deploy hold in code; DEPLOY silent on the church | `1cfb8d9` | `ServerMainTests.test_without_the_deploy_switch_the_church_is_not_opened_and_wesley_serves` (6 values × both flags; the file is never opened), `test_the_deploy_switch_is_not_passed_by_serve_sh`. New `docs/DEPLOY.md` section "The church gate" |
+| SF6: publish should leave DELETE mode; refuse WAL | `9534d58`, `1cfb8d9` | `ApprovalTests.test_approval_leaves_the_church_file_in_delete_mode`, `test_approval_with_another_wal_reader_warns_and_the_server_refuses_the_file`. `ChurchRefusalAtOpenTests.test_wal_mode_church_file_is_refused_and_no_sidecar_appears`, `test_delete_mode_church_file_opens_with_no_sidecar`. `ChurchRefusalWhileServingTests.test_wal_mode_while_serving_skips_the_request_without_dropping` |
+| Nit: cached corrupt pages | docs only | Accepted gap, listed in DEPLOY's church gate. I found no cheap fix: an in-place edit that keeps the inode and the change counter is served from SQLite's page cache until it misses |
+| Nit: `bundle_manifest.py:75` dangling symlink | `f0bf886` | `test_copy_index_replaces_a_dangling_symlink_without_creating_its_target` |
+
+### What changed
+
+- **MF2 (`library.church_path_problem`)** runs in `open_church_readonly` before any connect, and in `church_file_problem` before every church search. It refuses:
+  - a church name that is a symlink. This matches DEPLOY's rule for the classic library.
+  - a real file or real parent directory not owned by the serving euid or root.
+  - a real file or real parent directory that is group- or world-writable.
+
+  This covers the CLI too, which never had `writable_problem`. The server keeps `writable_problem` as well.
+- **SF1:** `RawConnectGuardTests` parses every `.py` outside `tests/`. Only the files in `RAW_CONNECTS` may import sqlite3, in any form: `import`, alias, `dbapi2`, `from sqlite3 import`, or a `"sqlite3"` string for `__import__`/`import_module`. Each file has a count of raw opens: `connect`/`dbapi2` references, `Connection(...)` calls, `getattr` on the module, and non-safe from-imports. A sqlite3 attribute outside the safe list fails until it is reviewed. `WRITER_CONNECTS` lists the four users of the writer `store.connect`: `build_index`, `bench`, `measure_parity` and `youtube.library.open_library`.
+- **SF3:** both 400 sites now say `library must be <classic slug>`. That is byte-identical to main's no-church text and does not change when a church is open, paused or dropped. I chose this over a new generic string so the no-church parity stays identical. It does mean the text does not list a church slug even when one is accepted.
+- **SF4:** `open_church` refuses first unless `PREACHED_CHURCH_SIDE` is exactly `enabled`, from a checkout or a bundle. The refusal is one `church side refused:` line, and the file is not opened. `serve.sh` does not pass this variable (its `env -i` allow-list) and passes no `--church-*`, so a `serve.sh` start can never enable the church side. The switch is not in the privacy TOML: that file's sha256 is pinned at import, so editing it would refuse every later approval. The CLI (`query.py --side`) is not gated by the switch because it is not a deploy path. DEPLOY.md's new section lists the gate: deploy switch, privacy config, permissions, owner, DELETE mode, publish gate, and the known gaps. The pastor-permission and church-deploy holds are stated first.
+- **SF6:**
+  - `pipeline.acknowledge` ends with `youtube.library.leave_delete_mode`: a checked checkpoint, then `journal_mode=DELETE`, then a check of the result.
+  - Another open WAL reader can block the switch. In that case the approvals stand, the command prints `warning: the church file is still in wal journal mode …`, and the exit status does not change.
+  - `open_church_readonly` reads the SQLite header (bytes 18/19, no connect) and refuses a WAL-mode file.
+  - While serving, `church_file_problem` raises `ChurchPaused` before its first read when the file is in WAL mode, which is the case while `--ack-review` is writing. `App._church_ready` skips the church side for that request only (INFO line, no drop) and reads nothing. That is why the server never joins the WAL and the switch back to DELETE succeeds with the server running.
+
+### Mutation results
+
+The script `/tmp/cwfix/mut.py` (not committed) applied each mutation on its own and ran `test_side`, `test_church_wire`, `test_hard_conditions` and `test_coverage`, then restored the file. Every mutation fails at least one test. The first full pass found three survivors: MF2-e, SF6-a, and SF3 at the `App.search` site. MF2-e and SF6-a were refused only after a connect, by the post-open check. For SF3, the mutated text matched after a drop. `a3db9c0` added a "refused before any connect" test and a paused-400 check, and the final pass below has no survivors.
+
+| Mutation | Fails |
+| --- | --- |
+| MF2-a symlink refusal off | 4 (`test_symlink_into_a_world_writable_directory_is_refused`, `…safe_church_file…`, `…swapped_for_a_symlink…`, `…before_any_connect`) |
+| MF2-b real directory not checked | 2 (`…symlinked_parent_is_checked`, `…directory_owned_by_another_user…`) |
+| MF2-c owner not checked | 4 (file owner, dir owner, owner change after start, before-any-connect) |
+| MF2-d path check skipped per request | 3 |
+| MF2-e path check skipped at open | 1 test, 2 failing subtests (`…before_any_connect`) |
+| SF2-a server church cards ignore adjacent flags | 1 (`test_the_chunk_right_after_a_flagged_name_has_no_audio`) |
+| SF2-b CLI cards ignore adjacent flags | 1 (`…prints_without_audio`) |
+| SF3 `App.search` 400 lists open libraries | 1 (`test_400_text_is_the_same…`) |
+| SF3b `parse_search_args` 400 lists open libraries | 5 |
+| SF4 deploy switch off | 1 test, 6 failing subtests |
+| SF6-a WAL file opened at start | 1 (`…before_any_connect`) |
+| SF6-b WAL not paused while serving | 2 |
+| SF6-c `--ack-review` does not leave DELETE mode | 2 |
+| Nit: `exists()` instead of `lexists()` in `copy_index` | 1 |
+| SF1: `from sqlite3 import connect` added to `query.py` | 1 |
+| SF1: `store.connect` imported into `check_dedupe.py` | 1 |
+
+### Parity and e2e
+
+- **No-church parity:** `origin/main` `1498182` vs this branch, using `/tmp/cwfix/parity.py` (not committed). Same venv, `/cache/index/wesley.sqlite`, ONNX fp32.
+  - CLI (5 queries × 3 modes, `--side` × 3, spurgeon, edwards): stdout, stderr and exit **20/20**.
+  - HTTP: **52/52** status and body (`took_ms` masked). This includes the `library=sample` 400 on both endpoints and the `library=mychurch` 400.
+  - Startup log equal apart from the `PREACHED_RSS_BYTES` number.
+- **With a refused church** (`--church-index` on a synthetic file, no switch, no privacy config):
+  - HTTP **52/52**.
+  - CLI stdout and exit 20/20.
+  - The only differences are the expected `church side refused:` lines: one in the server log (deploy switch) and one on CLI stderr for the 3 `--side` runs (privacy config). Main does not wire a church, so it prints none.
+- **Wesley sha256** `909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b` was unchanged.
+- **E2E over real HTTP** (`/tmp/cwfix/e2e.py`, synthetic church, `PREACHED_PRIVACY=privacy.example.toml`, `PREACHED_CHURCH_SIDE=enabled`): **17/17**.
+  - The approved passage is served with a timed watch link.
+  - The adjacent-to-flag card has no audio or source link.
+  - The 6 hidden tokens get 0 hits in all 3 modes, and `/healthz` says `"church": null`.
+  - The 400 text is the same while served, paused and dropped.
+  - No `-wal`/`-shm` appeared, and the church sha256 did not change from serving.
+  - In WAL mode the church side is skipped with nothing read; back in DELETE mode it is served again; after a chmod 666 it is dropped.
+  - Each of these start refusals is logged with the same 400: no switch, a symlink into a 0777 directory, a WAL file (no `-shm` created).
+
+### Results
+
+- `uv run python -m unittest discover -s tests`: **818 tests, OK** (90.9 s). The merge of main gave 797. This round adds 21: 2 in `RawConnectGuardTests`, 1 for the dangling symlink, 2 in `ApprovalTests`, and 16 in `test_church_wire`.
+- `uv lock --check`: passed (79 packages). `pyproject.toml` and `uv.lock` are unchanged.
+- gitleaks: NOT run (not installed in this sandbox).
+- **PR body: NOT updated.** `gh` is not installed in this sandbox. The branch is pushed. The PR body should get this section's item table.
+- Code head before this section: `a3db9c0`. The branch head is the commit that adds this section.
+
+### Open issues
+
+- **Same-uid races remain (#33).** The symlink, owner and mode checks are by name. A WAL flip between the pause check and the read can still make the server join the WAL. If that happens, `--ack-review` warns and a restart refuses the file until `--ack-review` is re-run with no reader.
+- **A paused request** gives an empty church column, and `library=<church>` gets a 400 for that request.
+- **Any write tool opens WAL again** (`open_library` → `store.connect`). Examples: an import, or `--redo`. The file stays in WAL mode, and is refused at start or paused while serving, until the next `--ack-review` returns it to DELETE mode.
+- **Holds:** the pastor-permission and church-deploy holds stand. Do not set `PREACHED_CHURCH_SIDE` on any deploy.
