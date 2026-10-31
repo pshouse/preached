@@ -23,3 +23,12 @@ Full suite: 842 tests OK (`uv run python -m unittest discover -s tests`). `uv lo
 
 ## 5. Dependencies
 None.
+
+## Fix round: W3-EXPOSURE-NITS-FIX (CTO #29 r4 S3, #40 S2)
+
+Previous head: e091ac0 (origin/main merged in with a merge commit, no rebase). Tests/docstrings only.
+
+- `tests/test_exposure.py`: the docstring of `test_in_flight_never_exceeds_the_cap_and_every_slot_comes_back` now says it catches a non-atomic acquire only through contention (mutant killed 5/5 with a 2 ms window) and that `slot_is_held` is the deterministic guard for off-by-one, not atomicity.
+- `tests/test_shutdown.py` `InFlightTests`: the order assert now matches the whole `INFO stopping` line (`\nINFO stopping\n`) instead of `err.index("stopping")`, and requires it before `GET /api/search 200`.
+- Mutation: joining the held search before SIGTERM (not in flight at the stop) makes the test FAIL; reverted afterwards.
+- Full suite OK (934 tests); `uv lock --check` OK.

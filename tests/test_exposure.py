@@ -1204,10 +1204,17 @@ class RequestSlotRaceTests(_Served):
                 self.assertEqual(_get(port, path, source="127.0.0.2")[0], 200)
 
     def test_in_flight_never_exceeds_the_cap_and_every_slot_comes_back(self) -> None:
-        # Production invariant under contention: at most max_requests in
-        # flight per key, every refusal is a busy 503 with Retry-After: 1,
-        # and no slot leaks. Counted inside acquire and release, so the
-        # result does not depend on how the threads interleave.
+        """Production invariant under contention: at most max_requests in
+        flight per key, every refusal is a busy 503 with Retry-After: 1,
+        and no slot leaks. Counted inside acquire and release, so the
+        result does not depend on how the threads interleave.
+
+        Limits: this catches a non-atomic acquire only through contention
+        (a mutant was killed 5/5 with a 2 ms window), so it is probabilistic
+        for atomicity. ``test_slot_is_held_until_after_the_response_is_written``
+        (``slot_is_held``) is the deterministic guard for off-by-one, not for
+        atomicity.
+        """
         port, _app, server = self._serve(max_connections=32, max_per_client=16, max_requests=2)
         lock = threading.Lock()
         state = {"now": 0, "peak": 0, "acquired": 0, "released": 0, "returned": 0}
