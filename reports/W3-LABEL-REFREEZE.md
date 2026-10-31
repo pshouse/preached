@@ -72,3 +72,72 @@ uv run python -m unittest discover -s tests
 
 - Labels are **not** re-frozen yet. The frozen test must not run until the 10 rows are ruled on and applied.
 - No dependencies added. No code, index, grade or abstain setting changed.
+
+---
+
+## 7. W3-LABEL-APPLY (CTO #50 rulings), 2026-10-31
+
+Nothing was run on the new labels. Only the test suite ran, plus `uv lock --check`.
+
+### What was done
+
+- **Merge:** `9487b08` merges origin/main. The task pinned main at `0f2b553`, but origin/main had moved on to `76990e8` (PR #48, church-hd), which contains `0f2b553`. I merged `origin/main` as instructed, so the branch also has #48.
+- **Tests (ruling b):** `c98aa3a` changes `tests/test_eval_leak.py` only. It adds status `confirmed`, which requires `found_by` to match `^human:patrick-blind-w3$` and a `sheet_row` that exists in `reports/W3-LABEL-VERDICTS.csv` with verdict equal to the label's grade. Plain-blind labels may be `proposed` or `confirmed`. The original and proposed rules are unchanged. New test `test_confirmed_label_needs_a_valid_sheet_row` checks that a confirmed label fails with a missing, None, unknown (`L99`) or wrong-verdict (`L01`, verdict 0) sheet_row, or with the wrong `found_by`.
+- **Labels (rulings a, c, d, e):** `3e419c9612940475f021635220ebbd2d9c13b08b`, one commit that changes `eval/questions.jsonl` and adds `eval/partial_verdicts.jsonl`. Nothing reads the partial file: no code, scorer or test opens it. Each line has `question_id`, `sheet_row`, `verdict`, an optional `mirrored_from` and a grade-1 `label`.
+- **Prereg amendment:** `895e0d6` adds one dated line to `reports/W3-FUSION-PREREG.md`. It covers mappings (a)–(e), Patrick's 10:34 ET confirmation of (a), the pre-declared sensitivity analysis "verdict 1 counted as grade 1" (never used to select `w`), and the label commit hash.
+
+### Quote rule (c), as applied
+
+The KEY quote (`reports/W3-LABEL-SHEET-KEY-source.json`, field `quote`) is split into its double-quoted strings, and each string is split at `...`. A segment qualifies when it meets all three conditions:
+- it appears verbatim in the row's chunk;
+- it is at least 40 characters long;
+- `preached.metrics.contains_quote` over `CHUNKS_JSONL` matches exactly that one chunk. This is the matching `eval/validate.py` uses.
+
+The longest qualifying segment becomes the label quote. Segments were never trimmed further. Most failures happen because neighbouring chunks overlap, so a segment near a chunk edge appears in two or three chunks.
+
+### Per-row table
+
+| L id | question | verdict | action | quote length / segment | chunk_id |
+| --- | --- | --- | --- | --- | --- |
+| L02 | q-forgiveness | 2 | **primary grade 2**, `q-forgiveness-conf-01` | 85 / "All our trespasses and sins are forgiven us, if we forgive, and as we forgive, others" | wesley-026-c0071 |
+| L06 | p-030 | 1 | partial file, grade 1, `p-030-part-01` | 87 / "Not that we can in any wise condemn the intermixing solitude or retirement with society" (58-char segment 1 also in c0011) | wesley-024-c0012 |
+| L07 | p-002 | 1 | partial file, grade 1, `p-002-part-01` | 88 / "the strong emotion, the secret workings of soul which a parent feels on such an occasion" (segment 2 also in c0025, c0026) | wesley-135-c0024 |
+| L08 | p-013 | 2 | **STOPPED (c)** | only segment, 95 chars, "If thy brother shall sin against thee, go and tell him of his fault, between thee and him alone", matches c0011 and c0013 | wesley-049-c0011 |
+| L09 | p-007 | 1 | **STOPPED (c)** | 48 and 44 chars, both in c0050 and c0051 | wesley-033-c0051 |
+| L11 | q-money-plain | 1 | **STOPPED (c)** | 43 chars in c0026 and c0027; 14 chars under 40 and in c0028 | wesley-089-c0027 |
+| L16 | q-means-plain | 1 | partial file, grade 1, `q-means-part-01`, mirrored to q-means | 106 / "May you not advise him also, to meditate on what he reads, that it may have its full force upon his heart?" | wesley-016-c0079 |
+| L19 | p-007 | 1 | **STOPPED (c)** | 74 chars in c0012 and c0013; 20 chars under 40 | wesley-022-c0013 |
+| L20 | q-justification-plain | 2 | **primary grade 2**, `q-justification-conf-01`, mirrored to q-justification | 45 / "God justifieth not the godly, but the ungodly" (47-char segment 1 also in c0031) | wesley-005-c0032 |
+| L21 | p-009 | 1 | **STOPPED (c)** | 45 chars in c0009–c0011; 60 chars in c0010 and c0011 | wesley-024-c0011 |
+| other 14 | | 0 | no change (unlabelled) | | |
+
+Every new label has `status: confirmed`, `found_by: human:patrick-blind-w3`, `sheet_row` and `quote_source: key-segment`, with `chunk_ids` set to the single chunk.
+
+### Rows stopped under (c), for the CTO
+
+- **L08 (verdict 2):** ruling (e) expected a new grade-2 label on p-013 for c0011. The KEY row is an artefact note whose only quoted text is the Matt 18:15 passage. That passage appears in both c0011 and c0013, so no segment resolves to c0011 alone. No label was added. The existing `p-013-g2-01` (c0013) is untouched. **The net primary change is L02 + L20 (+ q-justification), not L02 + L08 + L20.**
+- **L09, L11, L19, L21 (verdict 1):** these are left out of the partial file, so the sensitivity analysis currently covers 3 of the 7 verdict-1 rows (L06, L07, L16).
+- One possible ruling: allow a sub-span of a segment, or take the quote from the chunk text instead of the KEY quote. Either is a change to (c), so I did neither.
+
+### Commits
+
+| step | hash |
+| --- | --- |
+| merge origin/main | `9487b08` |
+| tests | `c98aa3a` |
+| labels | `3e419c9612940475f021635220ebbd2d9c13b08b` |
+| prereg amendment | `895e0d6` |
+
+### How to check
+
+```
+git show 3e419c9 --stat
+uv run python -m unittest tests.test_eval_leak
+uv run python -m unittest discover -s tests
+uv lock --check
+```
+
+### Results
+
+- `uv run python -m unittest discover -s tests` on the label commit: **Ran 972 tests, OK.** The baseline before was 961; the merge brought in 10 tests and `c98aa3a` added 1. `tests.test_eval_leak`: 16 tests, OK. The ERROR lines in the log are logging from failure-path tests.
+- `uv lock --check`: OK (79 packages). No dependencies added.
