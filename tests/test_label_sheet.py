@@ -43,6 +43,34 @@ class LabelSheetTest(unittest.TestCase):
             self.assertEqual(row[5:], ["", ""])
             self.assertRegex(row[0], r"^L\d\d$")
             self.assertRegex(row[1], r"^Q\d\d$")
+            self.assertRegex(row[3], r"^C\d\d$")
+
+    def test_no_wesley_id_or_sermon_header_anywhere_in_sheet(self):
+        raw = gen.SHEET.read_text(encoding="utf-8")
+        self.assertNotRegex(raw, r"(?i)wesley-\d")
+        self.assertNotRegex(raw, r"c\d{4}")
+        rows = list(csv.reader(io.StringIO(raw, newline="")))[1:]
+        for row in rows:
+            self.assertNotRegex(row[2] + row[4], r"(?i)wesley-\d")
+            self.assertFalse(re.match(r"\s*(\d+\s|sermon\b|upon our lord)", row[4], re.I), row[4][:40])
+
+    def test_chunk_ids_opaque_and_one_per_chunk(self):
+        import json
+        src = json.loads(gen.SOURCE.read_text(encoding="utf-8"))
+        rows = list(csv.reader(io.StringIO(gen.SHEET.read_text(encoding="utf-8"), newline="")))[1:]
+        by_text = {}
+        for row in rows:
+            by_text.setdefault(row[4], set()).add(row[3])
+        self.assertTrue(all(len(v) == 1 for v in by_text.values()))
+        cids = sorted({r[3] for r in rows})
+        self.assertEqual(cids, [f"C{i:02d}" for i in range(1, len(by_text) + 1)])
+        self.assertEqual(len(by_text), len({it["chunk_id"] for it in src}))
+        # ids follow the shuffled order, not the sermon number
+        firsts = []
+        for r in rows:
+            if r[3] not in firsts:
+                firsts.append(r[3])
+        self.assertEqual(firsts, cids)
 
 
 if __name__ == "__main__":
