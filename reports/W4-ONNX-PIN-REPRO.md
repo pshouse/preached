@@ -59,7 +59,7 @@ All 18 cells: exit 0, `fp32 sha256 matches the pin` in the log, fp32 `aed7adbae7
 4. `_check_trace_order` refuses to trace unless `set(config.layer_types)` iterates `["full_attention", "sliding_attention"]` (sorted order).
 5. `_check_pin` exits non-zero before writing a manifest if the fp32 graph is not the pin.
 
-`src/preached/artifacts.py` has one pin value, `FP32_ONNX_SHA256 = aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`, and the matrix (§1b) is the evidence for it. The value is the one 96 set. This task did not change it, because the matrix showed it is the only digest the script writes. Its comment now records the matrix. `docs/DEPLOY.md` §7 and its ONNX file table quoted the old `3861025a…`. Both now quote `aed7adba…`, so the branch has exactly one fp32 pin value anywhere (`grep -rn 3861025a` finds it only in the ADR, this report and the artifacts.py comment, as history).
+`src/preached/artifacts.py` has one pin value, `FP32_ONNX_SHA256 = aed7adbae73975b28f076b68d6e7429f40c74e7b1ea9612f390b952dedf85b78`, and the matrix (§1b) is the evidence for it. The value is the one 96 set. This task did not change it, because the matrix showed it is the only digest the script writes. Its comment now records the matrix. `docs/DEPLOY.md` §7 and its ONNX file table quoted the old `3861025a…`. Both now quote `aed7adba…`, so the branch has exactly one fp32 pin value anywhere (`grep -rn 3861025a` finds it only as history: the ADR, this report, the artifacts.py comment, and the dated W3 reports `W3-CPU`, `W3-RSS`, `W3-DEPLOY-PREP`).
 
 ## 3. Startup log and /healthz
 
@@ -132,20 +132,18 @@ This takes under a minute here once the HF snapshot is cached. Stored passage ve
 
 This PR changes `app/server.py` (+23 lines: the `ArtifactMissing` import, the `MISSING_GRAPH_*` and `SEARCH_MODE_REASONS` constants, the `except ArtifactMissing` branch, and the two `/healthz` fields). So every `app/server.py` cite in `docs/DEPLOY.md` and in `tests/test_deploy_alerts.py` `CITED` is re-pinned in this PR.
 
-- **Before.** On `origin/main`, all 52 `app/server.py` cites were stale by a uniform +3: each needle sat exactly 3 lines below its cite (the 52 known failures). On this branch before the re-pin, the same 52 were off by +4 to +26.
-- **Method.** `/tmp/onnxmatrix/cites/repin.py` (not committed) maps each cite to `origin/main` line cite+3, where its needle was verified. It then follows that line through a `difflib` line alignment of main's `app/server.py` onto this branch's, and asserts the needle is on the target line. DEPLOY.md is rewritten using the runbook parser's own rules (`runbook_cites`: per row, list item and paragraph, a bare `:n` belongs to the last named file). Only cites it attributes to `app/server.py` change. `src/preached/library.py` and `scripts/build-bundle.sh` cites are untouched.
-- **Verified by reading the file.** `/tmp/onnxmatrix/cites/check.py` reads each `CITED` line from `app/server.py` at HEAD and checks the needle: 0 misses (54 misses before, counting both ends of the two ranges). `test_deploy_alerts` passes: 7 tests OK. That includes `test_every_cited_file_line_holds_its_string` (reads each file) and `test_the_runbook_cites_exactly_the_pinned_lines` (DEPLOY.md set == `CITED` set). Examples: `REQUEST_TIMEOUT_S` 231→235, `UNAVAILABLE_LOG` 282→286, `INDEX_STATUS_LOG` 283→291, D2's `logging.exception(UNAVAILABLE_LOG)` 839→861, stop path 3200-3218→3226-3244, `stopped cleanly` 3216→3242.
-- DEPLOY.md's two fp32 sha quotes (§7 go-live, ONNX file table) now give `aed7adba…`. The diff touches no other DEPLOY.md text.
+- **Main moved mid-task.** On the first pass, `origin/main` was `b224281`, and its 52 `app/server.py` cites were stale by a uniform +3 (the 52 known failures). I re-pinned them from cite+3. Before push, `git fetch && git merge origin/main` brought in #73 (R4-COND, `0559b02`), which re-pins those cites to main's `server.py` and conflicts with mine in both files. Resolution, in merge commit `cbe962b`: I took main's two files, then re-ran the re-pin from main's now-correct cites (offset 0), and re-applied the fp32 sha quotes.
+- **Method.** `/tmp/onnxmatrix/cites/repin.py` (not committed) takes each cite on `origin/main`'s `app/server.py` and follows it through a `difflib` line alignment onto this branch's `app/server.py`. It asserts the needle is on the target line. DEPLOY.md is rewritten using the runbook parser's own rules (`runbook_cites`: per row, list item and paragraph, a bare `:n` belongs to the last named file), and only cites it attributes to `app/server.py` change. `src/preached/library.py` and `scripts/build-bundle.sh` cites are untouched. A word diff against `origin/main` shows that only `app/server.py` cite numbers and the two fp32 sha quotes changed in DEPLOY.md, and only cite numbers in `CITED`.
+- **Verified by reading the file.** Each of the 63 `CITED` entries' lines is read from the working tree, and its needle is found: 0 misses. `test_deploy_alerts`: 7 tests OK. That includes `test_every_cited_file_line_holds_its_string` (reads each file) and `test_the_runbook_cites_exactly_the_pinned_lines` (DEPLOY.md set == `CITED` set). Examples (main → branch): `REQUEST_TIMEOUT_S` 234→235, `UNAVAILABLE_LOG` 285→286, `INDEX_STATUS_LOG` 286→291, D2's `logging.exception(UNAVAILABLE_LOG)` 842→861, the stop path 3203-3221→3226-3244, `stopped cleanly` 3219→3242.
+- DEPLOY.md's two fp32 sha quotes (§7 go-live, ONNX file table) now give `aed7adba…`.
 
 ### Merge, lock, suite
 
-`git fetch origin && git merge origin/main` after the code commit returned **Already up to date**. `origin/main` is still `b224281`, the branch base, so there was no merge commit to make and no conflicts. I checked again right before pushing (§8).
+`git fetch origin && git merge origin/main`: merge commit `cbe962b` (main `0559b02`), with conflicts resolved as above. `uv lock --check`: OK (`Resolved 79 packages`). No new dependencies.
 
-`uv lock --check`: OK (`Resolved 79 packages`). No new dependencies.
+Full suite **after the merge**, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests` (log `/cache/w4-onnx-matrix/suite3.log`):
 
-Full suite, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests` (log `/cache/w4-onnx-matrix/suite1.log`):
-
-`Ran 1023 tests in 247.993s`, **`FAILED (failures=3, errors=2)`**, 0 skipped. The two-export test ran and passed. The 52 stale-cite failures are gone, because this PR re-pins those cites. The 5 failures are all the box's own graph, which is still the old `3861025a…` (§6). Each message is `not the pinned digest`:
+`Ran 1023 tests in 249.358s`, **`FAILED (failures=3, errors=2)`**, 0 skipped. The two-export test ran and passed. There are no stale-cite failures: main is green on cites after #73, and this PR keeps them green. The 5 failures are all the box's own graph, which is still the old `3861025a…` (§6). Each message is `not the pinned digest`:
 
 - `test_embed_backend.RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins` (fail)
 - `test_embed_backend.RealOnnxTests.test_fp32_directory_without_int8_loads` (error)
@@ -153,13 +151,24 @@ Full suite, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run
 - `test_embed_backend.ImportGuardTests.test_youtube_embed_path_does_not_import_torch` (fail)
 - `test_shutdown.LoadedSigtermTests.test_sigterm_under_hybrid_load_exits_zero_and_cleans_up` (fail: the server fell back to BM25)
 
-The same command with `PREACHED_ONNX_DIR=/cache/w4-onnx-avx2/final`, a complete export by this branch (log `suite2.log`): `Ran 1023 tests in 258.879s`, **`OK`**, 0 skipped. So the 5 clear once the box is re-exported after merge.
+The same command with `PREACHED_ONNX_DIR=/cache/w4-onnx-avx2/final`, a complete export by this branch (log `suite4.log`): `Ran 1023 tests in 260.085s`, **`OK`**, 0 skipped. So the 5 clear once the box is re-exported after merge. The pre-merge runs gave the same counts (`suite1.log`: 3 failures / 2 errors; `suite2.log`: OK; 1023 tests each).
 
 ## 8. Diff scope
 
-`git diff --stat origin/main..HEAD`: see the final commit's output below (filled in before push).
+`git diff --stat origin/main..HEAD` at `cbe962b`, before this report's final edit:
 
-DIFFSTAT
+```
+ app/server.py                            |  23 ++
+ docs/DEPLOY.md                           | 116 ++++----
+ docs/adr/0001-onnx-export-determinism.md |  62 ++++
+ reports/W4-ONNX-PIN-REPRO.md             | 178 ++++++++++++
+ scripts/export_onnx.py                   |  89 +++++-
+ src/preached/artifacts.py                |  23 +-
+ tests/test_deploy_alerts.py              |  92 +++---
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 477 +++++++++++++++++++++++++++++++
+ 9 files changed, 952 insertions(+), 112 deletions(-)
+```
 
 The files in scope: the export script, `artifacts.py`, server/healthz, their tests, the ADR, this report, and the standing-rule-4 cite re-pin (`docs/DEPLOY.md`, `tests/test_deploy_alerts.py`). No README.md and no keep-alive code.
 
@@ -168,7 +177,7 @@ The files in scope: the export script, `artifacts.py`, server/healthz, their tes
 - **AVX512 is unverified here.** This CPU cannot run it (SIGILL). The script makes it moot for export, since it always dispatches avx2, but the raw AVX512 digest is the CTO's measurement alone.
 - **The CTO's literal search hashes are not reproduced** (§4). The equivalence is re-measured under five definitions, but `20bf48af596a4d4d` / `73463e64b1ce508a` need the CTO's harness.
 - **Every existing export must be redone after merge** (§6), including this box's `/cache/models/granite-english-r2-onnx`. Until then that box's server is BM25 only, and the 5 tests in §7 fail there.
-- **Possible conflict with R4-COND.** This PR re-pins all 52 `app/server.py` cites in `docs/DEPLOY.md`, as standing rule 4 requires. If R4-COND (Grok) also edits those lines, whichever lands second must re-run the check. `test_deploy_alerts` catches any miss.
+- Any later PR that changes `app/server.py` above a cited line must re-pin again. `test_deploy_alerts` catches a miss.
 - The runbook still has no row for the `ONNX GRAPH NOT BUILT` line or the new `/healthz` fields. D2 still fires, because its line is emitted first.
 - The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 0 differently, `_check_trace_order` stops the export with a message. The lasting fix is upstream `sorted(set(...))`.
 - Scratch files are safe to delete: `/cache/w4-onnx-matrix/` (about 0.6 GB: one kept fp32 graph, logs, matrix data), `/cache/w4-onnx-avx2/` (about 0.75 GB) and `/cache/w4-onnx-repro/` (95, about 1.5 GB).
