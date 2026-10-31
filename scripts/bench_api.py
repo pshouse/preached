@@ -72,7 +72,8 @@ def queries(path: Path = QUESTIONS) -> list[tuple[str, str]]:
     """Every (id, query) in the eval file, in order. Exits on any unusable line."""
     found: list[tuple[str, str]] = []
     ids: set[str] = set()
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    # split("\n"), not splitlines(): U+2028 and friends can sit inside a JSON string.
+    for number, line in enumerate(path.read_text().split("\n"), 1):
         if not line.strip():
             continue
         where = f"{path}:{number}"
@@ -130,8 +131,9 @@ def main() -> None:
         cmd.extend(["--index", args.index])
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ""
-    env.setdefault("PREACHED_RATE_LIMIT", "1000000")
-    env.setdefault("PREACHED_GLOBAL_RATE_LIMIT", "1000000")
+    for name in ("PREACHED_RATE_LIMIT", "PREACHED_GLOBAL_RATE_LIMIT"):
+        if not env.get(name, "").strip():  # unset and empty both mean "not chosen"
+            env[name] = "1000000"
     err_file = tempfile.NamedTemporaryFile(
         "w", prefix="preached-bench-", suffix=".stderr", delete=False
     )
@@ -167,7 +169,7 @@ def main() -> None:
         with urllib.request.urlopen(health_url, timeout=30) as response:
             health = json.loads(response.read())
         if health.get("fallback") or not health.get("dense"):
-            raise SystemExit(f"server is not serving dense/hybrid search: {health}")
+            raise SystemExit(f"server is not serving dense/hybrid search: {health}; see {err_path}")
 
         def once(query: str) -> float:
             params = urllib.parse.urlencode(
@@ -182,12 +184,12 @@ def main() -> None:
                     payload = json.loads(response.read())
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode(errors="replace")
-                raise SystemExit(f"search failed: HTTP {exc.code}: {body}")
+                raise SystemExit(f"search failed: HTTP {exc.code}: {body}; see {err_path}")
             elapsed_ms = (time.perf_counter() - started) * 1000
             if response.status != 200:
-                raise SystemExit(f"search failed: {payload}")
+                raise SystemExit(f"search failed: {payload}; see {err_path}")
             if payload.get("mode") != "hybrid":
-                raise SystemExit(f"expected hybrid, got {payload.get('mode')} {payload.get('note')}")
+                raise SystemExit(f"expected hybrid, got {payload.get('mode')} {payload.get('note')}; see {err_path}")
             return elapsed_ms
 
         once(found[0][1])  # warmup
