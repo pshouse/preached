@@ -22,7 +22,7 @@ Nit, accepted: `side_access_line` sets `_client_key`, so `log_request` takes `_l
 
 Paragraph lines are joined before backtick matching, so a wrapped `^...$` is one pattern. A backtick token that starts with `^` and has no `$` is a failure, not a skip. The expected names are exactly `D2b`, `stamp`, `side-access`.
 
-Infra check: `test_infra_yaml_matches_when_the_file_is_present` compares those regexes to `pattern` / `evidence_pattern` when `church-alerts.yaml` is present (`PREACHED_INFRA_ALERTS` or `/workspace/infra-ops/preached/alerts/church-alerts.yaml`). The file is absent here, so the test skips.
+Infra check: `test_infra_yaml_matches_when_the_file_is_present` compares those regexes to `pattern` / `evidence_pattern` when `church-alerts.yaml` is present (`PREACHED_INFRA_ALERTS` or `/workspace/infra-ops/preached/alerts/church-alerts.yaml`). A loosened regex passes wherever the infra yaml is absent.
 
 ## Proofs
 

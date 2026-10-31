@@ -45,12 +45,18 @@ Read `BRIEF.md` first. This file holds the rules. If it conflicts with BRIEF.md,
 - Don't rewrite pushed history.
 - Never modify files outside your worktree, except shared data in `/cache`.
 
+### Standing process rules
+
+- **DEPLOY.md cites.** If you edit `app/server.py` or any other file cited in `docs/DEPLOY.md`, re-pin in the same PR: the affected DEPLOY.md cites, the `CITED` pins in `tests/test_deploy_alerts.py`, and any DEPLOY.md sentence that names the tree or sha those line numbers hold on (prefer tree-relative wording). Verify each by reading the file, never by arithmetic alone. The full suite must show zero `test_every_cited_file_line_holds_its_string` failures attributable to your change.
+- **Cache safety.** Test and mutant runs must never point `PREACHED_CACHE`, `PREACHED_ONNX_DIR` or `HF_HOME` at a real cache for any output (temp dirs only; the real cache may only be read). Before any destructive call (rmtree, unlink, overwrite), resolve the path and assert it is under `tempfile.gettempdir()`. Snapshot the real cache listing (paths, sizes, mtimes) before and after your runs and report any difference.
+- **Merge conflicts.** Resolve every conflict by editing to the correct merged content. `git checkout --ours`, `--theirs` or any whole-file pick of one side is banned because it silently drops the other side's changes. The only exception is a file where the other side's hunks are provably already present; then say so in the commit message and show that `git diff OTHER-SIDE..HEAD -- FILE` is empty for those hunks.
+
 ## 7. Finishing a task
 
 Every task ends with **`reports/<task-id>.md`** on your branch, pushed, containing:
 
 1. What was done
-2. How to run it (exact commands). For the full suite use `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`: the flag makes a missing `deno` fail the deno-backed tests instead of skipping them in a passing run.
+2. How to run it (exact commands). For the full suite use `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`: the flag makes a missing `deno` fail the deno-backed tests that honor it (`tests/test_app_js.py`, `test_mobile_ux.py`, `test_privacy_wire_fix.py`, `test_privacy_merge.py`) instead of skipping them in a passing run.
 3. Results and numbers (benchmarks, throughput, counts)
 4. Open issues, risks, and anything excluded (with reason)
 5. Dependencies added and why
