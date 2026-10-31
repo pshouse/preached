@@ -658,6 +658,47 @@ class OpenRaceTests(unittest.TestCase):
                     finally:
                         marked.close()
 
+    def test_classic_inode_with_one_link_once_opened_is_refused(self) -> None:
+        """The inode check on the descriptor, without the link count to lean on.
+
+        A hardlink swap leaves the classic with two links, so the nlink check
+        also fires. Here fstat reports one link for the classic's inode (as a
+        bind mount would), so only the ``(st_dev, st_ino)`` compare refuses it.
+        """
+        real_fstat = os.fstat
+        with self.classics():
+            for classic in (self.wesley, self.archive):
+                ident = os.stat(classic)
+
+                def one_link(fd, ident=ident):
+                    st = real_fstat(fd)
+                    if (st.st_dev, st.st_ino) != (ident.st_dev, ident.st_ino):
+                        return st
+                    return SimpleNamespace(st_mode=st.st_mode, st_dev=st.st_dev, st_ino=st.st_ino, st_nlink=1)
+
+                with self.subTest(classic=classic.name, side="target"):
+                    before = self.snapshot(classic)
+                    swap = _SwapOnConnect(self.sample, classic)
+                    with swap.patch(), patch.object(library.os, "fstat", one_link), self.assertRaises(UnsafeOpen) as caught:
+                        mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertTrue(swap.fired)
+                    self.assertIn("is a classic library file once opened", str(caught.exception))
+                    self.assert_untouched(classic, before)
+                    rows, vectors = church_rows()
+                    self.sample.unlink()
+                    build_library(self.sample, rows[:1], vectors[:1], church_import=True)
+                with self.subTest(classic=classic.name, side="sibling"):
+                    other = self.work / "other.sqlite"
+                    _plain_marked(other, church_import=True)
+                    before = self.snapshot(classic)
+                    swap = _SwapOnConnect(other, classic)
+                    with swap.patch(), patch.object(library.os, "fstat", one_link):
+                        skipped = mark_your_church_exclusive(self.sample, self.work, sample=True)
+                    self.assertTrue(swap.fired)
+                    self.assertEqual(skipped, [(other, "is a classic library file once opened")])
+                    self.assert_untouched(classic, before)
+                    other.unlink()
+
     def test_swap_for_a_wesley_shaped_copy_is_caught_by_the_shape_read_on_the_open_file(self) -> None:
         """One link, a new inode: the descriptor check passes; the shape check on the connection does not."""
         before = self.snapshot(self.wesley)
