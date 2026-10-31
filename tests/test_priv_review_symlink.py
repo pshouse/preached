@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import sys
 import tempfile
@@ -244,6 +245,50 @@ class MkdirRaceTests(unittest.TestCase):
     def test_rival_plants_a_file_fails_closed(self) -> None:
         with self.assertRaises(RuntimeError):
             self.race(lambda target: target.write_text("x"))
+
+    def test_eexist_retries_the_open_exactly_once(self) -> None:
+        for plant in (lambda target: target.mkdir(mode=0o700), lambda target: target.write_text("x")):
+            opens = []
+            real_open = os.open
+
+            def counting(path, flags, *args, **kwargs):
+                if path == "race":
+                    opens.append(path)
+                return real_open(path, flags, *args, **kwargs)
+
+            with patch("preached.privacy.os.open", counting):
+                try:
+                    fd = self.race(plant)
+                except RuntimeError:
+                    pass
+                else:
+                    os.close(fd)
+            # the first open (missing), then one retry after EEXIST; never a third
+            self.assertEqual(len(opens), 2, opens)
+            shutil.rmtree(self.root / "race", ignore_errors=True)
+            (self.root / "race").unlink(missing_ok=True)
+
+    def test_intermediate_component_swapped_fails_closed(self) -> None:
+        for create in (True, False):
+            with self.subTest(create=create):
+                base = self.root / f"swap{create}"
+                (base / "mid" / "leaf").mkdir(parents=True, mode=0o700)
+                real_open = os.open
+                swapped = []
+
+                def swapping(path, flags, *args, **kwargs):
+                    if path == "mid" and not swapped:
+                        swapped.append(path)
+                        (base / "mid" / "leaf").rmdir()
+                        (base / "mid").rmdir()
+                        (base / "mid").symlink_to(self.victim.dir)
+                    return real_open(path, flags, *args, **kwargs)
+
+                with patch("preached.privacy.os.open", swapping):
+                    with self.assertRaises(RuntimeError):
+                        _open_private_dir(base / "mid" / "leaf", create=create)
+                self.assertTrue(swapped)
+                self.victim.untouched(self)
 
 
 if __name__ == "__main__":

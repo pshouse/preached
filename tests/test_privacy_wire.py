@@ -278,11 +278,11 @@ class PrivacyConfigTests(Base):
             toml.write_text(f'flagged_audio = "{value}"\n')
             code, _out, err = self.importer(["--privacy", str(toml)])
             self.assertEqual(code, 2, err)
-            self.assertRegex(err, "Patrick chose 'none'|must be one of play, none")
+            self.assertRegex(err, "church libraries accept only 'none'|must be one of play, none")
             with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": value}):
                 code, _out, err = self.importer()
             self.assertEqual(code, 2, err)
-            self.assertRegex(err, "Patrick chose 'none'|must be one of play, none")
+            self.assertRegex(err, "church libraries accept only 'none'|must be one of play, none")
         # There is no command-line flag any more (argparse exits 2).
         with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as ctx:
             self.importer(["--flagged-audio", "shifted"])
@@ -317,7 +317,7 @@ class FlaggedAudioTests(Base):
             self.assertEqual(resolve_flagged_audio("none"), "none")
         # Patrick chose none for church libraries: nothing else is selectable.
         for value in ("play", "shifted"):
-            with self.assertRaisesRegex(ValueError, "Patrick chose 'none'|must be one of play, none"):
+            with self.assertRaisesRegex(ValueError, "church libraries accept only 'none'|must be one of play, none"):
                 resolve_flagged_audio(value)
             with patch.dict(os.environ, {"PREACHED_FLAGGED_AUDIO": value}), self.assertRaises(ValueError):
                 resolve_flagged_audio()

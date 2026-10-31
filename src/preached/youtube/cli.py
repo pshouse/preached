@@ -77,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         "(announcements, prayer requests, testimonies) may be confirmed, widened or added to before approval; "
         "approval excludes exactly what they list, and any edit after approval is refused.",
     )
+    parser.add_argument(
+        "--your-church",
+        action="store_true",
+        help="Mark this library as your church (meta role=church). Clears that mark on any other index in the directory. Ignored by --dry-run.",
+    )
     return parser
 
 
@@ -86,8 +91,15 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     if not SLUG.fullmatch(args.library):
         print("library must be a short slug: lowercase letters, digits, and hyphens", file=sys.stderr)
         return 2
-    if args.library == "wesley":
-        print("library wesley is the built-in text index; choose another slug", file=sys.stderr)
+    from preached.library import is_classic_slug
+
+    # wesley is the built-in index. spurgeon and edwards come from
+    # libraries.PUBLIC_DOMAIN: --your-church must not mark them.
+    if args.library == "wesley" or (args.your_church and is_classic_slug(args.library)):
+        print(
+            f"library {args.library} is a classic library and cannot be your church; choose another slug",
+            file=sys.stderr,
+        )
         return 2
     if args.library in PUBLIC_DOMAIN:
         # Those files are served without the publish gate, so church audio must never land in one.
@@ -137,7 +149,7 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
         print(f"privacy: {exc.__class__.__name__}: {exc}", file=sys.stderr)
         return 2
     try:
-        return run(
+        code = run(
             settings,
             lister=lister or list_channel,
             transcriber=transcriber or transcribe,
@@ -149,3 +161,19 @@ def main(argv: list[str] | None = None, *, lister=None, transcriber=None, embedd
     except (ChannelRefused, BadChannelUrl) as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    # Dry-run writes nothing, including the church mark. A failed or partial
+    # import (code != 0) does not mark the file either: the mark is only for
+    # a run that imported every selected video.
+    if args.your_church and code == 0 and not args.dry_run and settings.index_path.is_file():
+        from preached.library import mark_your_church_exclusive
+
+        try:
+            mark_your_church_exclusive(
+                settings.index_path,
+                index_root,
+                sample=args.library == "sample",
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+    return code

@@ -25,13 +25,14 @@ import numpy as np
 from app.server import STATIC_DIR, STALE_NOTE, App, make_server
 from preached.corpus import load_chunk_config
 from preached.models import MODELS
+from preached.library import get_meta, is_your_church, mark_your_church
 from preached.search import PREROLL_S as SEARCH_PREROLL_S
 from preached.search import Searcher
 from preached.store import connect, load_embeddings, open_readonly, stored_fingerprint
 from preached.youtube.chunking import chunk_words
 from preached.youtube.cli import main
 from preached.youtube.fetch import download_audio, fetch_metadata, list_channel
-from preached.youtube.library import MODEL_KEY
+from preached.youtube.library import MODEL_KEY, ensure_library
 from preached.youtube.listing import (
     PREROLL_S,
     WATCH_HOSTS,
@@ -1035,6 +1036,141 @@ class ImportTests(unittest.TestCase):
                 lister=self._boom,
             )
             self.assertEqual(code, 2)
+
+    def test_your_church_mark_is_exclusive_and_dry_run_writes_nothing(self) -> None:
+        video = Video(
+            "samplevid01",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid01",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                    "--dry-run",
+                ],
+                root,
+                lister=lambda _url: [video],
+                downloader=self._boom,
+                transcriber=self._boom,
+                metadata=self._boom,
+            )
+            self.assertEqual(code, 0, err)
+            self.assertFalse((root / "sample.sqlite").exists())
+
+            other = connect(root / "other.sqlite")
+            ensure_library(other)  # a church import, so its mark may be cleared
+            mark_your_church(other)
+            other.commit()
+            other.close()
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                ],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                transcriber=lambda _path: sample_words(12.2),
+                embedder=embedder,
+            )
+            self.assertEqual(code, 0, err)
+            marked = open_readonly(root / "sample.sqlite")
+            try:
+                self.assertTrue(is_your_church(marked))
+                self.assertEqual(get_meta(marked, "sample"), "1")
+            finally:
+                marked.close()
+            cleared = open_readonly(root / "other.sqlite")
+            try:
+                self.assertFalse(is_your_church(cleared))
+            finally:
+                cleared.close()
+
+    def test_failed_import_does_not_mark_the_church(self) -> None:
+        video = Video(
+            "samplevid01",
+            "On Mercy",
+            40,
+            date(2024, 6, 2),
+            "https://www.youtube.com/watch?v=samplevid01",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            other = connect(root / "other.sqlite")
+            ensure_library(other)  # a church import, so its mark may be cleared
+            mark_your_church(other)
+            other.commit()
+            other.close()
+
+            def boom(_path):
+                raise RuntimeError("transcribe failed")
+
+            code, _out, err = self._run(
+                [
+                    "https://www.youtube.com/watch?v=samplevid01",
+                    "--library",
+                    "sample",
+                    "--your-church",
+                ],
+                root,
+                lister=lambda _url: [video],
+                metadata=lambda _video: {
+                    "license": "Creative Commons Attribution license (reuse allowed)",
+                    "upload_date": "20240602",
+                    "title": "On Mercy",
+                    "uploader": "A Speaker",
+                    "duration": 40,
+                },
+                downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                transcriber=boom,
+                embedder=embedder,
+            )
+            self.assertEqual(code, 1, err)
+            self.assertTrue((root / "sample.sqlite").is_file())
+            marked = open_readonly(root / "sample.sqlite")
+            try:
+                self.assertFalse(is_your_church(marked))
+            finally:
+                marked.close()
+            sibling = open_readonly(root / "other.sqlite")
+            try:
+                self.assertTrue(is_your_church(sibling))
+            finally:
+                sibling.close()
+
+    def test_classic_slugs_are_refused_as_your_church(self) -> None:
+        for slug in ("wesley", "spurgeon", "edwards"):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                code, _out, err = self._run(
+                    [
+                        "https://www.youtube.com/watch?v=samplevid01",
+                        "--library",
+                        slug,
+                        "--your-church",
+                    ],
+                    root,
+                    lister=self._boom,
+                )
+                self.assertEqual(code, 2, err)
+                self.assertIn("classic", err)
+                self.assertFalse((root / f"{slug}.sqlite").exists())
 
     def test_privacy_hook_is_identity(self) -> None:
         words = sample_words()

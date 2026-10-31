@@ -54,8 +54,8 @@ def check_church_policy(value: object, source: str = "flagged_audio") -> str:
     check_flagged_audio(value)
     if value != CHURCH_FLAGGED_AUDIO:
         raise ValueError(
-            f"{source} = {value!r} refused: Patrick chose 'none' for church libraries "
-            "(no play link on name passages); no other value can be selected"
+            f"{source} = {value!r} refused: church libraries accept only 'none' "
+            "(Patrick's decision; no play link on name passages)"
         )
     return CHURCH_FLAGGED_AUDIO
 
