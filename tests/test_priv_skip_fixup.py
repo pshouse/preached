@@ -210,7 +210,7 @@ class YouTubeFixupTests(Base):
     def test_redo_canary_removed_from_db_and_wal(self) -> None:
         # The first import is long and holds the canary; the --redo transcript is
         # much shorter and has none, so the redo frees pages that held it. A
-        # 512-byte page holds 126 leaf numbers, so the large first import frees
+        # 512-byte page holds 120 leaf numbers (SQLite caps it there), so the large first import frees
         # more than one freelist trunk page.
         seed = sqlite3.connect(self.index)
         seed.execute("PRAGMA page_size = 512")
