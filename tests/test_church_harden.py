@@ -270,6 +270,44 @@ class StartupPauseTests(_Root):
         self.assertEqual(slug, "sample")
 
 
+class StartPausedFormsTests(_Root):
+    """HC1: every place the start-up open can meet a writer's lock is a start pause, not a refusal."""
+
+    def busy_error(self) -> sqlite3.OperationalError:
+        writer = lock(self.church)
+        try:
+            with closing(sqlite3.connect(self.church, timeout=0)) as probe:
+                with self.assertRaises(sqlite3.OperationalError) as caught:
+                    probe.execute("SELECT count(*) FROM chunks").fetchone()
+        finally:
+            release(writer)
+        self.assertTrue(library.is_busy(caught.exception))
+        return caught.exception
+
+    def assert_start_paused(self) -> None:
+        with self.assertRaises(library.ChurchStartPaused) as caught:
+            open_church_readonly(self.church, classic=self.wesley)
+        self.assertEqual(caught.exception.reason, LOCKED)
+        self.assertEqual(str(caught.exception), f"{LOCKED}; it is not opened")  # the CLI's refusal text
+
+    def test_a_lock_at_the_connect(self) -> None:
+        busy = self.busy_error()
+        with patch.object(library, "open_readonly", side_effect=busy):
+            self.assert_start_paused()
+
+    def test_a_lock_at_the_publish_gate_read(self) -> None:
+        busy = self.busy_error()
+        with patch("preached.store.visible_sql", side_effect=busy):
+            self.assert_start_paused()
+
+    def test_a_lock_at_the_shape_read(self) -> None:
+        writer = lock(self.church)
+        try:
+            self.assert_start_paused()
+        finally:
+            release(writer)
+
+
 class SearcherBuildFailureTests(_Root):
     """S4 and the DEPLOY 'one line' nit: a searcher that fails to build closes the connection, one line."""
 

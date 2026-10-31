@@ -891,6 +891,9 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
     except UnsafeSidecar as exc:
         raise ChurchRefused(str(exc)) from exc
     except (OSError, sqlite3.Error) as exc:
+        if is_busy(exc):
+            reason = f"the church file is locked by a writer ({exc})"
+            raise ChurchStartPaused(f"{reason}; it is not opened", reason) from exc
         raise ChurchRefused(f"{path.name} cannot be opened ({exc})") from exc
     problem = None
     paused = None
