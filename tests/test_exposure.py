@@ -452,12 +452,15 @@ class SlotFairnessTests(_Served):
         # Hold each handler after its response is flushed and before the
         # socket is closed: the window a fast client reconnects in.
         _hold_after_finish(self, server, 1.0)
-        for path in ("/healthz", "/api/search?q=grace", "/nope"):
+        for path, expected in (("/healthz", 200), ("/api/search?q=grace", 200), ("/nope", 404)):
             with self.subTest(path=path):
+                # The last subtest's reconnect may still be between its flush
+                # and its release.
+                self.assertTrue(_wait(lambda: server._conn_total == 0 and server._conn_by_ip == {}))
                 sock = _connect(port, "127.0.0.2")
                 self.addCleanup(sock.close)
                 _send(sock, path, close=True)
-                self.assertIsNotNone(_read_response(sock)[0])
+                self.assertEqual(_read_response(sock)[0], expected)
                 # The slot goes once the body is flushed, before the close.
                 self.assertTrue(_wait(lambda: server._conn_total == 0 and server._conn_by_ip == {}, 0.5))
                 self.assertFalse(_is_closed(sock, 0.05))
