@@ -207,4 +207,4 @@ Each mutation was applied to the working tree, the named tests were run, and the
 - `uv run python -m unittest discover -s tests`: **782 tests, OK** (89.8s). That is 766 after the `origin/main` merge, plus 16 in `tests/test_hard_conditions.py`.
 - `uv lock --check`: passed (79 packages). No dependency changes.
 - No PR body was updated: `gh` is not installed in this sandbox, so the branch was only pushed. The PR body should get this section's item table.
-- Code head before this section: `9f80703`. The branch head is the commit that adds this section.
+- Code head before this section: `9f80703`. The commit that adds this section is `bc0969c`; the branch head is the follow-up commit that records this SHA (report text only).
