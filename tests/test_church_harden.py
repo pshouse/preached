@@ -150,6 +150,22 @@ class StartupPauseTests(_Root):
         self.assertEqual(len(calls), 3)
         self.assertEqual(app.church_connection.execute("PRAGMA busy_timeout").fetchone()[0], 0)
 
+    def test_main_holds_the_startup_pause_line_until_log_startup_pause(self) -> None:
+        church_open, _calls = self.opener()
+        classic = reopen(self.wesley)
+        self.addCleanup(classic.close)
+        writer = lock(self.church)
+        try:
+            with self.assertNoLogs(level="INFO"):
+                app = build_app(classic, model_key="granite-english-r2", bm25_only=True, hosts={"127.0.0.1"},
+                                static_dir=STATIC_DIR, floor=0.5, church_open=church_open, defer_church_pause_log=True)
+            with self.assertLogs(level="INFO") as logs:
+                app.log_startup_pause()
+                app.log_startup_pause()
+            self.assertEqual(logs.output, [f"INFO:root:{PAUSED_LOCK}"])
+        finally:
+            release(writer)
+
     def test_the_backoff_doubles_to_the_cap(self) -> None:
         church_open, calls = self.opener()
         writer = lock(self.church)
@@ -207,10 +223,12 @@ class StartupPauseTests(_Root):
         release(writer)
         os.chmod(self.church, 0o666)
         app._church_retry_at = 0.0
-        with self.assertLogs(level="ERROR") as logs:
+        with self.assertLogs(level="INFO") as logs:
             self.assertFalse(self.present(app))
-        self.assertEqual(len(logs.output), 1)
+        # The pause ends explicitly, right after the refusal line.
+        self.assertEqual(len(logs.output), 2, logs.output)
         self.assertTrue(logs.output[0].startswith("ERROR:root:church side refused: "), logs.output)
+        self.assertEqual(logs.output[1], "INFO:root:church side pause ended: refused")
         os.chmod(self.church, 0o644)
         app._church_retry_at = 0.0
         with self.assertNoLogs(level="INFO"):
@@ -469,10 +487,15 @@ HOLD_CHURCH = (
 )
 
 
-def raw_get(port: int, path: str, timeout: float = 30) -> tuple[int, bytes]:
+def raw_get(port: int, path: str, timeout: float = 30, source: str = "127.0.0.1") -> tuple[int, bytes]:
     """One request with ``Connection: close``, read to EOF: the server has
     released the connection and its request slot before the close."""
-    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+    return raw_get_full(port, path, timeout, source)[::2]
+
+
+def raw_get_full(port: int, path: str, timeout: float = 30, source: str = "127.0.0.1") -> tuple[int, dict, bytes]:
+    """``raw_get`` with the response headers (lower-case names) as well, from the given source address."""
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout, source_address=(source, 0)) as sock:
         sock.sendall(f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".encode())
         chunks = []
         while True:
@@ -483,7 +506,11 @@ def raw_get(port: int, path: str, timeout: float = 30) -> tuple[int, bytes]:
     raw = b"".join(chunks)
     head, _, body = raw.partition(b"\r\n\r\n")
     status = int(head.split(b" ", 2)[1]) if head else 0
-    return status, body
+    headers = {}
+    for line in head.decode("latin-1").split("\r\n")[1:]:
+        name, _, value = line.partition(":")
+        headers[name.strip().lower()] = value.strip()
+    return status, headers, body
 
 
 class _ChurchServer(unittest.TestCase):
@@ -572,9 +599,27 @@ class StartupLockServeTests(_ChurchServer):
         self.assertEqual(rc, 0, err[-3000:])
         self.assertEqual(err.count(PAUSED_LOCK), 1, err[-3000:])
         self.assertEqual(err.count("church side resumed"), 1, err[-3000:])
+        # HD1: the pause is logged after "listening on", which clears the alert.
+        self.assertLess(err.index("INFO listening on "), err.index(PAUSED_LOCK))
         self.assertLess(err.index(PAUSED_LOCK), err.index(OPENED))
         self.assertLess(err.index(OPENED), err.index("church side resumed"))
         self.assert_church_clean(err)
+
+    def test_started_in_wal_mode_logs_the_pause_after_listening(self) -> None:
+        with closing(sqlite3.connect(self.church)) as writer:
+            self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone()[0], "wal")
+        with tempfile.TemporaryDirectory() as tmp:
+            running = self.start(tmp)
+            try:
+                status, body = raw_get(running.port, "/api/side?q=approvedtoken&mode=bm25")
+                self.assertEqual(status, 200)
+                self.assertFalse(json.loads(body)["church"]["present"])
+            finally:
+                rc, err = running.stop()
+        self.assertEqual(rc, 0, err[-3000:])
+        paused = "INFO church side paused: sample.sqlite is in WAL journal mode"
+        self.assertEqual(err.count(paused), 1, err[-3000:])
+        self.assertLess(err.index("INFO listening on "), err.index(paused))
 
 
 class CapsAndFlushServeTests(_ChurchServer):
@@ -591,16 +636,21 @@ class CapsAndFlushServeTests(_ChurchServer):
             running = self.start(tmp, hold_s=3)
             client, result = self.held_side(running.port)
             # The one request slot is the held church search: three more get 503 (busy).
-            busy = [raw_get(running.port, "/api/search?q=grace&mode=bm25")[0] for _ in range(3)]
+            busy_full = [raw_get_full(running.port, "/api/search?q=grace&mode=bm25") for _ in range(3)]
+            busy = [status for status, _headers, _body in busy_full]
             # The held connection plus an idle one fill the per-client cap: the next is refused at accept.
             idle = socket.create_connection(("127.0.0.1", running.port))
             time.sleep(0.2)
-            over, _body = raw_get(running.port, "/api/search?q=grace&mode=bm25")
+            over, over_headers, _body = raw_get_full(running.port, "/api/search?q=grace&mode=bm25")
             idle.close()
             rc, err = running.stop()
             client.join(30)
         self.assertEqual(busy, [503, 503, 503], err[-3000:])
         self.assertEqual(over, 503, err[-3000:])
+        # C7: every busy 503 tells the client when to come back.
+        for _status, headers, _body in busy_full:
+            self.assertEqual(headers.get("retry-after"), "1", headers)
+        self.assertEqual(over_headers.get("retry-after"), "1", over_headers)
         self.assertEqual(result.get("status"), 200, (result, err[-3000:]))
         self.assertTrue(result["body"]["church"]["present"])
         self.assertTrue(result["body"]["church"]["results"])
@@ -630,13 +680,18 @@ class HealthBucketServeTests(_ChurchServer):
             church = raw_get(port, "/api/search?q=approvedtoken&mode=bm25&library=sample")
             side = raw_get(port, "/api/side?q=approvedtoken&mode=bm25")
             classic = raw_get(port, "/api/search?q=grace&mode=bm25")
-            limited = [raw_get(port, "/api/search?q=approvedtoken&mode=bm25&library=sample")[0] for _ in range(3)]
-            health = [raw_get(port, "/healthz") for _ in range(3)]
+            limited_full = [raw_get_full(port, "/api/search?q=approvedtoken&mode=bm25&library=sample") for _ in range(3)]
+            limited = [status for status, _headers, _body in limited_full]
+            health_full = [raw_get_full(port, "/healthz") for _ in range(3)]
+            health = [(status, body) for status, _headers, body in health_full]
             rc, err = running.stop()
         self.assertEqual((church[0], side[0], classic[0]), (200, 200, 200), err[-3000:])
         self.assertTrue(json.loads(church[1])["results"])
         self.assertTrue(json.loads(side[1])["church"]["results"])
         self.assertEqual(limited, [429, 429, 429])
+        # C7: the 429 carries Retry-After, the search bucket's and the health bucket's.
+        for _status, headers, _body in limited_full + health_full[2:]:
+            self.assertRegex(headers.get("retry-after", ""), r"^[1-9][0-9]*$", headers)
         # The search bucket is empty; /healthz still answers from its own, then hits its own limit.
         self.assertEqual([status for status, _ in health], [200, 200, 429])
         self.assertIsNone(json.loads(health[0][1])["church"])
@@ -646,6 +701,122 @@ class HealthBucketServeTests(_ChurchServer):
         self.assertIn("WARNING refused 429-client flush suppressed=2", lines)
         self.assertEqual(sum(line.startswith("WARNING refused 429-health ") for line in lines), 1)
         self.assert_church_clean(err)
+
+
+class GlobalRateServeTests(_ChurchServer):
+    """C8: the global rate caps, filled by several source addresses (127.0.0.2 and up), church side on."""
+
+    ENV = {
+        "PREACHED_RATE_LIMIT": "100",
+        "PREACHED_GLOBAL_RATE_LIMIT": "3",
+        "PREACHED_HEALTH_RATE_LIMIT": "100",
+        "PREACHED_HEALTH_GLOBAL_RATE_LIMIT": "2",
+        "PREACHED_RATE_WINDOW_S": "60",
+    }
+
+    def test_the_global_and_health_global_caps_hold_across_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            running = self.start(tmp)
+            port = running.port
+            paths = ["/api/search?q=approvedtoken&mode=bm25&library=sample", "/api/side?q=approvedtoken&mode=bm25", "/api/search?q=grace&mode=bm25"]
+            allowed = [raw_get_full(port, path, source=f"127.0.0.{n}") for n, path in zip((2, 3, 4), paths)]
+            over = raw_get_full(port, paths[0], source="127.0.0.5")
+            health = [raw_get_full(port, "/healthz", source=f"127.0.0.{n}") for n in (6, 7, 8)]
+            rc, err = running.stop()
+        self.assertEqual([status for status, _h, _b in allowed], [200, 200, 200], err[-3000:])
+        self.assertEqual(over[0], 429)
+        self.assertRegex(over[1].get("retry-after", ""), r"^[1-9][0-9]*$", over[1])
+        self.assertEqual([status for status, _h, _b in health], [200, 200, 429])
+        self.assertRegex(health[2][1].get("retry-after", ""), r"^[1-9][0-9]*$", health[2][1])
+        self.assertEqual(rc, 0, err[-3000:])
+        self.assertEqual(sum(line.startswith("WARNING refused 429-global ") for line in err.splitlines()), 1, err)
+        self.assertEqual(sum(line.startswith("WARNING refused 429-health-global ") for line in err.splitlines()), 1, err)
+        self.assert_church_clean(err)
+
+
+class ConnectionCapAndReserveServeTests(_ChurchServer):
+    """C8: the global connection cap and the /healthz reserve, filled from several source addresses."""
+
+    ENV = {
+        "PREACHED_MAX_CONNECTIONS": "2",
+        "PREACHED_MAX_CLIENT_CONNECTIONS": "4",
+        "PREACHED_MAX_CLIENT_REQUESTS": "4",
+        "PREACHED_HEALTH_RESERVED_CONNECTIONS": "1",
+    }
+
+    def test_the_cap_is_global_and_the_reserve_serves_only_healthz(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            running = self.start(tmp, hold_s=3)
+            port = running.port
+            holders = []
+            for n in (2, 3):  # two church searches from two sources fill the two connections
+                sock = socket.create_connection(("127.0.0.1", port), timeout=30, source_address=(f"127.0.0.{n}", 0))
+                sock.sendall(b"GET /api/side?q=approvedtoken&mode=bm25 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                holders.append(sock)
+            deadline = time.monotonic() + 20
+            while not self.mark.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(self.mark.exists(), "the church search never started")
+            time.sleep(0.5)  # the second connection is accepted, queued behind the first
+            search = raw_get_full(port, "/api/search?q=grace&mode=bm25", source="127.0.0.4")
+            health = raw_get_full(port, "/healthz", source="127.0.0.5")
+            for sock in holders:
+                sock.close()
+            rc, err = running.stop()
+        self.assertEqual(search[0], 503, err[-3000:])
+        self.assertEqual(search[1].get("retry-after"), "1", search[1])
+        self.assertEqual(health[0], 200, err[-3000:])
+        self.assertEqual(rc, 0, err[-3000:])
+
+
+class ChurchClosedAtShutdownTests(unittest.TestCase):
+    """S3c: SIGTERM closes the church connection, then the process exits 0."""
+
+    def test_the_church_connection_is_closed_at_shutdown(self) -> None:
+        class Conn:
+            closed = 0
+
+            def close(self) -> None:
+                self.closed += 1
+
+        class Server:
+            drained = False
+
+            def drain(self):
+                return []
+
+            def server_close(self) -> None:
+                pass
+
+        app = type("A", (), {})()
+        app.church_connection = Conn()
+        app.close_embedder = lambda: None
+        classic = Conn()
+        server._STOP["requested"] = True  # nothing is served; go straight to the stop
+        self.addCleanup(server._STOP.update, {"requested": False, "stopping": False, "server": None})
+        server.serve_until_stopped(Server(), app, classic)
+        self.assertEqual((classic.closed, app.church_connection.closed), (1, 1))
+
+    def test_not_closed_while_a_handler_is_still_running(self) -> None:
+        class Conn:
+            closed = 0
+
+            def close(self) -> None:
+                self.closed += 1
+
+        class Server:
+            refusals = None
+
+            def drain(self):
+                return [object()]
+
+        app = type("A", (), {})()
+        app.church_connection = Conn()
+        server._STOP["requested"] = True
+        self.addCleanup(server._STOP.update, {"requested": False, "stopping": False, "server": None})
+        with self.assertRaises(SystemExit):
+            server.serve_until_stopped(Server(), app, Conn())
+        self.assertEqual(app.church_connection.closed, 0)
 
 
 class StuckChurchServeTests(_ChurchServer):
