@@ -18,7 +18,10 @@ Security choices:
   search budget and search never starves it. A full table refuses new clients
 - concurrent connections are capped globally and per peer, and in-flight
   requests per client key. A full server closes the longest-idle connection
-  of the client holding the most, and bounds keep-alive idle time when scarce
+  of the client holding the most, and bounds keep-alive idle time when scarce.
+  A peer already at its cap may take its own idle keep-alive once that
+  socket has been quiet for KEEPALIVE_IDLE_S, so a second client on the
+  same IP is not stuck behind a tab that finished loading
 - the whole header block has one deadline, not a timeout per read
 - a regular kill file stops and resumes serving on the next request
 - anything unexpected at the kill path is treated as killed
@@ -247,6 +250,14 @@ DEFAULT_MAX_CLIENT_REQUESTS = 4
 # Once a quarter of the connection slots or fewer are free, a connection
 # waiting for its next request line gets this long, not the full deadline.
 SCARCE_IDLE_S = 2.0
+# How long an idle keep-alive must have been quiet before a new connection
+# from the same peer can take its slot. Idle sockets count toward the
+# per-IP cap. A tab that has finished loading otherwise holds the cap
+# until the header deadline (15s), and the next client on that IP is
+# refused for the whole wait. Busy sockets, and ones still receiving
+# headers, are never taken. A brand-new extra connection is still refused:
+# the quiet socket has to have been idle this long.
+KEEPALIVE_IDLE_S = 1.0
 # A shared test process issues well under this. serve.sh sets a tighter cap.
 DEFAULT_RATE_LIMIT = 120
 DEFAULT_RATE_WINDOW_S = 60.0
@@ -2427,6 +2438,10 @@ class PreachedServer(ThreadingHTTPServer):
     whose headers are still coming is closed only when that peer has no
     idle one left. A request being handled is never closed. When slots are
     scarce, a connection waiting for its next request gets ``scarce_idle_s``.
+    Separately, a peer already at its own cap can take its own oldest
+    idle socket once that socket has been quiet for ``KEEPALIVE_IDLE_S``.
+    A request in flight, or one still receiving headers, is not that
+    socket. A further connection before the quiet period is still refused.
 
     When nothing can be closed, up to ``health_reserved`` more connections
     are admitted for ``/healthz`` alone: one request, then a close. Any
@@ -2522,6 +2537,27 @@ class PreachedServer(ThreadingHTTPServer):
                 return oldest[holder][1]
         return None
 
+    def _takeable_idle(self, holder: str):
+        """Oldest idle socket of ``holder`` quiet for ``KEEPALIVE_IDLE_S``, or None.
+
+        Lock held. A request in flight, one still receiving headers, and a
+        reserved ``/healthz`` connection are kept. ``since`` is the accept
+        time until ``mark_idle`` moves it to the end of the last response,
+        so a socket is takeable only after it has actually been sitting.
+        """
+        now = time.monotonic()
+        oldest_at = None
+        oldest = None
+        for request, conn in self._conns.items():
+            if conn.holder != holder or conn.closed or conn.busy or conn.reading or conn.reserved:
+                continue
+            if now - conn.since < KEEPALIVE_IDLE_S:
+                continue
+            if oldest is None or conn.since < oldest_at:
+                oldest = request
+                oldest_at = conn.since
+        return oldest
+
     def _forget(self, request) -> None:
         """Drop a connection from the counts. Idempotent. Lock held."""
         conn = self._conns.get(request)
@@ -2546,8 +2582,16 @@ class PreachedServer(ThreadingHTTPServer):
         with self._conn_lock:
             held = self._conn_by_ip.get(holder, 0)
             if held >= self.max_connections_per_client and not trusted:
-                return False
-            if self._conn_total >= self.max_connections:
+                # Its own quiet keep-alive, not someone else's slot. A
+                # connection that has not been idle long enough stays, and
+                # the new one is refused, same as before.
+                victim = self._takeable_idle(holder)
+                if victim is None:
+                    return False
+                victim_holder = holder
+                self._forget(victim)
+                held -= 1
+            elif self._conn_total >= self.max_connections:
                 victim = self._pick_victim(held)
                 if victim is None:
                     if self._reserved_total >= self.health_reserved:
