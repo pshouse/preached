@@ -53,3 +53,14 @@ The dry run's single sample (729.3 MiB start, 782.6 MiB after about 45 queries, 
 - Test count without the skip sources.
 - 143 recordings / 71.14 h (not rechecked; cited from `reports/W1-A.md`).
 - The `W3-CPU.md` 960 MiB may predate the #26 fix; the docs say only which setup it is.
+
+## Corrections (task 84, CTO review of #60)
+
+Merged `origin/main` (`ad78a75`, includes #54 `b93e25b` and #60) into this branch (merge commit). Docs only; scope is `docs/DEMO-SCRIPT.md`, `docs/SUBMISSION-DRAFT.md` and this report.
+
+- **Item 1 (sha and tests):** `33573c7` replaced by `ad78a75` at DEMO-SCRIPT:10, :77 and SUBMISSION-DRAFT:3, :42. `bbdb1ba` / `47da348` were already gone from the docs; the "unchanged since `bbdb1ba`" clause is dropped. `git diff --stat 33573c7 ad78a75 -- src search app` is empty (the only changes are two reports). Suite re-run on `ad78a75`: `PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`: `Ran 995 tests in 228.447s`, `OK`, no skip line. Count unchanged at 995.
+- **Items 2 to 5 (fallback table):** already correct from the earlier pass, left as is. Re-verified live on `ad78a75` (server on `/cache/index/wesley.sqlite`, `/api/search?mode=hybrid&k=5&library=wesley`; CLI for the worry timestamp): money second hit The Danger of Riches `wesley-087-c0021` 622.25 (strong); worry page `wesley-029-c0002` 69.24 (strong), CLI 112.32; forgiveness `wesley-026-c0072` 2239.57, second Justification By Faith 1090.4, level `weak`; prayer `wesley-026-c0027` 797.8, second On Visiting the Sick `wesley-098-c0031` 950.74, `weak`. No differences from the CTO's values.
+- **Item 6 (memory):** DEMO-SCRIPT:65 and SUBMISSION-DRAFT:35 rewritten: embedder alone 683 MiB RSS / 903 MiB peak (W3-RSS.md); full server, single runs on a desktop, about 730 MiB at start, about 730 to 780 MiB after queries, peak 950 to 970 MiB, under 1 GiB, citing W4-DEMO-PREP.md:55/:73 and reports/W4-DEMO-DRYRUN.md. Bare "about 728 MiB" dropped. W3-CPU.md:79's 960 MiB annotated as pre-#26. No cross-setup comparison.
+- **Item 7:** Tailscale fill-in at DEMO-SCRIPT:79 left blank; no URL, tailnet name or IP written.
+- **Optional S1:** a bare `Worry` query is NOT `weak` on `ad78a75`: it returns level `none`, `abstain: true` (consistent with W4-DEMO-DRYRUN.md:84). The `Worry` button sends "What did Wesley say about worry?", which is `weak` (top On Riches 1110.29). DEMO-SCRIPT:38 describes the button and is correct, so it is unchanged; flagging the difference.
+- The #52 S1 to S4 text and the citable sentence are untouched.
