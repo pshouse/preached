@@ -633,6 +633,281 @@ class BundleTests(unittest.TestCase):
             self.assertEqual(count, 1)
             self.assertEqual(journal, "delete")
 
+    def _build_with_tar(self, root: Path, tar_body: str, *, pre: str = "", cwd: Path | None = None):
+        """Build with a fake `tar` first on PATH. For the create (-cf) call
+        only, it runs `pre` (with $snap set to the -C directory), then the
+        real tar, then `tar_body`."""
+        source, onnx_root, index = self._fixture_source(root)
+        fake_bin = root / "fakebin"
+        fake_bin.mkdir()
+        real_tar = shutil.which("tar")
+        fake = fake_bin / "tar"
+        fake.write_text(
+            "#!/bin/bash\n"
+            f'case " $* " in *" -cf "*) ;; *) exec {real_tar} "$@";; esac\n'
+            'args=("$@"); for ((i = 0; i < ${#args[@]}; i++)); do '
+            '[ "${args[i]}" = -C ] && snap=${args[i+1]}; done\n'
+            f"{pre}\n"
+            f'{real_tar} "$@"\n'
+            "status=$?\n"
+            f"{tar_body}\n"
+            'exit "$status"\n'
+        )
+        fake.chmod(0o755)
+        env = self._env(
+            PREACHED_LIBRARY="wesley",
+            PREACHED_INDEX=str(index),
+            PREACHED_ONNX_DIR=str(onnx_root),
+            PATH=f"{fake_bin}:{os.environ['PATH']}",
+        )
+        out = root / "bundle"
+        result = subprocess.run(
+            ["bash", str(source / "scripts" / "build-bundle.sh"), str(out)],
+            cwd=cwd or source,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        return result, out
+
+    def test_tar_exit_1_leaves_no_archive_and_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result, out = self._build_with_tar(root, "status=1")
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("no archive written", result.stderr)
+            self.assertEqual(sorted(p.name for p in root.glob("bundle.tar*")), [])
+            self.assertEqual(list(root.glob("*.partial*")), [])
+
+    def test_failed_rebuild_removes_an_older_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stale = root / "bundle.tar.gz"
+            stale.write_bytes(b"from an earlier build")
+            result, _ = self._build_with_tar(root, "status=1")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(stale.exists())
+
+    def test_tar_exit_1_once_is_retried_and_the_archive_verifies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            counter = root / "calls"
+            body = f'echo x >> "{counter}"; [ "$(wc -l < "{counter}")" -eq 1 ] && status=1'
+            result, out = self._build_with_tar(root, body)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("attempt 2 of 3", result.stderr)
+            self.assertEqual(len(counter.read_text().splitlines()), 2)
+            self._assert_archive_matches_manifest(root, out)
+
+    def test_tar_exit_1_twice_then_success_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            counter = root / "calls"
+            body = f'echo x >> "{counter}"; [ "$(wc -l < "{counter}")" -le 2 ] && status=1'
+            result, out = self._build_with_tar(root, body)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("attempt 3 of 3", result.stderr)
+            self.assertEqual(len(counter.read_text().splitlines()), 3)
+            self._assert_archive_matches_manifest(root, out)
+
+    def test_tar_exit_1_three_times_fails_closed_after_three_attempts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            counter = root / "calls"
+            result, _ = self._build_with_tar(root, f'echo x >> "{counter}"; status=1')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("tar failed", result.stderr)
+            self.assertEqual(len(counter.read_text().splitlines()), 3)
+            self.assertEqual(list(root.glob("bundle.tar*")), [])
+            self.assertEqual(list(root.glob("*.partial*")), [])
+
+    def test_archive_with_a_changed_listed_file_is_not_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # tar exits 0, same file set, but one listed file has other bytes.
+            result, _ = self._build_with_tar(root, "", pre='echo changed >> "$snap/README.md"')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not match MANIFEST.sha256", result.stderr)
+            self.assertEqual(list(root.glob("bundle.tar*")), [])
+
+    def test_failures_before_the_tar_step_remove_a_stale_archive(self) -> None:
+        def run(root: Path, source: Path, out: Path, **env) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["bash", str(source / "scripts" / "build-bundle.sh"), str(out)],
+                cwd=source,
+                env=self._env(PREACHED_LIBRARY="wesley", **env),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, onnx_root, index = self._fixture_source(root)
+            out = root / "bundle"
+            stale = root / "bundle.tar.gz"
+            good = {"PREACHED_INDEX": str(index), "PREACHED_ONNX_DIR": str(onnx_root)}
+
+            def stale_run(label: str, **env) -> None:
+                with self.subTest(label):
+                    stale.write_bytes(b"from an earlier build")
+                    result = run(root, source, out, **{**good, **env})
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertFalse(stale.exists())
+
+            stale_run("missing index", PREACHED_INDEX="/nonexistent")
+            not_sqlite = root / "plain.sqlite"
+            not_sqlite.write_bytes(b"not a database" * 100)
+            stale_run("not a sqlite index", PREACHED_INDEX=str(not_sqlite))
+            # Pin mismatch: the fixture's pinned model file changes after the pin.
+            (onnx_root / GRANITE_REVISION / "model.fp32.onnx").write_bytes(b"another model")
+            stale_run("pin mismatch")
+            (onnx_root / GRANITE_REVISION / "model.fp32.onnx").write_bytes(b"stand-in model.fp32.onnx\n")
+            out.mkdir()
+            (out / "leftover").write_text("x")
+            stale_run("output directory not empty")
+
+    def test_leftover_partial_files_from_killed_builds_are_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, onnx_root, index = self._fixture_source(root)
+            (root / "bundle.tar.gz.partial.12345").write_bytes(b"killed")
+            keep = root / "bundle.tar.gz.partial.notapid"
+            keep.write_bytes(b"not ours")
+            other = root / "other.tar.gz.partial.12345"
+            other.write_bytes(b"another build")
+            result = self._build(source, root / "bundle", onnx_root, index)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / "bundle.tar.gz.partial.12345").exists())
+            self.assertTrue(keep.exists() and other.exists())
+
+    def test_out_dir_with_a_trailing_slash_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, onnx_root, index = self._fixture_source(root)
+            result = subprocess.run(
+                ["bash", str(source / "scripts" / "build-bundle.sh"), f"{root}/bundle/"],
+                cwd=source,
+                env=self._env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_INDEX=str(index),
+                    PREACHED_ONNX_DIR=str(onnx_root),
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("slash", result.stderr)
+            self.assertFalse((root / "bundle").exists())
+
+    def test_tar_exit_2_is_not_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            counter = root / "calls"
+            result, _ = self._build_with_tar(root, f'echo x >> "{counter}"; status=2')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(len(counter.read_text().splitlines()), 1)
+            self.assertEqual(list(root.glob("bundle.tar*")), [])
+
+    def test_archive_that_disagrees_with_the_manifest_is_not_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # tar exits 0 but the archive holds a file the manifest does not list.
+            source, onnx_root, index = self._fixture_source(root)
+            fake_bin = root / "fakebin"
+            fake_bin.mkdir()
+            real_tar = shutil.which("tar")
+            fake = fake_bin / "tar"
+            fake.write_text(
+                "#!/bin/bash\n"
+                f'case " $* " in *" -cf "*) ;; *) exec {real_tar} "$@";; esac\n'
+                'args=("$@")\n'
+                'for ((i = 0; i < ${#args[@]}; i++)); do\n'
+                '  if [ "${args[i]}" = -C ]; then echo extra > "${args[i+1]}/extra.txt"; fi\n'
+                'done\n'
+                f'exec {real_tar} "${{args[@]}}"\n'
+            )
+            fake.chmod(0o755)
+            result = subprocess.run(
+                ["bash", str(source / "scripts" / "build-bundle.sh"), str(root / "bundle")],
+                cwd=source,
+                env=self._env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_INDEX=str(index),
+                    PREACHED_ONNX_DIR=str(onnx_root),
+                    PATH=f"{fake_bin}:{os.environ['PATH']}",
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("does not match MANIFEST.sha256", result.stderr)
+            self.assertEqual(list(root.glob("bundle.tar*")), [])
+
+    def _assert_archive_matches_manifest(self, root: Path, out: Path) -> None:
+        archive = Path(str(out) + ".tar.gz")
+        self.assertTrue(archive.is_file())
+        self.assertEqual(list(root.glob("*.partial*")), [])
+        extracted = root / "extracted"
+        extracted.mkdir()
+        subprocess.run(["tar", "-xzf", str(archive), "-C", str(extracted)], check=True)
+        check = subprocess.run(
+            ["sha256sum", "--check", "--strict", "MANIFEST.sha256"],
+            cwd=extracted,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertEqual(
+            (extracted / "MANIFEST.sha256").read_bytes(), (out / "MANIFEST.sha256").read_bytes()
+        )
+
+    def test_success_archive_verifies_against_the_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, onnx_root, index = self._fixture_source(root)
+            out = root / "bundle"
+            result = self._build(source, out, onnx_root, index)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self._assert_archive_matches_manifest(root, out)
+
+    def test_a_decoy_package_in_the_callers_cwd_is_not_imported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, onnx_root, index = self._fixture_source(root)
+            decoy = root / "elsewhere"
+            marker = root / "decoy-ran"
+            for package in ("preached", "app", "scripts"):
+                (decoy / package).mkdir(parents=True)
+                (decoy / package / "__init__.py").write_text(
+                    f"open({str(marker)!r}, 'a').write({package!r})\nraise SystemExit('decoy imported')\n"
+                )
+            result = subprocess.run(
+                ["bash", str(source / "scripts" / "build-bundle.sh"), str(root / "bundle")],
+                cwd=decoy,
+                env=self._env(
+                    PREACHED_LIBRARY="wesley",
+                    PREACHED_INDEX=str(index),
+                    PREACHED_ONNX_DIR=str(onnx_root),
+                ),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(marker.exists(), marker.read_text() if marker.exists() else "")
+            # The version line runs python from the caller's cwd too.
+            self.assertRegex(result.stdout, r"(?m)^input python \d+\.\d+\.\d+ sqlite \d")
+
     def test_int8_is_removed_from_the_bundled_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

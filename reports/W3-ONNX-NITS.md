@@ -14,7 +14,7 @@ Branch `chore/w3-onnx-nits`, from origin/main (eb4d48a; includes #26, #31, #32, 
 | S1 sentinel digest | load test wraps `_open_hashed_graph` to return a sentinel; asserts `model_sha256 == sentinel` | `test_load_reports_the_sha256_of_the_graph_it_loaded` |
 | S2 `VerifiedArtifacts.digests` | dropped (nothing read it) from `artifacts.py` | existing manifest tests |
 | S3 wrong umask example | DEPLOY.md now names an rsync/cp of a checkout made under umask 002, and says build-bundle.sh tars are unaffected | docs only |
-| S4 build-bundle "file changed as we read it" | No change needed: main already tars a private full-copy snapshot (commit 56ffbf7, `scripts/build-bundle.sh`). | none |
+| S4 build-bundle "file changed as we read it" | **Corrected (CTO #38 S2):** the private-snapshot copy (56ffbf7) did not fix it. GNU tar still exited 1 in about 1 of 3 builds under concurrent writes and 1 of 7 plain tars of a static snapshot, cause unknown, and the failed build left a complete-looking tar.gz. The earlier "no change needed" was wrong. Fixed in `fix/w3-bundle-tar`; see `reports/W3-BUNDLE-TAR.md`. | `tests/test_deploy.py` BundleTests tar tests |
 
 ## Mutation results (item 2, plus 1, 3, S1)
 

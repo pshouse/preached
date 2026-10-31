@@ -6,6 +6,7 @@ artifacts are not under /cache.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -896,9 +898,18 @@ class FdLoadTests(unittest.TestCase):
             worker.start()
             worker.join(timeout=5)
             if worker.is_alive():
-                # Release the blocked open so the thread can end.
-                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
-                worker.join(timeout=5)
+                # Release the blocked open so the thread can end. A
+                # non-blocking write open fails with ENXIO until the worker
+                # has its read open pending, so retry until it does.
+                deadline = time.monotonic() + 5
+                while worker.is_alive() and time.monotonic() < deadline:
+                    try:
+                        os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+                    except OSError as exc:
+                        if exc.errno != errno.ENXIO:
+                            raise
+                        time.sleep(0.01)
+                    worker.join(timeout=0.1)
                 self.fail("opening a FIFO at the graph path blocked")
             if outcome[0] is not None:
                 raise outcome[0]
@@ -1007,6 +1018,26 @@ class FdLoadTests(unittest.TestCase):
             with self.subTest(field=field):
                 graph = _pb_bytes(15, _pb_bytes(field, external))
                 self._accepted_or_refused(_pb_int(1, 8) + _pb_bytes(7, graph), "external data")
+
+    def test_external_data_under_every_walker_entry_is_refused(self) -> None:
+        external = _pb_bytes(8, b"w") + _pb_int(2, 1) + _pb_int(14, 1)
+        tensor = _pb_bytes(5, external)  # GraphProto.initializer
+        graph_with_tensor = tensor
+        node_with = lambda attribute: _pb_bytes(1, _pb_bytes(5, attribute))  # noqa: E731
+        rows = {
+            # ModelProto.training_info (20): TrainingInfoProto.initialization (1), .algorithm (2)
+            "training_info.initialization": _pb_bytes(20, _pb_bytes(1, graph_with_tensor)),
+            "training_info.algorithm": _pb_bytes(20, _pb_bytes(2, graph_with_tensor)),
+            # AttributeProto.tensors (10), .graphs (11), .sparse_tensor (22), .sparse_tensors (23)
+            "attribute.tensors": _pb_bytes(7, node_with(_pb_bytes(10, external))),
+            "attribute.graphs": _pb_bytes(7, node_with(_pb_bytes(11, graph_with_tensor))),
+            "attribute.sparse_tensor": _pb_bytes(7, node_with(_pb_bytes(22, _pb_bytes(1, external)))),
+            "attribute.sparse_tensors": _pb_bytes(7, node_with(_pb_bytes(23, _pb_bytes(2, external)))),
+        }
+        for label, body in rows.items():
+            with self.subTest(entry=label):
+                field = _pb_int(1, 8) + body
+                self._accepted_or_refused(field, "external data")
 
     def test_trailing_partial_field_is_refused(self) -> None:
         # A fixed64 key with only three of its eight bytes: the skip lands
