@@ -14,7 +14,6 @@ import math
 import os
 import random
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys

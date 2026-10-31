@@ -10,7 +10,6 @@ from __future__ import annotations
 import http.client
 import json
 import os
-import shutil
 import sqlite3
 import stat
 import subprocess

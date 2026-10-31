@@ -190,8 +190,8 @@ Wire that command as the systemd service. Unit settings:
   `ERROR <n> handler thread(s) still running after 10s; index left open`,
   leaves the classic index, the church index (when one is open) and the
   ONNX session open, waits for that thread, and exits 1
-  (`app/server.py:3203-3221`; the church connection is closed only on the
-  clean path at `:3217`; that path logs `INFO stopped cleanly` at `:3219`;
+  (`app/server.py:3206-3224`; the church connection is closed only on the
+  clean path at `:3220`; that path logs `INFO stopped cleanly` at `:3222`;
   alert table, "deploy alerts"). A second SIGTERM or Ctrl-C does not force an exit.
   `TimeoutStopSec=` (or a SIGKILL by hand) ends it.
 - Logs go to stderr, so under systemd to journald. Set journald's limits
@@ -716,8 +716,8 @@ the classic side serves exactly as with no church named.
 What happens, and what is logged:
 
 - **Refused at start.** Any other failed condition at start logs one
-  `ERROR church side refused: <why>` line (`app/server.py:2837`, `:2844`,
-  `:2855`, `:1410`, `:1415`). The church side stays off until restart.
+  `ERROR church side refused: <why>` line (`app/server.py:2840`, `:2847`,
+  `:2858`, `:1410`, `:1415`). The church side stays off until restart.
   When the church searcher cannot be built, the line is
   `ERROR church side refused: its searcher could not be built (<Type>: <why>)`
   (`app/server.py:892`): one line, no traceback.
@@ -733,7 +733,7 @@ What happens, and what is logged:
   restart. A retry runs the whole start again (`open_church`, the searcher
   build, the install; the `start` closure at `app/server.py:1780`). A failed
   retry logs one `ERROR church side refused: <why>` line, the same line a
-  start would log: `app/server.py:2837`, `:2844` or `:2855` (an ordinary
+  start would log: `app/server.py:2840`, `:2847` or `:2858` (an ordinary
   refusal), `:892` (the searcher could not be built), `:1410` or `:1415`
   (the install). Only an unexpected exception logs
   `ERROR church side refused: the church file could not be opened (<exc>)`
@@ -749,7 +749,7 @@ What happens, and what is logged:
   `INFO church side: <slug>, read-only, through the publish gate`
   mid-process, so that line is **not** a restart marker. A pause found at
   start is held and logged by `log_startup_pause` (`app/server.py:1506`,
-  called at `:2769`) after `INFO listening on` (HD1, MET, fixed in #48).
+  called at `:2772`) after `INFO listening on` (HD1, MET, fixed in #48).
 - **Dropped while serving.** A problem found before a church search (owner,
   mode, inode, link count, sidecars, shape) logs
   `ERROR church side dropped: <why>` once. The side stays off until
@@ -783,7 +783,7 @@ They are not readable from this repo. **Every church rule stays DISABLED
 until the church deploy is approved** (hard conditions above).
 
 Log format: `logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")`
-(`app/server.py:3024`). Each line is the level name, one space, the
+(`app/server.py:3027`). Each line is the level name, one space, the
 message. Patterns are anchored to the start of the line. A
 `logging.exception` call adds a traceback on the following lines.
 
@@ -800,7 +800,7 @@ disabled until Infra Ops enables them after deploy approval.
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 1 | PAGE | `church-refused` | `ERROR church side refused:` | `app/server.py:1410`, `:1415`, `:2837`, `:2844`, `:2855` | Any refusal, at start or on a retry of a paused start, one line. Start-time lock and WAL are no longer refusals (row 5). |
+| 1 | PAGE | `church-refused` | `ERROR church side refused:` | `app/server.py:1410`, `:1415`, `:2840`, `:2847`, `:2858` | Any refusal, at start or on a retry of a paused start, one line. Start-time lock and WAL are no longer refusals (row 5). |
 | 2 | PAGE | `church-refused` | `ERROR church side refused: its searcher could not be built` | `app/server.py:892` | `ERROR church side refused: its searcher could not be built (<Type>: <why>)`, one line, no traceback. At start or on a retry of a paused start. |
 | 3 | PAGE | `church-refused` | `ERROR church side refused: the church file could not be opened` | `app/server.py:1448` | `ERROR church side refused: the church file could not be opened (<exc>)`, only for an unexpected exception on a retry of a paused start (an ordinary failed retry logs a row 1 or row 2 line). In the paging group with rows 1-2. Any failed retry ends the retries and clears the pause with no `resumed` line. |
 | 4 | PAGE | `church-dropped` | `ERROR church side dropped:` | `app/server.py:1487` | Off until restart: the same effect as a refusal (the church side stays off until restart), so it pages with rows 1-3. Final severity (CTO). |
@@ -879,7 +879,7 @@ is a failed go-live (step 7). Severities are the CTO's final rulings.
 | D2b | PAGE | `deploy-index-status-unreadable-bm25` | `ERROR index status unreadable after reload; serving BM25 only` | `app/server.py:1139` via `:1214` (text `:286`) | Regex `^ERROR index status unreadable after reload; serving BM25 only$`. Reload only, and only when dense search was loaded. Once per transition, no traceback. Pages once per transition, deduped to at most 1 per hour. Rule drafted, disabled until deploy approval. |
 | D3 | PAGE | `deploy-refusing-after-reload` | `ERROR refusing to serve after reload:` | `app/server.py:1122` | A checkout reloaded an index it will not serve. Rule drafted, disabled. |
 | D4 | PAGE | `deploy-refusing-frozen-bundle` | `ERROR refusing to serve:` | `app/server.py:1205` | The frozen bundle index changed after start; every request is `503`. Rule drafted, disabled. |
-| D5 | PAGE | `deploy-stuck-stop` | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3207` | The stuck stop (the 10 s `DRAIN_TIMEOUT_S` line, logged after `stopping` at `:3202`); exit 1. It does not log `stopped cleanly`. Rule drafted, disabled. |
+| D5 | PAGE | `deploy-stuck-stop` | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3210` | The stuck stop (the 10 s `DRAIN_TIMEOUT_S` line, logged after `stopping` at `:3205`); exit 1. It does not log `stopped cleanly`. Rule drafted, disabled. |
 | D6 | TICKET (server types), INFO (client types) | `deploy-request-failed-server` (TICKET, at most 1 per rolling hour), `deploy-request-failed-client` (INFO) | `ERROR request failed:` | `app/server.py:1997`, `:2002`, `:2047`, `:2049`, `:2109`, `:2349`, `:2370` | The line carries the exception type only. Ordinary clients produce it: a slow header, a keep-alive left idle past 15 s (`REQUEST_TIMEOUT_S`) and a reset give `TimeoutError` and `ConnectionResetError`. The client-caused types `TimeoutError`, `ConnectionResetError`, `BrokenPipeError` and `ConnectionAbortedError` go to the INFO rule; every other type goes to the TICKET rule. Rules drafted, disabled. |
 | D7 | TICKET | `deploy-abstain-calibration-unusable` | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1774` | At most 1 per hour. Traceback follows. The server serves with no abstain floor. Rule drafted, disabled. |
 | stamp | TICKET | `deploy-index-stamp-unreadable` | `ERROR could not read the index stamp` | `app/server.py:1091` | Regex `^ERROR could not read the index stamp$`. At most 1 per rolling hour; the cap survives restarts. `enabled: false`. Traceback once per outage, then DEBUG. With dense search loaded, a stamp failure also fires the D2b page (D4 in a frozen bundle): one page for impact, one ticket for cause. Under `--bm25-only` this is the only alert. Recovery is silent (`/healthz` `"dense": true` only). Open suggestion for the CTO: log `INFO dense search restored` when dense search comes back. That line is not logged today. Rule drafted, disabled. |
@@ -902,8 +902,8 @@ Observability holds from W3-OBS-GAPS, MET in #51 (`8cd3104`, merged as `87c0395`
   `--bm25-only` the stamp line is the only alert. Recovery is silent
   (`/healthz` `"dense": true` only). D2b itself has no traceback.
 - [x] **MET: a clean stop logs `INFO stopped cleanly`**
-  (`app/server.py:3219`). It is the last line of the clean path, after the
-  church connection closes (`:3217`). The stuck path logs D5 (`:3207`) and
+  (`app/server.py:3222`). It is the last line of the clean path, after the
+  church connection closes (`:3220`). The stuck path logs D5 (`:3210`) and
   exits 1, and does not log this line. The INFO rule is
   `deploy-stopped-cleanly`, drafted and disabled (other lines table).
 
@@ -911,14 +911,14 @@ Other lines this runbook names, all grep-verified on main `b224281`. The Rule id
 
 | Line | Rule id | Emitted at | Where it shows |
 | --- | --- | --- | --- |
-| `INFO church side: <slug>, read-only, through the publish gate` | `church-opened` (INFO) | `app/server.py:2862` | Church side opened, at start or on a successful retry. Not a restart marker. |
+| `INFO church side: <slug>, read-only, through the publish gate` | `church-opened` (INFO) | `app/server.py:2865` | Church side opened, at start or on a successful retry. Not a restart marker. |
 | `INFO church side paused: <file> is in WAL journal mode` | `church-paused` (INFO) | `app/server.py:1498` (direct) or `:1506` (held at start, logged after `listening on`), text from `src/preached/library.py:883-884` (start) or `:962` (the check, before a search, or at start through `:915`) | Pause line, WAL form. |
 | `INFO church side paused: the church file is locked by a writer (...)` | `church-paused` (INFO) | `app/server.py:1498` or `:1506`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (the check, before a search, or at start through `:915`), `app/server.py:889` (searcher build, at start or on a retry) or `app/server.py:1573` (search) | Pause line, lock form. |
 | `warning: the church file is still in wal journal mode (...)` | | `src/preached/youtube/pipeline.py:333`, text from `src/preached/youtube/library.py:157` | `--ack-review` output (step 4 of the gate). |
-| `INFO listening on http://<host>:<port>` | `process-restart` (INFO) | `app/server.py:2765` | Server up. Infra Ops' restart marker. A start-time `paused` line is logged after it, by `log_startup_pause` called at `:2769` (HD1, MET, fixed in #48). |
-| `INFO stopping` | `deploy-stopping` (INFO) | `app/server.py:3202` | Start of every stop. |
-| `INFO stopped cleanly` | `deploy-stopped-cleanly` (INFO) | `app/server.py:3219` | Last line of a clean stop. The stuck path (D5) does not log it. Rule drafted, disabled. |
-| `ERROR <n> handler thread(s) still running after 10s; index left open` | `deploy-stuck-stop` (PAGE) | `app/server.py:3207` | The stuck path; exit 1 (also D5 above). |
+| `INFO listening on http://<host>:<port>` | `process-restart` (INFO) | `app/server.py:2768` | Server up. Infra Ops' restart marker. A start-time `paused` line is logged after it, by `log_startup_pause` called at `:2772` (HD1, MET, fixed in #48). |
+| `INFO stopping` | `deploy-stopping` (INFO) | `app/server.py:3205` | Start of every stop. |
+| `INFO stopped cleanly` | `deploy-stopped-cleanly` (INFO) | `app/server.py:3222` | Last line of a clean stop. The stuck path (D5) does not log it. Rule drafted, disabled. |
+| `ERROR <n> handler thread(s) still running after 10s; index left open` | `deploy-stuck-stop` (PAGE) | `app/server.py:3210` | The stuck path; exit 1 (also D5 above). |
 | `WARNING refused <class> <detail> suppressed=N` | `deploy-refusal-warning` (INFO) | `app/server.py:482` | Rate-limited refusal lines. |
 | `WARNING refused <class> flush suppressed=N` | `deploy-refusal-flush` (INFO) | `app/server.py:494` | Counts flushed at stop. |
 | `tar exited 1 (file changed as we read it?); attempt N of 3` | `build-tar-flake-retry` (INFO, build stream only) | `scripts/build-bundle.sh:239` | Build machine, the tar flake. Not an alert. |
