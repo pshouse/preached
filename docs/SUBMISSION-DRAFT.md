@@ -1,6 +1,6 @@
 # Submission draft (for Patrick's review)
 
-Status: **draft, not submitted anywhere.** Deadline: Nov 27 2026, 11:59 PM ET (BRIEF.md). Everything below describes what is merged on `main` (`efdf8ab`) today. Re-check the claims list if anything merges before you submit.
+Status: **draft, not submitted anywhere.** Deadline: Nov 27 2026, 11:59 PM ET (BRIEF.md). Everything below describes what is merged on `main` (`cd3ad8f`) today. Re-check the claims list if anything merges before you submit.
 
 - **Project name:** Preached
 - **Track:** Discipleship & Spiritual Growth
@@ -32,14 +32,14 @@ Every figure is from a file in the repo. "Eval" figures use 35 answerable questi
 | Play position: the link starts 0.75 s before the stored start time as a safety margin. No measured offset is claimed: the repo holds no measurement data for the earlier 0.42 s / 0.76 s spot-check figures, so they are dropped. | `README.md`; `reports/W1-CLI.md` |
 | Retrieval, bench path (hybrid, de-duplicated; from the bench script, not the web page): Recall@5 0.614, MRR@10 0.497, nDCG@10 0.546 on 35 answerable questions (AI-drafted labels, human review pending). **Caveat:** main's own evals say this headline mostly measured title lookup. On plain-language questions nDCG@10 is 0.028 and R@5 0.040; on questions written blind to the corpus the default finds an acceptable passage in the top 10 for 3 of 28 (0.11). So the demo works best when you ask in the preacher's own vocabulary or by topic, not in everyday words. | `README.md`; `reports/W3-CPU.md` Eval table; `eval/results/2026-10-30-dedupe-w3cpu-onnx-fp32.json`; `reports/EVAL-DELEAK.md:7`; `reports/EVAL-GRADE.md:20` |
 | Low-confidence banner when a question has no good match; it is a heuristic fitted to the same AI-drafted questions, so its false-abstain rate is likely optimistic. | `reports/W3-POLISH.md` (caveats, section 6); run live in `reports/W4-DEMO-PREP.md` ("cryptocurrency") |
-| Runs on a CPU: ONNX Runtime fp32, 1 thread; 56 ms p50 / 68 ms p95 per search on one pinned core of a desktop i9-12900K; RSS 683 MiB after the #26 fix (`reports/W3-RSS.md`), measured 722.7 MiB at start and about 728 MiB after queries on `efdf8ab`; runtime install 149 MiB; torch not installed. | `reports/W3-CPU.md` (pick table); `reports/W3-RSS.md`. Measured on a desktop CPU, not on a Sprite or server. |
+| Runs on a CPU: ONNX Runtime fp32, 1 thread; 56 ms p50 / 68 ms p95 per search on one pinned core of a desktop i9-12900K; RSS 683 MiB after the #26 fix (`reports/W3-RSS.md`), measured 722.7 MiB at start and about 728 MiB after queries on `efdf8ab`, peak (VmHWM) about 969 MiB during model load; runtime install 149 MiB; torch not installed. | `reports/W3-CPU.md` (pick table); `reports/W3-RSS.md`. Measured on a desktop CPU, not on a Sprite or server. |
 | ONNX answers are identical to the torch reference: same metrics, cosine of fp32 document vectors at least 0.99999988. int8 was rejected for quality. | `reports/W3-CPU.md` (Parity, Eval) |
 | One SQLite file, FTS5 plus brute-force vectors, no vector database. | `AGENTS.md` section 2; `docs/DEPLOY.md` |
 | Serve path has a bundle manifest check, read-only index, per-IP rate limit, kill file. Loopback or Tailscale only; public exposure is not done. | `docs/DEPLOY.md`; `reports/W3-DEPLOY-PREP.md` |
 | YouTube channel import: lists a channel, downloads audio only as a working file, transcribes with timestamps, stores excerpt plus exact start and end seconds; the video stays on YouTube. Dry run verified against a Creative Commons test clip. | `README.md`; `reports/W2-YT.md`; `reports/W4-DEMO-PREP.md` |
 | Church import privacy: names redacted; no play link on name passages; announcements, prayer requests and testimonies excluded; the review step requires `--ack-review`; the software cannot verify the listen, so that part is process. The exclusion rules caught 635 of 730 words (0.870) on an AI-written synthetic test set, so the human listen is the real control. | `reports/W3-PRIV-SKIP.md`; `docs/DEPLOY.md`; `BRIEF.md` privacy section |
 | Side by side view exists. The side-by-side church column is empty ("Nothing from your church yet.") because it is not wired. A church library alone is served behind the publish gate (`README.md:37`). | `reports/W3-SIDE.md`; live `/api/side` run in `reports/W4-DEMO-PREP.md` |
-| Test suite: 729 tests pass on `main` (`efdf8ab`). | `python -m unittest discover -s tests`, run for `reports/W4-DEMO-PREP.md` |
+| Test suite: 738 tests pass on `main` (`cd3ad8f`); 6 skip on machines without the `/cache` ONNX artifacts. | `python -m unittest discover -s tests`, run for `reports/W4-DEMO-PREP.md` |
 | Spurgeon (6 sermons, 4.32 h) and Edwards (39 tracks, 19.53 h) are separate libraries; they have **no retrieval-quality evaluation**, only a 12/12 smoke test. | `reports/W3-LIB.md` sections 1, 4, 5 |
 
 ## Not claimed (kept out on purpose)

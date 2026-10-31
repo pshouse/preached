@@ -7,7 +7,7 @@ Hard limit is 5:00 (BRIEF.md). This plan totals **4:40**, leaving 20 s of slack.
 - Use only the public-domain Wesley library on screen. No Gaston Community Church audio, titles or transcripts. No real names of members anywhere.
 - Every result shown is the preacher's own words. Never imply the app wrote an answer.
 
-All results below were produced by running the real code on `main` (`efdf8ab`) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
+All results below were produced by running the real code on `main` (`cd3ad8f`) against `/cache/index/wesley.sqlite` (8,383 chunks, `index_version` 198339...e363b2) through the page's own path, `/api/search?mode=hybrid&k=5&library=wesley`. The page de-duplicates adjacent chunks, so its first card can differ from `search/query.py`; the numbers here are the page's. Timestamps are h:mm:ss of the sermon audio (`start_s`); the play link starts 0.75 s earlier.
 
 ## Shots
 
@@ -25,7 +25,7 @@ All results below were produced by running the real code on `main` (`efdf8ab`) a
   2. The Use of Money, `wesley-050-c0004`, 0:03:31 (211.47): "An excellent branch of Christian wisdom is here inculcated by our Lord on all his followers, namely, the right use of money ..."
   3. Upon our Lord's Sermon on the Mount, Discourse 8, `wesley-028-c0076`, 0:38:29 (2309.57): "If we waste our money we are not only guilty of wasting a talent which God has given us ..."
 - **Actions:** press Play on card 1. Let it run about 10 s so the audience hears the reader start at the passage, not at the top of the sermon. Point at the sermon title, the time, and the cited text source. Then play card 3 for a few seconds to show it jumps across sermons.
-- **Narration:** "I'll ask something a regular person would ask: how should a Christian use money. Notice every answer is a real passage with the sermon and the time on it. I press Play and it starts right at that moment, in the middle of the sermon, about a second before the words begin. Nothing here is written by an AI. The AI found it; Wesley said it. The voice you hear is a LibriVox volunteer reading Wesley's published sermon, public domain."
+- **Narration:** "I'll ask something a regular person would ask: how should a Christian use money. Notice every answer is a real passage with the sermon and the time on it. I press Play and it starts right at that moment, in the middle of the sermon, about a second before the words begin. Nothing here is written by an AI. The AI found it; Wesley said it. The voice you hear is a LibriVox volunteer reading Wesley's published sermon (the recordings are public domain in the US)."
 - **Second question, same shot, 25 s:** type `How can I know that I am a child of God?` (this is the page's "Assurance" example button; clicking it is fine).
   - **Expected (verified, `strong`):** 1. **The Witness of the Spirit, Discourse II**, `wesley-011-c0025`, 0:13:00 (780.35): "But this is confirmed, not only by experience of the children of God; thousands of whom can declare that they never did know themselves to be in the favour of God till it was directly witnessed to them by his Spirit ..." 2. THE WITNESS OF THE SPIRIT, Discourse I, `wesley-010-c0010`, 0:05:07 (307.49): "If any need farther light, he may receive it by attending on the ministry of God's Word ..." 3. Discourse I, `wesley-010-c0043`, 0:22:30 (1350.88).
   - **Narration:** "Same thing for a question about assurance. Two sermons by Wesley on exactly this, a few clicks apart."
@@ -61,8 +61,8 @@ All results below were produced by running the real code on `main` (`efdf8ab`) a
 ### 7. Runs on a small CPU box (4:10 to 4:30, 20 s)
 - **On screen:** `reports/W3-CPU.md` pick table, or a terminal running `curl localhost:PORT/healthz` showing `"backend": "onnx"`, `"chunks": 8383`.
 - **Expected result (verified `/healthz`):** `ok: true, library: wesley, chunks: 8383, model: granite-english-r2, backend: onnx, dense: true, fallback: false`.
-- **Narration:** "No GPU, no chat model, no vector database. One SQLite file and one small embedding model on a CPU. A search takes about 56 milliseconds on a single thread. A church doesn't need a server room."
-- Backing: `reports/W3-CPU.md` (56 ms p50 on one pinned CPU of a desktop i9; RSS about 683 MiB after the #26 fix, `reports/W3-RSS.md`). Say "on my desktop CPU, limited to one core" if asked; it has not been measured on a Sprite.
+- **Narration:** "No GPU, no chat model, no vector database. One SQLite file and one small embedding model on a CPU. A search takes about 56 milliseconds on my desktop, on one core. A church doesn't need a server room."
+- Backing: `reports/W3-CPU.md` (56 ms p50 on one pinned CPU of a desktop i9; RSS about 683 MiB after the #26 fix, `reports/W3-RSS.md`; peak (VmHWM) about 969 MiB during model load, so it needs roughly 1 GiB of RAM). Say "on my desktop CPU, limited to one core" if asked; it has not been measured on a Sprite.
 
 ### 8. Why it matters to a church (4:30 to 4:40, 10 s; trim to fit)
 - **On screen:** back to the results page with the Wesley card playing, or the title card.
@@ -74,7 +74,7 @@ All results below were produced by running the real code on `main` (`efdf8ab`) a
 
 Do this the day before and again right before recording.
 
-- [ ] Branch: `main` at or after `efdf8ab`; `git status` clean.
+- [ ] Branch: `main` at or after `cd3ad8f`; `git status` clean.
 - [ ] **Index:** `/cache/index/wesley.sqlite` (default; do not use `wesley-onnx-*.sqlite` copies or `cc-speech.sqlite`). `curl http://HOST:PORT/healthz` must show `"chunks": 8383`, `"index_version": "198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2"` (Patrick's `/cache` build; update if the index is rebuilt), `"backend": "onnx"`, `"fallback": false`, `"church": null`. If `fallback` is true the server is on BM25 only and the results above will differ.
 - [ ] **Start the server** (loopback, from the repo): `uv run app/server.py` (default 127.0.0.1:8000). For the Tailscale URL, follow `docs/DEPLOY.md` ("Bind `PREACHED_HOST=127.0.0.1`... `tailscale serve` to that loopback port, add the tailscale hostname to `PREACHED_HOSTS`"). **URL over Tailscale:** `http://<this machine's tailnet name>:PORT` (the actual name is not recorded anywhere in the repo; fill in: ______ ). Open it once from the recording browser and run one search before hitting record. No tailnet was running on the machine used to write this draft.
 - [ ] Do not record the public Sprite URL; there is no public exposure (`docs/DEPLOY.md`, "Going public").
@@ -88,13 +88,13 @@ Do this the day before and again right before recording.
 
 ## Fallback queries (if one returns a weak result)
 
-All run on the same index through the page path. Verified from `search/query.py` unless noted; confirm on the page in pre-flight, because the page de-duplicates.
+All run on the same index through the page path. Verified from `search/query.py` unless marked "(page path)"; confirm on the page in pre-flight, because the page de-duplicates.
 
 | Instead of | Try | Expected top result |
 | --- | --- | --- |
-| money | `What did Wesley say about money?` (the "Money" button) | The Use of Money, `wesley-050-c0006`, 0:04:47 (287.16); then The Danger of Riches, 0:10:37 (637.22). Level `strong`. |
+| money | `What did Wesley say about money?` (the "Money" button) | The Use of Money, `wesley-050-c0006`, 0:04:47 (287.16); then The Danger of Riches, 0:10:37 (637.22). (page path) Level `strong`. |
 | assurance | `the witness of the Spirit` | THE WITNESS OF THE SPIRIT, Discourse I, `wesley-010-c0005`, 0:02:49 (169.96): "What is this witness or testimony of our spirit; what is the testimony of God's Spirit ..." Score 0.0308. |
-| assurance | `Romans 8:16` (the "Romans 8:16" button) | Level `strong`; top hit The Witness of the Spirit, Discourse II. |
+| assurance | `Romans 8:16` (the "Romans 8:16" button) | (page path) Level `strong`; top hit The Witness of the Spirit, Discourse II. |
 | worry | `take no thought for tomorrow` | Upon our Lord's Sermon on the Mount, Discourse 9, `wesley-029-c0002`, 0:01:52 (112.32): "...shall he not much more clothe you, O ye of little faith? Therefore take no thought, saying, What shall we eat?..." Score 0.0325 (both rankers agree). Use this instead of the "Worry" button. |
 | forgiveness | `What has Wesley taught about forgiving someone who wronged me` | Upon our Lord's Sermon on the Mount, Discourse 6, `wesley-026-c0072`, 0:37:19 (2239.57): "If," saith he, "ye forgive men their trespasses, your heavenly Father will also forgive you ..." Second: Justification By Faith, 0:18:10 (1090.4). |
 | prayer | `I don't know how to pray anymore` | Sermon on the Mount, Discourse 6, `wesley-026-c0027`, 0:13:17 (797.8) ("the end of your praying is not to inform God ..."); second On Visiting the Sick, 0:16:23 (983.96). Mixed quality; use only if you need a third question. |

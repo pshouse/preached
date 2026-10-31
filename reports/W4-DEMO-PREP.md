@@ -1,6 +1,6 @@
 # W4-DEMO-PREP: demo script and submission draft
 
-Branch `docs/w4-demo-prep` from `origin/main` (`180a0a4`). Docs only: `docs/DEMO-SCRIPT.md`, `docs/SUBMISSION-DRAFT.md`, this report. No code, no new dependency. Nothing deployed or submitted.
+Branch `docs/w4-demo-prep` from `origin/main` (`180a0a4` at first; since merged up to `cd3ad8f`, see the fix tables at the bottom). Docs only: `docs/DEMO-SCRIPT.md`, `docs/SUBMISSION-DRAFT.md`, this report. No code, no new dependency. Nothing deployed or submitted.
 
 ## How to run (re-verify the script)
 
@@ -18,21 +18,21 @@ uv run python -m unittest discover -s tests
 - Through `search/query.py` (CLI; differs from the page because the page de-duplicates adjacent chunks): the fallback queries and the Spurgeon and Edwards queries.
 - `/api/side`: classic column is John Wesley; church column is "Nothing from your church yet." with `present: false`.
 - YouTube importer `--dry-run` on the Creative Commons test clip printed `BGoD6CIpLWQ  Are speeches public domain?  2012-08-06  322` and wrote no index file.
-- `uv run python -m unittest discover -s tests`: 693 tests, OK.
+- `uv run python -m unittest discover -s tests`: 738 tests, OK on `cd3ad8f` (6 skip on machines without the `/cache` ONNX artifacts; 693 when first run on `180a0a4`).
 
 ## Word count
 
-Project description: **247 words** (limit 250), counted with a whitespace split of the text between the heading and "Honest technical claims" in `docs/SUBMISSION-DRAFT.md`; the count is printed in that heading.
+Project description: **245 words** (limit 250; first draft was 247), counted with a whitespace split of the text between the heading and "Honest technical claims" in `docs/SUBMISSION-DRAFT.md`; the count is printed in that heading.
 
 ## Dropped or softened
 
-- **Church side-by-side with a filled column:** not on main (church serving is not wired). The shot shows the empty "Nothing from your church yet." state and says so. No "sample data" column exists to show.
+- **Church side-by-side with a filled column:** the side-by-side church column is not wired on main (a church library alone is served behind the publish gate, `README.md:37`). The shot shows the empty "Nothing from your church yet." state and says so. No "sample data" column exists to show.
 - **Any "percent of questions answered correctly" claim:** the eval labels are AI-drafted and human review is pending (`eval/README.md`); numbers are quoted only with that caveat.
-- **Latency on a Sprite / "small box" figure:** only measured on one pinned core of an i9-12900K; stated as such. RSS differs between harnesses (946 MiB vs 1.5 GiB), both given.
+- **Latency on a Sprite / "small box" figure:** only measured on one pinned core of an i9-12900K; stated as such. RSS is 683 MiB after the #26 fix (`W3-RSS.md`), peak (VmHWM) about 969 MiB during model load.
 - **Spurgeon and Edwards retrieval quality:** none measured (12/12 smoke only), so they are not featured.
 - **Competitor comparisons with numbers:** only BRIEF.md's positioning text exists; no number used.
-- **Romans 8:16 fallback:** not run, labelled as such in the script.
-- **Money button query ("What did Wesley say about money?"):** top result recorded but confidence level not checked.
+- **Romans 8:16 fallback:** level `strong`, top hit Witness of the Spirit II, marked "(page path)" in the script.
+- **Money button query ("What did Wesley say about money?"):** level `strong`, marked "(page path)" in the script.
 
 ## Open items for Patrick
 
@@ -59,3 +59,19 @@ Merged `origin/main` (`efdf8ab`) into the branch (merge commit). Docs only.
 | Should-fix | "church serving not wired" narrowed to the side-by-side column (`README.md:37`); shot 6 runs from repo root; pre-flight index_version marked "update if the index is rebuilt"; fallback rows filled (Romans 8:16 strong, top hit Witness of the Spirit II; Money button strong); "must listen" reworded as process (`--ack-review` is all the software enforces); 0.614 source noted. |
 
 Final description word count: **245** (limit 250), same whitespace-split method. Head SHA: see the commit pushed after this report (stated in the hand-off).
+
+## CTO r2 fixes
+
+Merged `origin/main` (`cd3ad8f`) into the branch (merge commit). Docs only. Suite re-run on the merged branch: 738 tests, OK. The 6 skips are environmental (granite ONNX artifacts are not in `/cache`), so they are worded that way, not as a product fact.
+
+| Item | Change |
+| --- | --- |
+| Must-fix 1 | The body of this report now reads cleanly: base SHA, test count (738), word count (245), church column, RSS, Romans 8:16 and Money lines were updated in place. The r1 table is kept. |
+| Must-fix 2 | `SUBMISSION-DRAFT.md` line 3 and the claims row now say `cd3ad8f` and "738 tests pass ... 6 skip on machines without the `/cache` ONNX artifacts"; `DEMO-SCRIPT.md` lines 10 and 77 say `cd3ad8f`. |
+| S1 | Shot 2 narration now says the recordings are "public domain in the US", matching the README. |
+| S2 | Fallback table header: "unless marked (page path)"; Romans 8:16 and Money rows marked "(page path)". |
+| S3 | CPU claim row and shot 7 backing give peak VmHWM about 969 MiB during model load (figure as given in the review; `W3-RSS.md` records 903 to 908 MiB on its own harness). |
+| S4 | Note only: if #37 merges before recording or submission, re-check every "side-by-side church column is not wired" line in `DEMO-SCRIPT.md` and `SUBMISSION-DRAFT.md`. |
+| S5 | Shot 7 narration: "on my desktop, on one core". |
+
+Description word count: **245** (limit 250), unchanged, same whitespace-split method. S6 (README) not touched.
