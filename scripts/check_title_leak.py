@@ -2,7 +2,7 @@
 
 A question in group "plain" fails when it shares a content word with the
 title of any sermon in its ``relevant`` list. Content words are lowercase
-alphabetic tokens longer than 3 letters that are not stopwords. Two words
+alphabetic tokens of 3 or more letters that are not stopwords. Two words
 match when their stems are equal, or one stem is a prefix of the other and
 the shorter stem has at least 5 letters ("justified" / "justification").
 The stemmer is a few suffix rules, deliberately loose: a false alarm costs a
@@ -107,7 +107,7 @@ SYNONYMS = {
     "wesley-040": ["perfect", "sinless", "flawless"],
     "wesley-076": ["perfect", "sinless", "flawless"],
     "wesley-135": ["grief", "grieve", "bereaved", "bereavement"],
-    "wesley-042": ["devil", "demon", "tempter", "wiles", "schemes", "enemy", "trick"],
+    "wesley-042": ["devil", "demon", "tempter", "wiles", "schemes", "enemy", "trick", "deceive", "deception"],
     "wesley-082": ["tempted", "enticed", "enticement"],
     "wesley-016": ["sacrament", "ordinance"],
     "wesley-101": ["eucharist", "sacrament", "supper", "mass"],

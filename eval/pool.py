@@ -14,7 +14,7 @@ the "own reading" pass. The pool section is shuffled and does not name the
 ranker or the rank, so a grader cannot see which system returned a chunk.
 Judging is done by reading; no model scores relevance.
 
-  uv run --group bench eval/pool.py [--k 20] [--models ...]
+  uv run --group bench eval/pool.py [--k 20] [--models ...] [--family ID ...]
 """
 
 from __future__ import annotations
@@ -60,6 +60,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--k", type=int, default=POOL_K)
     parser.add_argument("--models", nargs="*", default=[k for k, s in MODELS.items() if s.enabled])
+    parser.add_argument("--family", nargs="*", default=None,
+                        help="re-pool only these families, replacing their records in the existing --out file")
     parser.add_argument("--index", type=Path, default=INDEX_PATH)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--texts", type=Path, default=None, help="default /cache/eval-pool/YYYY-MM-DD")
@@ -68,8 +70,15 @@ def main() -> None:
     out = args.out or ROOT / "eval" / "pool" / f"pool-{today}.jsonl"
     texts_dir = args.texts or Path("/cache/eval-pool") / today
 
-    connection = open_readonly(args.index)
+    try:
+        connection = open_readonly(args.index)
+    except FileNotFoundError as error:
+        sys.exit(f"pool.py: {error}. Build the index first (see reports/ for the ingest commands) or pass --index PATH.")
     items = load_items()
+    if args.family:
+        items = [i for i in items if i["family"] in args.family]
+        if not items:
+            sys.exit(f"pool.py: no questions in families {args.family}")
     rankers: dict[str, dict[str, list[str]]] = {i["id"]: {} for i in items}
     lexical = Searcher(connection)
     for item in items:
@@ -99,26 +108,33 @@ def main() -> None:
         families.setdefault(item["family"], []).append(item)
     out.parent.mkdir(parents=True, exist_ok=True)
     texts_dir.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as handle:
-        for family, members in families.items():
-            pooled: dict[str, list[str]] = {}
-            for item in members:
-                for ranker, ids in rankers[item["id"]].items():
-                    for rank, cid in enumerate(ids, start=1):
-                        pooled.setdefault(cid, []).append(f"{item['id']}|{ranker}@{rank}")
-            gold_sermons = sorted({p["sermon_id"] for p in members[0]["relevant"] if int(p["grade"]) == 2})
-            record = {
-                "family": family,
-                "ids": [m["id"] for m in members],
-                "queries": {m["id"]: m["query"] for m in members},
-                "k": args.k,
-                "models": args.models,
-                "rankers": {m["id"]: rankers[m["id"]] for m in members},
-                "pooled": sorted(pooled, key=lambda c: chunks[c]["sermon_number"] * 10000 + int(c.rsplit("c", 1)[1])),
-                "gold_sermons": gold_sermons,
-            }
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            _write_texts(texts_dir / f"{family}.md", record, members, pooled, chunks, by_sermon)
+    # --family: replace those records in place, keep every other line as it is.
+    lines = out.read_text(encoding="utf-8").splitlines() if args.family and out.exists() else []
+    position = {json.loads(line)["family"]: n for n, line in enumerate(lines)}
+    for family, members in families.items():
+        pooled: dict[str, list[str]] = {}
+        for item in members:
+            for ranker, ids in rankers[item["id"]].items():
+                for rank, cid in enumerate(ids, start=1):
+                    pooled.setdefault(cid, []).append(f"{item['id']}|{ranker}@{rank}")
+        gold_sermons = sorted({p["sermon_id"] for p in members[0]["relevant"] if int(p["grade"]) == 2})
+        record = {
+            "family": family,
+            "ids": [m["id"] for m in members],
+            "queries": {m["id"]: m["query"] for m in members},
+            "k": args.k,
+            "models": args.models,
+            "rankers": {m["id"]: rankers[m["id"]] for m in members},
+            "pooled": sorted(pooled, key=lambda c: chunks[c]["sermon_number"] * 10000 + int(c.rsplit("c", 1)[1])),
+            "gold_sermons": gold_sermons,
+        }
+        line = json.dumps(record, ensure_ascii=False)
+        if family in position:
+            lines[position[family]] = line
+        else:
+            lines.append(line)
+        _write_texts(texts_dir / f"{family}.md", record, members, pooled, chunks, by_sermon)
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {out} ({len(families)} families) and {texts_dir}")
 
 

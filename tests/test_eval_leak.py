@@ -118,7 +118,7 @@ class TitleLeakTest(unittest.TestCase):
         self.assertEqual(lint.leaks(q, {}), [])
 
     def test_enemy_and_trick_are_synonyms_of_satans_devices(self):
-        for word in ("enemy", "trick"):
+        for word in ("enemy", "enemies", "trick", "tricked", "deceive", "deception"):
             q = {"query": f"How does the {word} catch me?", "relevant": [
                 {"sermon_id": "wesley-042", "sermon_title": "Satan's Devices", "grade": 2, "quote": "x"}]}
             self.assertTrue(any(h.startswith(f'synonym "{word}"') for h in lint.leaks(q, {})), word)
