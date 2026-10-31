@@ -19,11 +19,14 @@ The export is byte-reproducible and must write the graph pinned in
   that is not x86-64 with AVX2.
 - The order of transformers' ModernBERT rotary tables, built in
   ``set(config.layer_types)`` order, which follows ``PYTHONHASHSEED``. The
-  script re-executes itself under ``EXPORT_HASHSEED`` and checks the order.
+  script re-executes itself under ``PYTHONHASHSEED=1`` and checks the order.
 
 It exits non-zero without a manifest if the graph does not match the pin.
 
-Outputs under ``/cache/models/granite-english-r2-onnx/<revision>/``:
+The Hugging Face cache defaults to ``$PREACHED_CACHE/huggingface`` (``/cache``
+only when PREACHED_CACHE is unset); an explicit HF_HOME wins.
+
+Outputs under ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``:
 
   model.fp32.onnx
   model.int8.onnx
@@ -47,8 +50,21 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 # Before torch is imported: the dispatch level changes the exported bytes.
 EXPORT_CPU_CAPABILITY = "avx2"
 os.environ["ATEN_CPU_CAPABILITY"] = EXPORT_CPU_CAPABILITY
-os.environ.setdefault("HF_HOME", "/cache/huggingface")
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "/cache/huggingface/hub")
+
+
+def _default_hf_cache(environ) -> None:
+    """Point the HF cache under PREACHED_CACHE (/cache only when it is unset).
+
+    An explicit HF_HOME wins; the hub cache then follows it. This runs at
+    import, before the hash-seed restart and before any HF or torch import,
+    and the restart passes os.environ on, so the restarted process sees it.
+    """
+    root = environ.get("PREACHED_CACHE") or "/cache"
+    environ.setdefault("HF_HOME", os.path.join(root, "huggingface"))
+    environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(environ["HF_HOME"], "hub"))
+
+
+_default_hf_cache(os.environ)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -62,10 +78,10 @@ from preached.artifacts import (  # noqa: E402
 )
 from preached.pooling import HIDDEN_SIZE, MAX_SEQ_LENGTH  # noqa: E402
 
-# Under this seed CPython 3.12 iterates set(config.layer_types) in sorted
-# order, the order an upstream sorted(set(...)) would pin: the pinned graph.
-EXPORT_HASHSEED = "0"
-PINNED_TRACE_ORDER = ["full_attention", "sliding_attention"]
+# Under this seed (with avx2 dispatch) CPython 3.12 iterates
+# set(config.layer_types) sliding first and the export is the pinned graph.
+EXPORT_HASHSEED = "1"
+PINNED_TRACE_ORDER = ["sliding_attention", "full_attention"]
 
 
 def _require_avx2(machine: str | None = None, cpuinfo: Path = Path("/proc/cpuinfo")) -> None:
@@ -86,7 +102,13 @@ def _require_avx2(machine: str | None = None, cpuinfo: Path = Path("/proc/cpuinf
 
 
 def _reexec_with_hashseed() -> None:
-    """String hashing is fixed at interpreter start, so set it and restart."""
+    """String hashing is fixed at interpreter start, so set it and restart.
+
+    The ambient seed (unset, random, or any other value) never reaches the
+    trace. A numeric PYTHONHASHSEED wins over ``-R``, so the variable alone
+    says whether the seed is fixed. (``sys.flags.hash_randomization`` reads 1
+    under any seed but 0, so testing it would restart forever.)
+    """
     if os.environ.get("PYTHONHASHSEED") == EXPORT_HASHSEED:
         return
     os.environ["PYTHONHASHSEED"] = EXPORT_HASHSEED
