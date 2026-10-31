@@ -246,6 +246,14 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     call to ``Connection``, ``getattr`` on a sqlite3 name, and every name
     imported ``from sqlite3`` other than a safe one. ``unknown`` lists other
     sqlite3 attributes, so a new one is reviewed before it is allowed.
+
+    The writer ``store.connect`` is seen through ``from preached.store
+    import connect``, ``from preached import store``, ``from . import
+    store``, ``import preached.store`` (dotted ``preached.store.connect``),
+    ``getattr(store, ...)``, and a module rebound to another name
+    (``db = sqlite3``, ``s = store``; PR #37 r2 C). A regression guard, not
+    a sandbox: ``exec``, star imports and ``import_module`` of
+    ``preached.store`` are not followed.
     """
     tree = ast.parse(source)
     imports = False
@@ -253,6 +261,7 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
     raw = 0
     writer_names: set[str] = set()  # local names bound to preached.store.connect
     store_modules: set[str] = set()  # local names bound to preached.store
+    packages: set[str] = set()  # local names bound to the preached package
     unknown: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -264,6 +273,12 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                         raw += 1  # sqlite3.dbapi2: a second door to connect
                 elif alias.name in ("preached.store", "store") and alias.asname:
                     store_modules.add(alias.asname)
+                elif alias.name == "store":
+                    store_modules.add("store")
+                elif alias.name.split(".")[0] == "preached" and not alias.asname:
+                    packages.add("preached")  # import preached.store binds preached
+                elif alias.name == "preached":
+                    packages.add(alias.asname)
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if module.split(".")[0] == "sqlite3":
@@ -275,7 +290,8 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                 for alias in node.names:
                     if alias.name == "connect":
                         writer_names.add(alias.asname or "connect")
-            elif module == "preached":
+            elif module == "preached" or (node.level and not module):
+                # from preached import store, from . import store
                 for alias in node.names:
                     if alias.name == "store":
                         store_modules.add(alias.asname or "store")
@@ -283,9 +299,38 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
             if node.value == "sqlite3" or node.value.startswith("sqlite3."):
                 imports = True
                 raw += 1
+    # A module bound to another name (``db = sqlite3``, ``s = store``,
+    # ``s = preached.store``) is that module too; repeat until nothing new.
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) or node.value is None:
+                continue
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names = {target.id for target in targets if isinstance(target, ast.Name)}
+            for bound, is_it in (
+                (modules, isinstance(value, ast.Name) and value.id in modules),
+                (store_modules, (isinstance(value, ast.Name) and value.id in store_modules) or (
+                    isinstance(value, ast.Attribute) and value.attr == "store"
+                    and isinstance(value.value, ast.Name) and value.value.id in packages
+                )),
+                (packages, isinstance(value, ast.Name) and value.id in packages),
+                (writer_names, isinstance(value, ast.Name) and value.id in writer_names),
+            ):
+                if is_it and not names <= bound:
+                    bound |= names
+                    changed = True
     writer = 0
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if (
+            isinstance(node, ast.Attribute) and node.attr == "connect"
+            and isinstance(node.value, ast.Attribute) and node.value.attr == "store"
+            and isinstance(node.value.value, ast.Name) and node.value.value.id in packages
+        ):
+            writer += 1  # preached.store.connect
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
             if node.value.id in modules:
                 if node.attr in ("connect", "dbapi2"):
                     raw += 1
@@ -305,6 +350,15 @@ def scan_sqlite_use(source: str) -> tuple[bool, int, int, list[str]]:
                 and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in modules
             ):
                 raw += 1
+            elif (
+                isinstance(func, ast.Name) and func.id in ("getattr", "vars")
+                and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in store_modules
+                and not (
+                    len(node.args) > 1 and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value != "connect"
+                )
+            ):
+                writer += 1  # getattr(store, "connect"), or a name it cannot read
         elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in writer_names:
             writer += 1
     return imports, raw, writer, unknown
@@ -364,6 +418,22 @@ class RawConnectGuardTests(unittest.TestCase):
             "from preached import store\nstore.connect('x')": (False, 0, 1),
             "import preached.store as s\nopen_it = s.connect\n": (False, 0, 1),
             "from preached.store import open_readonly\nopen_readonly('x')": (False, 0, 0),
+            # PR #37 r2 C: rebinding, dotted, getattr, relative from-import.
+            "import sqlite3\ndb = sqlite3\ndb.connect('x')": (True, 1, 0),
+            "import sqlite3\na = sqlite3\nb = a\nb.connect('x')": (True, 1, 0),
+            "from preached import store\ns = store\ns.connect('x')": (False, 0, 1),
+            "from preached.store import connect\nopen_it = connect\n": (False, 0, 1),
+            "import preached.store\npreached.store.connect('x')": (False, 0, 1),
+            "import preached\npreached.store.connect('x')": (False, 0, 1),
+            "import preached as p\np.store.connect('x')": (False, 0, 1),
+            "import preached.store\ns = preached.store\ns.connect('x')": (False, 0, 1),
+            "from preached import store\ngetattr(store, 'connect')('x')": (False, 0, 1),
+            "from preached import store\nname = 'connect'\ngetattr(store, name)('x')": (False, 0, 1),
+            "from preached import store\ngetattr(store, 'open_readonly')('x')": (False, 0, 0),
+            "from . import store\nstore.connect('x')": (False, 0, 1),
+            "from .. import store as s\ns.connect('x')": (False, 0, 1),
+            "from .store import connect\nconnect('x')": (False, 0, 1),
+            "import preached.store\npreached.store.open_readonly('x')": (False, 0, 0),
         }
         for source, want in cases.items():
             with self.subTest(source=source):
