@@ -707,6 +707,8 @@ class RealOnnxTests(unittest.TestCase):
             (folder / "manifest.json").write_text(json.dumps(manifest))
             embedder = OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1, batch_size=1)
             self.assertEqual(embedder.variant, "fp32")
+            self.assertEqual(embedder.model_sha256, FP32_ONNX_SHA256)
+            self.assertNotIn("/", embedder.model_sha256)
             vectors = embedder.encode_queries(["What did Wesley say about worry?"])
             self.assertEqual(vectors.shape, (1, 768))
             self.assertTrue(np.allclose(np.linalg.norm(vectors, axis=1), 1.0, atol=1e-5))

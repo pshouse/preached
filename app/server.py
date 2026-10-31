@@ -9,29 +9,83 @@ Security choices:
 - the Host header must match the allowlist
 - request target, header, and body size are limited; the socket times out
 - clients never receive a traceback
+- /healthz reports the index version and the model sha256, never a path
+- each client IP has a request cap; X-Forwarded-For is ignored
+- /healthz shares that cap; a full client table refuses new clients
+- concurrent connections are capped globally and per client
+- the whole header block has one deadline, not a timeout per read
+- a regular kill file stops and resumes serving on the next request
+- anything unexpected at the kill path is treated as killed
+- access logs keep the path, drop the query string, and escape controls
+- a group- or world-writable bundle is refused; modes are not repaired
+- a 405, or any earlier error, that leaves a body unread closes the connection
+- any Transfer-Encoding, or a repeated or non-digit Content-Length, is refused
+  and the connection closed
+- from a bundle (build stamp PREACHED_BUNDLE), MANIFEST.sha256 must parse,
+  list the stamp and match, no bytecode may sit in the tree, and the index
+  and model/ must be the bundle's own, or the server does not start
+  (app/bundle.py). A tree that is neither a bundle nor a .git checkout is
+  refused
+- scripts/serve.sh runs that check, stdlib only, before any bundle code is
+  imported. Started directly (python app/server.py, python -B, uv run), no
+  bytecode is read or written: the first lines below set a private
+  sys.pycache_prefix before app.bundle and preached.* are imported. Those
+  modules still run from their .py files before main() checks them, so an
+  edited .py or a planted extension module runs first. python -m app.server
+  is not covered (docs/DEPLOY.md)
+- a bundle's index is frozen: a change after start is 503 until restart
+- a NUL or control character in the request line or a header value is a 400
 """
 
 from __future__ import annotations
 
-import argparse
-import json
-import logging
-import os
-import re
-import sqlite3
+import atexit
+import shutil
 import sys
-import threading
-import time
-from types import SimpleNamespace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+import tempfile
+
+# Before any app or preached import. ``python app/server.py``, ``python -B``
+# and ``uv run`` import app.bundle and preached.* below, before main() runs
+# bundle_problem. An old __pycache__ in the tree can match a source file's
+# size and mtime and would run in place of that source. A fresh, private,
+# empty prefix means every one of those modules is compiled from source,
+# and nothing is written. Removed at exit (main turns SIGTERM into one).
+sys.dont_write_bytecode = True
+sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
+atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+
+import argparse  # noqa: E402
+import json  # noqa: E402
+import logging  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import signal  # noqa: E402
+import sqlite3  # noqa: E402
+import stat  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from collections import deque  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
+from pathlib import Path  # noqa: E402
+from urllib.parse import parse_qs, urlsplit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+# ``uv run app/server.py`` puts app/ on the path, not the root.
+if str(ROOT) not in sys.path:
+    sys.path.insert(1, str(ROOT))
 
+from app.bundle import (  # noqa: E402, F401
+    BUILD_STAMP,
+    BUNDLE_MARKERS,
+    ONNX_ROOT_ENV,
+    bundle_problem,
+    is_bundle,
+    onnx_dir_problem,
+)
 from preached import env  # noqa: E402, F401
 from preached.abstain import floor_for, search_with_confidence  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
@@ -103,7 +157,26 @@ LIBRARY = "wesley"
 LIBRARY_SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_TARGET = 2048
 MAX_BODY = 4096
+# RFC 9110 token, and a Content-Length of digits with optional SP/HTAB around.
+HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+CONTENT_LENGTH = re.compile(r"[ \t]*[0-9]{1,10}[ \t]*")
+MAX_HEADER_BYTES = 8192
+# RFC 9110 5.5: a field value is visible characters, SP and HTAB. NUL, CR,
+# LF and every other control character are refused. The request line may
+# carry none at all, apart from its CRLF ending.
+HEADER_VALUE_BAD = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+REQUEST_LINE_BAD = re.compile(rb"[\x00-\x1f\x7f]")
 REQUEST_TIMEOUT_S = 15
+# One deadline for the request line and all headers together. A per-read
+# timeout let a client drip one header line at a time and hold a thread.
+HEADER_DEADLINE_S = 15.0
+# Thread per connection. These caps are the backstop for that.
+DEFAULT_MAX_CONNECTIONS = 32
+DEFAULT_MAX_CLIENT_CONNECTIONS = 4
+# A shared test process issues well under this. serve.sh sets a tighter cap.
+DEFAULT_RATE_LIMIT = 120
+DEFAULT_RATE_WINDOW_S = 60.0
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 # Wesley ids are lowercase slugs (wesley-001), at most 64 characters. A
 # YouTube video id is 11 characters and case-sensitive. Dots and slashes are
 # not in either form, so a path cannot be an id.
@@ -138,6 +211,139 @@ class BadRequest(Exception):
         super().__init__(message)
         self.message = message
         self.status = status
+
+
+def public_sha256(value: object) -> str | None:
+    """A lowercase sha256 hex string, or None. Anything else is dropped."""
+    if isinstance(value, str) and SHA256_HEX.fullmatch(value):
+        return value
+    return None
+
+
+def _positive_int(raw: str | None, default: int) -> int:
+    try:
+        value = int(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return value if value >= 1 else default
+
+
+def _positive_float(raw: str | None, default: float) -> float:
+    try:
+        value = float(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def escape_controls(value: object) -> str:
+    """ASCII, with control characters written as ``\\xHH``.
+
+    A request line must not be able to inject a second log line or a
+    terminal escape. The query string is removed by the caller first.
+    """
+    text = "" if value is None else str(value)
+    parts: list[str] = []
+    for char in text:
+        code = ord(char)
+        if code < 32 or code == 127:
+            parts.append("\\x%02x" % code)
+        elif char == "\\":
+            parts.append("\\\\")
+        else:
+            parts.append(char)
+    return "".join(parts)
+
+
+def kill_file_engaged(path: Path) -> bool:
+    """True when the kill switch is on, or the path is not a normal absence.
+
+    A missing file in a readable directory is off, so removing a regular
+    kill file resumes serving on the next request. A directory, a symlink
+    (dangling or not), an unreadable parent, or any other surprise is on.
+    The file's contents are never read.
+    """
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return _kill_parent_unexpected(path)
+    except OSError:
+        return True
+    return True
+
+
+def _kill_parent_unexpected(path: Path) -> bool:
+    """True when the missing kill file's parent is not a normal directory."""
+    current = path.parent
+    while True:
+        try:
+            listed = os.lstat(current)
+        except FileNotFoundError:
+            if current == current.parent:
+                return False
+            current = current.parent
+            continue
+        except OSError:
+            return True
+        if stat.S_ISLNK(listed.st_mode):
+            try:
+                followed = os.stat(current)
+            except OSError:
+                return True
+            if not stat.S_ISDIR(followed.st_mode):
+                return True
+            return False
+        if not stat.S_ISDIR(listed.st_mode):
+            return True
+        return False
+
+
+class RateLimiter:
+    """Fixed window per client key.
+
+    The table holds at most ``max_keys`` keys. Keys with no hit in the
+    current window are dropped before a new key is added. When the table
+    is still full, a new key is refused and an existing key is left alone.
+    That is fail closed: an unknown client gets no service until some key
+    goes idle. ``/healthz`` uses this same window. It is not exempt and it
+    does not have its own bucket.
+    """
+
+    def __init__(self, limit: int, window_s: float, max_keys: int = 4096) -> None:
+        self.limit = limit
+        self.window_s = window_s
+        self.max_keys = max_keys
+        self.retry_after = max(1, int(window_s))
+        self._hits: dict[str, deque] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str, now: float | None = None) -> bool:
+        moment = time.monotonic() if now is None else now
+        with self._lock:
+            hits = self._hits.get(key)
+            if hits is None:
+                if len(self._hits) >= self.max_keys:
+                    self._evict(moment)
+                if key not in self._hits:
+                    if len(self._hits) >= self.max_keys:
+                        return False
+                    hits = deque()
+                    self._hits[key] = hits
+                else:
+                    hits = self._hits[key]
+            cutoff = moment - self.window_s
+            while hits and hits[0] <= cutoff:
+                hits.popleft()
+            if len(hits) >= self.limit:
+                return False
+            hits.append(moment)
+            return True
+
+    def _evict(self, now: float) -> None:
+        cutoff = now - self.window_s
+        stale = [key for key, hits in self._hits.items() if not hits or hits[-1] <= cutoff]
+        for key in stale:
+            del self._hits[key]
 
 
 def rss_bytes() -> int | None:
@@ -378,6 +584,7 @@ def default_loader(
     encode.backend = embedder.backend
     encode.variant = getattr(embedder, "variant", None)
     encode.threads = getattr(embedder, "threads", None)
+    encode.model_sha256 = getattr(embedder, "model_sha256", None)
     return searcher, encode
 
 
@@ -450,6 +657,9 @@ class App:
         floor=None,
         backend=None,
         library: str = LIBRARY,
+        rate_limit: int | None = None,
+        rate_window_s: float | None = None,
+        kill_file: Path | None = None,
         servable=None,
         church_connection=None,
         church_searcher=None,
@@ -458,10 +668,15 @@ class App:
         church_sample: bool | None = None,
         church_note: str | None = None,
         classic_label: str | None = None,
+        frozen: bool = False,
     ):
         """``servable(connection)`` raises SystemExit when the file may not be
         served (main passes ``check_servable``). It runs again before every
-        searcher a reload builds; None skips it (tests)."""
+        searcher a reload builds; None skips it (tests).
+
+        ``frozen`` (main sets it when serving from a bundle): the index was
+        hashed at start, so any change after start is refused with 503 until
+        the process restarts. It is never reloaded."""
         self.connection = connection
         self._servable = servable
         # Why the index is refused, or None. While set, nothing is served.
@@ -483,6 +698,14 @@ class App:
         self.static_dir = Path(static_dir)
         self.lock = threading.Lock()
         self.library = library
+        if rate_limit is None:
+            rate_limit = _positive_int(os.environ.get("PREACHED_RATE_LIMIT"), DEFAULT_RATE_LIMIT)
+        if rate_window_s is None:
+            rate_window_s = _positive_float(
+                os.environ.get("PREACHED_RATE_WINDOW_S"), DEFAULT_RATE_WINDOW_S
+            )
+        self.rate_limiter = RateLimiter(rate_limit, rate_window_s)
+        self.kill_file = Path(kill_file) if kill_file else None
         self.classic_label = classic_label or read_label(connection) or (
             CLASSIC_LABEL if library == LIBRARY else library
         )
@@ -520,10 +743,21 @@ class App:
         # Always "none" for church libraries (Patrick's decision). Tests may set
         # the attribute to exercise the other values; no flag, env or TOML can.
         self.flagged_audio = resolve_flagged_audio(default_config().flagged_audio)
+        self.frozen = frozen
+        # Set once in a frozen App when the index changed; never cleared.
+        self._frozen_refusal = None
+        self._data_version = self._read_data_version() if frozen else None
         self._stamp = self._capture_stamp()
         # A failed read must not let the next success adopt a stamp without
         # reloading. Init counts: the searcher was built before this read.
         self._status_failed = self._stamp is None
+
+    def _read_data_version(self):
+        try:
+            return self.connection.execute("PRAGMA data_version").fetchone()[0]
+        except Exception:
+            logging.exception("could not read the index data_version")
+            return None
 
     def _capture_stamp(self):
         try:
@@ -544,6 +778,9 @@ class App:
     def _refuse_unless_servable(self) -> bool:
         """Re-run the serve gate on the open file. On failure drop every
         cached row and serve nothing (fail closed); True when refused."""
+        if self._frozen_refusal is not None:
+            self.refused = self._frozen_refusal
+            return True
         if self._servable is None:
             self.refused = None
             return False
@@ -557,13 +794,16 @@ class App:
             self.refused = None
             return False
         logging.error("refusing to serve after reload: %s", problem)
+        self._drop(problem)
+        return True
+
+    def _drop(self, problem: str) -> None:
         self.refused = problem
         self.searcher = None
         self.encode = None
         self.model_name = None
         self.backend = None
         self.floor = None
-        return True
 
     def _serve_keyword_only(self, note: str) -> None:
         self.searcher = self._searcher()
@@ -610,7 +850,19 @@ class App:
         the open file. A refusal keeps ``_status_failed`` set, so the gate
         runs again on the next request.
         """
+        if self._frozen_refusal is not None:
+            self.refused = self._frozen_refusal
+            return
         stamp = self._capture_stamp()
+        if self.frozen and (
+            stamp is None or stamp != self._stamp or self._read_data_version() != self._data_version
+        ):
+            # A bundle's index was hashed at start. Any change, or a status
+            # read that fails, is refused until restart; it is not reloaded.
+            self._frozen_refusal = "the bundled index changed after start; restart the server"
+            logging.error("refusing to serve: %s", self._frozen_refusal)
+            self._drop(self._frozen_refusal)
+            return
         if stamp is None:
             self._status_failed = True
             if not self._refuse_unless_servable():
@@ -632,7 +884,46 @@ class App:
     def host_allowed(self, header_value: str) -> bool:
         return hostname_of(header_value) in self.hosts
 
+    def disabled(self) -> bool:
+        """True when the operator has thrown the kill switch.
+
+        Called on every request, so a regular kill file starts and stops
+        serving without a process restart. ``PREACHED_DISABLED`` is read
+        from this process's environment on each call. Another shell cannot
+        change that environment; set the variable before start. The kill
+        file is the switch that works without a restart.
+
+        A regular file at the kill path is on. A missing file in a readable
+        directory is off. A directory, a symlink, an unreadable parent, or
+        any other surprise is on (fail closed). Contents and the path are
+        never returned to the client.
+        """
+        flag = os.environ.get("PREACHED_DISABLED", "").strip().lower()
+        if flag in {"1", "true", "yes", "on"}:
+            return True
+        path = self.kill_file
+        if path is None:
+            raw = os.environ.get("PREACHED_KILL_FILE", "").strip()
+            path = Path(raw) if raw else None
+        if path is None:
+            return False
+        return kill_file_engaged(path)
+
+    def _index_version(self) -> str | None:
+        """chunks_sha256 from meta, if it is 64 hex chars. Not a path."""
+        try:
+            row = self.connection.execute(
+                "SELECT value FROM meta WHERE key = 'chunks_sha256'"
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None:
+            return None
+        return public_sha256(row[0])
+
     def health(self) -> dict:
+        if self.disabled():
+            return {"ok": False, "disabled": True}
         with self.lock:
             self._refresh_if_stale()
             # /healthz re-runs the serve gate itself: a swapped -wal can leave the
@@ -643,8 +934,13 @@ class App:
             count = visible_count(self.connection, gated=self.gated, library=self.library)
             gated = self.gated and not public_domain_file(self.connection, self.library)
             pending = pending_review_count(self.connection) if gated else None
+            index_version = self._index_version()
+        model_sha = None
+        if self.encode is not None:
+            model_sha = public_sha256(getattr(self.encode, "model_sha256", None))
         payload = {
             "ok": True,
+            "disabled": False,
             "library": self.library,
             "chunks": count,
             "model": self.model_name,
@@ -652,6 +948,8 @@ class App:
             "dense": self.encode is not None,
             "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
+            "index_version": index_version,
+            "model_sha256": model_sha,
             "church": self.church_library,
         }
         if pending is not None:
@@ -841,11 +1139,15 @@ def build_app(
     ort_threads: int | None = None,
     variant: str | None = None,
     library: str = LIBRARY,
+    rate_limit: int | None = None,
+    rate_window_s: float | None = None,
+    kill_file: Path | None = None,
     servable=None,
     church_connection=None,
     church_library: str | None = None,
     church_label: str | None = None,
     church_sample: bool | None = None,
+    frozen: bool = False,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
     searcher, encode, note = load_search(
@@ -884,8 +1186,42 @@ def build_app(
         hosts=hosts,
         static_dir=static_dir,
         library=library,
+        rate_limit=rate_limit,
+        rate_window_s=rate_window_s,
+        kill_file=kill_file,
         servable=servable,
+        frozen=frozen,
     )
+
+
+class _HeaderDeadlineSocket:
+    """Apply one deadline to every header read.
+
+    ``socket.recv`` is read-only, so the timeout cannot be patched onto the
+    socket. ``makefile`` also buffers: one ``readline`` calls ``recv_into``
+    many times, and each of those calls gets a fresh socket timeout. A
+    client that drips one byte per read never trips a per-read timeout.
+    This wrapper sits in ``SocketIO._sock`` and re-arms the remaining budget
+    before every read.
+    """
+
+    def __init__(self, sock, deadline: float) -> None:
+        self._sock = sock
+        self._deadline = deadline
+
+    def _arm(self) -> None:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("header deadline exceeded")
+        self._sock.settimeout(remaining)
+
+    def recv(self, n, flags=0):
+        self._arm()
+        return self._sock.recv(n, flags)
+
+    def recv_into(self, buf, nbytes=0, flags=0):
+        self._arm()
+        return self._sock.recv_into(buf, nbytes, flags)
 
 
 def make_handler(app: App):
@@ -895,8 +1231,187 @@ def make_handler(app: App):
         sys_version = ""
         timeout = REQUEST_TIMEOUT_S
 
+        def _header_deadline_s(self) -> float:
+            server = getattr(self, "server", None)
+            raw = getattr(server, "header_deadline_s", HEADER_DEADLINE_S)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                return HEADER_DEADLINE_S
+            return value if value > 0 else HEADER_DEADLINE_S
+
+        def _install_header_deadline(self, deadline: float):
+            """Return the SocketIO to restore, or None when there is nothing to wrap."""
+            raw = getattr(self.rfile, "raw", None)
+            sock = getattr(raw, "_sock", None) if raw is not None else None
+            if raw is None or sock is None or isinstance(sock, _HeaderDeadlineSocket):
+                try:
+                    self.connection.settimeout(self._header_deadline_s())
+                except OSError:
+                    pass
+                return None
+            raw._sock = _HeaderDeadlineSocket(sock, deadline)
+            return raw
+
+        def _framing_problem(self) -> int | None:
+            """Status to refuse a request whose body framing is not plain, or None.
+
+            No route reads a body, so the only framing this server accepts is
+            none, or exactly one Content-Length of ASCII digits. Anything a
+            proxy might frame differently is refused and the connection is
+            closed: any Transfer-Encoding (even empty), a repeated
+            Content-Length, a sign, a comma list, or a header name that is
+            not a token (``Content-Length :``).
+            """
+            headers = getattr(self, "headers", None)
+            if headers is None:
+                return None
+            # A line the header parser could not take ("Content-Length : 5")
+            # ends the headers early and lands in the payload. Refuse it, and
+            # refuse obs-fold continuation lines, rather than guess.
+            if getattr(headers, "defects", None) or headers.get_payload():
+                return 400
+            for name, value in headers.items():
+                if not HEADER_NAME.fullmatch(name) or HEADER_VALUE_BAD.search(value):
+                    return 400
+            if headers.get_all("Transfer-Encoding"):
+                return 501
+            lengths = headers.get_all("Content-Length") or []
+            if len(lengths) > 1:
+                return 400
+            if lengths and not CONTENT_LENGTH.fullmatch(lengths[0]):
+                return 400
+            return None
+
+        def _has_unread_body(self) -> bool:
+            """True when the client declared a body this server did not read.
+
+            No route reads a body. Leaving those bytes on a keep-alive
+            connection makes the next ``handle_one_request`` parse them as a
+            second request (a POST body smuggled after a 405, or after any
+            earlier error). Framing that is not one plain zero
+            Content-Length counts as a body.
+            """
+            headers = getattr(self, "headers", None)
+            if headers is None:
+                return False
+            if self._framing_problem() is not None:
+                return True
+            lengths = headers.get_all("Content-Length") or []
+            if not lengths:
+                return False
+            return int(lengths[0]) != 0
+
+        def _close_if_unread_body(self) -> None:
+            if self._has_unread_body():
+                self.close_connection = True
+
+        def handle_one_request(self) -> None:
+            # Headers share one deadline. The handler then runs under the
+            # normal socket timeout, so a search is not cut off by the
+            # header budget.
+            deadline = time.monotonic() + self._header_deadline_s()
+            raw = None
+            parsed = False
+            try:
+                raw = self._install_header_deadline(deadline)
+                self.raw_requestline = self.rfile.readline(65537)
+                if len(self.raw_requestline) > 65536:
+                    self.requestline = ""
+                    self.request_version = ""
+                    self.command = ""
+                    self.send_error(414)
+                    return
+                if not self.raw_requestline:
+                    self.close_connection = True
+                    return
+                line = self.raw_requestline
+                line = line[:-2] if line.endswith(b"\r\n") else line.rstrip(b"\n")
+                if REQUEST_LINE_BAD.search(line):
+                    # Never echoed or logged: the line is the attacker's bytes.
+                    self.requestline = ""
+                    self.request_version = ""
+                    self.command = ""
+                    self.close_connection = True
+                    self.send_error(400)
+                    return
+                if not self.parse_request():
+                    return
+                parsed = True
+            except TimeoutError:
+                self.close_connection = True
+                logging.error("request failed: %s", "TimeoutError")
+                return
+            except Exception as exc:
+                # A bad request line must not escape the thread. The type is
+                # enough; the line itself can carry control characters.
+                logging.error("request failed: %s", type(exc).__name__)
+                self.close_connection = True
+                return
+            finally:
+                if raw is not None:
+                    wrapped = getattr(raw, "_sock", None)
+                    if isinstance(wrapped, _HeaderDeadlineSocket):
+                        raw._sock = wrapped._sock
+                try:
+                    self.connection.settimeout(REQUEST_TIMEOUT_S)
+                except OSError:
+                    pass
+            if not parsed:
+                return
+            # Refuse ambiguous body framing before any route runs. The
+            # connection closes, so bytes after the headers are never parsed
+            # as a second request.
+            framing = self._framing_problem()
+            if framing is not None:
+                self.close_connection = True
+                self.send_error(framing)
+                return
+            try:
+                method_name = "do_" + str(self.command)
+                if not hasattr(self, method_name):
+                    self.send_error(501)
+                    return
+                getattr(self, method_name)()
+                self.wfile.flush()
+            except TimeoutError:
+                self.close_connection = True
+                logging.error("request failed: %s", "TimeoutError")
+            except Exception as exc:
+                logging.error("request failed: %s", type(exc).__name__)
+                self.close_connection = True
+            finally:
+                # After a 405, or any earlier error, an unread body must not
+                # stay on the connection to be parsed as the next request.
+                self._close_if_unread_body()
+
         def log_message(self, fmt, *args):
-            logging.info("%s %s", self.address_string(), fmt % args)
+            # Drop anything after ? so a query is not written to the log.
+            # Never raise: a broken format or a wild request line is dropped.
+            try:
+                text = fmt % args if args else str(fmt)
+            except Exception:
+                text = "unformattable log line"
+            if "?" in text:
+                text = text.split("?", 1)[0]
+            logging.info(
+                "%s %s",
+                escape_controls(self.client_address[0]),
+                escape_controls(text),
+            )
+
+        def log_request(self, code="-", size="-"):
+            raw_path = getattr(self, "path", None) or "/"
+            path = raw_path.split("?", 1)[0] or "/"
+            command = getattr(self, "command", None) or "-"
+            status = getattr(code, "value", code)
+            logging.info(
+                "%s %s %s %s",
+                escape_controls(self.client_address[0]),
+                escape_controls(command),
+                escape_controls(path),
+                status,
+            )
 
         def version_string(self):
             return "Preached"
@@ -904,9 +1419,9 @@ def make_handler(app: App):
         def send_error(self, code, message=None, explain=None):
             """Fixed JSON. The request line is not echoed back to the client."""
             try:
-                self.log_error("code %s, message %s", code, message)
+                self.log_error("code %s", code)
             except Exception:
-                logging.exception("error while logging a rejected request")
+                logging.error("request failed: %s", "LogError")
             self.close_connection = True
             if code in (413, 414, 431):
                 text = "request too large"
@@ -929,47 +1444,105 @@ def make_handler(app: App):
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Frame-Options", "DENY")
 
-        def _send(self, status: int, body: bytes, content_type: str, include_body: bool) -> None:
+        def _send(
+            self,
+            status: int,
+            body: bytes,
+            content_type: str,
+            include_body: bool,
+            extra_headers: dict | None = None,
+        ) -> None:
             self._started = True
             self.send_response(status)
             self._security_headers()
+            if extra_headers:
+                for key, value in extra_headers.items():
+                    self.send_header(key, value)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if self._has_unread_body():
+                self.close_connection = True
+                self.send_header("Connection", "close")
             self.end_headers()
             if include_body:
                 self.wfile.write(body)
 
-        def _send_json(self, status: int, payload: dict, include_body: bool) -> None:
+        def _send_json(
+            self,
+            status: int,
+            payload: dict,
+            include_body: bool,
+            extra_headers: dict | None = None,
+        ) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self._send(status, body, "application/json; charset=utf-8", include_body)
+            self._send(
+                status,
+                body,
+                "application/json; charset=utf-8",
+                include_body,
+                extra_headers=extra_headers,
+            )
 
         def _limits_and_host(self) -> None:
+            try:
+                header_bytes = len(self.headers.as_string().encode("latin-1", "replace"))
+            except Exception as exc:
+                raise BadRequest("request too large", 431) from exc
+            if header_bytes > MAX_HEADER_BYTES:
+                raise BadRequest("request too large", 431)
             if len(self.path) > MAX_TARGET:
                 raise BadRequest("request too large", 414)
-            if self.headers.get("Transfer-Encoding"):
-                raise BadRequest("request too large", 413)
+            if self._framing_problem() is not None:
+                raise BadRequest("bad request")
             raw_length = self.headers.get("Content-Length")
-            if raw_length is not None:
-                try:
-                    length = int(raw_length)
-                except ValueError as exc:
-                    raise BadRequest("bad content length") from exc
-                if length > MAX_BODY:
-                    raise BadRequest("request too large", 413)
+            if raw_length is not None and int(raw_length) > MAX_BODY:
+                raise BadRequest("request too large", 413)
             hosts = self.headers.get_all("Host") or []
             if len(hosts) != 1 or not app.host_allowed(hosts[0]):
                 raise BadRequest("host not allowed", 421)
 
-        def _route(self, include_body: bool) -> None:
+        def _limited_headers(self) -> dict:
+            return {"Retry-After": str(app.rate_limiter.retry_after)}
+
+        def _blocked(self, include_body: bool) -> str | None:
+            """Size and host checks, then the kill switch, then the rate cap.
+
+            Returns 'disabled' or 'limited' when the handler already replied.
+            """
             self._limits_and_host()
+            parsed = urlsplit(self.path)
+            path = parsed.path or "/"
+            if app.disabled():
+                if path == "/healthz":
+                    self._send_json(503, {"ok": False, "disabled": True}, include_body)
+                else:
+                    self._send_json(503, {"error": "unavailable"}, include_body)
+                return "disabled"
+            # The socket peer, never X-Forwarded-For. /healthz uses this same
+            # bucket. A proxy in front shares one bucket until a trusted-proxy
+            # mode exists; that is not this process.
+            if not app.rate_limiter.allow(self.client_address[0]):
+                self._send_json(
+                    429,
+                    {"error": "too many requests"},
+                    include_body,
+                    extra_headers=self._limited_headers(),
+                )
+                return "limited"
+            return None
+
+        def _route(self, include_body: bool) -> None:
+            if self._blocked(include_body):
+                return
             parsed = urlsplit(self.path)
             path = parsed.path or "/"
             if path == "/":
                 self._send_page(include_body)
                 return
             if path == "/healthz":
-                self._send_json(200, app.health(), include_body)
+                payload = app.health()
+                self._send_json(200 if payload.get("ok") else 503, payload, include_body)
                 return
             if path in ("/api/search", "/api/side"):
                 try:
@@ -1029,9 +1602,11 @@ def make_handler(app: App):
                 if getattr(self, "_started", False):
                     self.close_connection = True
                     return
-                self._send_json(exc.status, {"error": exc.message}, include_body)
-            except Exception:
-                logging.exception("request failed")
+                extra = self._limited_headers() if exc.status == 429 else None
+                self._send_json(exc.status, {"error": exc.message}, include_body, extra_headers=extra)
+            except Exception as exc:
+                # The exception text can quote the user's query. Log the type only.
+                logging.error("request failed: %s", type(exc).__name__)
                 if getattr(self, "_started", False):
                     self.close_connection = True
                     return
@@ -1045,22 +1620,26 @@ def make_handler(app: App):
 
         def _reject_method(self) -> None:
             try:
-                self._limits_and_host()
+                if self._blocked(True):
+                    return
             except BadRequest as exc:
-                self._send_json(exc.status, {"error": exc.message}, True)
+                extra = self._limited_headers() if exc.status == 429 else None
+                self._send_json(exc.status, {"error": exc.message}, True, extra_headers=extra)
                 return
-            except Exception:
-                logging.exception("request failed")
+            except Exception as exc:
+                logging.error("request failed: %s", type(exc).__name__)
                 self._send_json(500, {"error": "internal error"}, True)
                 return
             body = json.dumps({"error": "method not allowed"}).encode("utf-8")
             self._started = True
+            self.close_connection = True
             self.send_response(405)
             self._security_headers()
             self.send_header("Allow", "GET, HEAD")
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
 
@@ -1080,8 +1659,89 @@ def make_handler(app: App):
 
 
 class PreachedServer(ThreadingHTTPServer):
+    """Threaded server with a global cap and a per-client cap.
+
+    ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
+    the cap, the connection is closed on the accept thread with a short 503
+    and no handler thread is started.
+    """
+
     allow_reuse_address = True
     daemon_threads = True
+    max_connections = DEFAULT_MAX_CONNECTIONS
+    max_connections_per_client = DEFAULT_MAX_CLIENT_CONNECTIONS
+    header_deadline_s = HEADER_DEADLINE_S
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._conn_lock = threading.Lock()
+        self._conn_total = 0
+        self._conn_by_ip: dict[str, int] = {}
+        self.max_connections = _positive_int(
+            os.environ.get("PREACHED_MAX_CONNECTIONS"), DEFAULT_MAX_CONNECTIONS
+        )
+        self.max_connections_per_client = _positive_int(
+            os.environ.get("PREACHED_MAX_CLIENT_CONNECTIONS"),
+            DEFAULT_MAX_CLIENT_CONNECTIONS,
+        )
+        self.header_deadline_s = _positive_float(
+            os.environ.get("PREACHED_HEADER_DEADLINE_S"), HEADER_DEADLINE_S
+        )
+
+    def _acquire_connection(self, ip: str) -> bool:
+        with self._conn_lock:
+            if self._conn_total >= self.max_connections:
+                return False
+            held = self._conn_by_ip.get(ip, 0)
+            if held >= self.max_connections_per_client:
+                return False
+            self._conn_total += 1
+            self._conn_by_ip[ip] = held + 1
+            return True
+
+    def _release_connection(self, ip: str) -> None:
+        with self._conn_lock:
+            self._conn_total = max(0, self._conn_total - 1)
+            left = self._conn_by_ip.get(ip, 0) - 1
+            if left <= 0:
+                self._conn_by_ip.pop(ip, None)
+            else:
+                self._conn_by_ip[ip] = left
+
+    def process_request(self, request, client_address) -> None:
+        ip = client_address[0]
+        if not self._acquire_connection(ip):
+            self._reject_over_cap(request)
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._release_connection(ip)
+            raise
+
+    def process_request_thread(self, request, client_address) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._release_connection(client_address[0])
+
+    def _reject_over_cap(self, request) -> None:
+        body = b'{"error":"unavailable"}'
+        message = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
+            b"Connection: close\r\n"
+            b"Retry-After: 1\r\n"
+            b"Cache-Control: no-store\r\n"
+            b"\r\n" + body
+        )
+        try:
+            request.settimeout(1)
+            request.sendall(message)
+        except OSError:
+            pass
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
@@ -1167,6 +1827,36 @@ def file_identity(path: Path) -> tuple[int, int] | None:
     return st.st_dev, st.st_ino
 
 
+def writable_problem(index: Path) -> str | None:
+    """Why ``index`` is too writable to serve, or None.
+
+    The file and the directory that holds it must not be group- or
+    world-writable. When that directory is named ``index`` (a bundle, or
+    ``/cache/index``), its parent is checked too. That parent is the bundle
+    root. A loose file under a temp directory is not walked up into ``/tmp``.
+    ``serve.sh`` does not chmod these paths; a world-writable bundle is
+    refused here instead of being repaired.
+    """
+    index = Path(index)
+    targets: list[tuple[Path, str]] = [
+        (index, "index"),
+        (index.parent, "index directory"),
+    ]
+    if index.parent.name == "index":
+        targets.append((index.parent.parent, "index parent directory"))
+    for target, what in targets:
+        try:
+            st = os.stat(target)
+        except OSError as exc:
+            return f"cannot check {target} ({exc})"
+        if st.st_mode & 0o022:
+            return (
+                f"{what} {target} is group- or world-writable "
+                f"(mode {stat.S_IMODE(st.st_mode):o})"
+            )
+    return None
+
+
 def check_servable(connection, library: str, index: Path, *, church_gate: bool = False) -> None:
     """SystemExit unless this file may be served as ``library``.
 
@@ -1187,7 +1877,13 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
     ``wesley-*``, no ``videos`` table, no ``library`` marker, and only the
     tables and columns in WESLEY_SCHEMA (case-insensitive), so no column a
     church import or the review gate adds, in chunks or a side table.
+
+    A group- or world-writable bundle is refused, not repaired. The bundle
+    manifest is checked once at start by ``bundle_problem``, not here.
     """
+    problem = writable_problem(index)
+    if problem is not None:
+        raise SystemExit(f"error: {problem}")
     tables = {row[0].lower() for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     marker = None
     if "meta" in tables:
@@ -1229,7 +1925,17 @@ def check_servable(connection, library: str, index: Path, *, church_gate: bool =
         raise SystemExit(f"error: {index} is not the Wesley index or a public-domain library ({allowed})")
 
 
+def _stop_on_sigterm(_signum, _frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> None:
+    # No PREACHED_ALLOW_ROOT. Root is refused here, not only in serve.sh.
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        raise SystemExit("refusing to serve as root")
+    # SIGTERM (systemd stop, serve.sh's parent) stops like Ctrl-C, so the
+    # socket and index close and atexit removes the bytecode prefix above.
+    signal.signal(signal.SIGTERM, _stop_on_sigterm)
     # Set before torch is imported. Queries are CPU; the GPU is Whisper's.
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -1301,12 +2007,30 @@ def main(argv: list[str] | None = None) -> None:
     index = args.index if args.index is not None else INDEX_DIR / f"{library}.sqlite"
     if library == LIBRARY and args.index is None:
         index = INDEX_PATH
+    # The file checked must be the file opened: same (st_dev, st_ino) before
+    # the hash below, after the open and checks, and before every reload.
+    identity = file_identity(index)
+    # From a bundle: MANIFEST.sha256 must parse and match, and the index must
+    # be the bundle's own. A checkout (.git, no build stamp) skips this; a
+    # tree that is neither is refused. serve.sh ran the same check before
+    # importing this module; this repeats it for any other launcher.
+    problem = bundle_problem(index)
+    if problem is not None:
+        raise SystemExit(f"error: {problem}")
+    bundle = is_bundle()
+    if bundle:
+        # Only the bundle's own hashed model/, only the ONNX backend (torch
+        # and preached.embed are not shipped).
+        problem = onnx_dir_problem(ROOT, os.environ.get(ONNX_ROOT_ENV))
+        if problem is not None:
+            raise SystemExit(f"error: {problem}")
+        os.environ[ONNX_ROOT_ENV] = str(ROOT / "model")
+        backend = (args.embed_backend or os.environ.get("PREACHED_EMBED_BACKEND") or "onnx").strip().lower()
+        if backend != "onnx":
+            raise SystemExit("error: a bundle serves only the onnx embed backend")
     # Refuses wesley / spurgeon / edwards as the church. Opens nothing.
     # The church side stays empty until PR #12's gate serves it.
     prepare_church(church_index=args.church_index, church_library=church_library)
-    # The file checked must be the file opened: same (st_dev, st_ino) before
-    # the open and after the checks, and again before every reload.
-    identity = file_identity(index)
     try:
         connection = open_readonly(index, check_same_thread=False)
     except FileNotFoundError as exc:
@@ -1340,12 +2064,14 @@ def main(argv: list[str] | None = None) -> None:
         variant=args.onnx_variant,
         library=library,
         servable=servable,
+        frozen=bundle,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)
     elif app.encode is None:
         logging.info("BM25 only; the embedding model was not loaded")
     else:
+        logging.info("index opened read-only for library %s", library)
         logging.info(
             "embed backend=%s variant=%s threads=%s",
             getattr(app.encode, "backend", None),

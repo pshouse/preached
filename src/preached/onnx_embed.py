@@ -102,6 +102,7 @@ class OnnxEmbedder:
             # is requested alone; anything else means the session ignored that.
             raise ArtifactError(f"ONNX session providers {session.get_providers()} are not CPU")
         tokenizer = Tokenizer.from_buffer(verified.files["tokenizer.json"])
+        graph_sha = verified.digests.get(filename)
         embedder = cls(
             spec,
             session,
@@ -113,6 +114,8 @@ class OnnxEmbedder:
             threads=threads,
         )
         embedder.output_name = session.get_outputs()[0].name
+        # Hex digest of the graph bytes just verified. No path.
+        embedder.model_sha256 = graph_sha
         return embedder
 
     def encode_queries(self, queries: list[str]) -> np.ndarray:

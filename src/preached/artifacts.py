@@ -97,12 +97,14 @@ class VerifiedArtifacts:
     """Manifest plus the bytes of the files the selected variant needs.
 
     Callers load the session and the tokenizer from ``files`` so a file
-    cannot change between the hash and the open.
+    cannot change between the hash and the open. ``digests`` are the sha256
+    hex of those same bytes.
     """
 
     manifest: dict
     variant: str
     files: dict[str, bytes]
+    digests: dict[str, str]
 
 
 def required_filenames(variant: str) -> list[str]:
@@ -139,6 +141,7 @@ def verify_manifest(
     manifest = load_manifest(folder)
     chosen = resolve_variant(manifest, variant)
     verified: dict[str, bytes] = {}
+    digests: dict[str, str] = {}
     graph_name = VARIANT_FILES[chosen]
     for name in required_filenames(chosen):
         if not isinstance(name, str) or "/" in name or "\\" in name or name.startswith("."):
@@ -157,13 +160,16 @@ def verify_manifest(
         if enforce_pins and pinned is not None and actual != pinned:
             raise ArtifactError(f"ONNX sha256 for {name} is not the pinned digest")
         verified[name] = data
+        digests[name] = actual
     try:
         pooling = json.loads(verified["pooling.json"])
     except json.JSONDecodeError as exc:
         raise ArtifactError("pooling.json is not JSON") from exc
     if not isinstance(pooling, dict) or pooling.get("pooling") != "cls":
         raise ArtifactError(f"pooling.json pooling {pooling.get('pooling')!r} is not cls")
-    return VerifiedArtifacts(manifest=manifest, variant=chosen, files=verified)
+    return VerifiedArtifacts(
+        manifest=manifest, variant=chosen, files=verified, digests=digests
+    )
 
 
 def resolve_variant(manifest: dict, requested: str | None = None) -> str:
