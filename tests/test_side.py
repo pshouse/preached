@@ -38,7 +38,7 @@ from preached.library import (
     UnsafeOpen,
 )
 import preached.library as library
-from preached.store import connect, open_readonly, save_embedding_info, write_embeddings
+from preached.store import UnsafeSidecar, connect, open_readonly, save_embedding_info, write_embeddings
 from preached.youtube.library import ensure_library
 
 FIXTURE_FP = "fixture-fingerprint"
@@ -951,6 +951,126 @@ class SidecarTests(unittest.TestCase):
         self.assertIn("has a sidecar with 2 hard links once opened", str(caught.exception))
         # SQLite drops the -wal name when the refused connection closes.
         Path(f"{self.sample}-wal").unlink(missing_ok=True)
+        self.assertEqual(self.wesley_state(), before)
+
+
+class _Served(Exception):
+    """``make_server`` was reached: the file passed every check at start."""
+
+
+class ReadOnlyOpenSidecarTests(unittest.TestCase):
+    """CTO round 2 on PR #27, item 1: the read-only church opens outside library.py.
+
+    ``search/query.py --library <church slug>`` (``open_index``) and
+    ``app/server.py --library <church slug>`` both open the church file with
+    ``store.open_readonly``. A WAL church file whose -shm (or -wal) name is a
+    hardlink to wesley.sqlite made the first read write the shm index into
+    Wesley ("file is not a database" afterwards), with no race needed. Now
+    ``open_readonly`` checks the sidecars (``library._sidecar_problem``)
+    before it connects, so both entry points refuse the file.
+    """
+
+    SLUG = "mychurch"
+    SUFFIXES = ("-wal", "-shm", "-journal")
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.index_dir.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        self.church = self.index_dir / f"{self.SLUG}.sqlite"
+        self.build()
+        self.query = _load_query()
+        import app.server as server
+
+        self.server = server
+        privacy = Path(__file__).resolve().parents[1] / "privacy.example.toml"
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+            patch.object(self.query, "INDEX_DIR", self.index_dir),
+            patch.object(self.query, "INDEX_PATH", self.wesley),
+            patch.object(server, "INDEX_DIR", self.index_dir),
+            patch.object(server, "INDEX_PATH", self.wesley),
+            patch.object(server, "bundle_problem", lambda _index: None),
+            patch.object(server, "make_server", self._no_server),
+            patch.dict(os.environ, {"PREACHED_PRIVACY": str(privacy)}),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def build(self) -> None:
+        """A fresh Wesley and a fresh WAL-mode church file, so no subtest sees another's damage."""
+        for path in (self.wesley, self.church):
+            for leftover in (path, *(Path(f"{path}{suffix}") for suffix in self.SUFFIXES)):
+                leftover.unlink(missing_ok=True)
+        build_library(self.wesley, *classic_rows())
+        rows, vectors = church_rows()
+        build_library(self.church, rows, vectors, church=True, sample=True)
+        with closing(sqlite3.connect(self.church)) as probe:
+            self.assertEqual(probe.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    @staticmethod
+    def _no_server(*_args, **_kwargs):
+        raise _Served
+
+    def wesley_state(self) -> tuple[str, int, int]:
+        st = self.wesley.stat()
+        return hashlib.sha256(self.wesley.read_bytes()).hexdigest(), st.st_size, st.st_mtime_ns
+
+    def plant(self, suffix: str) -> Path:
+        sidecar = Path(f"{self.church}{suffix}")
+        sidecar.unlink(missing_ok=True)
+        os.link(self.wesley, sidecar)
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+        return sidecar
+
+    def entry_points(self):
+        yield "query.open_index", lambda: self.query.open_index(None, self.SLUG).close()
+        yield "server.main", lambda: self.server.main(["--library", self.SLUG, "--bm25-only", "--port", "0"])
+        # --index <church file> is refused as a library, but only after a read.
+        yield "query.open_index --index", lambda: self.query.open_index(self.church, None).close()
+        yield "server.main --index", lambda: self.server.main(["--index", str(self.church), "--bm25-only", "--port", "0"])
+
+    def test_both_entry_points_open_the_church_file_when_its_sidecars_are_safe(self) -> None:
+        # The open itself works; the server then stops at the gate it has today.
+        before = self.wesley_state()
+        self.query.open_index(None, self.SLUG).close()
+        with self.assertRaises(_Served):
+            self.server.main(["--library", self.SLUG, "--bm25-only", "--port", "0"])
+        self.assertEqual(self.wesley_state(), before)
+
+    def test_a_hardlinked_sidecar_is_refused_by_both_entry_points_and_wesley_is_unchanged(self) -> None:
+        for name, run in self.entry_points():
+            for suffix in self.SUFFIXES:
+                with self.subTest(entry=name, suffix=suffix):
+                    self.build()
+                    before = self.wesley_state()
+                    sidecar = self.plant(suffix)
+                    try:
+                        run()
+                        refusal = None
+                    except (SystemExit, _Served) as exc:
+                        refusal = exc
+                    self.assertEqual(self.wesley_state(), before)
+                    self.assertIsInstance(refusal, SystemExit)
+                    self.assertIn(f"has a {suffix} file with 2 hard links", str(refusal))
+                    self.assertTrue(sidecar.exists())
+                    self.assertEqual(os.stat(self.wesley).st_nlink, 2)
+                    sidecar.unlink()
+                    with closing(sqlite3.connect(f"{self.wesley.as_uri()}?mode=ro", uri=True)) as probe:
+                        self.assertEqual(probe.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+
+    def test_open_readonly_refuses_a_symlinked_sidecar(self) -> None:
+        sidecar = Path(f"{self.church}-shm")
+        sidecar.unlink(missing_ok=True)
+        os.symlink(self.wesley, sidecar)
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+        before = self.wesley_state()
+        with self.assertRaises(UnsafeSidecar) as caught:
+            open_readonly(self.church)
+        self.assertIn("-shm file that is a symlink", str(caught.exception))
         self.assertEqual(self.wesley_state(), before)
 
 
