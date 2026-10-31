@@ -676,6 +676,18 @@ class ChurchPaused(Exception):
     """The church file is in WAL mode or locked by a writer (``--ack-review``): skip this search."""
 
 
+class ChurchStartPaused(ChurchRefused):
+    """``open_church_readonly`` could not open the file because it is in WAL
+    mode or locked by a writer (``--ack-review`` running). The message is the
+    refusal a one-shot caller (``search/query.py --side``) prints; ``reason``
+    is the pause reason the server logs before it retries the open later
+    (CTO #37 r3 hard condition 1)."""
+
+    def __init__(self, message: str, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 def is_busy(exc: BaseException) -> bool:
     """True for SQLITE_BUSY or SQLITE_LOCKED (any extended code): another
     connection holds a lock. The church connection waits for none
@@ -716,15 +728,36 @@ def _ancestor_problem(path: Path) -> str | None:
                 continue
             if st.st_uid == 0 and st.st_mode & stat.S_ISVTX and owners is not None:
                 try:
-                    if os.lstat(below).st_uid in owners:
-                        continue
-                except OSError:
-                    pass
+                    below_uid = os.lstat(below).st_uid
+                except OSError as exc:
+                    return f"directory {below} in sticky directory {directory} cannot be checked ({exc.__class__.__name__})"
+                if below_uid in owners:
+                    continue
+                # Sticky stops others renaming only what they do not own: the
+                # reason is the owner below, not the sticky directory's mode.
+                return (
+                    f"directory {below} in sticky directory {directory} is owned by uid {below_uid}, "
+                    "not the serving uid or root"
+                )
             return (
                 f"directory {directory} above the church file is group- or world-writable "
                 f"(mode {stat.S_IMODE(st.st_mode):o})"
             )
     return None
+
+
+def _file_kind(mode: int) -> str:
+    """What a non-regular file is, for a refusal (not 'not found': PR #37 r3 nit)."""
+    for test, kind in (
+        (stat.S_ISDIR, "a directory"),
+        (stat.S_ISFIFO, "a FIFO"),
+        (stat.S_ISCHR, "a character device"),
+        (stat.S_ISBLK, "a block device"),
+        (stat.S_ISSOCK, "a socket"),
+    ):
+        if test(mode):
+            return kind
+    return "not a regular file"
 
 
 def _church_identity(path: Path) -> tuple[int, int] | None:
@@ -810,7 +843,10 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
     publish-gate columns (``store.visible_sql`` gives ``"0"``), and a file
     replaced while it was opened. The connection never waits for a lock
     (``busy_timeout = 0``). Each one means the church side is empty; the caller logs
-    the message and carries on with the classic side.
+    the message and carries on with the classic side. WAL mode and a
+    writer's lock (``--ack-review`` running) raise ``ChurchStartPaused``, a
+    ``ChurchRefused`` whose ``reason`` the server logs as a pause before it
+    retries the open later; a one-shot caller treats it as any refusal.
     """
     from preached.privacy import MissingConfig, required_config
     from preached.store import UnsafeSidecar, visible_sql
@@ -822,8 +858,14 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
         raise ChurchRefused(f"{exc}; the church side is not searched") from exc
     except (ValueError, OSError) as exc:
         raise ChurchRefused(f"privacy config: {exc}; the church side is not searched") from exc
-    if not path.is_file():
-        raise ChurchRefused(f"{path.name} not found; the church side is empty")
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        raise ChurchRefused(f"{path.name} not found; the church side is empty") from None
+    except OSError as exc:
+        raise ChurchRefused(f"{path.name} cannot be checked ({exc.__class__.__name__}); it is not opened") from exc
+    if not stat.S_ISREG(mode):
+        raise ChurchRefused(f"{path.name} is not a regular file ({_file_kind(mode)}); it is not opened")
     refusal = classic_church_refusal(None, path) or church_path_problem(path)
     if refusal:
         raise ChurchRefused(refusal)
@@ -835,8 +877,12 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
         raise ChurchRefused(f"{path.name} cannot be read as the regular file that was checked; it is not opened")
     if wal:
         # A read-only open of a WAL file creates -wal and -shm beside it.
-        # Approval (--ack-review) leaves the file in DELETE mode.
-        raise ChurchRefused(f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it")
+        # Approval (--ack-review) leaves the file in DELETE mode; while it
+        # runs the file is in WAL mode, so the server waits (a pause).
+        raise ChurchStartPaused(
+            f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it",
+            f"{path.name} is in WAL journal mode",
+        )
     if classic is not None and identity == _church_identity(Path(classic)):
         raise ChurchRefused(f"{path.name} is the classic index; it cannot be your church")
     before = _descriptors()
@@ -847,6 +893,7 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
     except (OSError, sqlite3.Error) as exc:
         raise ChurchRefused(f"{path.name} cannot be opened ({exc})") from exc
     problem = None
+    paused = None
     try:
         # The name is re-resolved by the connect: the file SQLite opened must
         # be the one checked above (PR #37 r2 should-fix A, _Checked's check).
@@ -862,13 +909,18 @@ def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sq
             if problem is None:
                 problem = church_file_problem(connection, path, identity)
         except ChurchPaused as exc:
-            problem = f"{exc}; it is not opened"
+            problem, paused = f"{exc}; it is not opened", str(exc)
         if problem is None and visible_sql(connection, "chunks", gated=True) == "0":
             problem = f"{path.name} has no publish-gate columns; nothing in it is served"
     except sqlite3.Error as exc:
         problem = f"{path.name} cannot be read ({exc})"
+        if is_busy(exc):
+            paused = f"the church file is locked by a writer ({exc})"
+            problem = f"{paused}; it is not opened"
     if problem is not None:
         connection.close()
+        if paused is not None:
+            raise ChurchStartPaused(problem, paused)
         raise ChurchRefused(problem)
     return connection, identity
 
