@@ -112,6 +112,41 @@ class ModelConfigTests(unittest.TestCase):
         self.assertTrue(MODELS["arctic-embed-l"].provenance.startswith("unclear:"))
         self.assertEqual(MODELS[DEFAULT_MODEL].provenance, "clear")
 
+    def test_arctic_is_eval_only(self) -> None:
+        from preached.models import RUNTIME_MODELS
+
+        self.assertTrue(MODELS["arctic-embed-l"].eval_only)
+        self.assertNotIn("arctic-embed-l", RUNTIME_MODELS)
+        self.assertFalse(MODELS[DEFAULT_MODEL].eval_only)
+        self.assertEqual({k for k, v in MODELS.items() if v.eval_only}, {"arctic-embed-l"})
+
+    def test_searcher_rejects_eval_only_model(self) -> None:
+        import sqlite3
+
+        from preached.search import Searcher
+
+        with self.assertRaisesRegex(RuntimeError, "eval-only"):
+            Searcher(sqlite3.connect(":memory:"), model="arctic-embed-l")
+
+    def test_server_rejects_eval_only_model(self) -> None:
+        from app.server import main
+
+        with self.assertRaises(SystemExit) as ctx:
+            main(["--model", "arctic-embed-l", "--bm25-only"])
+        self.assertIn("eval-only", str(ctx.exception))
+
+    def test_cli_rejects_eval_only_model(self) -> None:
+        import contextlib
+        import io
+
+        from search import query
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as ctx:
+            query.main(["worry", "--model", "arctic-embed-l"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIn("invalid choice", err.getvalue())
+
     def test_granite_has_no_prefix(self) -> None:
         spec = MODELS["granite-english-r2"]
         self.assertEqual(format_documents(spec, ["t"], ["x"]), (["x"], ""))
