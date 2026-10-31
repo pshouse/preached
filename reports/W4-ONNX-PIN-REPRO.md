@@ -718,3 +718,20 @@ r3c had 11 skips. The difference is `test_shutdown.LoadedSigtermTests`, which sk
 Cache snapshot: `find /cache -printf '%p\t%s\t%T@\n' | sort`, taken before the suite and after the last command. Both listings have 132604 entries. sha256 before `7d38bb40…96b4`, after `a366776c…c754`. Paths: no change. Sizes: the only changes are three deno WAL files that grew (`/cache/xdg/deno/{dep_analysis,v8_code}_cache_v2-wal`; `node_analysis_cache_v2` kept its size). Mtimes changed on `/cache/index/cc-speech.sqlite-shm`, the `/cache/models` directory (same single entry, `granite-english-r2-onnx`; nothing under it is newer than the first snapshot), `/cache/xdg/Microsoft/DeveloperTools/.onnxruntime/onnxruntime.db-{shm,wal}` and `/cache/xdg/deno/*_cache_v2{,-shm,-wal}`. None of this came from this run. The suite ran with `/cache` read-only (`touch /cache/models/.r3d-probe` inside the same wrapper fails with `Read-only file system`) and with every cache env var pointed at scratch. The writes are other agents that share `/cache` (SQLite shm/WAL, deno and onnxruntime caches). No model, index or ONNX file changed.
 
 Branch state after this commit: 0 behind, 33 ahead of `origin/main` (`a6a27bb`). In-scope diff stat below.
+
+`git diff --stat origin/main..HEAD` at the r3d report commit, before this stat block was added (every file is in PR #71 scope; r3d itself changes only `reports/W4-ONNX-PIN-REPRO.md`):
+
+```
+ app/server.py                            |  23 +
+ docs/DEPLOY.md                           | 118 ++---
+ docs/adr/0001-onnx-export-determinism.md |  54 ++
+ reports/W3-CPU.md                        |   4 +-
+ reports/W4-ONNX-PIN-REPRO.md             | 720 +++++++++++++++++++++++++++
+ scripts/export_onnx.py                   | 127 ++++-
+ src/preached/artifacts.py                |  31 +-
+ tests/test_deploy_alerts.py              |  97 ++--
+ tests/test_deploy_regex.py               |  60 ++-
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 822 +++++++++++++++++++++++++++++++
+ 11 files changed, 1938 insertions(+), 122 deletions(-)
+```
