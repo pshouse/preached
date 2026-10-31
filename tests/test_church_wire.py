@@ -637,6 +637,27 @@ class ChurchRefusalAtOpenTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_symlink_owner_and_wal_are_refused_before_any_connect(self) -> None:
+        link = self.index_dir / "linked.sqlite"
+        os.symlink(self.church, link)
+        wal = self.index_dir / "walchurch.sqlite"
+        build_church(wal)
+        with closing(sqlite3.connect(wal)) as writer:
+            writer.execute("PRAGMA journal_mode=WAL")
+        cases = {
+            "is a symlink": (link, {}),
+            "is owned by uid": (self.church, {"return_value": os.geteuid() + 4242}),
+            "WAL journal mode": (wal, {}),
+        }
+        for want, (path, euid) in cases.items():
+            with self.subTest(want=want), ExitStack() as stack:
+                stack.enter_context(patch("preached.library.open_readonly", side_effect=AssertionError("connected")))
+                if euid:
+                    stack.enter_context(patch("preached.library.os.geteuid", **euid))
+                with self.assertRaises(ChurchRefused) as caught:
+                    open_church_readonly(path, classic=self.wesley)
+                self.assertIn(want, str(caught.exception))
+
     def test_open_church_readonly_raises_a_refusal_not_a_crash(self) -> None:
         with self.assertRaises(ChurchRefused):
             open_church_readonly(self.index_dir / "absent.sqlite")
@@ -753,6 +774,13 @@ class ChurchRefusalWhileServingTests(unittest.TestCase):
         self.assertEqual(want, "library must be wesley")
         self.assertEqual(error(none, "spurgeon"), want)
         self.assertEqual(error(both, "spurgeon"), want)
+        status, _h, _body = both.get("/api/search?q=approvedtoken&mode=bm25&library=sample")
+        self.assertEqual(status, 200)
+        with closing(sqlite3.connect(self.church_path)) as writer:
+            writer.execute("PRAGMA journal_mode=WAL")
+            with self.assertLogs(level="INFO"):
+                self.assertEqual(error(both, "sample"), want)  # paused for this request
+            writer.execute("PRAGMA journal_mode=DELETE")
         status, _h, _body = both.get("/api/search?q=approvedtoken&mode=bm25&library=sample")
         self.assertEqual(status, 200)
         os.chmod(self.church_path, 0o666)
