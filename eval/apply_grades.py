@@ -17,7 +17,9 @@ Without --check it rewrites eval/questions.jsonl: previously applied proposals
 (status "proposed") and plain-blind items are removed first, so it is
 idempotent. Every label it adds has status "proposed" until Patrick confirms
 it in the review sheet. Existing labels are never changed. A rewrite and its
-original get identical label lists.
+original get identical label lists. Because plain-blind items are rebuilt from
+the grade files, it refuses to write while any plain-blind item carries a
+"confirmed" label (Patrick's blind verdict), which the rebuild would delete.
 
   uv run python eval/apply_grades.py --check [DIR_OR_FILES...]
   uv run python eval/apply_grades.py [DIR]      # default /cache/eval-pool/<today>/grades
@@ -132,6 +134,12 @@ def strip_applied(questions: list[dict]) -> list[dict]:
     return out
 
 
+def confirmed_plain_blind(questions: list[dict]) -> list[str]:
+    """Confirmed labels that strip_applied() would drop with their plain-blind question."""
+    return [f"{q['id']} {p.get('passage_id', '?')}" for q in questions if q.get("group") == "plain-blind"
+            for p in q["relevant"] if p.get("status") == "confirmed"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("paths", nargs="*", type=Path)
@@ -141,8 +149,13 @@ def main() -> int:
     args = parser.parse_args()
     paths = args.paths or [Path("/cache/eval-pool") / dt.date.today().isoformat() / "grades"]
     files = sorted(f for p in paths for f in (p.glob("*.json") if p.is_dir() else [p]))
+    current = read_jsonl(questions_path())
+    kept = confirmed_plain_blind(current)
+    if kept and not args.check:
+        print(f"refusing to rewrite {questions_path()}: re-applying would delete confirmed labels: {', '.join(kept)}")
+        return 1
     chunks = load_chunks(args.index)
-    questions = strip_applied(read_jsonl(questions_path()))
+    questions = strip_applied(current)
     by_id = {q["id"]: q for q in questions}
     families: dict[str, list[dict]] = {}
     for q in questions:
