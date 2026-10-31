@@ -6,7 +6,7 @@ Two sandbox gaps:
 - `sandbox.sh` is not on this machine (searched `/`), so git ran directly.
 - The review file `/workspace/reports/preached-pr37-review.md` is not here either (`/workspace` does not exist). I worked from the CTO items quoted verbatim in the task.
 
-**Code head: `ad2feee`.** The commit that adds this report follows it. The branch head is the follow-up commit that records that SHA (report text only).
+**Code head: `ad2feee`.** The commit that adds this report is `59a4b8c`. The branch head is the follow-up commit that records this SHA (report text only).
 
 ## What was done
 
