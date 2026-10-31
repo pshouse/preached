@@ -710,6 +710,47 @@ class ImportTests(unittest.TestCase):
                     self.assertEqual(code, 0, err)
                     self.assertEqual(seen, [60.0] if checked else [])
 
+    def test_metadata_integer_over_4300_digits_fails_closed_and_the_loop_continues(self) -> None:
+        # json.loads raises ValueError on a 4301-digit integer inside fetch_metadata; that video is marked error.
+        videos = [
+            Video("videohuge1", "Huge", 30, date(2024, 1, 2), "https://www.youtube.com/watch?v=videohuge1"),
+            Video("videookay1", "Fine", 30, date(2024, 1, 3), "https://www.youtube.com/watch?v=videookay1"),
+        ]
+        huge = '{"title": "Huge", "duration": ' + "9" * 4301 + "}"
+
+        def run_yt_dlp(command, **_kwargs):
+            body = huge if "videohuge1" in command[-1] else "{}"
+            return subprocess.CompletedProcess(args=command, returncode=0, stdout=body, stderr="")
+
+        def downloader(video, dest: Path):
+            dest.mkdir(parents=True, exist_ok=True)
+            path = dest / f"{video.id}.m4a"
+            path.write_bytes(b"fake")
+            return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch("preached.youtube.fetch.subprocess.run", side_effect=run_yt_dlp):
+                with self.assertRaises(ValueError):
+                    fetch_metadata(videos[0])
+                code, _out, err = self._run(
+                    ["https://www.youtube.com/channel/UCexample", "--library", "sample"],
+                    root,
+                    lister=lambda _url: videos,
+                    downloader=downloader,
+                    transcriber=lambda _path: sample_words(),
+                    coverage=lambda *_a, **_k: [],
+                    embedder=embedder,
+                )
+            self.assertEqual(code, 1, err)
+            self.assertIn("fail videohuge1", err)
+            connection = open_readonly(root / "sample.sqlite")
+            try:
+                status = dict(connection.execute("SELECT video_id, status FROM videos"))
+            finally:
+                connection.close()
+            self.assertEqual(status, {"videohuge1": "error", "videookay1": "ok"})
+
     def test_schema_matches_the_search_server(self) -> None:
         video = Video("samplevid01", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
         with tempfile.TemporaryDirectory() as tmp:

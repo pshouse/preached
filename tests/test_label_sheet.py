@@ -100,6 +100,19 @@ class LabelSheetTest(unittest.TestCase):
                 firsts.append(r[3])
         self.assertEqual(firsts, cids)
 
+    def test_row_order_is_the_seeded_shuffle_of_the_source(self):
+        import json
+        import random
+        src = json.loads(gen.SOURCE.read_text(encoding="utf-8"))
+        order = list(range(len(src)))
+        random.Random(PINNED_SEED).shuffle(order)
+        rows = list(csv.reader(io.StringIO(gen.SHEET.read_text(encoding="utf-8"), newline="")))[1:]
+        self.assertEqual([(r[2], r[4]) for r in rows], [(src[i]["question"], src[i]["chunk_text"]) for i in order])
+        # the KEY's "orig #" column (1-based position in the source) lists the same order
+        key_rows = [line.split(" | ") for line in gen.KEY.read_text(encoding="utf-8").splitlines() if re.match(r"\| L\d\d \|", line)]
+        self.assertEqual([int(k[4]) for k in key_rows], [i + 1 for i in order])
+        self.assertEqual([k[0].lstrip("| ") for k in key_rows], [r[0] for r in rows])
+
 
 if __name__ == "__main__":
     unittest.main()

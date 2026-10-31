@@ -317,6 +317,8 @@ class InFlightTests(unittest.TestCase):
 
 class DrainingGateTests(unittest.TestCase):
     def test_a_connection_accepted_after_drain_began_is_not_served(self) -> None:
+        saved_path = list(sys.path)
+        self.addCleanup(lambda: sys.path.__setitem__(slice(None), saved_path))
         sys.path.insert(0, str(ROOT))
         from app.server import PreachedServer
 
