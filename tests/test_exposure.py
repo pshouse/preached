@@ -1172,6 +1172,7 @@ class RequestSlotRaceTests(_Served):
             with self.subTest(path=path):
                 port, _app, server = self._serve(max_connections=16, max_per_client=4, max_requests=1)
                 gate = _Gate(self, server, "release_slot")
+                releases = _Releases(server)
                 health = path == "/healthz"
                 table = server._health_slots_by_key if health else server._slots_by_key
                 sock = _connect(port, "127.0.0.2")
@@ -1193,9 +1194,13 @@ class RequestSlotRaceTests(_Served):
                 # keep-alive connection and on a new one.
                 gate.open.set()
                 self.assertTrue(gate.done.wait(3))
-                self.assertEqual(table, {})
+                # Only this key: 127.0.0.3's release may still be on its way.
+                self.assertNotIn("127.0.0.2", table)
                 _send(sock, path)
                 self.assertEqual(_read_response(sock)[0], 200)
+                # The held one, 127.0.0.3's, and the keep-alive request's.
+                self.assertTrue(releases.wait_for(3))
+                self.assertEqual(table, {})
                 self.assertEqual(_get(port, path, source="127.0.0.2")[0], 200)
 
     def test_in_flight_never_exceeds_the_cap_and_every_slot_comes_back(self) -> None:
@@ -1205,7 +1210,7 @@ class RequestSlotRaceTests(_Served):
         # result does not depend on how the threads interleave.
         port, _app, server = self._serve(max_connections=32, max_per_client=16, max_requests=2)
         lock = threading.Lock()
-        state = {"now": 0, "peak": 0, "acquired": 0, "released": 0}
+        state = {"now": 0, "peak": 0, "acquired": 0, "released": 0, "returned": 0}
         real_acquire, real_release = server.acquire_slot, server.release_slot
 
         def acquire(key, *, health=False):
@@ -1218,11 +1223,16 @@ class RequestSlotRaceTests(_Served):
             return ok
 
         def release(key, *, health=False):
+            # "now" drops before the real release: the peak can only be
+            # undercounted by a request the real table still refuses.
             if not health:
                 with lock:
                     state["now"] -= 1
                     state["released"] += 1
             real_release(key, health=health)
+            if not health:
+                with lock:
+                    state["returned"] += 1
 
         server.acquire_slot, server.release_slot = acquire, release
         start = threading.Barrier(8)
@@ -1245,7 +1255,8 @@ class RequestSlotRaceTests(_Served):
         self.assertLessEqual(set(outcomes), {(200, None), (503, "1")})
         self.assertIn((200, None), outcomes)
         # Every handler has run release_slot once its last response is out.
-        self.assertTrue(_wait(lambda: state["released"] == state["acquired"]))
+        self.assertTrue(_wait(lambda: state["returned"] == state["acquired"]))
+        self.assertEqual(state["released"], state["acquired"])
         self.assertEqual(state["now"], 0)
         self.assertEqual(server._slots_by_key, {})
 
