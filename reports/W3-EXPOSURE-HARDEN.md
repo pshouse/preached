@@ -106,3 +106,57 @@ Each mutant was applied by hand and run against `tests.test_exposure` and `tests
 - The access log has one more field. Anything that parses it by position needs updating, and the release notes say so.
 - Behind a trusted proxy, addresses in that proxy's own /64 share its holder count. The intended proxy is `127.0.0.1`, so this does not come up in practice.
 - `tailscale serve`/`funnel` was still not tested as a proxy. It is now a gate item.
+
+## Round 2 fixes: CTO round 2 of PR #29 (42-W3-EXPOSURE-FIX2)
+
+Review of `9fa2451`: CHANGES. Nothing was deployed, nothing was bound to a public interface, and the Sprite was not contacted. No new dependencies. The task named `reports/W3-EXPOSURE.md`; that file does not exist, so this section is appended to the PR's report, `reports/W3-EXPOSURE-HARDEN.md`. The review file `/workspace/reports/preached-pr29-review.md` is not on this machine, so the items below follow the review text in the task.
+
+Merge: `git merge origin/main` (main at `efdf8ab`, which includes `eb4d48a`) made merge commit `5f14714`. The only conflict was the `app/server.py` import block (#32 moved `import signal` to the top). Resolved as the CTO did: the hunk keeps only `import socket  # noqa: E402`; `import ipaddress` sits outside the hunk. No rebase, no force-push.
+
+| Item | What changed | Commit | Tests |
+| --- | --- | --- | --- |
+| **M1, import conflict with main.** | Merged main and resolved as above. | `5f14714` | Full suite on the merge alone: 774 tests, OK. |
+| **M2, flaky `test_requests_in_flight_are_never_closed` and the SIGSEGV.** | (1) `PreachedServer.shutdown_request` calls `_release_connection` before `super().shutdown_request` (`_forget` is idempotent; the call in `process_request_thread` stays). (2) `_Served._serve` sets `daemon_threads = False` and `block_on_close = True` on the test server, so `server_close` joins every handler thread before cleanup closes the sqlite connection. (3) **The prescribed fix did not remove the flake on its own** (see below). The client reads the whole `Connection: close` response (it has a Content-Length) and reconnects before the handler thread reaches `shutdown_request`. So the handler's `end_headers` now calls `server.closing(request)` when `close_connection` is set, which frees the slot before any byte of the last response goes out. Every body is built before `end_headers`, so nothing is still working when the slot is handed on. | `13a2208` | New `test_slot_is_free_once_a_closing_response_is_read` (healthz, search, 404): it holds each handler for 0.3 s between write and close, then checks the slot is already free and the same peer, at its cap of 1, gets straight back in. Without the `end_headers` release it fails 5/5 runs, all three subtests. `test_requests_in_flight_are_never_closed` now also asserts `_reserved_total == 0` straight after the reserve's 503. |
+| **M3, go-public gate (docs only).** | Both "Going public" and "Remaining go-public gate items" now list, before CTO sign-off: #26 go-live checks on the Sprite (`/healthz` `dense: true`, `fallback: false`, `model_sha256` equal to the pin, `model/` not group- or world-writable; `umask 002` silently serves BM25 only) in place of the stale "1.62 GB" line (now 721 MiB); a #18 stale-bytecode drill and never `python -m app.server`; access-log retention and journald limits; least-privilege, scoped credentials (Sprite; tagged Tailscale node whose ACL allows only serve/funnel to the port; auth keys with expiry and rotation, by 1Password path only); fuzzing for the HTTP parser and `client_key`/XFF parsing; dependency and secret scanning in CI (no CI exists). The Tailscale e2e test is still listed as open. The threat model's "no query is stored" line now says client IP, path and time are stored. Left open for Patrick, listed as such: the retention period, serve vs funnel, and which CI. No CI workflow was added. | `5045deb` | `test_go_public_gate_has_the_round_one_items_before_sign_off` now checks each new item comes before CTO sign-off in both lists, that "1.62 GB" is gone, and that the stored-IP line is there. |
+| Should: Tailscale IPv6 shares one /64. | `address_key` keys `fd7a:115c:a1e0::/48` (`TAILSCALE_IPV6`) per address. Every other IPv6 address is still keyed by /64. | `0b91810` | `test_tailscale_addresses_are_keyed_per_address` (direct, forwarded, the edge of the /48, separate rate buckets), `test_tailscale_nodes_do_not_share_the_connection_cap` |
+| Should: sibling in the trusted proxy's /64. | Test only; code already trusts by the configured network. | `0b91810` | `test_a_sibling_in_the_proxys_64_is_not_trusted`: a sibling peer's XFF is ignored, and a sibling hop behind the real proxy is the client. |
+| Should: deterministic `_pick_victim` test for the reserve. | Test only. | `0b91810` | `test_a_reserved_healthz_connection_is_never_taken`: `_FakeRequest`s, no sockets. A busy and a reserved connection from a peer holding 2 more than the newcomer: `_pick_victim(0)` is None, the newcomer gets the second reserve, the next is refused, nothing is shut. |
+| Should: flush the suppressed refusal count. | `RefusalLog.flush()` logs `refused <class> flush suppressed=N` for each class with a pending count, then clears it. `PreachedServer.server_close` calls it, and `main()`'s `finally` already calls `server_close`. At shutdown, not on a timer. | `0b91810` | `test_suppressed_counts_are_flushed_at_shutdown` |
+| Should: journald docs. | DEPLOY's host section documents journald rate limiting (`RateLimitIntervalSec=`/`RateLimitBurst=`, or `LogRateLimit*` per unit), the "Suppressed N messages" loss under a flood, and rotation (`SystemMaxUse=`, `SystemMaxFileSize=`, `MaxRetentionSec=`). No values chosen. | `5045deb` | docs |
+| Should: #18 `main()` `finally` closes sqlite under live handlers. | **Not changed; follow-up.** PR #36 (`chore/w3-deploy-sigterm-nits`) is not merged. Its diff to `main()` widens the `except` to `(KeyboardInterrupt, SystemExit)` but keeps `server.server_close(); connection.close()` with `daemon_threads = True`, so `server_close` does not join handlers and a SIGTERM during a search can still close the connection under `Searcher.bm25`. A fix for main after #36: join handlers (non-daemon threads with a bounded join, or a drain counter) before `connection.close()`. That branch was not touched. | none | none |
+
+### Mutation checks (round 2)
+
+Each mutant was applied by a script that restored the file afterwards (it checked the content matched), and was run against `tests.test_exposure` (50 tests):
+
+- trust widened to the proxy's /64: **1 failure** (`test_a_sibling_in_the_proxys_64_is_not_trusted`). The CTO noted this mutant survived all 45 round-1 tests.
+- `_pick_victim` may take reserved connections: **1 failure** (`test_a_reserved_healthz_connection_is_never_taken`).
+- no Tailscale exception in `address_key`: **2 failures** (both Tailscale tests).
+- `server_close` does not flush: **1 failure** (`test_suppressed_counts_are_flushed_at_shutdown`).
+- no release in `end_headers` (`shutdown_request` release kept): `test_slot_is_free_once_a_closing_response_is_read` fails **5/5**.
+
+### Flake runs
+
+On a quiet machine this box does not reproduce the flake: `9fa2451` passed 20/20 alone, and so did the tree without the `end_headers` release. Under CPU load (24 busy-loop processes on 24 cores) it does:
+
+| Tree | Runs of `SlotFairnessTests.test_requests_in_flight_are_never_closed` alone | Failed |
+| --- | --- | --- |
+| `9fa2451` (round-1 head), loaded | 20 | **4** (all `503 != 200` on `/healthz`, the CTO's failure) |
+| `shutdown_request` release + thread join only (CTO's fix as written), loaded | 50 | **6** |
+| final head, quiet (`-X faulthandler`) | 50 | **0** |
+| final head, loaded | 50 | **0** |
+
+`SlotFairnessTests` on the final head, `-X faulthandler`: **0/10 failed** quiet and **0/10 failed** loaded, every exit code 0 (no 139). Script: `/tmp/m2scripts/flake.sh` (not committed). It is a loop of `uv run python -X faulthandler -m unittest tests.test_exposure.SlotFairnessTests.test_requests_in_flight_are_never_closed` (50×), then `tests.test_exposure.SlotFairnessTests` (10×).
+
+### Numbers
+
+- `uv run python -m unittest discover -s tests` on the final code (`5045deb`): **780 tests, 109.1 s, OK**. That is 774 from main plus round 1, plus 6 new tests in `tests.test_exposure`, which now has 51.
+- `uv lock --check`: clean, 79 packages resolved. The lockfile did not change.
+- Byte identity: `python3 -I scripts/compare_responses.py <origin/main worktree> "$PWD"` gives **28/28 identical** (Date, `took_ms` and Content-Length masked).
+- Head SHA: the commit that adds this section (`git rev-parse HEAD` on `feat/w3-exposure`). The last code commit is `0b91810`, and the last docs commit is `5045deb`.
+
+### Notes and limits
+
+- The per-key in-flight request slot (`acquire_slot`) is still released after the response is written, in `_respond`'s `finally`. A client that fires a new search on another connection the instant it reads a response could get a spurious `busy` 503. That is the same race class as M2, but not one the review raised. It is not changed here.
+- Releasing the connection slot in `end_headers` means a closing connection stops counting toward the caps while its last response is still being written, up to the 15 s socket timeout for a slow reader. That is at most one response per connection, after which the handler exits.
+- The `gh` CLI is not installed here, so the PR body could not be updated from this machine.
