@@ -8,12 +8,15 @@ restart under EXPORT_HASHSEED whatever the caller's seed.
 
 ExportIsByteIdenticalTests runs the real exporter three times (about a minute
 each on CPU). It skips only when the Granite weights are not in
-PREACHED_CACHE.
+PREACHED_CACHE, and it only reads them: outputs and the HF cache it uses are
+under a TMPDIR temp dir. Every other test here stubs os.execv and the export
+itself, so none downloads, exports, or writes under /cache.
 """
 
 from __future__ import annotations
 
 import filecmp
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +26,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 from preached.artifacts import (
     EXPORT_COMMAND,
@@ -216,8 +221,50 @@ def _load_exporter(name: str = "export_onnx_probe"):
 
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / "export_onnx.py")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # The script sets CUDA, dispatch and HF cache variables at import; keep
+    # them out of this process's environment.
+    with mock.patch.dict(os.environ):
+        spec.loader.exec_module(module)
     return module
+
+
+SCRIPT = ROOT / "scripts" / "export_onnx.py"
+# Prepended to subprocess code that runs the script as __main__. os.execv and
+# the export are stubbed: execv prints EXEC and its argv tail; main() prints
+# MAIN at its first import (torch / huggingface_hub are fakes). Either stub
+# exits 0, so nothing is downloaded, exported, or written.
+STUBS = (
+    "import json, os, sys, runpy, types\n"
+    "def execv(path, argv):\n"
+    "    print('EXEC', json.dumps(argv[1:]), flush=True)\n"
+    "    raise SystemExit(0)\n"
+    "os.execv = execv\n"
+    "class Stub(types.ModuleType):\n"
+    "    def __getattr__(self, name):\n"
+    "        print('MAIN', flush=True)\n"
+    "        raise SystemExit(0)\n"
+    "sys.modules['torch'] = Stub('torch')\n"
+    "sys.modules['huggingface_hub'] = Stub('huggingface_hub')\n"
+)
+
+
+def _sandbox_env(tmp: Path, **extra: str) -> dict[str, str]:
+    """Scratch caches and ONNX dir under tmp, offline, no hash seed."""
+    drop = {"PYTHONHASHSEED", "HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"}
+    env = {k: v for k, v in os.environ.items() if k not in drop}
+    env.update(
+        PREACHED_CACHE=str(tmp / "cache"),
+        PREACHED_ONNX_DIR=str(tmp / "onnx"),
+        HF_HOME=str(tmp / "hf"),
+        HF_HUB_OFFLINE="1",
+        TRANSFORMERS_OFFLINE="1",
+    )
+    env.update(extra)
+    return env
+
+
+def _tree(root: Path) -> list[str]:
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
 
 
 class Avx2GuardTests(unittest.TestCase):
@@ -253,14 +300,200 @@ class Avx2GuardTests(unittest.TestCase):
                 exporter._require_avx2("x86_64", Path(tmp) / "missing")
 
     def test_the_script_exits_non_zero_on_a_refused_host(self) -> None:
-        code = (
-            "import runpy, platform\n"
+        # Sandboxed: if __main__ skipped the guard, the stubbed execv (or the
+        # stubbed main) would exit 0 and this test would fail without any
+        # download, export, or write.
+        code = STUBS + (
+            "import platform\n"
             "platform.machine = lambda: 'arm64'\n"
-            f"runpy.run_path({str(ROOT / 'scripts' / 'export_onnx.py')!r}, run_name='__main__')\n"
+            f"runpy.run_path({str(SCRIPT)!r}, run_name='__main__')\n"
         )
-        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
-        self.assertNotEqual(result.returncode, 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                env=_sandbox_env(Path(tmp)),
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(_tree(Path(tmp)), [])
+        self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("export needs an x86-64 host with AVX2", result.stderr)
+        self.assertNotIn("EXEC", result.stdout)
+        self.assertNotIn("MAIN", result.stdout)
+
+
+class MainOrderTests(unittest.TestCase):
+    """The script's __main__ block: avx2 guard, then the seed restart (argv kept), then main."""
+
+    def _run(self, seed: str | None) -> list[str]:
+        code = STUBS + (
+            "import pathlib, platform\n"
+            "def machine():\n"
+            "    print('AVX2', flush=True)\n"
+            "    return 'x86_64'\n"
+            "platform.machine = machine\n"
+            "read_text = pathlib.Path.read_text\n"
+            "def fake_read_text(self, *args, **kwargs):\n"
+            "    if str(self) == '/proc/cpuinfo':\n"
+            "        return 'flags\\t: fpu avx avx2\\n'\n"
+            "    return read_text(self, *args, **kwargs)\n"
+            "pathlib.Path.read_text = fake_read_text\n"
+            f"sys.argv = [{str(SCRIPT)!r}, '--extra-arg', 'x y']\n"
+            f"runpy.run_path({str(SCRIPT)!r}, run_name='__main__')\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            extra = {} if seed is None else {"PYTHONHASHSEED": seed}
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                env=_sandbox_env(Path(tmp), **extra),
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(_tree(Path(tmp)), [])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def test_without_the_seed_it_guards_then_restarts_with_argv(self) -> None:
+        for seed in (None, "0", "random"):
+            with self.subTest(seed=seed):
+                lines = self._run(seed)
+                self.assertEqual(lines[0], "AVX2")
+                self.assertEqual(lines[1:], ['EXEC ' + json.dumps([str(SCRIPT.resolve()), "--extra-arg", "x y"])])
+
+    def test_under_the_seed_it_guards_then_runs_main(self) -> None:
+        self.assertEqual(self._run(_load_exporter().EXPORT_HASHSEED), ["AVX2", "MAIN"])
+
+
+class ExportMainTests(unittest.TestCase):
+    """main() with torch, the Hub and the export stubbed: where it writes, and the pin check."""
+
+    def _main(self, cache: Path, *, pin: str | None = None) -> tuple[Path, list[tuple[str, str]]]:
+        exporter = _load_exporter()
+        snapshot = cache.parent / "snapshot"
+        (snapshot / "1_Pooling").mkdir(parents=True)
+        (snapshot / "1_Pooling" / "config.json").write_text(json.dumps({"pooling_mode_cls_token": True}))
+        (snapshot / "sentence_bert_config.json").write_text(json.dumps({"max_seq_length": 8192}))
+        (snapshot / "tokenizer.json").write_text("{}")
+        torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+            backends=SimpleNamespace(cpu=SimpleNamespace(get_cpu_capability=lambda: "AVX2")),
+        )
+        hub = SimpleNamespace(snapshot_download=lambda *a, **k: str(snapshot))
+        touched: list[tuple[str, str]] = []
+
+        def record(kind, original):
+            def wrapper(*args, **kwargs):
+                touched.append((kind, str(args[0])))
+                return original(*args, **kwargs)
+
+            return wrapper
+
+        env = {k: v for k, v in os.environ.items() if k != "PREACHED_ONNX_DIR"}
+        env["PREACHED_CACHE"] = str(cache)
+        with (
+            mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.dict(sys.modules, {"torch": torch, "huggingface_hub": hub}),
+            mock.patch.object(exporter, "_load_encoder", lambda _snapshot: object()),
+            mock.patch.object(exporter, "_export", lambda _model, path: path.write_bytes(b"stub graph")),
+            mock.patch.object(exporter, "_check_export", lambda _model, _path: None),
+            mock.patch.object(exporter, "_quantize", lambda _src, dst: dst.write_bytes(b"stub int8")),
+            mock.patch.object(exporter, "FP32_ONNX_SHA256", pin or FP32_ONNX_SHA256),
+            mock.patch.object(shutil, "rmtree", record("rmtree", shutil.rmtree)),
+            mock.patch.object(shutil, "copyfile", record("copy", shutil.copyfile)),
+            mock.patch.object(Path, "write_text", autospec=True, side_effect=record("write", Path.write_text)),
+            mock.patch.object(Path, "write_bytes", autospec=True, side_effect=record("write", Path.write_bytes)),
+            mock.patch.object(Path, "mkdir", autospec=True, side_effect=record("mkdir", Path.mkdir)),
+            mock.patch("builtins.print"),
+        ):
+            folder = artifact_dir()
+            # main() removes this directory. Never let it run anywhere but the
+            # scratch cache, even when onnx_root is broken (a mutant once let
+            # it remove the real /cache export).
+            if not folder.is_relative_to(cache):
+                self.fail(f"export dir {folder} is not under PREACHED_CACHE {cache}; main() not run")
+            try:
+                exporter.main()
+            finally:
+                touched = [(kind, path) for kind, path in touched if not path.startswith(str(snapshot))]
+        return folder, touched
+
+    def test_a_graph_that_is_not_the_pin_writes_no_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pc"
+            with self.assertRaisesRegex(SystemExit, "is not the pin"):
+                self._main(cache)
+            folder = cache / "models" / "granite-english-r2-onnx" / GRANITE_REVISION
+            self.assertTrue((folder / "model.fp32.onnx").is_file())
+            self.assertFalse((folder / "manifest.json").exists())
+
+    def test_a_custom_preached_cache_holds_every_output_and_the_server_reads_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "pc"
+            # A stale export is replaced; a neighbour outside the export dir is not touched.
+            stale = cache / "models" / "granite-english-r2-onnx" / GRANITE_REVISION / "stale"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("old")
+            neighbour = cache / "models" / "other" / "keep"
+            neighbour.parent.mkdir(parents=True)
+            neighbour.write_text("keep")
+            pin = hashlib.sha256(b"stub graph").hexdigest()
+            folder, touched = self._main(cache, pin=pin)
+            self.assertEqual(folder, cache / "models" / "granite-english-r2-onnx" / GRANITE_REVISION)
+            self.assertFalse(stale.exists())
+            self.assertEqual(neighbour.read_text(), "keep")
+            self.assertEqual(
+                sorted(p.name for p in folder.iterdir()),
+                ["manifest.json", "model.fp32.onnx", "model.int8.onnx", "pooling.json", "tokenizer.json"],
+            )
+            # Every write, mkdir and removal is in the export dir.
+            self.assertIn(("rmtree", str(folder)), touched)
+            for kind, path in touched:
+                with self.subTest(kind=kind, path=path):
+                    self.assertTrue(path == str(folder) or path.startswith(str(folder) + os.sep), path)
+            # The server's default directory is the same one.
+            with mock.patch.dict(os.environ, {"PREACHED_CACHE": str(cache)}):
+                os.environ.pop("PREACHED_ONNX_DIR", None)
+                self.assertEqual(artifact_dir(), folder)
+                verified = verify_manifest(variant="fp32", enforce_pins=False)
+            self.assertEqual(verified.manifest["files"]["model.fp32.onnx"]["sha256"], pin)
+
+
+class OnnxRootTests(unittest.TestCase):
+    """The ONNX root: PREACHED_ONNX_DIR, else $PREACHED_CACHE/models/..., else /cache/models/..."""
+
+    def _root(self, **env: str) -> Path:
+        from preached.artifacts import onnx_root
+
+        base = {k: v for k, v in os.environ.items() if k not in {"PREACHED_ONNX_DIR", "PREACHED_CACHE"}}
+        base.update(env)
+        with mock.patch.dict(os.environ, base, clear=True):
+            return onnx_root()
+
+    def test_precedence(self) -> None:
+        self.assertEqual(self._root(), Path("/cache/models/granite-english-r2-onnx"))
+        self.assertEqual(self._root(PREACHED_CACHE="/tmp/pc-x"), Path("/tmp/pc-x/models/granite-english-r2-onnx"))
+        self.assertEqual(self._root(PREACHED_CACHE="/tmp/pc-x", PREACHED_ONNX_DIR="/tmp/o"), Path("/tmp/o"))
+
+    def test_the_server_names_the_custom_cache_path_when_the_graph_is_missing(self) -> None:
+        from app.server import load_search
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = {k: v for k, v in os.environ.items() if k != "PREACHED_ONNX_DIR"}
+            base["PREACHED_CACHE"] = tmp
+            with mock.patch.dict(os.environ, base, clear=True):
+                connection = _seed_granite(Path(tmp) / "index.sqlite")
+                try:
+                    with self.assertLogs(level="ERROR") as logs:
+                        load_search(connection, GRANITE_MODEL_KEY, embed_backend="onnx")
+                finally:
+                    connection.close()
+            expected = Path(tmp) / "models" / "granite-english-r2-onnx" / GRANITE_REVISION / "manifest.json"
+            self.assertIn(str(expected), "\n".join(logs.output))
+            self.assertEqual(_tree(Path(tmp)), ["index.sqlite"])
 
 
 class HfCacheDefaultTests(unittest.TestCase):
@@ -275,11 +508,12 @@ class HfCacheDefaultTests(unittest.TestCase):
             "import export_onnx\n"
             "def execv(path, argv):\n"
             "    print(os.environ['HF_HOME'], os.environ['HUGGINGFACE_HUB_CACHE'], 'torch' in sys.modules)\n"
+            "    assert os.environ['HF_HUB_CACHE'] == os.environ['HUGGINGFACE_HUB_CACHE']\n"
             "    raise SystemExit(0)\n"
             "os.execv = execv\n"
             "export_onnx._reexec_with_hashseed()\n"
         )
-        drop = {"PYTHONHASHSEED", "HF_HOME", "HUGGINGFACE_HUB_CACHE", "PREACHED_CACHE"}
+        drop = {"PYTHONHASHSEED", "HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "PREACHED_CACHE"}
         env = {k: v for k, v in os.environ.items() if k not in drop}
         env.update(env_set)
         result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
@@ -300,6 +534,15 @@ class HfCacheDefaultTests(unittest.TestCase):
             self._run(PREACHED_CACHE="/tmp/pc-x", HF_HOME="/tmp/hf-y"),
             ["/tmp/hf-y", "/tmp/hf-y/hub", "False"],
         )
+
+    def test_an_explicit_hub_cache_under_either_name_wins(self) -> None:
+        # huggingface_hub reads HF_HUB_CACHE first; both names end up equal.
+        for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    self._run(PREACHED_CACHE="/tmp/pc-x", **{name: "/tmp/hub-z"}),
+                    ["/tmp/pc-x/huggingface", "/tmp/hub-z", "False"],
+                )
 
 
 def _first_initializer_value(data: bytes | memoryview) -> int:
@@ -343,12 +586,11 @@ class MutantGraphTests(unittest.TestCase):
     def test_one_flipped_initializer_value_is_refused(self) -> None:
         source = artifact_dir()
         if not (source / "model.fp32.onnx").is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
-        if not os.access(source.parent.parent, os.W_OK):
-            self.skipTest("model mount is read-only; the test copies the 597 MB graph beside it")
+            self.skipTest("granite onnx artifacts are not under PREACHED_CACHE (or PREACHED_ONNX_DIR)")
         from preached.onnx_embed import OnnxEmbedder
 
-        with tempfile.TemporaryDirectory(dir=source.parent.parent) as tmp:
+        # The cache is only read; the 597 MB copy goes to TMPDIR.
+        with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             graph = folder / "model.fp32.onnx"
             shutil.copyfile(source / "model.fp32.onnx", graph)
@@ -471,7 +713,13 @@ def _export_command() -> list[str]:
 )
 class ExportIsByteIdenticalTests(unittest.TestCase):
     def test_exports_under_any_ambient_seed_are_byte_identical_and_are_the_pin(self) -> None:
-        with tempfile.TemporaryDirectory(dir=CACHE, prefix="export-repro-") as tmp:
+        # Outputs and the HF cache are in a TMPDIR temp dir; the snapshot in
+        # CACHE is only read, through a symlink, offline.
+        with tempfile.TemporaryDirectory(prefix="export-repro-") as tmp:
+            hf_home = Path(tmp) / "hf"
+            linked = hf_home / "hub" / SNAPSHOT.relative_to(CACHE / "huggingface" / "hub")
+            linked.parent.mkdir(parents=True)
+            linked.symlink_to(SNAPSHOT, target_is_directory=True)
             manifests = []
             # The runs start under different ambient hash seeds (unset, 0, 3)
             # and dispatch levels. Unfixed, seed 0 traces the other rotary
@@ -485,15 +733,7 @@ class ExportIsByteIdenticalTests(unittest.TestCase):
                 ("c", {"PYTHONHASHSEED": "3", "ATEN_CPU_CAPABILITY": "avx512"}),
             ):
                 out = Path(tmp) / name
-                env = {k: v for k, v in os.environ.items() if k != "PYTHONHASHSEED"}
-                env.update(
-                    PREACHED_ONNX_DIR=str(out),
-                    CUDA_VISIBLE_DEVICES="",
-                    HF_HOME=str(CACHE / "huggingface"),
-                    HUGGINGFACE_HUB_CACHE=str(CACHE / "huggingface" / "hub"),
-                    HF_HUB_OFFLINE="1",
-                    **start,
-                )
+                env = _sandbox_env(Path(tmp), PREACHED_ONNX_DIR=str(out), CUDA_VISIBLE_DEVICES="", **start)
                 result = subprocess.run(
                     [*_export_command(), str(ROOT / "scripts" / "export_onnx.py")],
                     cwd=ROOT,
