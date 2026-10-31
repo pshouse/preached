@@ -2,7 +2,7 @@
 
 Branch `docs/w3-label-sheet` (PR #43). Docs/data/script/tests only; no change to `src/`, the index, `eval/questions.jsonl` or grades.
 
-- **Head SHA:** see the final line of this commit's push note (the commit containing this report; the merge of origin/main 6a94caf is c3e6714, on top of 3db59e6). No rebase, no force-push.
+- **Head SHA:** `3fbfc50b7f262b1d75b2ab2c9733858cd8a051fa` (this report is in it; merge of origin/main 6a94caf is c3e6714 on top of 3db59e6). No rebase, no force-push.
 - **Caveats:** `gh`, `sandbox.sh` and `gitleaks` are not available here, so I used plain git, could not confirm via the API that PR #43 is open (origin/docs/w3-label-sheet was at 3db59e6 as required), and **did not run gitleaks**.
 
 ## Changes
