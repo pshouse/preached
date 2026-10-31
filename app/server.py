@@ -916,6 +916,7 @@ class App:
         church_note: str | None = None,
         church_check=None,
         church_start=None,
+        defer_church_pause_log=False,
         classic_label: str | None = None,
         frozen: bool = False,
     ):
@@ -1010,6 +1011,10 @@ class App:
         self.church_note = None
         self._church_check = None
         self._church_paused = False  # logged once at pause start and once at its end
+        # main() sets this so a pause found while the App is built is logged by
+        # ``log_startup_pause`` after ``listening on``, not before it.
+        self._defer_pause_log = bool(defer_church_pause_log)
+        self._held_pause_log = None
         self._church_start = None
         self._church_retry_at = 0.0
         self._church_backoff = CHURCH_RETRY_FIRST_S
@@ -1419,11 +1424,14 @@ class App:
             logging.error("church side refused: the church file could not be opened (%s)", exc)
             side = None
         self._church_start = None
-        if side is None:
+        refused = side is None or not self._install_church(**side)
+        if refused:
+            if self._church_paused:
+                # The refusal line itself was logged just above.
+                logging.info("church side pause ended: refused")
             self._church_paused = False
-        elif not self._install_church(**side):
-            self._church_paused = False
-            side["church_connection"].close()
+            if side is not None:
+                side["church_connection"].close()
 
     def _church_ready(self) -> bool:
         """True when the church side may be searched now. Call with ``self.lock`` held.
@@ -1460,7 +1468,18 @@ class App:
         """Log the start of a pause once, not once per skipped request. Call with ``self.lock`` held."""
         if not self._church_paused:
             self._church_paused = True
-            logging.info("church side paused: %s", reason)
+            if self._defer_pause_log:
+                self._held_pause_log = f"church side paused: {reason}"
+            else:
+                logging.info("church side paused: %s", reason)
+
+    def log_startup_pause(self) -> None:
+        """Log the pause found at startup, if any. ``serve_forever`` calls this right after ``listening on``."""
+        with self.lock:
+            self._defer_pause_log = False
+            held, self._held_pause_log = self._held_pause_log, None
+            if held is not None:
+                logging.info("%s", held)
 
     def _drop_church(self) -> None:
         self._church_paused = False
@@ -1687,6 +1706,7 @@ def build_app(
     church_check=None,
     church_open=None,
     frozen: bool = False,
+    defer_church_pause_log: bool = False,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file.
 
@@ -1772,6 +1792,7 @@ def build_app(
         kill_file=kill_file,
         servable=servable,
         church_start=start,
+        defer_church_pause_log=defer_church_pause_log,
         frozen=frozen,
     )
 
@@ -2709,6 +2730,7 @@ def _shutdown_socket(sock, how: int) -> None:
 def make_server(app: App, host: str, port: int) -> PreachedServer:
     server = PreachedServer((host, port), make_handler(app))
     server.trusted_proxies = app.trusted_proxies
+    server.app = app
     return server
 
 
@@ -2717,6 +2739,10 @@ def serve_forever(server: PreachedServer) -> None:
     print(f"PREACHED_RSS_BYTES {rss_bytes() or 0}", flush=True)
     print(f"PREACHED_LISTENING http://{host}:{port}", flush=True)
     logging.info("listening on http://%s:%s", host, port)
+    # After the line above: Infra's process-restart rule clears church-paused on it.
+    app = getattr(server, "app", None)
+    if app is not None:
+        app.log_startup_pause()
     server.serve_forever()
 
 
@@ -3111,6 +3137,7 @@ def main(argv: list[str] | None = None) -> None:
         servable=servable,
         church_open=church_open,
         frozen=bundle,
+        defer_church_pause_log=True,
     )
     if app.fallback_note:
         logging.warning("%s", app.fallback_note)

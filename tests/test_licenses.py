@@ -29,9 +29,14 @@ def check(rows: list[dict], provenance: dict) -> None:
     """Raise AssertionError if any generated field of provenance disagrees with rows."""
     tracks = Counter(r["ia_identifier"] for r in rows)
     items = provenance["ia_items"]
+    if len(items) != len({i["ia_identifier"] for i in items}):
+        raise AssertionError("duplicate ia_items entry")
     if {i["ia_identifier"] for i in items} != set(tracks):
         raise AssertionError("identifiers differ")
+    expected_keys = {"ia_identifier", "tracks", *ITEM_FIELDS}
     for item in items:
+        if set(item) != expected_keys:
+            raise AssertionError(f"{item['ia_identifier']}: keys {sorted(set(item) ^ expected_keys)}")
         ident = item["ia_identifier"]
         mine = [r for r in rows if r["ia_identifier"] == ident]
         if item["tracks"] != tracks[ident]:
@@ -62,6 +67,20 @@ class WesleyProvenanceTests(unittest.TestCase):
         changed = json.loads(json.dumps(provenance))
         changed["ia_items"][0]["tracks"] += 1
         with self.assertRaises(AssertionError):
+            check(rows, changed)
+
+    def test_guard_catches_a_duplicated_item(self) -> None:
+        rows, provenance = load()
+        changed = json.loads(json.dumps(provenance))
+        changed["ia_items"].append(dict(changed["ia_items"][0]))
+        with self.assertRaisesRegex(AssertionError, "duplicate"):
+            check(rows, changed)
+
+    def test_guard_catches_an_extra_key_in_an_item(self) -> None:
+        rows, provenance = load()
+        changed = json.loads(json.dumps(provenance))
+        changed["ia_items"][0]["extra"] = "x"
+        with self.assertRaisesRegex(AssertionError, "keys"):
             check(rows, changed)
 
     def test_note_does_not_claim_the_license_note_is_generated(self) -> None:
