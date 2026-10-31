@@ -428,7 +428,7 @@ def cpu_eval(
 
         dtype_label = loaded.dtype
     try:
-        searcher = Searcher(connection, model=spec.key)
+        searcher = Searcher(connection, model=spec.key, allow_eval_only=True)
         result = evaluate(searcher, questions, MODES, encode=encode, dedupe=dedupe)
         for q in questions[:2]:  # warmup
             searcher.hybrid(q["query"], encode(q["query"]), 5)
@@ -629,7 +629,7 @@ def abstain_rows(spec, connection, questions, encode=None) -> tuple[list[dict], 
             return encode_query(loaded, query)
 
     try:
-        searcher = Searcher(connection, model=spec.key)
+        searcher = Searcher(connection, model=spec.key, allow_eval_only=True)
         rows = []
         for q in questions:
             vector = encode(q["query"])

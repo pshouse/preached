@@ -1153,6 +1153,11 @@ def build_app(
     frozen: bool = False,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
+    if model_key not in RUNTIME_MODELS:
+        # Same refusal as main(); never fall back to keyword search quietly,
+        # whether the key is eval-only or a typo.
+        reason = "eval-only, not available to the server" if model_key in MODELS else "unknown model"
+        raise ValueError(f"model {model_key}: {reason}")
     searcher, encode, note = load_search(
         connection,
         model_key,
