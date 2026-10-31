@@ -14,7 +14,6 @@ import math
 import os
 import random
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -213,9 +212,9 @@ class ServedTests(Base):
 
 
     def run_page(self, cards: list[dict], checks: str) -> None:
-        if not shutil.which("deno"):
-            self.skipTest("deno not installed")
-        from test_app_js import PRELUDE
+        from test_app_js import PRELUDE, need_deno
+
+        need_deno(self)
 
         script = PRELUDE + APP_JS.read_text() + f"""
 var CARDS = {json.dumps(cards)};
