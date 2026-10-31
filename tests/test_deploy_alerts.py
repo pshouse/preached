@@ -74,7 +74,9 @@ CITED = (
     ("app/server.py", "883", LOCKED),
     ("app/server.py", "886", '"church side refused: its searcher could not be built (%s: %s)"'),
     ("app/server.py", "1107", "refusing to serve after reload:"),
+    ("app/server.py", "1150", "self._serve_keyword_only(STALE_NOTE)"),
     ("app/server.py", "1184", "refusing to serve:"),
+    ("app/server.py", "1190", "self._serve_keyword_only(INDEX_READ_NOTE)"),
     ("app/server.py", "1386", 'logging.error("church side refused: %s", problem)'),
     ("app/server.py", "1391", 'logging.error("church side refused: the publish gate did not turn on")'),
     ("app/server.py", "1424", '"church side refused: the church file could not be opened (%s)", exc)'),
@@ -130,6 +132,17 @@ CITED = (
 CITE = re.compile(r"`((?:[\w./-]+\.(?:py|sh))?):(\d+(?:-\d+)?)`")
 
 
+def _close_app(app) -> None:
+    """Close the sqlite connections church_app / build_app left open."""
+    app.connection.close()
+    if app.church_connection is not None:
+        app.church_connection.close()
+    for searcher in (app.searcher, app.church_searcher):
+        cache = getattr(searcher, "_visible_cache", None)
+        if cache is not None:
+            cache.fts.close()
+
+
 def runbook_cites(text: str) -> set[tuple[str | None, str]]:
     """(file, cite) for every `file:n` and bare `:n` in the runbook.
 
@@ -165,6 +178,7 @@ class AlertLineTests(_Root):
         church = self.root / "sample.sqlite"
         build_church(church)
         app = church_app(self.wesley, church)
+        self.addCleanup(_close_app, app)
         with patch.object(server, "compute_signals", side_effect=RuntimeError("boom")):
             with self.assertLogs(level="ERROR") as logs:
                 self.assertIsNone(app.church_search("approvedtoken", 5, "bm25"))
@@ -193,6 +207,7 @@ class AlertLineTests(_Root):
                     church_connection=reopen(church),
                     church_library="sample",
                 )
+        self.addCleanup(_close_app, app)
         self.assertIsNone(app.church_searcher)
         self.assertEqual(len(logs.output), 1, logs.output)
         self.assertEqual(logs.output, [f"ERROR:root:{SEARCHER_NOT_BUILT}"])

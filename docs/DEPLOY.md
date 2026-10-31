@@ -721,7 +721,10 @@ What happens, and what is logged:
   `ERROR church side refused: the church file could not be opened (<exc>)`
   (`app/server.py:1424`). Either way the retries end and the pause is
   cleared (`_church_paused = False`, `app/server.py:1432`) with no
-  `resumed` line: the side is off until restart. A file that is busy again
+  `resumed` line. `INFO church side pause ended: refused`
+  (`app/server.py:1431`) follows any refusal of a retry while paused
+  (rows 1-3), not only `:1424`; the refusal line precedes it. Not an
+  alert. The side is off until restart. A file that is busy again
   on a retry (`ChurchPaused`, also from the searcher build, `app/server.py:883`)
   keeps the pause and doubles the wait, with no new `paused` line. A
   successful retry logs
@@ -780,7 +783,7 @@ All rules stay disabled until Infra Ops enables them after deploy approval.
 | 2 | PAGE | `church-refused` | `ERROR church side refused: its searcher could not be built` | `app/server.py:886` | `ERROR church side refused: its searcher could not be built (<Type>: <why>)`, one line, no traceback. At start or on a retry of a paused start. |
 | 3 | PAGE | `church-refused` | `ERROR church side refused: the church file could not be opened` | `app/server.py:1424` | `ERROR church side refused: the church file could not be opened (<exc>)`, only for an unexpected exception on a retry of a paused start (an ordinary failed retry logs a row 1 or row 2 line). In the paging group with rows 1-2. Any failed retry ends the retries and clears the pause with no `resumed` line. |
 | 4 | PAGE | `church-dropped` | `ERROR church side dropped:` | `app/server.py:1463` | Off until restart: the same effect as a refusal (the church side stays off until restart), so it pages with rows 1-3. Final severity (CTO). |
-| 5 | INFO, then PAGE | `church-paused` -> `church-paused-stuck` / `church-paused-unverified` | `INFO church side paused:` | `app/server.py:1474`, `:1482` | Opens a 15-minute window. Start-time busy file, or a lock or WAL seen while serving. The side retries (1 s doubling to 30 s) and returns without a restart. Closed by `INFO church side resumed` (`app/server.py:1541`), which is logged only after the next church search completes, and also by a refused or dropped line or the restart marker. It pages (`church-paused-stuck`) only on a second `GET /api/side 200` logged after the window, at least 30 s (`confirm_after`) after the first; with no church search, no `resumed` line comes and the rule raises the info notice `church-paused-unverified`, not a page. See the note below. A pause found at start is held and logged after `listening on` (`:1482`, a `%s` of the held text; a grep for `church side paused` in the source misses it). A page for a start-time pause can therefore come late; that is acceptable. `church-paused-stuck` PAGE (with the 30 s confirm), `church-paused-unverified` INFO (CTO final). |
+| 5 | INFO, then PAGE | `church-paused` -> `church-paused-stuck` / `church-paused-unverified` | `INFO church side paused:` | `app/server.py:1474`, `:1482` | Opens a 15-minute window. Start-time busy file, or a lock or WAL seen while serving. The side retries (1 s doubling to 30 s) and returns without a restart. Closed by `INFO church side resumed` (`app/server.py:1541`), which is logged only after the next church search completes, and also by a refused or dropped line or the restart marker. It pages (`church-paused-stuck`) only on a second `GET /api/side 200` logged after the window, at least 30 s (`confirm_after`) after the first; with no church search, no `resumed` line comes and the rule raises the info notice `church-paused-unverified`, not a page. See the note below. A pause found at start is held and logged after `listening on` (`:1482`, a `%s` of the held text; a grep for `church side paused` in the source misses it). A page for a start-time pause can therefore come late. `church-paused-stuck` PAGE (with the 30 s confirm), `church-paused-unverified` INFO (CTO final). |
 | 6 | TICKET | `church-search-failed` | `ERROR church search failed; that side is empty` | `app/server.py:1544` | At most one ticket per hour. Traceback follows. Final severity TICKET (CTO). |
 
 Rule numbers moved with #46: the old rule 1 (a writer's lock at start is a
@@ -837,10 +840,11 @@ BM25 only, with no refusal. Both lines carry a traceback
 
 #### Deploy alerts
 
-These are lines from the Wesley deploy, not the church side. Every rule is
+These are lines from the Wesley deploy, not the church side. D1-D6 are
 drafted and disabled (Infra Ops, `church-alerts.yaml`); Infra Ops enables
-them after deploy approval. D1 and D2 are a failed go-live (step 7) if they
-appear at start. Severities are the CTO's final rulings.
+them after deploy approval. D7 is OPEN: Infra Ops drafts it disabled at the
+re-pin (TICKET, at most 1 per hour). D1 and D2 are a failed go-live (step 7)
+if they appear at start. Severities are the CTO's final rulings.
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -850,15 +854,18 @@ appear at start. Severities are the CTO's final rulings.
 | D4 | PAGE | `deploy-refusing-frozen-bundle` | `ERROR refusing to serve:` | `app/server.py:1184` | The frozen bundle index changed after start; every request is `503`. Rule drafted, disabled. |
 | D5 | PAGE | `deploy-stuck-stop` | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3183` | The stuck stop (the 10 s `DRAIN_TIMEOUT_S` line, logged after `stopping` at `:3178`); exit 1. Rule drafted, disabled. |
 | D6 | TICKET (server types), INFO (client types) | `deploy-request-failed-server` (TICKET, at most 1 per rolling hour), `deploy-request-failed-client` (INFO) | `ERROR request failed:` | `app/server.py:1973`, `:1978`, `:2023`, `:2025`, `:2085`, `:2325`, `:2346` | The line carries the exception type only. Ordinary clients produce it: a slow header, a keep-alive left idle past 15 s (`REQUEST_TIMEOUT_S`) and a reset give `TimeoutError` and `ConnectionResetError`. The client-caused types `TimeoutError`, `ConnectionResetError`, `BrokenPipeError` and `ConnectionAbortedError` go to the INFO rule; every other type goes to the TICKET rule. Rules drafted, disabled. |
-| D7 | TICKET | | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1750` | Traceback follows. The server serves with no abstain floor. |
+| D7 | TICKET | | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1750` | At most 1 per hour. Traceback follows. The server serves with no abstain floor. OPEN: Infra Ops drafts this rule disabled at the re-pin. |
 
 Known gaps in the observability, OPEN (no code change in this PR):
 
 - **OPEN, HARD CONDITION before any public exposure: a BM25 fallback during
-  a reload is silent.** The reload paths (`app/server.py`, the
-  `_serve_keyword_only` calls at lines 1150 and 1190) log nothing when they fall back to BM25, so only a `/healthz`
-  `dense: false` probe catches it. D1 and D2 are blind to it, on the Wesley
-  site too. The fix is tracked as W3-OBS-GAPS.
+  a reload is silent.** The reload BM25-fallback hard condition applies to
+  any deploy that can reach the reload paths (a checkout deploy and the
+  church site); a frozen bundle refuses first at `app/server.py:1184` (D4),
+  so it is covered there. The `_serve_keyword_only` calls
+  (`app/server.py:1150`, `:1190`) log nothing when they fall back to BM25, so
+  only a `/healthz` `dense: false` probe catches it. D1 and D2 are blind to
+  it on those reload paths. The fix is tracked as W3-OBS-GAPS.
 - **OPEN, should-fix until W3-OBS-GAPS lands: a clean stop logs no exit
   line.** A kill before the 10 s drain ends, or a hang on exit, is visible
   only through the supervisor's exit status.
@@ -870,7 +877,6 @@ Other lines this runbook names, all grep-verified on the merge tree (this branch
 | `INFO church side: <slug>, read-only, through the publish gate` | `church-opened` (INFO) | `app/server.py:2838` | Church side opened, at start or on a successful retry. Not a restart marker. |
 | `INFO church side paused: <file> is in WAL journal mode` | | `app/server.py:1474` (direct) or `:1482` (held at start, logged after `listening on`), text from `src/preached/library.py:883-884` (start) or `:962` (the check, before a search, or at start through `:915`) | Pause line, WAL form. |
 | `INFO church side paused: the church file is locked by a writer (...)` | | `app/server.py:1474` or `:1482`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (the check, before a search, or at start through `:915`), `app/server.py:883` (searcher build, at start or on a retry) or `app/server.py:1549` (search) | Pause line, lock form. |
-| `INFO church side pause ended: refused` | (INFO) | `app/server.py:1431`, after the refused line at `:1424` | A failed retry of a paused start ended the pause; the refusal line (rows 1-3) precedes it. Not an alert. |
 | `warning: the church file is still in wal journal mode (...)` | | `src/preached/youtube/pipeline.py:333`, text from `src/preached/youtube/library.py:157` | `--ack-review` output (step 4 of the gate). |
 | `INFO listening on http://<host>:<port>` | `process-restart` (INFO) | `app/server.py:2741` | Server up. Infra Ops' restart marker. A start-time `paused` line is logged after it, by `log_startup_pause` called at `:2745` (HD1, MET, fixed in #48). |
 | `INFO stopping` | `deploy-stopping` (INFO) | `app/server.py:3178` | Start of every stop. |
@@ -889,10 +895,10 @@ TimeoutError`, which D6 routes to INFO by type.
 `ChurchPaused`), the row-6 line and its traceback, the one-line
 searcher-build refusal, the log format, and that this file quotes each of
 them. It also checks that the string in every `file:line` this file cites
-(the alert rows, the "Other lines" table and the gate and unit bullets) sits
-on that line of that file, and that this file cites it in the same row or
-paragraph. A change that moves a cited line, or edits its text in place,
-fails it until this file is refreshed.
+(the alert rows, the "Other lines" table, the gate and unit bullets and the
+known-gaps bullets) sits on that line of that file, and that this file cites
+it in the same row or paragraph. A change that moves a cited line, or edits
+its text in place, fails it until this file is refreshed.
 
 ## Going public (Part 4, not part of this deploy)
 
