@@ -56,9 +56,9 @@ uv run app/server.py                                 # http://127.0.0.1:8000/api
 > alignment, so a chunk that contains the quote text overlaps the quote's span by construction.
 > They are therefore **equal to the text metric by construction (14/23 vs 14/23) and are not an
 > independent audio-accuracy result.** They show that timings and text agree, not that the timings
-> match the audio. The audio-accuracy evidence is the **W1-C spot-check**: `start_s` against the
-> audio, but the repo holds no measurement data for it, so no offset is quoted here. Do not present the
-> timestamp hit@k to judges as a separate result.
+> match the audio. **No audio-accuracy measurement is in the repo; the timestamp hit@k is not one.**
+> The W1-C spot-check (`start_s` against the audio) left no measurement data in the repo, so no offset
+> is quoted here. Do not present the timestamp hit@k to judges as a separate result.
 
 How a hit is judged: the gold span is the first-to-last word time of the eval quote, found in the
 canonical word stream and read from W1-C's per-word times (`/cache/aligned/wesley/*.json`).
@@ -73,9 +73,9 @@ often repeats its text verse. Grade-2 passages only; grade 1 adds nothing (same 
 
 - **Timestamp hits equal text hits exactly** (by construction, see the note above), question by question (after counting every
   occurrence of the quote). This only shows that the stored times agree with the text; it says
-  nothing about whether they match the audio. The audio evidence is W1-C's spot-check (chunk
-  starts vs the audio), whose earlier figures (0.42 s median, 0.76 s max) are withdrawn: the repo
-  holds no measurement data for them. The 0.75 s pre-roll is a margin, not a measured bound.
+  nothing about whether they match the audio. No audio-accuracy measurement is in the repo; the
+  timestamp hit@k is not one. W1-C's spot-check (chunk starts vs the audio) figures (0.42 s median,
+  0.76 s max) are withdrawn: the repo holds no measurement data for them. The 0.75 s pre-roll is a margin, not a measured bound.
 - Strict is low by design, not an error: a chunk is ~45 s (median) and the gold quote is a sentence
   or two inside it, so `start_s` is the chunk's start, a little before the quote. Among the 14
   top-1 overlap hits, the quote starts 0 s after `start_s` in 5, ≤ 2 s in 8, and at most 31.7 s
