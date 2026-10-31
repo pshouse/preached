@@ -24,8 +24,8 @@ uv run search/query.py "worry" --model arctic-embed-l   # argparse rejects
 
 ## 4. Open issues
 
-- No dedicated provenance files exist in the repo; the README points to the sources in Credits and `corpus/catalog.json`. 
-- AGENTS.md still lists Arctic Embed among allowed-provenance examples (a provenance statement, not a product option); not edited.
+- Provenance files: `ingest/manifest/{spurgeon,edwards}.provenance.json` exist (the earlier statement here that none existed was wrong); `wesley.provenance.json` was added in LICENSE-ARCTIC-NITS from `wesley.jsonl`. 
+- AGENTS.md listed Arctic Embed among allowed-provenance examples; removed in LICENSE-ARCTIC-NITS.
 
 ## 5. Dependencies added
 

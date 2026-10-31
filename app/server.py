@@ -848,6 +848,9 @@ def build_app(
     church_sample: bool | None = None,
 ) -> App:
     """``floor`` overrides search/abstain.toml (tests); None reads the file."""
+    if model_key in MODELS and model_key not in RUNTIME_MODELS:
+        # Same refusal as main(); never fall back to keyword search quietly.
+        raise ValueError(f"model {model_key}: eval-only, not available to the server")
     searcher, encode, note = load_search(
         connection,
         model_key,

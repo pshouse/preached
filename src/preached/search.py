@@ -116,13 +116,15 @@ class Searcher:
         self._rowids: list[int] | None = None
         self._matrix: np.ndarray | None = None
         if model:
-            if fingerprint is None:
-                from preached.models import MODELS
+            from preached.models import MODELS
 
+            # An explicit fingerprint is for fixture models that are not in
+            # models.toml; a configured eval-only model is refused either way.
+            if model in MODELS and MODELS[model].eval_only:
+                raise RuntimeError(f"model {model!r} is eval-only and cannot be used by the product")
+            if fingerprint is None:
                 if model not in MODELS:
                     raise RuntimeError(f"unknown model {model!r}; see search/models.toml")
-                if MODELS[model].eval_only:
-                    raise RuntimeError(f"model {model!r} is eval-only and cannot be used by the product")
                 self._fingerprint = MODELS[model].fingerprint()
             self._load_vectors()
         self._version = self._data_version()

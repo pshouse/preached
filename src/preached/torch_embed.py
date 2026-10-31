@@ -30,6 +30,8 @@ class TorchEmbedder:
         from preached.embed import load_model
 
         spec = MODELS[model_key]
+        if spec.eval_only:
+            raise ValueError(f"model {model_key!r} is eval-only and cannot be loaded for the product")
         loaded = load_model(spec, device=device, batch_size=batch_size)
         return cls(loaded, batch_size)
 
