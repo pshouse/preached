@@ -102,8 +102,9 @@ Attribution: I cannot prove this was not mine. The ambient shell environment has
 
 Demo dry run 2 against main `9fe33ca`: every DEMO-SCRIPT step passes; stale items (a40706b pin, 998 test count, latency 56 ms vs measured p50 72 ms unpinned, three drifted line cites) are listed with proposed wording in `reports/W4-DEMO-DRYRUN-2.md`. Report only; the four owner docs are untouched.
 
-Diff stat (`git diff --stat origin/main..HEAD`), filled in at commit time:
+Diff stat (`git diff --stat origin/main..HEAD`):
 
 ```
-DIFFSTAT
+ reports/W4-DEMO-DRYRUN-2.md | 109 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 109 insertions(+)
 ```
