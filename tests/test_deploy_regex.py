@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import app.server as server  # noqa: E402
 import test_obs_gaps  # noqa: E402  (module, not the class: discovery would rerun its tests)
+import test_onnx_pin_repro  # noqa: E402  (module only, same reason)
 
 DEPLOY = Path(__file__).resolve().parents[1] / "docs" / "DEPLOY.md"
 # The formatter main() installs. Alerts anchor on this, including the defaults
@@ -37,7 +38,7 @@ EXPECT_STYLE = "%"
 EXPECT_DATEFMT = None
 # Exact set. A wrapped or unanchored pattern that the parser used to skip
 # changes this set or adds a parse problem, and the test fails.
-EXPECTED_PATTERNS = {"D2b", "stamp", "side-access"}
+EXPECTED_PATTERNS = {"D2", "D2b", "stamp", "side-access"}
 # Infra Ops keeps the yaml outside this repo. Optional check when it is mounted.
 INFRA_ALERTS = Path("/workspace/infra-ops/preached/alerts/church-alerts.yaml")
 INFRA_RULES = {
@@ -372,8 +373,65 @@ class DeployRegexTests(unittest.TestCase):
         fake.log_request(200)
         return list(self.collect.lines)
 
+    def unavailable_lines(self) -> list[str]:
+        """D2 from both startup branches of the real load_search.
+
+        No graph: the real ONNX loader against an empty temp PREACHED_ONNX_DIR
+        raises ArtifactMissing, and the ONNX GRAPH NOT BUILT line must follow.
+        Load failure: a loader that raises, logged with a traceback.
+        """
+        needle = server.UNAVAILABLE_LOG
+        lines: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="preached-regex-d2-") as tmp:
+            _under_temp(Path(tmp))
+            onnx_dir = Path(tmp) / "onnx"
+            onnx_dir.mkdir()
+            offline = {
+                "HF_HUB_OFFLINE": "1",
+                "HF_HOME": str(Path(tmp) / "hf"),
+                "PREACHED_CACHE": tmp,
+                "PREACHED_ONNX_DIR": str(onnx_dir),
+                "TRANSFORMERS_OFFLINE": "1",
+            }
+            with patch.dict(os.environ, offline):
+                connection = test_onnx_pin_repro._seed_granite(Path(tmp) / "index.sqlite")
+                try:
+                    self.collect.lines.clear()
+                    _searcher, encode, note = server.load_search(
+                        connection, "granite-english-r2", embed_backend="onnx"
+                    )
+                    graph = list(self.collect.lines)
+                    self.assertIsNone(encode)
+                    self.assertEqual(note, server.MISSING_GRAPH_NOTE)
+                    at = [i for i, line in enumerate(graph) if needle in line]
+                    self.assertEqual(len(at), 1, f"no-graph start: {graph!r}")
+                    self.assertGreater(len(graph), at[0] + 1, f"no ONNX GRAPH NOT BUILT line: {graph!r}")
+                    self.assertTrue(
+                        graph[at[0] + 1].startswith(
+                            "ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. "
+                        ),
+                        graph,
+                    )
+                    lines.append(graph[at[0]])
+
+                    def broken(_connection, _model_key):
+                        raise RuntimeError("model load failed")
+
+                    self.collect.lines.clear()
+                    _searcher, encode, note = server.load_search(connection, "granite-english-r2", loader=broken)
+                    self.assertIsNone(encode)
+                    self.assertEqual(note, server.FALLBACK_NOTE)
+                    failed = [line for line in self.collect.lines if needle in line]
+                    self.assertEqual(len(failed), 1, self.collect.lines)
+                    lines.extend(failed)
+                finally:
+                    connection.close()
+        return lines
+
     def produce(self, name: str) -> list[str]:
         """The real emitted line(s) for a pattern, chosen by its anchor, never by its regex text."""
+        if name == "D2":  # startup, real load_search: no graph, then a load failure
+            return self.unavailable_lines()
         if name == "D2b":  # reload path, real App._refresh_if_stale
             return self.reload_lines("index status unreadable")
         if name == "stamp":  # real App._capture_stamp

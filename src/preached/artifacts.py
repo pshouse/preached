@@ -1,6 +1,10 @@
 """On-disk ONNX artifacts for Granite English R2.
 
-Weights live under ``/cache/models/granite-english-r2-onnx/<revision>/``.
+Weights live under ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``
+(``/cache`` when PREACHED_CACHE is unset; PREACHED_ONNX_DIR replaces the
+whole root). The export and the server both resolve it through
+``artifact_dir``.
+
 The runtime loads one variant, fp32. int8 is not a runtime variant: it
 missed the quality bar, and a manifest must not point ``fp32`` at another
 file. The graph file name and its sha256 are pinned in this module by
@@ -23,7 +27,10 @@ GRANITE_HF_ID = "ibm-granite/granite-embedding-english-r2"
 GRANITE_REVISION = "47ea694b257b703fee9253d75c2b1f2985180498"
 GRANITE_MODEL_KEY = "granite-english-r2"
 
-# sha256 of the bytes under /cache, hashed 2026-10-30. The graph pin is
+# sha256 of the bytes under /cache, hashed 2026-10-30. EXPORT_COMMAND
+# rebuilds this graph byte for byte: the export script fixes both
+# ATEN_CPU_CAPABILITY=avx2 and PYTHONHASHSEED=1 (see
+# docs/adr/0001-onnx-export-determinism.md). The graph pin is
 # keyed by variant, not by whatever file name the manifest writes. A
 # rewritten manifest cannot aim fp32 at another graph.
 FP32_ONNX_SHA256 = "3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9"
@@ -39,7 +46,11 @@ ONNX_ROOT_ENV = "PREACHED_ONNX_DIR"
 VARIANT_ENV = "PREACHED_ONNX_VARIANT"
 THREADS_ENV = "PREACHED_ORT_INTRA_OP_THREADS"
 
-DEFAULT_ONNX_ROOT = Path("/cache/models/granite-english-r2-onnx")
+CACHE_ENV = "PREACHED_CACHE"
+DEFAULT_CACHE = "/cache"
+ONNX_SUBDIR = Path("models") / "granite-english-r2-onnx"
+# The one step that builds and checks the graph, named in missing-graph errors.
+EXPORT_COMMAND = 'uv run --group bench python scripts/export_onnx.py'
 # One intra-op thread. A 1-vCPU Sprite with 4 threads was slower (134 ms
 # p50 vs 56 ms). Set PREACHED_ORT_INTRA_OP_THREADS=4 on a larger CPU.
 DEFAULT_ORT_THREADS = 1
@@ -50,11 +61,19 @@ class ArtifactError(RuntimeError):
     """The ONNX directory is missing or does not match its manifest."""
 
 
+class ArtifactMissing(ArtifactError):
+    """The manifest or a needed file is absent: the export was never run.
+
+    A file that is present but wrong stays a plain ArtifactError; rebuilding
+    is not the advice for a tampered graph.
+    """
+
+
 def onnx_root() -> Path:
     raw = os.environ.get(ONNX_ROOT_ENV)
     if raw:
         return Path(raw)
-    return DEFAULT_ONNX_ROOT
+    return Path(os.environ.get(CACHE_ENV) or DEFAULT_CACHE) / ONNX_SUBDIR
 
 
 def artifact_dir(revision: str | None = None) -> Path:
@@ -73,7 +92,7 @@ def load_manifest(directory: Path | None = None) -> dict:
     folder = directory or artifact_dir()
     path = folder / "manifest.json"
     if not path.is_file():
-        raise ArtifactError(f"missing ONNX manifest at {path}")
+        raise ArtifactMissing(f"missing ONNX manifest at {path}; build it with: {EXPORT_COMMAND}")
     try:
         manifest = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
@@ -158,7 +177,7 @@ def verify_manifest(
             raise ArtifactError(f"ONNX manifest sha256 for {name} is missing")
         path = folder / name
         if not path.is_file():
-            raise ArtifactError(f"ONNX artifact missing: {name}")
+            raise ArtifactMissing(f"ONNX artifact missing: {path}; build it with: {EXPORT_COMMAND}")
         if name == graph_name:
             if not hash_graph:
                 continue

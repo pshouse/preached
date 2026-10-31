@@ -143,6 +143,7 @@ from app.bundle import (  # noqa: E402, F401
 )
 from preached import env  # noqa: E402, F401
 from preached.abstain import church_confidence, compute_signals, floor_for, search_with_confidence  # noqa: E402
+from preached.artifacts import ArtifactMissing  # noqa: E402
 from preached.backends import DEFAULT_EMBED_BACKEND  # noqa: E402
 from preached.libraries import PUBLIC_DOMAIN, classic_index_problem, is_public_domain  # noqa: E402
 from preached.library import (  # noqa: E402
@@ -294,9 +295,21 @@ BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
 MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"
 UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"
+# Loud on purpose: a fresh clone without the export otherwise looks like a
+# working server that finds nothing.
+MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"
+MISSING_GRAPH_NOTE = "The search model has not been built; results are BM25 only."
 INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 REFUSED_ERROR = "index unavailable"
+# /healthz search_mode_reason when search_mode is bm25. A code, never a path.
+SEARCH_MODE_REASONS = {
+    None: "bm25_only",
+    MISSING_GRAPH_NOTE: "onnx_graph_not_built",
+    FALLBACK_NOTE: "model_unavailable",
+    STALE_NOTE: "stale_vectors",
+    INDEX_READ_NOTE: "index_unreadable",
+}
 
 RESULT_FIELDS = (
     "chunk_id",
@@ -849,6 +862,12 @@ def load_search(
         # Never pair new query vectors with old document vectors.
         logging.exception(MISMATCH_LOG)
         return Searcher(connection), None, STALE_NOTE
+    except ArtifactMissing as exc:
+        # The alert line first (it still pages), then exc: the missing path
+        # and EXPORT_COMMAND.
+        logging.error(UNAVAILABLE_LOG)
+        logging.error(MISSING_GRAPH_LOG, exc)
+        return Searcher(connection), None, MISSING_GRAPH_NOTE
     except Exception:
         logging.exception(UNAVAILABLE_LOG)
         return Searcher(connection), None, FALLBACK_NOTE
@@ -1314,8 +1333,10 @@ class App:
             pending = pending_review_count(self.connection) if gated else None
             index_version = self._index_version()
         model_sha = None
+        reason = SEARCH_MODE_REASONS.get(self.fallback_note, "fallback")
         if self.encode is not None:
             model_sha = public_sha256(getattr(self.encode, "model_sha256", None))
+            reason = None
         payload = {
             "ok": True,
             "disabled": False,
@@ -1324,6 +1345,8 @@ class App:
             "model": self.model_name,
             "fallback": self.fallback_note is not None,
             "dense": self.encode is not None,
+            "search_mode": "hybrid" if self.encode is not None else "bm25",
+            "search_mode_reason": reason,
             "backend": self.backend,
             "abstain_calibrated": self.floor is not None,
             "index_version": index_version,
@@ -2429,7 +2452,12 @@ class PreachedServer(ThreadingHTTPServer):
 
     ``ThreadingHTTPServer`` starts one thread per accepted connection. Over
     the cap, the connection is closed on the accept thread with a short 503
-    and no handler thread is started.
+    and no handler thread is started. A request whose Accept includes
+    text/html is a page navigation: that 503 is a static HTML page with a
+    meta refresh of the same delay, so the browser retries. Any other
+    request keeps the JSON body. Only bytes already buffered at accept are
+    read, without waiting; headers not yet arrived get JSON. Nothing from
+    the request is copied in.
 
     Fairness: when every slot is taken, a new connection may take one from a
     peer holding at least two more connections than the newcomer. The
@@ -2711,13 +2739,24 @@ class PreachedServer(ThreadingHTTPServer):
             refusals.flush()
 
     def _reject_over_cap(self, request) -> None:
-        body = b'{"error":"unavailable"}'
+        """503 on the accept thread. No handler is started.
+
+        A page navigation (Accept includes text/html) gets the static HTML
+        page. Everyone else gets the same JSON body as before. The page is
+        a constant: no request byte is copied into it.
+        """
+        if _accept_includes_html(_read_over_cap_headers(request)):
+            body = _OVER_CAP_HTML
+            content_type = b"text/html; charset=utf-8"
+        else:
+            body = b'{"error":"unavailable"}'
+            content_type = b"application/json; charset=utf-8"
         message = (
             b"HTTP/1.1 503 Service Unavailable\r\n"
-            b"Content-Type: application/json; charset=utf-8\r\n"
+            b"Content-Type: " + content_type + b"\r\n"
             b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n"
             b"Connection: close\r\n"
-            b"Retry-After: 1\r\n"
+            b"Retry-After: " + _OVER_CAP_RETRY + b"\r\n"
             b"Cache-Control: no-store\r\n"
             b"\r\n" + body
         )
@@ -2801,6 +2840,69 @@ def _shutdown_socket(sock, how: int) -> None:
         sock.shutdown(how)
     except OSError:
         pass
+
+
+# Retry-After and the meta refresh are this same delay. The page is built
+# from these constants only, so a request cannot change it.
+_OVER_CAP_RETRY = b"1"
+_OVER_CAP_HTML = (
+    b"<!DOCTYPE html><html lang=en><head><meta charset=utf-8>"
+    b'<meta http-equiv="refresh" content="' + _OVER_CAP_RETRY + b'">'
+    b"<title>Unavailable</title></head>"
+    b"<body><p>Unavailable. Retrying.</p></body></html>"
+)
+
+
+def _accept_includes_html(data: bytes) -> bool:
+    """True when a complete header block lists text/html with a nonzero q.
+
+    The type token is compared, not a substring, so ``text/htmlx`` and
+    ``Accept-Language`` do not count. ``text/html;q=0`` is not acceptable
+    (RFC 9110 12.4.2) and does not count either. Every Accept line is read.
+    ``*/*`` and ``text/*`` are not text/html: a client that names no HTML
+    type gets the JSON body. An incomplete block (no blank line yet) is
+    False. Nothing from the block is returned.
+    """
+    head, sep, _rest = data.partition(b"\r\n\r\n")
+    if not sep:
+        return False
+    for line in head.split(b"\r\n")[1:]:
+        if line[:1] in (b" ", b"\t"):
+            continue
+        name, colon, value = line.partition(b":")
+        if not colon or name.strip().lower() != b"accept":
+            continue
+        for part in value.split(b","):
+            media, *params = part.split(b";")
+            if media.strip().lower() != b"text/html":
+                continue
+            if any(_is_q_zero(param) for param in params):
+                continue
+            return True
+    return False
+
+
+_Q_ZERO = re.compile(rb"\s*q\s*=\s*0(\.0*)?\s*", re.IGNORECASE)
+
+
+def _is_q_zero(param: bytes) -> bool:
+    """``q=0``, ``Q=0.000``, `` q = 0. ``: weight zero, not acceptable."""
+    return _Q_ZERO.fullmatch(param) is not None
+
+
+def _read_over_cap_headers(request) -> bytes:
+    """The request bytes already buffered, up to the bound. Never waits.
+
+    One non-blocking recv on the accept thread: a client that has sent
+    nothing yet, or only part of its headers, gets the JSON 503 at once
+    and cannot hold the accept thread. The bytes are consumed rather than
+    peeked so the close after the 503 is a FIN, not a reset for unread data.
+    """
+    try:
+        request.setblocking(False)
+        return request.recv(65536 + MAX_HEADER_BYTES)
+    except OSError:
+        return b""
 
 
 def make_server(app: App, host: str, port: int) -> PreachedServer:
