@@ -481,3 +481,189 @@ Result: no re-merge needed. The branch already contains `ebffabb` (the #69 merge
 - Cache snapshot (`/cache`, path+size+mtime, 132589 entries) before and after the cite test: identical (sha256 `cba0cf49…1783`). Nothing was written outside a temp dir.
 
 `git diff --stat origin/main..HEAD` is unchanged from "Branch state" above (10 files, all in scope).
+
+## r3c (99-WA-ONNX-D2-AFTER75): merge #75, D2 producer, re-pin
+
+#75 (DEPLOY regex pins, `tests/test_deploy_regex.py`) merged; `origin/main` is `a6a27bb10b79df2eae72dec107c9473a4ce2bd39`. On #71 merged over it, `test_deploy_regex` failed on the new D2 row: `Ran 10 tests`, `FAILED (failures=3, skipped=1)`, with `'D2'` outside `EXPECTED_PATTERNS`.
+
+Done, as the CTO required:
+- (a) D2 producer in `tests/test_deploy_regex.py` (`unavailable_lines`). It drives the real `app.server.load_search` for both startup forms. No graph: `embed_backend="onnx"`, `PREACHED_ONNX_DIR` an empty dir under a fresh `TemporaryDirectory` (checked with `_under_temp`), `HF_HOME` and `PREACHED_CACHE` in the same temp dir, offline, and an index seeded with a matching fingerprint (`test_onnx_pin_repro._seed_granite`) so the load fails on the artifact. The producer asserts note `MISSING_GRAPH_NOTE`, exactly one D2 line, and that the next emitted line starts with `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. ` (the GRAPH NOT BUILT branch). Load failure: a loader that raises `RuntimeError`, giving note `FALLBACK_NOTE` and the traceback form. Both D2 lines go through the formatter `main()` installs and must fullmatch the row's regex.
+- (b) `EXPECTED_PATTERNS = {"D2", "D2b", "stamp", "side-access"}`.
+- (c) Cites. The merge changed no cited file except `docs/DEPLOY.md` (the `<!-- regex: side-access -->` anchor, same line), so no number moved in this round. The stamp row already reads `app/server.py:1121` on the merged tree (main had `:1102`). Line 1121 holds `logging.log(level, "could not read the index stamp", exc_info=True)`, read off the file. The DEPLOY.md sentence saying which tree the numbers hold on now names #75 too, tree-relative, no sha.
+- Not done: `INFRA_RULES` has no D2 entry. The CTO did not ask for one, and the infra yaml is not mounted here, so a D2 rule id could not be checked against it.
+
+Head (code): `5d6284d` (merge `c3e78c7`, then the D2 commit); this report is the commit on top. Ahead/behind `origin/main` (`a6a27bb`): 0 behind, 31 ahead before this report, 32 with it. Merge and commits only; no rebase, no force-push.
+
+### test_deploy_regex
+Merged tree, before the D2 change: `FAILED (failures=3, skipped=1)`. After: `Ran 10 tests`, `OK (skipped=1)` (the skip is the optional infra yaml). The test prints:
+`checked table D2: ^ERROR embedding model unavailable; serving BM25 only$ <- 'ERROR embedding model unavailable; serving BM25 only'`.
+
+### Mutants (each run with `/cache` read-only, scratch caches; each reverted from a saved copy, `git status` clean after)
+| Mutant | Result |
+| --- | --- |
+| M1: remove the `if name == "D2"` producer branch | FAIL: `AssertionError: no producer for DEPLOY.md pattern D2: add one, do not skip it` (1 failure) |
+| M2: `app/server.py` drops `logging.error(MISSING_GRAPH_LOG, exc)` | FAIL: `no ONNX GRAPH NOT BUILT line: ['ERROR embedding model unavailable; serving BM25 only']` |
+| M3: no-graph D2 line logged with `logging.warning` | FAIL: `'^ERROR embedding model unavailable; serving BM25 only$' does not fullmatch real line(s) ['WARNING embedding model unavailable; serving BM25 only', 'ERROR …']` |
+| Reverted | `Ran 10 tests`, `OK (skipped=1)` |
+
+### Cite table (merged tree, every cite read off the file)
+All 68 `file:line` cites in `docs/DEPLOY.md` (bare `:n` read against the file named before it, as `runbook_cites` does) are in `CITED`, and every `CITED` pin is cited (0 pinned but uncited). Line text as read:
+
+```
+PIN app/server.py:238 -> 'REQUEST_TIMEOUT_S = 15'
+PIN app/server.py:244 -> 'DRAIN_TIMEOUT_S = 10.0'
+PIN app/server.py:285-286 -> 'CHURCH_RETRY_FIRST_S = 1.0' .. 'CHURCH_RETRY_MAX_S = 30.0'
+PIN app/server.py:296 -> 'MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"'
+PIN app/server.py:297 -> 'UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"'
+PIN app/server.py:300 -> 'MISSING_GRAPH_LOG = "ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. %s"'
+PIN app/server.py:302 -> 'INDEX_STATUS_LOG = "index status unreadable after reload; serving BM25 only"'
+PIN app/server.py:306-312 -> 'SEARCH_MODE_REASONS = {' .. '}'
+PIN app/server.py:506 -> 'logging.warning("refused %s %s suppressed=%d", kind, detail, suppressed)'
+PIN app/server.py:518 -> 'logging.warning("refused %s flush suppressed=%d", kind, suppressed)'
+PIN app/server.py:863 -> 'logging.exception(MISMATCH_LOG)'
+PIN app/server.py:868 -> 'logging.error(UNAVAILABLE_LOG)'
+PIN app/server.py:869 -> 'logging.error(MISSING_GRAPH_LOG, exc)'
+PIN app/server.py:872 -> 'logging.exception(UNAVAILABLE_LOG)'
+PIN app/server.py:896 -> 'logging.exception("church vectors do not match search/models.toml; that side is BM25 only")'
+PIN app/server.py:901 -> 'logging.exception("church vectors unavailable; that side is BM25 only")'
+PIN app/server.py:919 -> 'raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc'
+PIN app/server.py:922 -> 'logging.error("church side refused: its searcher could not be built (%s: %s)", exc.__class__.__name__, reason)'
+PIN app/server.py:1121 -> 'logging.log(level, "could not read the index stamp", exc_info=True)'
+PIN app/server.py:1152 -> 'logging.error("refusing to serve after reload: %s", problem)'
+PIN app/server.py:1169 -> 'logging.error("%s", message)'
+PIN app/server.py:1201 -> 'self._serve_keyword_only(STALE_NOTE, MISMATCH_LOG)'
+PIN app/server.py:1235 -> 'logging.error("refusing to serve: %s", self._frozen_refusal)'
+PIN app/server.py:1244 -> 'self._serve_keyword_only(INDEX_READ_NOTE, INDEX_STATUS_LOG if self._weights_ok else None)'
+PIN app/server.py:1348-1349 -> '"search_mode": "hybrid" if self.encode is not None else "bm25",' .. '"search_mode_reason": reason,'
+PIN app/server.py:1444 -> 'logging.error("church side refused: %s", problem)'
+PIN app/server.py:1449 -> 'logging.error("church side refused: the publish gate did not turn on")'
+PIN app/server.py:1482 -> 'logging.error("church side refused: the church file could not be opened (%s)", exc)'
+PIN app/server.py:1489 -> 'logging.info("church side pause ended: refused")'
+PIN app/server.py:1490 -> 'self._church_paused = False'
+PIN app/server.py:1521 -> 'logging.error("church side dropped: %s", problem)'
+PIN app/server.py:1532 -> 'logging.info("church side paused: %s", reason)'
+PIN app/server.py:1540 -> 'logging.info("%s", held)'
+PIN app/server.py:1599 -> 'logging.info("church side resumed")'
+PIN app/server.py:1602 -> 'logging.exception("church search failed; that side is empty")'
+PIN app/server.py:1607 -> 'self._church_pause(f"the church file is locked by a writer ({exc})")'
+PIN app/server.py:1808 -> 'logging.exception("abstain calibration unusable; abstain floor disabled")'
+PIN app/server.py:1814 -> 'def start():'
+PIN app/server.py:2031 -> 'logging.error("request failed: %s", "TimeoutError")'
+PIN app/server.py:2036 -> 'logging.error("request failed: %s", type(exc).__name__)'
+PIN app/server.py:2081 -> 'logging.error("request failed: %s", "TimeoutError")'
+PIN app/server.py:2083 -> 'logging.error("request failed: %s", type(exc).__name__)'
+PIN app/server.py:2143 -> 'logging.error("request failed: %s", "LogError")'
+PIN app/server.py:2383 -> 'logging.error("request failed: %s", type(exc).__name__)'
+PIN app/server.py:2404 -> 'logging.error("request failed: %s", type(exc).__name__)'
+PIN app/server.py:2840 -> 'logging.info("listening on http://%s:%s", host, port)'
+PIN app/server.py:2844 -> 'app.log_startup_pause()'
+PIN app/server.py:2912 -> 'logging.error("church side refused: %s", problem)'
+PIN app/server.py:2919 -> 'logging.error("church side refused: %s", exc)'
+PIN app/server.py:2930 -> 'logging.error("church side refused: %s", problem)'
+PIN app/server.py:2937 -> 'logging.info("church side: %s, read-only, through the publish gate", slug)'
+PIN app/server.py:3099 -> 'logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")'
+PIN app/server.py:3277 -> 'logging.info("stopping")'
+PIN app/server.py:3278-3296 -> 'stuck = server.drain()' .. 'raise SystemExit(1)'
+PIN app/server.py:3282 -> 'logging.error("%d handler thread(s) still running after %.0fs; index left open", len(stuck), DRAIN_TIMEOUT_S)'
+PIN app/server.py:3292 -> 'app.church_connection.close()'
+PIN app/server.py:3294 -> 'logging.info("stopped cleanly")'
+PIN scripts/build-bundle.sh:239 -> 'echo "tar exited 1 (file changed as we read it?); attempt ${attempt} of 3" >&2'
+PIN scripts/build-bundle.sh:243 -> 'echo "tar failed (tar ${TAR_STATUS}, gzip ${GZIP_STATUS}); no archive written" >&2'
+PIN scripts/build-bundle.sh:247 -> 'echo "tar.gz does not match MANIFEST.sha256; no archive written" >&2'
+PIN src/preached/library.py:468 -> 'raise ChurchPaused(f"the church file is locked by a writer ({exc})") from exc'
+PIN src/preached/library.py:883-884 -> 'f"{path.name} is in WAL journal mode; run --ack-review (it leaves DELETE mode) before serving it",' .. 'f"{path.name} is in WAL journal mode",'
+PIN src/preached/library.py:895-896 -> 'reason = f"the church file is locked by a writer ({exc})"' .. 'raise ChurchStartPaused(f"{reason}; it is not opened", reason) from exc'
+PIN src/preached/library.py:915 -> 'problem, paused = f"{exc}; it is not opened", str(exc)'
+PIN src/preached/library.py:921-922 -> 'paused = f"the church file is locked by a writer ({exc})"' .. 'problem = f"{paused}; it is not opened"'
+PIN src/preached/library.py:962 -> 'raise ChurchPaused(f"{path.name} is in WAL journal mode")'
+PIN src/preached/youtube/library.py:157 -> 'f"the church file is still in {mode} journal mode (another connection has it open in WAL mode); "'
+PIN src/preached/youtube/pipeline.py:333 -> 'print(f"warning: {exc}", file=sys.stderr)'
+68 cites; 68 pins; pins not cited: []
+```
+
+### Full suite
+`PREACHED_REQUIRE_DENO=1`, with `PREACHED_CACHE`, `HF_HOME`, `PREACHED_ONNX_DIR`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR`, `TORCH_HOME` all under `/tmp/r3c/suite.*`, and `/cache` mounted read-only (`unshare -rm` + ro bind, mapped back to uid 1000): **`Ran 1053 tests in 222.678s`, `OK (skipped=11)`**. 0 failures, 0 errors, so 0 `test_every_cited_file_line_holds_its_string` failures. 1053 = r3's 1043 + #75's 10. The 11 skips:
+- 6 in `test_embed_backend`: granite ONNX artifacts not in the scratch dir.
+- 1 in `test_eval_leak`: no chunked corpus in the scratch cache.
+- 2 in `test_onnx_pin_repro`: `ExportIsByteIdenticalTests` and `MutantGraphTests`, no real artifacts under the scratch cache.
+- 1 in `test_deploy_regex`: the infra yaml is absent (new with #75).
+- 1 in `test_shutdown.LoadedSigtermTests`: needs `/cache/index/wesley.sqlite` and an existing `PREACHED_ONNX_DIR`. This run's scratch `PREACHED_ONNX_DIR` was never created, so the test skipped. Environment only; it is not from this change.
+
+`uv lock --check` (scratch `UV_CACHE_DIR`): `Resolved 79 packages`, OK. No new dependencies.
+
+### Cache snapshot
+`find /cache -xdev -printf '%p\t%s\t%T@\n' | sort`, taken before the merge and after the last test run: 132599 entries both times, sha256 of the listing `e9606819d56f167f…` both times, `diff` empty. Nothing in `/cache` changed (paths, sizes, mtimes).
+
+### Diff stat (in scope)
+`git diff --stat origin/main..HEAD`:
+
+```
+ app/server.py                            |  23 +
+ docs/DEPLOY.md                           | 118 ++---
+ docs/adr/0001-onnx-export-determinism.md |  54 ++
+ reports/W3-CPU.md                        |   4 +-
+ reports/W4-ONNX-PIN-REPRO.md             | 669 +++++++++++++++++++++++++
+ scripts/export_onnx.py                   | 127 ++++-
+ src/preached/artifacts.py                |  31 +-
+ tests/test_deploy_alerts.py              |  97 ++--
+ tests/test_deploy_regex.py               |  60 ++-
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 822 +++++++++++++++++++++++++++++++
+ 11 files changed, 1887 insertions(+), 122 deletions(-)
+```
+
+### PR BODY (r3c, replaces the r3 body above)
+
+````markdown
+## W4-ONNX-PIN-REPRO: a fresh export reproduces the pinned ONNX graph
+
+Fixes fresh-clone BLOCKER 2 (#68 finding 2). The pin stays `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`; there is no re-pin.
+
+### What moved the bytes
+Two independent variables, and each one alone changes the exported fp32 graph (measured, 12-cell raw matrix, i9-12900K):
+- `PYTHONHASHSEED`: transformers 5.22.1 ModernBERT traces its two rotary tables in `set(config.layer_types)` order (6 of 3009 nodes differ).
+- `ATEN_CPU_CAPABILITY`: the dispatch level changes one float32 of the `inv_freq` Constants (default vs avx2).
+Four digests come out, one per (order, dispatch) pair: `3861025a` (avx2, sliding first: the pin), `aed7adba` (avx2, full first), `44038d45` and `d99ba823` (default dispatch). Neither variable is "the" cause; both must be fixed. Raw AVX512 cannot run on this host (SIGILL); the CTO's AVX512 cells are not re-verified.
+
+### Fix
+- `scripts/export_onnx.py`: sets `ATEN_CPU_CAPABILITY=avx2` before importing torch; refuses non-x86-64 or non-AVX2 hosts; re-execs under `PYTHONHASHSEED=1` (argv kept); checks the trace order; exits non-zero with no manifest if the graph is not the pin. It hides CUDA itself, so the export command has no `CUDA_VISIBLE_DEVICES` prefix. Through the script, all 21 ambient cells (seed unset/0-5 × default/avx2/avx512) write the pin.
+- ONNX outputs and the server default follow `PREACHED_CACHE`: `PREACHED_ONNX_DIR`, else `$PREACHED_CACHE/models/granite-english-r2-onnx`, else `/cache/...`. The HF cache defaults to `$PREACHED_CACHE/huggingface` (an explicit `HF_HOME` / `HF_HUB_CACHE` / `HUGGINGFACE_HUB_CACHE` wins).
+- `app/server.py`: a missing graph logs the D2 line `ERROR embedding model unavailable; serving BM25 only` (no traceback), then `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; …` with the path and export command. `/healthz` gains `search_mode` (`hybrid`/`bm25`) and `search_mode_reason` (a code, never a path).
+- `docs/DEPLOY.md`: D2 row covers both forms, new "D2 detail" row for the NOT BUILT line and the `/healthz` fields; every `app/server.py` cite re-pinned on the tree merged with #72, #69 and #75 (tree-relative wording) and pinned in `tests/test_deploy_alerts.py`.
+- ADR: `docs/adr/0001-onnx-export-determinism.md`.
+
+### Tests
+`tests/test_deploy_regex.py` (from #75) now pins D2 too: `D2` is in `EXPECTED_PATTERNS`, and its producer drives the real `load_search` twice, once with the ONNX loader against an empty temp `PREACHED_ONNX_DIR` (the real `ArtifactMissing`; the next line must be `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. …`) and once with a loader that raises (the traceback form). Both lines fullmatch `^ERROR embedding model unavailable; serving BM25 only$`. Removing the producer fails with `no producer for DEPLOY.md pattern D2`.
+
+`tests/test_onnx_pin_repro.py` (31 tests). No test downloads; only the three-export byte-identity test exports for real, into TMPDIR, reading the snapshot. Every test points its outputs at temp dirs; `__main__` runs are sandboxed (scratch caches, offline, stubbed `os.execv` and `main`). `ExportMainTests`, which runs `main()` (it `rmtree`s the export dir), resolves the export dir and every `rmtree`/copy/write/mkdir target and refuses anything not under `tempfile.gettempdir()` and its temp cache, before acting; tests cover a `..` path, a symlinked `models` dir and an escaping write. The other tests rely on their temp environment, not a check. Mutants (each fails, then reverted): avx2 guard removed from `__main__`, seed restart removed, restart drops argv, `_check_pin` removed, `onnx_root` ignoring `PREACHED_CACHE`, `HF_HUB_CACHE` ignored, and the CTO's F2 (`..` traversal) and F3 (symlinked `$PREACHED_CACHE/models`), which got past the earlier lexical guard and are now refused with a decoy cache untouched.
+
+Full suite on the merge with main (`a6a27bb`, #75): `PREACHED_REQUIRE_DENO=1`, every output cache (incl. `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR`) in temp dirs, `/cache` mounted read-only → `Ran 1053 tests`, `OK (skipped=11)` (9 need real artifacts, 1 is #75's optional infra-yaml check, 1 needs a real ONNX dir). `uv lock --check` OK. No new dependencies.
+
+### Migration
+None for `/cache` hosts: the existing `3861025a` export stays valid. A host with `PREACHED_CACHE` other than `/cache` that kept the export at `/cache/models/...` must set `PREACHED_ONNX_DIR` or move it.
+
+### Incident
+On 2026-10-31 at 16:29 ET, during a mutant run, a test removed and rewrote the shared `/cache/models/granite-english-r2-onnx/47ea…/`. It was restored at 16:30 ET from an identical script export (fp32 and tokenizer match their pins; `verify_manifest` OK). Infra Ops re-ran the export and found the restored folder byte-identical to a fresh export (all 5 files); the live demo never loaded the damaged folder and needed no restart; the church index main db is unchanged. The guard added after the incident was lexical and was later shown to miss `..` and symlinked paths; it now resolves paths (above). Mutant and real-artifact runs mount `/cache` read-only. Details: `reports/W4-ONNX-PIN-REPRO.md` §9 and §12.
+
+### Branch state
+0 behind, 32 ahead of `origin/main` (`a6a27bb`).
+
+`git diff --stat origin/main..HEAD`:
+
+```
+ app/server.py                            |  23 +
+ docs/DEPLOY.md                           | 118 ++---
+ docs/adr/0001-onnx-export-determinism.md |  54 ++
+ reports/W3-CPU.md                        |   4 +-
+ reports/W4-ONNX-PIN-REPRO.md             | 669 +++++++++++++++++++++++++
+ scripts/export_onnx.py                   | 127 ++++-
+ src/preached/artifacts.py                |  31 +-
+ tests/test_deploy_alerts.py              |  97 ++--
+ tests/test_deploy_regex.py               |  60 ++-
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 822 +++++++++++++++++++++++++++++++
+ 11 files changed, 1887 insertions(+), 122 deletions(-)
+```
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+````
