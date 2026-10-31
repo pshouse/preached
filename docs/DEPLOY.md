@@ -97,7 +97,12 @@ That writes `/tmp/preached-bundle/` and `/tmp/preached-bundle.tar.gz`.
 sorted. The tar is taken from a private copy of the directory (not a reflink
 of the live index or model), ustar, owner 0, mtime `2026-10-30 00:00:00` UTC,
 and `gzip -n`. The same index, model bytes, and source tree produce the same
-manifest and the same tar. Check it with:
+manifest and the same tar. GNU tar sometimes exits 1 ("file changed as we
+read it") even on that private copy, so the script retries the tar once on
+exit 1, checks the archive against `MANIFEST.sha256`, and only then renames
+it into place. A failed build exits non-zero and leaves no `.tar.gz` (it also
+removes one from an earlier build). If `/tmp/preached-bundle.tar.gz` exists,
+the build succeeded. Check it with:
 
 ```bash
 cd /tmp/preached-bundle && sha256sum -c MANIFEST.sha256
@@ -336,14 +341,21 @@ In the process:
   stay mode `0444`, which is what the table above says. The owner of the
   tree has to already be the service user. A root-owned tree is not chmod'd
   by the start script.
-- The `model/` directory and every file in it must be owned by root or the
-  service uid, and the directory must be `0755` or stricter (no group or
-  world write); files must be `0444`/`0644` or stricter. `check_servable`
-  does not look at `model/`; the ONNX loader does, and it does not stop the
-  server. If it refuses, the reason is logged and the server serves BM25
-  only, with `/healthz` `dense: false`. The pre-cutover check is `/healthz`
-  showing `dense: true`. A real cause is `model/` copied with `rsync` or
-  `cp -r` from a checkout made under `umask 002`, which leaves it `0775`.
+- The `model/<revision>/` directory (the revision pinned in
+  `src/preached/artifacts.py`) and every file in it must be owned by root or
+  the service uid, and the directory must be `0755` or stricter (no group or
+  world write); files must be `0444`/`0644` or stricter. The loader checks
+  that one directory, not `model/` above it (files are pinned by hash, so a
+  loose `model/` does not let a file be swapped, but keep it `0755` anyway).
+  `check_servable` does not look at any of this; the ONNX loader does, and it
+  does not stop the server. If it refuses, the reason is logged and the
+  server serves BM25 only, with `/healthz` `dense: false`. The pre-cutover
+  check is `/healthz` showing `dense: true`. A real cause is `model/`
+  copied with `cp -r` or `rsync -r` from a checkout made under
+  `umask 002`: `cp -r` makes new directories `0775` under that umask. Copy
+  with `cp -a` or `rsync -a` from a tree whose directories are already `0755`,
+  which keeps the source modes, or run the `chmod` lines above
+  afterward.
   (A tar from `scripts/build-bundle.sh` stores `0755`/`0444`, and extraction
   under `umask 002`, `000`, or `022` all gave `755`/`755`/`444`, so the
   tar itself does not cause this.) Run the `chmod` lines above and check
