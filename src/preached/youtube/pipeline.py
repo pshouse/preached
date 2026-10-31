@@ -24,7 +24,7 @@ from preached.corpus import load_chunk_config
 from preached.exclusions import approve, base_sha256, boundary_flags, carried_stretches, excluded_indexes, kept_runs, merge_flag, previous_excludes, review_lines, word_rows, words_file, words_file_lines
 from preached.privacy import Config, ReviewList, apply_drops, config_sha256, default_config, redact_metadata, required_config, review, review_metadata, write_review_file_sha256
 from preached.youtube import privacy
-from preached.youtube.coverage import Unchecked, check_coverage, clip_to_window
+from preached.youtube.coverage import Unchecked, check_coverage, clip_to_window, stated_duration
 from preached.skip import propose
 from preached.youtube.chunking import chunk_words
 from preached.youtube.library import imported_ok, index_video, mark_video, open_library
@@ -479,7 +479,8 @@ def _import_one(
     # Sound with no word in it is a stretch the ASR dropped: approval refuses while it is open.
     # The whole file is checked against the stated duration; the window only limits which spans count.
     try:
-        gaps = clip_to_window(coverage(audio_path, words, duration_s=video.duration_s), windows.get(video.id))
+        duration_s = stated_duration(video.duration_s)
+        gaps = clip_to_window(coverage(audio_path, words, duration_s=duration_s), windows.get(video.id))
     except Unchecked as exc:
         # Fail closed: NULL coverage, so approval is refused and the sermon is never served.
         gaps = None
