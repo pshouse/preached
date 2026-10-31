@@ -304,12 +304,12 @@ In the process:
 | Connections | At most 32 concurrent connections, and at most 4 from one socket IP (a trusted proxy is exempt from the per-IP cap). Over the cap the accept thread returns 503 and does not start a handler thread. `PREACHED_MAX_CONNECTIONS` and `PREACHED_MAX_CLIENT_CONNECTIONS` override the numbers. |
 | Slot fairness | When all 32 are taken, a new connection takes the slot of the longest-idle connection (waiting between requests) of the peer holding the most, if that peer holds at least two more than the newcomer. A connection whose request line has arrived and whose headers are still coming is taken only when no such peer has an idle one left. A request being handled is never closed. Once 8 or fewer slots are free, a connection waiting for its next request gets 2 seconds, not 15 (`PREACHED_SCARCE_IDLE_S`). At most 4 searches (and, separately, 4 `/healthz` requests) in flight per client key (`PREACHED_MAX_CLIENT_REQUESTS`); over that is `503`, `Retry-After: 1`, and the connection closes. An IPv6 peer is counted by its /64. |
 | `/healthz` reserve | When nothing can be closed, one more connection is admitted (`PREACHED_HEALTH_RESERVED_CONNECTIONS`, default 1, 0 turns it off). It serves one `/healthz` and closes (`Connection: close`). Any other path on it is `503`. While it is held, the next newcomer gets the accept-time `503`. |
-| Client key | The socket peer, or its /64 for IPv6 (IPv4-mapped IPv6 is folded to IPv4). `X-Forwarded-For` is read only when the peer is in `PREACHED_TRUSTED_PROXIES` (comma-separated addresses or networks, default empty). Then the key is the right-most hop that is not a trusted proxy. Hops to its left are never read. A forwarded IPv6 hop is keyed by its /64 too. A hop that does not parse keys on the nearest trusted address. A malformed `PREACHED_TRUSTED_PROXIES` entry stops the server. `Forwarded` (RFC 7239) is ignored. |
+| Client key | The socket peer, or its /64 for IPv6 (IPv4-mapped IPv6 is folded to IPv4). A Tailscale address (`fd7a:115c:a1e0::/48`, where every node shares one /64) is keyed per address. Trust is by the listed network only, never widened to the proxy's /64. `X-Forwarded-For` is read only when the peer is in `PREACHED_TRUSTED_PROXIES` (comma-separated addresses or networks, default empty). Then the key is the right-most hop that is not a trusted proxy. Hops to its left are never read. A forwarded IPv6 hop is keyed by its /64 too. A hop that does not parse keys on the nearest trusted address. A malformed `PREACHED_TRUSTED_PROXIES` entry stops the server. `Forwarded` (RFC 7239) is ignored. |
 | Rate limit | 60 requests per 60 seconds per client key in `serve.sh` (the code default is 120, so the unit tests fit). Behind that, a global backstop of 600 per 60 seconds across all clients in `serve.sh` (code default 1200, `PREACHED_GLOBAL_RATE_LIMIT`). A client over its own cap does not spend the backstop, and a request the backstop refuses gives its hit back to the client's own bucket. A full table of live keys refuses a new key. `429` and `Retry-After`. |
 | `/healthz` bucket | Its own per-client bucket (60 per 60 seconds, `PREACHED_HEALTH_RATE_LIMIT`) and its own global backstop (600, `PREACHED_HEALTH_GLOBAL_RATE_LIMIT`). Health checks never spend the search budget, and a search flood does not starve them. The connection caps above still apply, before the path is known. |
 | Socket timeout | 15 seconds on a read or a write after the headers. |
 | Headers | CSP, `nosniff`, `no-referrer`, `X-Frame-Options: DENY`, `Server: Preached`. CSP is unchanged. |
-| Logs | Access log is `peer key method path status`: the socket peer, then the client key (the forwarded client behind a trusted proxy, the peer otherwise, a /64 for IPv6). The query string is not logged. Control characters are escaped in both addresses and the path. Refusals are logged as `refused <class> ... suppressed=N` warnings, at most one line per class per second, where N counts the lines dropped since the last one. Classes: `over-cap` (accept-time 503), `evict` (`holder->newcomer`), `busy` (per-key in-flight 503, or a non-`/healthz` request on the reserve), and `429-client`, `429-global`, `429-health`, `429-health-global`. A bad request line does not crash the process. A failed request logs the exception type, not the message. |
+| Logs | Access log is `peer key method path status`: the socket peer, then the client key (the forwarded client behind a trusted proxy, the peer otherwise, a /64 for IPv6). The query string is not logged. Control characters are escaped in both addresses and the path. Refusals are logged as `refused <class> ... suppressed=N` warnings, at most one line per class per second, where N counts the lines dropped since the last one. Classes: `over-cap` (accept-time 503), `evict` (`holder->newcomer`), `busy` (per-key in-flight 503, or a non-`/healthz` request on the reserve), and `429-client`, `429-global`, `429-health`, `429-health-global`. Counts still suppressed at shutdown are logged as `refused <class> flush suppressed=N`. A bad request line does not crash the process. A failed request logs the exception type, not the message. |
 | No listing | `/static/` is an allowlist of three files. |
 | Kill file | Checked on every request. `touch KILL` in the bundle root stops serving without a restart. `/healthz` becomes `503` with `{"ok": false, "disabled": true}`. Search returns `{"error": "unavailable"}`. Removing a regular KILL file turns it back on, again without a restart. A directory, a symlink (dangling or not), or an unreadable parent at that path is treated as killed. The file's contents and path are not sent to the client. |
 | `PREACHED_DISABLED` | Read from the process environment on each request. Set it before start. Another shell cannot change a running process's environment, so this is not the without-restart switch. The kill file is. |
@@ -365,6 +365,16 @@ In the process:
   empty: every proxied client then shares one bucket, which fails closed.
   Any local process on the Sprite that can connect to the port from
   `127.0.0.1` is then the trusted proxy and can choose its own key.
+- Access-log volume. The server writes one access line per request, and
+  refusal lines at most once per class per second, to stderr. Under
+  systemd that goes to journald. journald rate-limits each service
+  (`RateLimitIntervalSec=`, `RateLimitBurst=` in `journald.conf`, or
+  `LogRateLimitIntervalSec=`/`LogRateLimitBurst=` in the unit). Over the
+  limit it drops lines and logs one "Suppressed N messages" line, so a
+  flood can cost access lines. Rotation and the cap on disk use are
+  `SystemMaxUse=`, `SystemMaxFileSize=` and `MaxRetentionSec=`. The lines
+  hold real client IPs behind the proxy, so the retention period is a
+  go-public decision (gate item 5), not a default to leave in place.
 - Do not enable directory listings, a debug console, or a shell on the
   listening port.
 - One ONNX thread is the right default for a 1-vCPU box. `reports/W3-CPU.md`
@@ -386,19 +396,48 @@ Before any of that happens, all of the following have to be done, in order:
 
 1. A written threat model for the public process. A draft is below; it is
    not final.
-2. The RSS fix (#26). With dense search on, RSS is still 1.62 GB.
-3. Audit logging (PR #29 review M2): the log names the client key, and
+2. Go-live checks for the RSS fix (#26) on the Sprite. RSS with dense
+   search on is now 721 MiB; what is left is proving the dense path is the
+   one serving. `/healthz` shows `dense: true`, `fallback: false`, and
+   `model_sha256` equal to the fp32 pin. `model/` and every file in it are
+   not group- or world-writable (`find model ! -type l -perm /022` prints
+   nothing). A bundle unpacked under `umask 002` silently serves BM25 only.
+3. Stale-bytecode drill for the bytecode fix (#18) on the Sprite: plant a
+   `__pycache__` that would change `bundle_problem`, start through
+   `scripts/serve.sh`, confirm the start is refused, remove it. The service
+   never starts with `python -m app.server` (see "What a direct start does
+   and does not guarantee").
+4. Audit logging (PR #29 review M2): the log names the client key, and
    refusals and evictions are logged. In code on `feat/w3-exposure`; done
    when the CTO accepts it.
-4. An end-to-end test through a real `tailscale serve` or `tailscale funnel`
+5. Access-log retention. The log stores the real client IP behind the
+   proxy, with path and time. Set a retention period and journald limits
+   (`SystemMaxUse=`, `MaxRetentionSec=`, `RateLimitIntervalSec=` and
+   `RateLimitBurst=`) on the Sprite. The period is an open decision for
+   Patrick.
+6. Least-privilege, scoped credentials. The Sprite credential can do only
+   what operating this service needs. The Tailscale node is a tagged node
+   whose ACL allows only `serve`/`funnel` to the server's port. Any auth key
+   has an expiry and is rotated; it is referred to only
+   by its 1Password path, never pasted into the repo, a report or the
+   Sprite's app environment. Serve (tailnet only) or funnel (public) is an
+   open decision for Patrick.
+7. Fuzzing of untrusted input. Nothing fuzzes the HTTP request parser
+   (request line, headers, framing) or `client_key`/`X-Forwarded-For`
+   parsing yet.
+8. Dependency and secret scanning in CI. The repo has no CI (no
+   `.github/`). Which CI to add is an open decision for Patrick.
+9. An end-to-end test through a real `tailscale serve` or `tailscale funnel`
    in front of the process: it appends `X-Forwarded-For`, the key in the log
    is the client, and per-client 429s land on the client, not the proxy.
-5. Per-/64 IPv6 keying (PR #29 review M4). In code on `feat/w3-exposure`;
-   done when the CTO accepts it.
-6. CTO sign-off on that threat model.
-7. Patrick's approval.
-8. A kill-switch drill: `touch KILL`, confirm `/healthz` is 503, remove the
-   regular file, confirm `/healthz` is 200 again, without restarting.
+   Still open.
+10. Per-/64 IPv6 keying (PR #29 review M4), with Tailscale addresses
+    (`fd7a:115c:a1e0::/48`) keyed per address. In code on
+    `feat/w3-exposure`; done when the CTO accepts it.
+11. CTO sign-off on that threat model.
+12. Patrick's approval.
+13. A kill-switch drill: `touch KILL`, confirm `/healthz` is 503, remove the
+    regular file, confirm `/healthz` is 200 again, without restarting.
 
 Until those are done, the process stays on loopback or Tailscale.
 
@@ -419,7 +458,8 @@ authorise a public bind. Nothing here changes the "Going public" order.
 - The Sprite admin credential and any token in the operator's shell. The
   app holds no secret of its own.
 - Searchers' queries. The access log drops the query string; no query is
-  stored.
+  stored. The client IP (the real one behind a trusted proxy), the path and
+  the time are stored, for as long as the log is kept.
 
 ### Attackers
 
@@ -484,15 +524,28 @@ manifest gate, root refusal, and the scrubbed environment.
 
 Not done, and required, in this order:
 
-1. The RSS fix (#26); RSS is still 1.62 GB with dense search on.
-2. Audit logging (M2) accepted.
-3. An end-to-end test through a real `tailscale serve` or `tailscale funnel`.
-4. Per-/64 IPv6 keying (M4) accepted.
-5. CTO sign-off on this threat model, once it is final.
-6. Patrick's approval.
-7. A kill-switch drill on the Sprite: `touch KILL`, confirm `/healthz` is
-   503, remove the regular file, confirm `/healthz` is 200 again, without
-   restarting.
+1. RSS fix (#26) go-live checks on the Sprite: `/healthz` `dense: true`,
+   `fallback: false`, `model_sha256` equal to the pin, and `model/` not
+   group- or world-writable. (RSS is now 721 MiB.)
+2. Stale-bytecode drill (#18) on the Sprite; never `python -m app.server`.
+3. Audit logging (M2) accepted.
+4. Access-log retention and journald limits set. Retention period: open,
+   Patrick decides.
+5. Scoped credentials: least-privilege Sprite credential, tagged Tailscale
+   node whose ACL allows only serve/funnel to the port, auth keys with
+   expiry and rotation, referred to by 1Password path only. Serve or
+   funnel: open, Patrick decides.
+6. Fuzzing for the HTTP parser and `client_key`/`X-Forwarded-For` parsing.
+7. Dependency and secret scanning in CI (there is no CI yet). Which CI:
+   open, Patrick decides.
+8. An end-to-end test through a real `tailscale serve` or `tailscale funnel`.
+   Open.
+9. Per-/64 IPv6 keying (M4), Tailscale `/48` per address, accepted.
+10. CTO sign-off on this threat model, once it is final.
+11. Patrick's approval.
+12. A kill-switch drill on the Sprite: `touch KILL`, confirm `/healthz` is
+    503, remove the regular file, confirm `/healthz` is 200 again, without
+    restarting.
 
 Public exposure goes only through Tailscale with
 `PREACHED_TRUSTED_PROXIES=127.0.0.1`. Eviction matters only for a direct
@@ -620,7 +673,12 @@ Behaviour changes for anyone already running `app/server.py`:
   field). Log parsers that split on spaces need updating. Refusals are
   logged as rate-limited `refused ...` warnings.
 - IPv6 clients are keyed by /64: addresses in one /64 share a rate bucket,
-  in-flight slots and the per-peer connection cap.
+  in-flight slots and the per-peer connection cap. Tailscale addresses
+  (`fd7a:115c:a1e0::/48`) are keyed per address, because the tailnet puts
+  every node in one /64.
+- A connection's slot is freed before its last (`Connection: close`)
+  response is sent, so a client that reads it and reconnects at once is
+  not refused for its own old slot.
 - One connection over the cap is reserved for a single `/healthz`.
 - A connection still receiving its headers is evicted only after every
   idle one of the same peer.

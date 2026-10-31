@@ -951,9 +951,24 @@ class DocAndScriptTests(unittest.TestCase):
             start = text.index(heading)
             gate = text[start : text.index("\n## ", start + 1) if heading.startswith("## ") else text.index("\n## ", start)]
             sign_off = gate.index("CTO sign-off")
-            for item in ("RSS fix (#26)", "1.62 GB", "Audit logging (", "tailscale funnel", "/64 IPv6 keying ("):
+            for item in (
+                "RSS fix (#26)",
+                "`fallback: false`",
+                "group- or world-writable",
+                "Stale-bytecode drill",
+                "python -m app.server",
+                "Audit logging (",
+                "journald",
+                "tagged",
+                "1Password path",
+                "Fuzzing",
+                "secret scanning in CI",
+                "tailscale funnel",
+                "/64 IPv6 keying (",
+            ):
                 with self.subTest(heading=heading, item=item):
                     self.assertLess(gate.index(item), sign_off)
+            self.assertNotIn("1.62 GB", gate)
             self.assertIn("PREACHED_TRUSTED_PROXIES=127.0.0.1", gate)
             self.assertIn("direct", gate[gate.index("PREACHED_TRUSTED_PROXIES=127.0.0.1") - 200 :])
         start = text.index("### Known gaps")
@@ -962,6 +977,7 @@ class DocAndScriptTests(unittest.TestCase):
             with self.subTest(item=item):
                 self.assertIn(item, gaps)
         self.assertNotIn("keyed per address, not per /64", gaps)
+        self.assertIn("client IP (the real one behind a trusted proxy), the path and\n  the time are stored", text)
         logs = next(line for line in text.splitlines() if line.startswith("| Logs |"))
         self.assertIn("`peer key method path status`", logs)
         self.assertIn("suppressed=N", logs)
