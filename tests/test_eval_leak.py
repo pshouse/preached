@@ -6,6 +6,7 @@ import csv
 import importlib.util
 import json
 import re
+import sqlite3
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_title_leak as lint  # noqa: E402
+from preached import paths  # noqa: E402
 
 # By path, so eval/ (pool.py, timestamps.py) never goes on sys.path.
 _spec = importlib.util.spec_from_file_location("eval_validate", ROOT / "eval" / "validate.py")
@@ -34,6 +36,22 @@ def load_verdicts() -> dict[str, str]:
 
 def load_partials() -> list[dict]:
     return [json.loads(line) for line in (ROOT / "eval" / "partial_verdicts.jsonl").read_text().splitlines() if line.strip()]
+
+
+def load_chunk_texts() -> list[dict] | None:
+    """Chunk id + text from chunks.jsonl, else from the index sqlite opened read-only; None if neither exists."""
+    if validate.CHUNKS_JSONL.is_file():
+        return validate.read_jsonl(validate.CHUNKS_JSONL)
+    index = paths.INDEX_PATH
+    if not index.is_file():
+        return None
+    # immutable=1 never touches -wal/-shm or the file itself; the private index is not written or copied.
+    conn = sqlite3.connect(f"file:{index}?mode=ro&immutable=1", uri=True)
+    try:
+        return [{"chunk_id": cid, "text": text}
+                for cid, text in conn.execute("SELECT chunk_id, text FROM chunks ORDER BY rowid")]
+    finally:
+        conn.close()
 
 
 def load_sheet_chunks() -> dict[str, str]:
@@ -147,7 +165,8 @@ class TitleLeakTest(unittest.TestCase):
             if "mirrored_from" in line:
                 where = f'{line["question_id"]} {line["sheet_row"]}'
                 source = sources.get((line["mirrored_from"], line["sheet_row"]))
-                self.assertIsNotNone(source, where)
+                if source is None:
+                    self.fail(f"mirror has no source line: {where}")
                 self.assertEqual(line["label"], source["label"], where)
                 # The mirror goes on the original of that -plain rewrite.
                 self.assertEqual(by_id[line["mirrored_from"]].get("rewrite_of"), line["question_id"], where)
@@ -166,11 +185,12 @@ class TitleLeakTest(unittest.TestCase):
             if p["quote_source"] == "key-segment":
                 self.assertIn(p["quote"], segments[p["sheet_row"]], f'{p["passage_id"]} {p["sheet_row"]}')
 
-    @unittest.skipUnless(validate.CHUNKS_JSONL.is_file(), "needs the chunked corpus in /cache")
     def test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk(self):
+        chunks = load_chunk_texts()
+        if chunks is None:
+            self.skipTest("needs chunks.jsonl or the index sqlite in PREACHED_CACHE")
         sheet = load_sheet_chunks()
         self.assertEqual(len(sheet), 24)
-        chunks = validate.read_jsonl(validate.CHUNKS_JSONL)
         labels = confirmed_labels()
         self.assertTrue(labels)
         for p in labels:
