@@ -1,27 +1,43 @@
 """Fail a unittest run that writes under a real cache.
 
-The suite reads PREACHED_CACHE. It must not create or change regular files
+The suite reads PREACHED_CACHE. It must not create or change anything
 there. Tool caches (XDG_CACHE_HOME, DENO_DIR) are pointed at a temp directory
 so deno and ONNX Runtime do not use /cache/xdg.
 
-A before/after listing catches files left behind. Write-mode opens are
+A before/after listing catches files left behind, including a same-size
+replace, a chmod, a new symlink, an empty directory, and a SQLite -wal
+file written by a connection that is still open. Write-mode opens are
 recorded as they happen, so a file created under the cache and removed
-before the run ends still fails the run.
+before the run ends still fails the run. A writable sqlite3.connect under
+a watched root is refused; mode=ro URIs are left alone.
+
+Arming: import the tests package (``python -m unittest tests.<module>``)
+or discover the suite (``python -m unittest discover -s tests`` from any
+directory). Discovery loads ``test_cache_guard``, which calls ``install``
+without going through the package. ``python -m unittest test_x`` with the
+working directory inside tests/ does not arm the guard.
 """
 
 from __future__ import annotations
 
 import atexit
+import fnmatch
 import os
+import sqlite3
 import stat
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 
-# Top-level directories that other tools rewrite. SQLite sidecars change when
-# a read-only connection opens the index. Everything else must stay put.
+# Top-level directories that other tools rewrite. -shm changes when a
+# read-only connection opens a WAL index, so those sidecars are ignored.
+# -wal is the log itself: an insert or update with the connection still
+# open changes only that file. The box snapshot daemon's
+# *.box-store-snap-* names are noise. Everything else must stay put.
 _EXCLUDED_DIRS = frozenset({"uv", "uv-python", "venvs", "xdg", "demo-kill"})
+_SNAP_NOISE = "*.box-store-snap-*"
 _REAL_CACHE = Path("/cache")
 
 _installed = False
@@ -31,8 +47,47 @@ _run: "_Run | None" = None
 _real_builtin_open = open
 _real_os_open = os.open
 _real_io_open = None
+_real_sqlite_connect = sqlite3.connect
 _hooks_on = False
 _in_hook = False
+
+
+class Entry(tuple):
+    """lstat identity of one path. Directories compare inode and mode only.
+
+    A directory's size, mtime and ctime move when the box daemon adds and
+    removes a snap file beside a watched file. Those names are ignored, and
+    the directory's timestamps are too, so that noise does not fail a run.
+    Inode and mode still catch a replaced directory and a chmod of one.
+    Files and symlinks compare inode, mode, size, mtime and ctime, so a
+    same-size same-mtime replace, a chmod, or a metadata-only change is
+    visible. Symlinks are lstat'd and not followed.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, inode: int, mode: int, size: int, mtime_ns: int, ctime_ns: int) -> "Entry":
+        return tuple.__new__(cls, (inode, mode, size, mtime_ns, ctime_ns))
+
+    @property
+    def inode(self) -> int:
+        return self[0]
+
+    @property
+    def mode(self) -> int:
+        return self[1]
+
+    @property
+    def size(self) -> int:
+        return self[2]
+
+    @property
+    def mtime_ns(self) -> int:
+        return self[3]
+
+    @property
+    def ctime_ns(self) -> int:
+        return self[4]
 
 
 class _Run:
@@ -43,60 +98,98 @@ class _Run:
         self.notes: set[str] = set()
 
 
+def _ignored_name(name: str) -> bool:
+    if fnmatch.fnmatch(name, _SNAP_NOISE):
+        return True
+    # -shm only. -wal of a watched database is itself watched.
+    return name.endswith("-shm")
+
+
 def _ignored_rel(rel: str) -> bool:
     if not rel or rel == ".":
         return True
-    head = rel.split("/", 1)[0]
-    if head in _EXCLUDED_DIRS:
+    parts = rel.split("/")
+    if parts[0] in _EXCLUDED_DIRS:
         return True
-    name = rel.rsplit("/", 1)[-1]
-    return name.endswith("-shm") or name.endswith("-wal")
+    return any(_ignored_name(part) for part in parts)
 
 
-def snapshot_tree(root: Path) -> dict[str, tuple[int, int]]:
-    """Relative path -> (size, mtime_ns) for regular files under ``root``.
+def _entry(path: str) -> Entry | None:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return Entry(st.st_ino, st.st_mode, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
-    Symlinks are not followed and are not listed. Excluded directories are
-    not walked. The snapshot only stats; it does not write.
+
+def _visible(entry: Entry) -> tuple:
+    """The fields a change is judged on. Directory timestamps are not among them."""
+    if stat.S_ISDIR(entry.mode):
+        return (entry.inode, entry.mode)
+    return (entry.inode, entry.mode, entry.size, entry.mtime_ns, entry.ctime_ns)
+
+
+def _format_entry(entry: Entry) -> str:
+    return (
+        f"inode={entry.inode} mode={oct(entry.mode)} size={entry.size} "
+        f"mtime_ns={entry.mtime_ns} ctime_ns={entry.ctime_ns}"
+    )
+
+
+def snapshot_tree(root: Path) -> dict[str, Entry]:
+    """Relative path -> lstat identity for files, directories and symlinks.
+
+    Symlinks are not followed. Excluded directories and ignored names are
+    not walked and not listed. The snapshot only stats; it does not write.
+    ``.`` is the root itself, so a chmod of the cache directory is visible.
     """
-    listing: dict[str, tuple[int, int]] = {}
+    listing: dict[str, Entry] = {}
     base = os.fspath(root)
+    root_entry = _entry(base)
+    if root_entry is not None:
+        listing["."] = root_entry
     for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
         rel_dir = os.path.relpath(dirpath, base)
-        if rel_dir == ".":
-            dirnames[:] = [name for name in dirnames if name not in _EXCLUDED_DIRS]
-            prefix = ""
-        else:
-            prefix = rel_dir.replace(os.sep, "/") + "/"
-            dirnames[:] = [name for name in dirnames if not _ignored_rel(prefix + name)]
-        for name in filenames:
+        prefix = "" if rel_dir == "." else rel_dir.replace(os.sep, "/") + "/"
+        kept: list[str] = []
+        for name in dirnames:
             rel = name if not prefix else prefix + name
             if _ignored_rel(rel):
                 continue
             path = os.path.join(dirpath, name)
-            try:
-                st = os.lstat(path)
-            except OSError:
+            entry = _entry(path)
+            if entry is not None:
+                listing[rel] = entry
+            # A symlink to a directory is listed and not descended into.
+            if os.path.islink(path):
                 continue
-            if not stat.S_ISREG(st.st_mode):
+            kept.append(name)
+        dirnames[:] = kept
+        for name in filenames:
+            rel = name if not prefix else prefix + name
+            if _ignored_rel(rel):
                 continue
-            listing[rel] = (st.st_size, st.st_mtime_ns)
+            entry = _entry(os.path.join(dirpath, name))
+            if entry is not None:
+                listing[rel] = entry
     return listing
 
 
-def diff_lines(label: str, before: dict[str, tuple[int, int]], after: dict[str, tuple[int, int]]) -> list[str]:
+def diff_lines(label: str, before: dict[str, Entry], after: dict[str, Entry]) -> list[str]:
     lines = []
     for rel in sorted(set(before) | set(after)):
         if rel not in before:
-            size, mtime = after[rel]
-            lines.append(f"{label} added {rel} size={size} mtime_ns={mtime}")
+            lines.append(f"{label} added {rel} {_format_entry(after[rel])}")
         elif rel not in after:
-            size, mtime = before[rel]
-            lines.append(f"{label} removed {rel} size={size} mtime_ns={mtime}")
-        elif before[rel] != after[rel]:
-            bsize, bmtime = before[rel]
-            asize, amtime = after[rel]
-            lines.append(f"{label} changed {rel} size={bsize}->{asize} mtime_ns={bmtime}->{amtime}")
+            lines.append(f"{label} removed {rel} {_format_entry(before[rel])}")
+        elif _visible(before[rel]) != _visible(after[rel]):
+            old, new = before[rel], after[rel]
+            lines.append(
+                f"{label} changed {rel} "
+                f"inode={old.inode}->{new.inode} mode={oct(old.mode)}->{oct(new.mode)} "
+                f"size={old.size}->{new.size} mtime_ns={old.mtime_ns}->{new.mtime_ns} "
+                f"ctime_ns={old.ctime_ns}->{new.ctime_ns}"
+            )
     return lines
 
 
@@ -235,6 +328,61 @@ def _hooked_io_open(file, mode="r", *args, **kwargs):
     return _real_io_open(file, mode, *args, **kwargs)
 
 
+def _connect_uri(args: tuple, kwargs: dict) -> bool:
+    if "uri" in kwargs:
+        return bool(kwargs["uri"])
+    # timeout, detect_types, isolation_level, check_same_thread, factory,
+    # cached_statements, uri. uri becomes keyword-only in 3.15.
+    return bool(args[6]) if len(args) >= 7 else False
+
+
+def _sqlite_fs_path(database: object, uri: bool) -> str | None:
+    try:
+        text = os.fspath(database)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+    if isinstance(text, bytes):
+        text = os.fsdecode(text)
+    if not isinstance(text, str) or text in {":memory:", ""}:
+        return None
+    if uri and text.startswith("file:"):
+        path = urllib.parse.unquote(urllib.parse.urlparse(text).path)
+        if path in {":memory:", ""}:
+            return None
+        return path
+    return text
+
+
+def _sqlite_is_readonly(database: object, uri: bool) -> bool:
+    """True only for a URI whose mode parameter is ro."""
+    if not uri:
+        return False
+    try:
+        text = os.fspath(database)  # type: ignore[arg-type]
+    except TypeError:
+        return False
+    if isinstance(text, bytes):
+        text = os.fsdecode(text)
+    if not isinstance(text, str) or "?" not in text:
+        return False
+    query = text.split("?", 1)[1].split("#", 1)[0]
+    modes = [item.strip().lower() for item in urllib.parse.parse_qs(query).get("mode", [])]
+    return bool(modes) and all(mode == "ro" for mode in modes)
+
+
+def _hooked_sqlite_connect(database, *args, **kwargs):
+    """Refuse a writable open under a watched root. mode=ro URIs pass through."""
+    uri = _connect_uri(args, kwargs)
+    if not _sqlite_is_readonly(database, uri):
+        path = _sqlite_fs_path(database, uri)
+        if path is not None and _run is not None and not _in_hook:
+            note = classify_write(path, _run.live_roots)
+            if note is not None:
+                _record(path)
+                raise sqlite3.OperationalError(f"cache guard: refusing a writable SQLite open ({note})")
+    return _real_sqlite_connect(database, *args, **kwargs)
+
+
 def _install_write_hooks() -> None:
     global _hooks_on, _real_io_open
     if _hooks_on:
@@ -246,6 +394,7 @@ def _install_write_hooks() -> None:
     builtins.open = _hooked_builtin_open
     io.open = _hooked_io_open
     os.open = _hooked_os_open
+    sqlite3.connect = _hooked_sqlite_connect
     _hooks_on = True
 
 
@@ -259,6 +408,7 @@ def _remove_write_hooks() -> None:
     builtins.open = _real_builtin_open
     io.open = _real_io_open
     os.open = _real_os_open
+    sqlite3.connect = _real_sqlite_connect
     _hooks_on = False
 
 
