@@ -289,6 +289,7 @@ for the deno-backed tests that honor it (the set grows as more
 tests adopt it). Without it, a machine with no `deno` would skip the
 withheld-card scan, the touch-only blur check and the code-point cap check,
 and the suite would still pass.
+
 To run a checkout or a bundle by hand on loopback:
 `PREACHED_HOST=127.0.0.1 PREACHED_PORT=8000 scripts/serve.sh`.
 
