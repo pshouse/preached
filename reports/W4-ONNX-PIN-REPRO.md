@@ -130,7 +130,18 @@ Full suite, exact command: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run
 
 ## 8. Diff scope
 
-@@STAT@@
+```
+ app/server.py                            |  23 ++
+ docs/DEPLOY.md                           | 112 +++----
+ docs/adr/0001-onnx-export-determinism.md |  52 ++++
+ reports/W4-ONNX-PIN-REPRO.md             | 148 ++++++++++
+ scripts/export_onnx.py                   |  90 +++++-
+ src/preached/artifacts.py                |  19 +-
+ tests/test_deploy_alerts.py              |  92 +++---
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 481 +++++++++++++++++++++++++++++++
+ 9 files changed, 912 insertions(+), 109 deletions(-)
+```
 
 The files in scope: the export script, `artifacts.py`, server/healthz, their tests, the ADR, this report, and the standing-rule-4 cite re-pin (`docs/DEPLOY.md`, `tests/test_deploy_alerts.py`). No README.md and no keep-alive code.
 
