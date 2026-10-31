@@ -39,7 +39,7 @@ uv run python -m unittest discover -s tests
 - ~~The church ASR path has no review file and no gate~~ and ~~approvals are read at server start~~: fixed, see the fix-up section below.
 - The server does not re-hash the review file; the file hash is checked at import and approval only.
 - Approval is a CLI act of the operator; nothing proves the file was read.
-- The `shifted` policy was deleted in round 6. The *seek* margin (`SEEK_SLACK_S`) is now 1.5 s, from measurement (round 5): large-v3-turbo word ends vs forced alignment were p95 0.12 s, p99 0.48 s, max 3.58 s late on clean studio audio, so p99 + 0.5 s = 0.98 s and 1.5 s is that plus headroom; church audio will be worse. YouTube `t=` is whole seconds, rounded up.
+- The `shifted` policy was deleted in round 6. The *seek* margin (`SEEK_SLACK_S`) is now 1.5 s, from measurement (round 5): large-v3-turbo word ends vs forced alignment were p95 0.12 s, p99 0.48 s, max 3.58 s late on clean studio audio, so p99 + 0.5 s = 0.98 s and 1.5 s is that plus headroom; church audio will be worse. YouTube `t=` is whole seconds, rounded down (`int()` in `listing.py`).
 - A kept-but-unflagged name (the silent-miss class in `reports/W3-PRIV.md`) is neither redacted nor audio-restricted.
 - The sermon-level `audio_url` in `/api/sermon/<id>` skips flagged chunks unless the policy is `play`.
 - Titles are redacted by the same rules (recall 0.926 on blind3), so titles can still leak names.

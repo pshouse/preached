@@ -53,29 +53,32 @@ def raw(index: Path) -> bytes:
     return index.read_bytes() + (wal.read_bytes() if wal.exists() else b"")
 
 
-def free_pages(index: Path) -> list[tuple[int, bytes]]:
-    """Every freelist page (trunk and leaf) as (number, bytes).
+def free_pages(index: Path) -> tuple[list[tuple[int, bytes]], int]:
+    """Every freelist page (trunk and leaf) as (number, bytes), and the trunk count.
 
-    SQLite reuses the first free page as the trunk without wiping it, so a
-    trunk keeps the old b-tree page's header and cell-pointer array (offsets,
-    no text). Those first 64 bytes are left out; cell content sits at the
-    page end and must be zero.
+    SQLite reuses a free page as the trunk without wiping it, so a trunk keeps
+    the old b-tree page's header and cell-pointer array (offsets, no text), and
+    its own header and leaf list. The first ``max(64, 8 + 4 * count)`` bytes
+    are left out; cell content sits at the page end and must be zero. Leaf
+    pages are returned whole.
     """
     data = index.read_bytes()
     size = int.from_bytes(data[16:18], "big")
     size = 65536 if size == 1 else size
     trunk = int.from_bytes(data[32:36], "big")
     pages = []
+    trunks = 0
     while trunk:
+        trunks += 1
         page = data[(trunk - 1) * size : trunk * size]
         following = int.from_bytes(page[0:4], "big")
         count = int.from_bytes(page[4:8], "big")
         for i in range(count):
             leaf = int.from_bytes(page[8 + 4 * i : 12 + 4 * i], "big")
             pages.append((leaf, data[(leaf - 1) * size : leaf * size]))
-        pages.append((trunk, page[64:]))
+        pages.append((trunk, page[max(64, 8 + 4 * count) :]))
         trunk = following
-    return pages
+    return pages, trunks
 
 
 def chunk(i: int, text: str) -> dict:
@@ -206,8 +209,17 @@ class YouTubeFixupTests(Base):
 
     def test_redo_canary_removed_from_db_and_wal(self) -> None:
         # The first import is long and holds the canary; the --redo transcript is
-        # much shorter and has none, so the redo frees pages that held it.
-        self.assertEqual(self.run_import(SERVICE + FILLER * 40)[0], 0)
+        # much shorter and has none, so the redo frees pages that held it. A
+        # 512-byte page holds 126 leaf numbers, so the large first import frees
+        # more than one freelist trunk page.
+        seed = sqlite3.connect(self.index)
+        seed.execute("PRAGMA page_size = 512")
+        seed.execute("PRAGMA journal_mode = DELETE")
+        seed.execute("CREATE TABLE seed (x)")
+        seed.commit()
+        seed.close()
+        self.index.with_name(self.index.name + "-wal").unlink(missing_ok=True)
+        self.assertEqual(self.run_import(SERVICE + FILLER * 1500)[0], 0)
         self.assertIn(CANARY.encode(), raw(self.index))
         seen = []
         real_open = library.open_library
@@ -224,8 +236,10 @@ class YouTubeFixupTests(Base):
         self.assertNotIn(CANARY.encode(), self.index.read_bytes())
         wal = Path(f"{self.index}-wal")
         self.assertNotIn(CANARY.encode(), wal.read_bytes() if wal.exists() else b"")
-        free = free_pages(self.index)
+        self.assertNotIn(CANARY[:8].encode(), raw(self.index))  # nor an FTS prefix of it
+        free, trunks = free_pages(self.index)
         self.assertTrue(free, "the shrinking redo should have freed pages")
+        self.assertGreater(trunks, 1, "the fixture should free more than one trunk page")
         for number, page in free:
             self.assertFalse(any(page), f"free page {number} holds stale bytes")
 
@@ -383,6 +397,30 @@ class AsrOutTests(unittest.TestCase):
         self.addCleanup(connection.close)
         stored = [r[0] for r in connection.execute("SELECT text FROM chunks WHERE sermon_id = 'church-1' ORDER BY rowid")]
         self.assertEqual(stored, [r["text"] for r in after if r["sermon_id"] == "church-1"])
+
+    def test_out_under_a_symlinked_parent_is_rewritten_at_approval(self) -> None:
+        real = self.root / "real-out"
+        real.mkdir()
+        link = self.root / "link-out"
+        link.symlink_to(real)
+        out = link / "c.jsonl"
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            asr_chunks.main([str(self.paths[0]), "--out", str(out), "--library", "church",
+                             "--privacy", str(self.toml), "--index", str(self.index)], embedder=embedder)
+        self.assertIn(CANARY, (real / "c.jsonl").read_text())
+        review = self.root / "church" / "review" / "church-1.review.jsonl"
+        words = words_for(SERVICE)
+        index = next(i for i, w in enumerate(words) if w.text == CANARY)
+        lines = [json.loads(x) for x in review.read_text().splitlines()]
+        lines.append({"field": "exclude", "start_s": words[index - 1].start, "end_s": words[index + 3].end})
+        review.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines))
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()) as err:
+            code = youtube_main(["--library", "church", "--ack-review", "church-1", "--privacy", str(self.toml)],
+                                index_dir=self.root, embedder=embedder)
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertNotIn(CANARY, (real / "c.jsonl").read_text())
+        self.assertTrue(link.is_symlink())  # the link itself was not replaced
+        self.assertEqual(sorted(p.name for p in real.iterdir()), ["c.jsonl"])
 
     def test_rerun_keeps_reviewer_stretches(self) -> None:
         argv = [str(self.paths[0]), "--out", str(self.out), "--library", "church", "--privacy", str(self.toml), "--index", str(self.index)]

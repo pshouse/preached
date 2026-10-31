@@ -132,6 +132,20 @@ def compute_signals(searcher, query: str, vector, shown) -> Signals:
     )
 
 
+def church_confidence(signals: Signals, *, has_results: bool) -> Confidence:
+    """Confidence for a church library. Unrated until that library is calibrated.
+
+    The floor in ``search/abstain.toml`` was fitted on Wesley. Applying it
+    to a church transcript would call the same cosine strong, weak, or low
+    on the wrong scale. A list with passages is ``unrated`` (show them, no
+    strong/weak/low claim). An empty list is ``none`` only as "nothing
+    found", with ``calibrated`` false and no floor.
+    """
+    if not has_results:
+        return Confidence(level="none", calibrated=False, floor=None, signals=signals)
+    return Confidence(level="unrated", calibrated=False, floor=None, signals=signals)
+
+
 def decide(signals: Signals, floor: float | None, has_results: bool = True) -> Confidence:
     """The level for one search. ``floor`` None means uncalibrated."""
     calibrated = floor is not None

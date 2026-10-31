@@ -570,7 +570,7 @@ class SchemaTests(unittest.TestCase):
         from app.server import App
 
         class _Conn:
-            def execute(self, _sql):
+            def execute(self, _sql, _params=()):
                 return self
 
             def fetchone(self):
