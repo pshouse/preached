@@ -179,15 +179,20 @@ A direct start is `python app/server.py`, `python -B app/server.py`, or
 
 It does guarantee:
 
-- no bytecode is read from the tree or written to it. The first lines of
+- no cached bytecode for the server's own `.py` modules is read from the tree,
+  and none is written to it. Files added to the tree (a sourceless `.pyc`, a
+  `sitecustomize` under `serve.sh`'s `PYTHONPATH`, an extension module) are in
+  the same class as an edited `.py`: refused by the check, but only after they
+  have run on a direct start. The first lines of
   `app/server.py`, before any `app` or `preached` import, set
   `sys.dont_write_bytecode` and point `sys.pycache_prefix` at a new private
   empty directory (`tempfile.mkdtemp`). `app/__init__.py`, `app/bundle.py`
   and every `preached` module are compiled from their source files. A
   planted `__pycache__` (for example one that makes `bundle_problem` return
   None) is not read; `main` then finds it and refuses to start. The
-  directory is removed at exit, and SIGTERM stops the server cleanly so
-  that removal runs.
+  directory is removed at exit. A SIGTERM handler is installed on the line
+  after the directory is made, so SIGTERM during start-up imports, and
+  later during serving, still removes it.
 - `main` runs the whole bundle check (`bundle_problem`, then the model
   directory check) before it opens the index or binds the port.
 
@@ -209,6 +214,8 @@ It does not guarantee:
 - anything about `.venv` or the interpreter (next section).
 - a clean exit on SIGKILL. The private bytecode directory (empty, mode
   0700) is left in `$TMPDIR`.
+- that `$TMPDIR` is used. If it is set but not writable, `mkdtemp` falls back
+  to `/tmp` (same mode 0700, random name, removed at exit).
 
 While serving, a bundle's index is frozen. If the open index changes after
 start (chunks, vectors, any commit from another connection, or a status

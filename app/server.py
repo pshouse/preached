@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import atexit
 import shutil
+import signal
 import sys
 import tempfile
 
@@ -49,17 +50,18 @@ import tempfile
 # bundle_problem. An old __pycache__ in the tree can match a source file's
 # size and mtime and would run in place of that source. A fresh, private,
 # empty prefix means every one of those modules is compiled from source,
-# and nothing is written. Removed at exit (main turns SIGTERM into one).
+# and nothing is written. Removed at exit; SIGTERM becomes an exit from here
+# on (main later turns it into a clean stop of the serve loop).
 sys.dont_write_bytecode = True
 sys.pycache_prefix = tempfile.mkdtemp(prefix="preached-pycache-")
 atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
+signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(128 + signal.SIGTERM))
 
 import argparse  # noqa: E402
 import json  # noqa: E402
 import logging  # noqa: E402
 import os  # noqa: E402
 import re  # noqa: E402
-import signal  # noqa: E402
 import sqlite3  # noqa: E402
 import stat  # noqa: E402
 import threading  # noqa: E402
