@@ -1,6 +1,10 @@
 """On-disk ONNX artifacts for Granite English R2.
 
-Weights live under ``/cache/models/granite-english-r2-onnx/<revision>/``.
+Weights live under ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``
+(``/cache`` when PREACHED_CACHE is unset; PREACHED_ONNX_DIR replaces the
+whole root). The export and the server both resolve it through
+``artifact_dir``.
+
 The runtime loads one variant, fp32. int8 is not a runtime variant: it
 missed the quality bar, and a manifest must not point ``fp32`` at another
 file. The graph file name and its sha256 are pinned in this module by
@@ -42,9 +46,11 @@ ONNX_ROOT_ENV = "PREACHED_ONNX_DIR"
 VARIANT_ENV = "PREACHED_ONNX_VARIANT"
 THREADS_ENV = "PREACHED_ORT_INTRA_OP_THREADS"
 
-DEFAULT_ONNX_ROOT = Path("/cache/models/granite-english-r2-onnx")
+CACHE_ENV = "PREACHED_CACHE"
+DEFAULT_CACHE = "/cache"
+ONNX_SUBDIR = Path("models") / "granite-english-r2-onnx"
 # The one step that builds and checks the graph, named in missing-graph errors.
-EXPORT_COMMAND = 'CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py'
+EXPORT_COMMAND = 'uv run --group bench python scripts/export_onnx.py'
 # One intra-op thread. A 1-vCPU Sprite with 4 threads was slower (134 ms
 # p50 vs 56 ms). Set PREACHED_ORT_INTRA_OP_THREADS=4 on a larger CPU.
 DEFAULT_ORT_THREADS = 1
@@ -67,7 +73,7 @@ def onnx_root() -> Path:
     raw = os.environ.get(ONNX_ROOT_ENV)
     if raw:
         return Path(raw)
-    return DEFAULT_ONNX_ROOT
+    return Path(os.environ.get(CACHE_ENV) or DEFAULT_CACHE) / ONNX_SUBDIR
 
 
 def artifact_dir(revision: str | None = None) -> Path:

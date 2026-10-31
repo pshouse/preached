@@ -8,7 +8,7 @@ the GPU stays with Whisper.
 
 From the repo root (``uv run --group bench`` installs the bench group):
 
-  CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
+  uv run --group bench python scripts/export_onnx.py
 
 The export is byte-reproducible and must write the graph pinned in
 ``preached.artifacts.FP32_ONNX_SHA256``. Two things move the bytes
@@ -24,9 +24,12 @@ The export is byte-reproducible and must write the graph pinned in
 It exits non-zero without a manifest if the graph does not match the pin.
 
 The Hugging Face cache defaults to ``$PREACHED_CACHE/huggingface`` (``/cache``
-only when PREACHED_CACHE is unset); an explicit HF_HOME wins.
+only when PREACHED_CACHE is unset); an explicit HF_HOME or hub cache wins.
 
-Outputs under ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``:
+Outputs go to ``preached.artifacts.artifact_dir()``, the directory the server
+reads: ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``
+(``/cache`` only when PREACHED_CACHE is unset; PREACHED_ONNX_DIR replaces the
+root). The script removes and rewrites only that directory:
 
   model.fp32.onnx
   model.int8.onnx
@@ -55,13 +58,21 @@ os.environ["ATEN_CPU_CAPABILITY"] = EXPORT_CPU_CAPABILITY
 def _default_hf_cache(environ) -> None:
     """Point the HF cache under PREACHED_CACHE (/cache only when it is unset).
 
-    An explicit HF_HOME wins; the hub cache then follows it. This runs at
-    import, before the hash-seed restart and before any HF or torch import,
-    and the restart passes os.environ on, so the restarted process sees it.
+    An explicit HF_HOME wins; the hub cache then follows it. An explicit hub
+    cache under either name (HF_HUB_CACHE, which huggingface_hub prefers, or
+    the older HUGGINGFACE_HUB_CACHE) wins over that, and both names are set
+    to the one in use. This runs at import, before the hash-seed restart and
+    before any HF or torch import, and the restart passes os.environ on, so
+    the restarted process sees it.
     """
     root = environ.get("PREACHED_CACHE") or "/cache"
     environ.setdefault("HF_HOME", os.path.join(root, "huggingface"))
-    environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(environ["HF_HOME"], "hub"))
+    hub = (
+        environ.get("HF_HUB_CACHE")
+        or environ.get("HUGGINGFACE_HUB_CACHE")
+        or os.path.join(environ["HF_HOME"], "hub")
+    )
+    environ["HF_HUB_CACHE"] = environ["HUGGINGFACE_HUB_CACHE"] = hub
 
 
 _default_hf_cache(os.environ)

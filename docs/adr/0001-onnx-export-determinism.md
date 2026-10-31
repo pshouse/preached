@@ -1,10 +1,10 @@
 # ADR 0001: The ONNX export fixes avx2 dispatch and PYTHONHASHSEED=1
 
-Status: accepted, 2026-10-31. Tasks 95, 96, and 96-W4-ONNX-SEED1-PIN (the CTO's seed 1 + avx2 ruling). Evidence is in `reports/W4-ONNX-PIN-REPRO.md`.
+Status: accepted, 2026-10-31. Tasks 95, 96, 96-W4-ONNX-SEED1-PIN (the CTO's seed 1 + avx2 ruling) and 99-W4-ONNX-PIN-FIX1. Evidence is in `reports/W4-ONNX-PIN-REPRO.md`.
 
 ## Context
 
-`src/preached/artifacts.py` pins the sha256 of `model.fp32.onnx`, and the runtime refuses any other graph. A fresh clone runs `scripts/export_onnx.py` to build that graph, so the export must write the same bytes on every supported host. It did not. Different hosts produced `3861025a…` (the 2026-10-30 pin), `aed7adba…` or `d99ba823…`.
+`src/preached/artifacts.py` pins the sha256 of `model.fp32.onnx`, and the runtime refuses any other graph. A fresh clone runs `scripts/export_onnx.py` to build that graph, so the export must write the same bytes on every supported host. It did not. Depending on host and hash seed, the export produced `3861025a…` (the 2026-10-30 pin), `aed7adba…`, `d99ba823…` or `44038d45…` (the four digests of the matrix below).
 
 **Both** of these variables move the bytes. Neither changes the weights. They act independently: the hash seed picks the order of the rotary tables, and the dispatch level picks the values in them.
 
@@ -37,7 +37,7 @@ The CTO's seeded exports agree with every cell above where they overlap: avx2 + 
 - **Dispatch.** `scripts/export_onnx.py` sets `ATEN_CPU_CAPABILITY=avx2` at module top, before torch is imported, overriding any ambient value. After the import it checks `torch.backends.cpu.get_cpu_capability() == "AVX2"`. It refuses a host that is not x86-64 or whose CPU flags lack `avx2`, exiting non-zero with a message that names AVX2.
 - **Hash seed.** String hashing is fixed when the interpreter starts, so the seed cannot be set from inside the process. The script re-executes itself (`os.execv`) under `PYTHONHASHSEED=1` before it imports torch, unless `PYTHONHASHSEED` is already `1`. (It tests the variable, not `sys.flags.hash_randomization`, which reads 1 under every seed but 0; a numeric seed wins over `-R`.) Before tracing it also refuses unless `set(config.layer_types)` iterates `["sliding_attention", "full_attention"]`, the order seed 1 gives on CPython 3.12 and the order of the pinned graph.
 - **Pin.** Unchanged: `FP32_ONNX_SHA256 = 3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. Seed 1 + avx2 reproduces it, so there is no re-pin and existing exports stay valid. The export exits non-zero, before it writes a manifest, if its graph is not the pin.
-- **Tests.** `tests/test_onnx_pin_repro.py` runs the real exporter three times under ambient `PYTHONHASHSEED` unset, 0 and 3 (and dispatch `default`, `avx2`, `avx512`) and asserts byte-identical fp32 graphs equal to the pin with identical manifests. `HashSeedReexecTests` checks that any ambient seed other than the export seed restarts. `TraceOrderTests` checks that seed 0 is refused.
+- **Tests.** `tests/test_onnx_pin_repro.py` runs the real exporter three times (outputs and HF cache in a TMPDIR temp dir; the Granite snapshot is only read) under ambient `PYTHONHASHSEED` unset, 0 and 3 (and dispatch `default`, `avx2`, `avx512`) and asserts byte-identical fp32 graphs equal to the pin with identical manifests. `HashSeedReexecTests` checks that any ambient seed other than the export seed restarts. `TraceOrderTests` checks that seed 0 is refused.
 - No semantic digest, and no committed graph.
 
 ## Equivalence
@@ -46,8 +46,9 @@ Seed 1 + avx2 writes the existing pin, so nothing changes for the runtime. For r
 
 ## Consequences
 
-- The script's Hugging Face cache defaults to `$PREACHED_CACHE/huggingface` (`/cache` only when unset; an explicit `HF_HOME` wins), set before the seed restart, so a fresh clone with a custom `PREACHED_CACHE` never touches `/cache`.
+- Everything the export reads or writes follows `PREACHED_CACHE` (`/cache` only when it is unset). The Hugging Face cache defaults to `$PREACHED_CACHE/huggingface`, set before the seed restart (an explicit `HF_HOME`, `HF_HUB_CACHE` or `HUGGINGFACE_HUB_CACHE` wins). The outputs go to `preached.artifacts.artifact_dir()`, `$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/` (`PREACHED_ONNX_DIR` replaces the root), the same directory the server reads, and the export removes and rewrites only that directory. So a fresh clone with a custom `PREACHED_CACHE`, and no cache variables pointing elsewhere, does not touch `/cache`.
 - An existing `/cache` export of `3861025a…` stays valid; no re-export is needed. A fresh clone's export now writes the same bytes.
 - Export hosts must be x86-64 with AVX2. ARM hosts can still run the server with a graph exported elsewhere.
 - The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 1 to another order, the export stops with a clear message instead of writing a wrong graph. The lasting fix is upstream `sorted(set(...))`.
+- `/healthz` gains `search_mode` and `search_mode_reason`, so the three parity reference hashes that include `/healthz` change: HTTP `41ef875c` (was `ead2d78f`), HTTP without church `b0ad4285` (was `a08cb861`), in-process `c3436409` (was `d5490339`). The others are unchanged.
 - A torch, transformers or onnx version other than the one in `uv.lock` may trace another graph. The export refuses it and never re-pins.

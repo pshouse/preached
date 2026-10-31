@@ -875,7 +875,8 @@ is a failed go-live (step 7). Severities are the CTO's final rulings.
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
 | D1 | PAGE | `deploy-stored-vectors-mismatch-bm25` | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | startup `app/server.py:852` (text `:285`); reload `:1158` via `:1190` | Startup (`logging.exception`) carries a traceback. A reload logs the same line once per transition, when the note changes, with no traceback. Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
-| D2 | PAGE | `deploy-embedding-unavailable-bm25` | `ERROR embedding model unavailable; serving BM25 only` | startup only, `app/server.py:861` (text `:286`) | Fires only at startup, with a traceback. A reload does not emit this line (that path is D2b). Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
+| D2 | PAGE | `deploy-embedding-unavailable-bm25` | `ERROR embedding model unavailable; serving BM25 only` | startup only, `app/server.py:861` (text `:286`); missing graph `:857` | Fires only at startup, in two forms. A load failure logs it with a traceback (`:861`). A missing ONNX graph or manifest (the export never ran) logs it with `logging.error`, no traceback (`:857`), and the next line is `ERROR ONNX GRAPH NOT BUILT…` (row below). The regex `^ERROR embedding model unavailable; serving BM25 only$` matches both. A reload does not emit this line (that path is D2b). Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
+| D2 detail | none (not an alert; D2 already pages) | none | `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only.` | `app/server.py:858` (text `:289`) | Follows the missing-graph D2 line. The rest of the line is the missing path and the export command (`uv run --group bench python scripts/export_onnx.py`). No traceback. `/healthz` then reports `"search_mode": "bm25"` and `"search_mode_reason": "onnx_graph_not_built"` (`:1337-1338`, codes `:295-301`). The other reasons are `model_unavailable` (D2 with a traceback), `stale_vectors` (D1), `index_unreadable` (D2b), and `bm25_only` (`--bm25-only`). With dense search loaded it is `"hybrid"` and `null`. The reason is a code, never a path. |
 | D2b | PAGE | `deploy-index-status-unreadable-bm25` | `ERROR index status unreadable after reload; serving BM25 only` | `app/server.py:1158` via `:1233` (text `:291`) | Regex `^ERROR index status unreadable after reload; serving BM25 only$`. Reload only, and only when dense search was loaded. Once per transition, no traceback. Pages once per transition, deduped to at most 1 per hour. Rule drafted, disabled until deploy approval. |
 | D3 | PAGE | `deploy-refusing-after-reload` | `ERROR refusing to serve after reload:` | `app/server.py:1141` | A checkout reloaded an index it will not serve. Rule drafted, disabled. |
 | D4 | PAGE | `deploy-refusing-frozen-bundle` | `ERROR refusing to serve:` | `app/server.py:1224` | The frozen bundle index changed after start; every request is `503`. Rule drafted, disabled. |
@@ -895,7 +896,8 @@ Observability holds from W3-OBS-GAPS, MET in #51 (`8cd3104`, merged as `87c0395`
   search was loaded, logs D2b once per transition (`:1158` via `:1233`).
   A server that never loaded weights stays quiet on that path: startup
   already logged why, and D2 (`:861`) fires only at startup. D1 and D2 at
-  startup still carry a traceback (`:852`, `:861`). The failed stamp read
+  startup still carry a traceback (`:852`, `:861`), except D2's
+  missing-graph form (`:857`), which has none. The failed stamp read
   logs `ERROR could not read the index stamp` with a traceback once per
   outage (`:1110`), then DEBUG while the outage lasts. With dense search
   loaded, that also fires the D2b page (D4 in a frozen bundle); under
