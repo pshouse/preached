@@ -263,6 +263,45 @@ class Avx2GuardTests(unittest.TestCase):
         self.assertIn("export needs an x86-64 host with AVX2", result.stderr)
 
 
+class HfCacheDefaultTests(unittest.TestCase):
+    """The export's Hugging Face cache follows PREACHED_CACHE; nothing is downloaded."""
+
+    def _run(self, **env_set: str) -> list[str]:
+        # execv is replaced so the restart is recorded: the env it would pass on
+        # is what the real second process starts with.
+        code = (
+            "import os, sys\n"
+            f"sys.path.insert(0, {str(ROOT / 'scripts')!r})\n"
+            "import export_onnx\n"
+            "def execv(path, argv):\n"
+            "    print(os.environ['HF_HOME'], os.environ['HUGGINGFACE_HUB_CACHE'], 'torch' in sys.modules)\n"
+            "    raise SystemExit(0)\n"
+            "os.execv = execv\n"
+            "export_onnx._reexec_with_hashseed()\n"
+        )
+        drop = {"PYTHONHASHSEED", "HF_HOME", "HUGGINGFACE_HUB_CACHE", "PREACHED_CACHE"}
+        env = {k: v for k, v in os.environ.items() if k not in drop}
+        env.update(env_set)
+        result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split()
+
+    def test_the_cache_follows_preached_cache(self) -> None:
+        self.assertEqual(
+            self._run(PREACHED_CACHE="/tmp/pc-x"),
+            ["/tmp/pc-x/huggingface", "/tmp/pc-x/huggingface/hub", "False"],
+        )
+
+    def test_unset_preached_cache_falls_back_to_slash_cache(self) -> None:
+        self.assertEqual(self._run(), ["/cache/huggingface", "/cache/huggingface/hub", "False"])
+
+    def test_an_explicit_hf_home_wins_and_the_hub_cache_follows_it(self) -> None:
+        self.assertEqual(
+            self._run(PREACHED_CACHE="/tmp/pc-x", HF_HOME="/tmp/hf-y"),
+            ["/tmp/hf-y", "/tmp/hf-y/hub", "False"],
+        )
+
+
 def _first_initializer_value(data: bytes | memoryview) -> int:
     """Offset of the first float in the first raw_data initializer.
 

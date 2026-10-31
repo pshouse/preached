@@ -46,6 +46,7 @@ Seed 1 + avx2 writes the existing pin, so nothing changes for the runtime. For r
 
 ## Consequences
 
+- The script's Hugging Face cache defaults to `$PREACHED_CACHE/huggingface` (`/cache` only when unset; an explicit `HF_HOME` wins), set before the seed restart, so a fresh clone with a custom `PREACHED_CACHE` never touches `/cache`.
 - An existing `/cache` export of `3861025a…` stays valid; no re-export is needed. A fresh clone's export now writes the same bytes.
 - Export hosts must be x86-64 with AVX2. ARM hosts can still run the server with a graph exported elsewhere.
 - The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 1 to another order, the export stops with a clear message instead of writing a wrong graph. The lasting fix is upstream `sorted(set(...))`.

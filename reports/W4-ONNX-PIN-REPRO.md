@@ -157,3 +157,7 @@ The files in scope: the export script, `artifacts.py`, server/healthz, their tes
 ## Dependencies added
 
 None.
+
+## 96-W4-ONNX-HFHOME addendum
+
+`scripts/export_onnx.py` now defaults `HF_HOME` to `$PREACHED_CACHE/huggingface` and the hub cache to `$HF_HOME/hub`, falling back to `/cache` only when `PREACHED_CACHE` is unset. An explicit `HF_HOME` wins. The default is set at import, before the `PYTHONHASHSEED` restart and any HF/torch import, and the restart inherits it. `HfCacheDefaultTests` covers the three cases without downloading anything.

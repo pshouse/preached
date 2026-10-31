@@ -23,7 +23,10 @@ The export is byte-reproducible and must write the graph pinned in
 
 It exits non-zero without a manifest if the graph does not match the pin.
 
-Outputs under ``/cache/models/granite-english-r2-onnx/<revision>/``:
+The Hugging Face cache defaults to ``$PREACHED_CACHE/huggingface`` (``/cache``
+only when PREACHED_CACHE is unset); an explicit HF_HOME wins.
+
+Outputs under ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``:
 
   model.fp32.onnx
   model.int8.onnx
@@ -47,8 +50,21 @@ os.environ["CUDA_VISIBLE_DEVICES"] = ""
 # Before torch is imported: the dispatch level changes the exported bytes.
 EXPORT_CPU_CAPABILITY = "avx2"
 os.environ["ATEN_CPU_CAPABILITY"] = EXPORT_CPU_CAPABILITY
-os.environ.setdefault("HF_HOME", "/cache/huggingface")
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "/cache/huggingface/hub")
+
+
+def _default_hf_cache(environ) -> None:
+    """Point the HF cache under PREACHED_CACHE (/cache only when it is unset).
+
+    An explicit HF_HOME wins; the hub cache then follows it. This runs at
+    import, before the hash-seed restart and before any HF or torch import,
+    and the restart passes os.environ on, so the restarted process sees it.
+    """
+    root = environ.get("PREACHED_CACHE") or "/cache"
+    environ.setdefault("HF_HOME", os.path.join(root, "huggingface"))
+    environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(environ["HF_HOME"], "hub"))
+
+
+_default_hf_cache(os.environ)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
