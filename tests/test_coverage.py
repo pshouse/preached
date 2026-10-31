@@ -523,7 +523,7 @@ class ChurchPathTests(unittest.TestCase):
             with self.subTest(duration=duration):
                 err = self.chunk(self.transcript(words_for((1, 59)), meta={"duration_s": duration}), audio_dir=self.audio)
                 self.assertIsNone(self.stored()[0])
-                self.assertIn("no meta.duration_s", err)
+                self.assertIn("no usable stated duration", err)
         path = self.transcript(words_for((1, 59)))
         data = json.loads(path.read_text())
         del data["meta"]["duration_s"]

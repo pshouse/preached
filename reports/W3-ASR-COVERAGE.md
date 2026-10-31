@@ -293,3 +293,13 @@ uv lock --check
 - **AMX:** this box has no AMX, so N2 is tested with a fake `/proc/cpuinfo` only. The value list is the CTO's, from MKL verbose output on the AMX box.
 - **Visible-index memory:** a gated `Searcher` holds an in-memory FTS5 copy of the visible text plus a copy of the visible vectors. For a church library of a few hundred sermons that is tens of MB.
 - **`/api/sermon` timing** (~5 µs for a hidden id versus an absent one): reported above, not fixed.
+
+## YouTube duration
+
+33-W3-YT-DURATION-GATE closes the open issue above. PR #20 had already merged, so this is branch `fix/w3-yt-duration` from `origin/main`.
+
+- **Change:** `coverage.stated_duration()` raises `Unchecked` unless the duration is a finite number above zero (not a bool). `pipeline` calls it on `video.duration_s` before the coverage check, so a YouTube import with a missing, zero, negative, non-numeric or non-finite duration stores `coverage_gaps` NULL: approval refuses it and it is never served. The church path (`align/asr_chunks.py`) now calls the same helper in place of its inline test; its behaviour is unchanged, and its message is now "no usable stated duration".
+- **Tests:** `ImportTests.test_bad_stated_duration_is_unchecked` covers None, 0, -5, `"40"`, NaN and inf, plus a valid-duration control (40, checked with `duration_s=40.0`). Suite: 675 pass (674 + 1 new; the church test's message assertion was updated).
+- **Wesley:** not touched. Wesley chunking does not go through the YouTube pipeline, and the church-path condition is the same expression moved into the helper. The full byte-identity sweep was not re-run.
+- **`uv lock --check`:** passes (79 packages). No dependencies added.
+- **Head SHA:** given in the final message.

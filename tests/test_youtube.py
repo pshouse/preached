@@ -623,6 +623,60 @@ class ImportTests(unittest.TestCase):
             self.assertEqual(code, 0, err)
             self.assertEqual(seen["meta"], 1)
 
+    def test_bad_stated_duration_is_unchecked(self) -> None:
+        # A missing, zero, negative, non-numeric or non-finite duration stores NULL coverage (never approvable),
+        # as the church path does; a valid duration is the control.
+        for duration, checked in (
+            (None, False),
+            (0, False),
+            (-5, False),
+            ("40", False),
+            (float("nan"), False),
+            (float("inf"), False),
+            (40, True),
+        ):
+            with self.subTest(duration=duration):
+                video = Video("samplevid01", "On Mercy", None if isinstance(duration, str) else duration, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
+                seen = []
+
+                def coverage(_path, _words, *, duration_s=None):
+                    seen.append(duration_s)
+                    return []
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    code, _out, err = self._run(
+                        ["https://www.youtube.com/watch?v=samplevid01", "--library", "sample"],
+                        root,
+                        lister=lambda _url: [video],
+                        metadata=lambda _video: {
+                            "license": "Creative Commons Attribution license (reuse allowed)",
+                            "upload_date": "20240602",
+                            "title": "On Mercy",
+                            "duration": duration,
+                        },
+                        downloader=lambda _video, dest: dest / "samplevid01.m4a",
+                        transcriber=lambda _path: sample_words(12.2),
+                        coverage=coverage,
+                        embedder=embedder,
+                    )
+                    self.assertEqual(code, 0, err)
+                    connection = open_readonly(root / "sample.sqlite", check_same_thread=False)
+                    try:
+                        stored = connection.execute("SELECT coverage_gaps FROM videos").fetchone()[0]
+                    finally:
+                        connection.close()
+                    if checked:
+                        self.assertEqual(stored, "[]")
+                        self.assertEqual(seen, [40.0])
+                        self.assertNotIn("NOT checked", err)
+                    else:
+                        self.assertIsNone(stored)
+                        self.assertEqual(seen, [])
+                        self.assertIn("NOT checked (no usable stated duration)", err)
+                        code, _out, err = self._run(["--library", "sample", "--ack-review", "samplevid01"], root)
+                        self.assertNotEqual(code, 0)
+
     def test_schema_matches_the_search_server(self) -> None:
         video = Video("samplevid01", "On Mercy", 40, date(2024, 6, 2), "https://www.youtube.com/watch?v=samplevid01")
         with tempfile.TemporaryDirectory() as tmp:

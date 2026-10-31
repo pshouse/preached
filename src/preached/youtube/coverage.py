@@ -53,6 +53,7 @@ very speech the check exists to find, and a name in it is never flagged.
 from __future__ import annotations
 
 import bisect
+import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -343,6 +344,16 @@ def open_spans(sound: list[Span], words: list, *, max_gap_s: float = MAX_UNCOVER
         *sparse_spans(sound, words),
         *stretched_spans(sound, words),
     ])
+
+
+def stated_duration(value: object) -> float:
+    """The source's stated length in seconds. Raises ``Unchecked`` unless it is a finite number above zero.
+
+    Without it a download cut short after the last word would pass the check.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise Unchecked("no usable stated duration")
+    return float(value)
 
 
 def check_coverage(

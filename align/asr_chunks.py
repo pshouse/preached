@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 from pathlib import Path
@@ -299,7 +298,7 @@ def sermon_gaps(transcript: dict, audio_dir: Path | None, coverage) -> list[tupl
     sermon's coverage unchecked, and approval refuses it. Without a stated
     duration a download cut short after the last word would pass.
     """
-    from preached.youtube.coverage import Unchecked, clip_to_window
+    from preached.youtube.coverage import Unchecked, clip_to_window, stated_duration
     from preached.youtube.words import Word
 
     meta = transcript.get("meta", {})
@@ -312,13 +311,9 @@ def sermon_gaps(transcript: dict, audio_dir: Path | None, coverage) -> list[tupl
     window = None
     if "searchable_start" in transcript and "searchable_end" in transcript:
         window = (float(transcript["searchable_start"]), float(transcript["searchable_end"]))
-    duration = meta.get("duration_s")
-    if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
-        print(f"coverage {sermon_id}: NOT checked (no meta.duration_s in the transcript); approval is blocked",
-              file=sys.stderr)
-        return None
     try:
-        spans = clip_to_window(coverage(audio, words, duration_s=float(duration)), window)
+        duration = stated_duration(meta.get("duration_s"))
+        spans = clip_to_window(coverage(audio, words, duration_s=duration), window)
     except Unchecked as exc:
         print(f"coverage {sermon_id}: NOT checked ({exc}); approval is blocked", file=sys.stderr)
         return None
