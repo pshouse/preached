@@ -278,6 +278,8 @@ SERMON_ID = re.compile(r"^(?:[a-z0-9][a-z0-9-]{0,63}|[A-Za-z0-9_-]{11})$")
 FALLBACK_NOTE = "Embedding model failed to load; results are BM25 only."
 BM25_ONLY_NOTE = "Embeddings are not loaded; results are BM25 only."
 STALE_NOTE = "Stored passage vectors do not match the configured model; results are BM25 only."
+MISMATCH_LOG = "stored vectors do not match search/models.toml; serving BM25 only"
+UNAVAILABLE_LOG = "embedding model unavailable; serving BM25 only"
 INDEX_READ_NOTE = "The sermon index could not be checked; results are BM25 only."
 REFUSED_ERROR = "index unavailable"
 
@@ -830,10 +832,10 @@ def load_search(
             searcher, encode = loader(connection, model_key)
     except EmbeddingMismatch:
         # Never pair new query vectors with old document vectors.
-        logging.exception("stored vectors do not match search/models.toml; serving BM25 only")
+        logging.exception(MISMATCH_LOG)
         return Searcher(connection), None, STALE_NOTE
     except Exception:
-        logging.exception("embedding model unavailable; serving BM25 only")
+        logging.exception(UNAVAILABLE_LOG)
         return Searcher(connection), None, FALLBACK_NOTE
     return searcher, encode, None
 
@@ -1116,7 +1118,11 @@ class App:
         self.backend = None
         self.floor = None
 
-    def _serve_keyword_only(self, note: str) -> None:
+    def _serve_keyword_only(self, note: str, message: str) -> None:
+        """Drop to BM25. ``message`` is logged once per transition (the note
+        changes), not per request; the strings are the ones the alerts match."""
+        if self.fallback_note != note:
+            logging.error("%s", message)
         self.searcher = self._searcher()
         self.encode = None
         self.model_name = None
@@ -1147,7 +1153,7 @@ class App:
                 getattr(self._encode, "variant", None),
             )
         except (EmbeddingMismatch, RuntimeError):
-            self._serve_keyword_only(STALE_NOTE)
+            self._serve_keyword_only(STALE_NOTE, MISMATCH_LOG)
             return
         self.encode = self._encode
         self.model_name = self._configured_model
@@ -1187,7 +1193,7 @@ class App:
         if stamp is None:
             self._status_failed = True
             if not self._refuse_unless_servable():
-                self._serve_keyword_only(INDEX_READ_NOTE)
+                self._serve_keyword_only(INDEX_READ_NOTE, UNAVAILABLE_LOG)
             return
         if not self._status_failed and stamp == self._stamp:
             return
@@ -3192,6 +3198,7 @@ def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
             if app.church_connection is not None:
                 app.church_connection.close()
             app.close_embedder()
+            logging.info("stopped cleanly")
     if stuck:
         raise SystemExit(1)
 
