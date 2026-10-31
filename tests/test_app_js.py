@@ -454,8 +454,14 @@ class PageStaticTests(unittest.TestCase):
         page = (APP_JS.parent / "index.html").read_text()
         script = APP_JS.read_text()
         for element in ('id="results-section"', 'aria-busy="false"', 'id="confidence"', 'id="hide-low"',
-                        'id="retry"', 'role="status" aria-live="polite"'):
+                        'id="retry"', 'role="status" aria-live="polite"', 'id="view"', 'id="sides"',
+                        "Side by side"):
             self.assertIn(element, page)
+        css = (APP_JS.parent / "app.css").read_text()
+        base, _, wide = css.partition("@media (min-width: 800px)")
+        self.assertIn(".sides {", base)
+        self.assertNotIn("grid-template-columns: 1fr 1fr;", base)
+        self.assertIn("grid-template-columns: 1fr 1fr;", wide)
         self.assertNotIn("style=", page)
         self.assertIsNone(re.search(r"<[^>]*\son[a-z]+\s*=", page))  # no inline event handlers
         for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML", "eval(", "new Function", "document.write",
@@ -463,8 +469,159 @@ class PageStaticTests(unittest.TestCase):
             self.assertNotIn(banned, script)
 
 
+SIDE_CHECKS = r"""
+function eq(actual, expected, label) {
+  if (actual !== expected) throw new Error(label + ": got " + JSON.stringify(actual) + ", want " + JSON.stringify(expected));
+}
+function walk(node, out) {
+  out.push(node);
+  var kids = node.children || [];
+  for (var i = 0; i < kids.length; i += 1) walk(kids[i], out);
+  return out;
+}
+function tagged(root, tag) {
+  return walk(root, []).filter(function (node) { return node.tagName === tag; });
+}
+
+var churchHit = {
+  sermon_title: "On Mercy",
+  text: "churchonlytoken",
+  start_s: 12.2,
+  end_s: 20,
+  audio_url: "https://www.youtube.com/watch?v=samplevid01&t=11s",
+  text_source: "asr",
+};
+var classicHit = {
+  sermon_title: "Salvation by Faith",
+  sermon_number: 1,
+  text: "classiconlytoken",
+  start_s: 32.81,
+  end_s: 40,
+  audio_url: "https://archive.org/download/x/y.mp3",
+  reader: "Reader",
+  source_url: "https://www.ccel.org/x",
+};
+var classic = {
+  library: "wesley", label: "John Wesley", sample: false, present: true, empty: false,
+  message: null, mode: "bm25", results: [classicHit], note: null, abstain: false,
+  confidence: { level: "unrated", note: null },
+};
+var churchLow = {
+  library: "sample", label: "Your church", sample: true, present: true, empty: false,
+  message: null, mode: "hybrid", results: [churchHit], note: null, abstain: true,
+  confidence: { level: "none", note: "n" },
+};
+var churchMissing = {
+  library: null, label: "Your church", sample: false, present: false, empty: true,
+  message: CHURCH_EMPTY, mode: null, results: [], note: null, abstain: false, confidence: null,
+};
+
+eq(sideHeading(classic, "classic"), "Classic library: John Wesley", "classic heading");
+eq(sideHeading(churchLow, "church"), "Your church (sample data)", "sample heading");
+eq(sideHeading(churchMissing, "church"), "Your church", "missing heading");
+
+var low = describeSide(churchLow, false, "church");
+eq(low.kind, "low", "church low kind");
+eq(low.showResults, true, "low church shows passages");
+eq(low.confidenceNote, MESSAGES.low, "church low banner");
+eq(low.canHide, true, "church can hide");
+var strong = describeSide(classic, false, "classic");
+eq(strong.kind, "results", "classic kind");
+eq(strong.confidenceNote, null, "classic has no low banner");
+eq(strong.heading.indexOf("churchonlytoken"), -1, "classic heading has no church token");
+
+var missing = describeSide(churchMissing, false, "church");
+eq(missing.kind, "empty", "missing kind");
+eq(missing.status, CHURCH_EMPTY, "missing copy");
+eq(missing.showResults, false, "missing shows nothing");
+eq(missing.canHide, false, "missing is not a low-confidence toggle");
+
+var searchedEmpty = describeSide({
+  library: "sample", label: "Your church", sample: true, present: true, empty: true,
+  message: CHURCH_EMPTY, results: [], abstain: true, confidence: { level: "none", note: "n" },
+}, false, "church");
+eq(searchedEmpty.status, CHURCH_EMPTY, "searched empty copy");
+eq(searchedEmpty.heading, "Your church (sample data)", "searched empty still says sample");
+eq(searchedEmpty.confidenceNote, null, "empty church skips the low banner");
+
+var churchCol = renderSide(churchLow, false, "church");
+var classicCol = renderSide(classic, false, "classic");
+eq(tagged(churchCol, "H2")[0].textContent, "Your church (sample data)", "church h2");
+eq(tagged(classicCol, "H2")[0].textContent, "Classic library: John Wesley", "classic h2");
+var watch = tagged(churchCol, "A").filter(function (node) { return node.className === "play"; });
+eq(watch.length, 1, "church reuses the watch link");
+eq(watch[0].href, "https://www.youtube.com/watch?v=samplevid01&t=11s", "stored watch href");
+eq(tagged(churchCol, "BUTTON").length, 0, "youtube column has no player button");
+var play = tagged(classicCol, "BUTTON").filter(function (node) { return node.className === "play"; });
+eq(play.length, 1, "classic reuses the archive player");
+eq(play[0].textContent, "Play from 0:00:32", "archive label");
+eq(tagged(classicCol, "A").filter(function (node) { return node.className === "play"; }).length, 0, "archive is not a watch link");
+var classicText = walk(classicCol, []).map(function (node) { return node.textContent || ""; }).join("\n");
+var churchText = walk(churchCol, []).map(function (node) { return node.textContent || ""; }).join("\n");
+eq(classicText.indexOf("churchonlytoken"), -1, "classic column has no church excerpt");
+eq(churchText.indexOf("classiconlytoken"), -1, "church column has no classic excerpt");
+eq(walk(renderSide(churchMissing, false, "church"), []).filter(function (node) { return node.tagName === "LI"; }).length, 0, "missing church has no card");
+
+function FakeNode(tag) {
+  this.tagName = tag; this.children = []; this.textContent = ""; this.hidden = false;
+  this.attrs = {}; this.dataset = {}; this.focused = false;
+  var classes = new Set();
+  this.classList = {
+    add: function (c) { classes.add(c); }, remove: function (c) { classes.delete(c); },
+    contains: function (c) { return classes.has(c); },
+    toggle: function (c, on) { if (on) classes.add(c); else classes.delete(c); },
+  };
+}
+FakeNode.prototype.appendChild = function (n) { this.children.push(n); return n; };
+FakeNode.prototype.replaceChildren = function () { this.children = []; };
+FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = String(v); };
+FakeNode.prototype.getAttribute = function (k) { return this.attrs[k]; };
+FakeNode.prototype.addEventListener = function () {};
+FakeNode.prototype.focus = function () { this.focused = true; };
+var nodes = {};
+["results-section", "results", "note", "status", "confidence", "hide-low", "retry", "sides"].forEach(function (id) {
+  nodes[id] = new FakeNode("x");
+});
+nodes.wrap = new FakeNode("div");
+nodes.note.hidden = true; nodes.confidence.hidden = true; nodes["hide-low"].hidden = true; nodes.retry.hidden = true; nodes.sides.hidden = true;
+document.getElementById = function (id) { return nodes[id] || null; };
+document.createElement = function (tag) { return new FakeNode(tag); };
+document.querySelector = function (sel) { return sel === ".wrap" ? nodes.wrap : null; };
+
+var payload = { classic: classic, church: churchLow };
+showSides(payload);
+eq(nodes.sides.hidden, false, "sides shown");
+eq(nodes.results.hidden, true, "single list hidden");
+eq(nodes.sides.children.length, 2, "two columns");
+eq(nodes.wrap.classList.contains("is-side"), true, "wide layout class");
+eq(nodes["hide-low"].hidden, false, "toggle when one side is low");
+eq(nodes.status.textContent.indexOf("Classic library: John Wesley"), 0, "status names classic");
+eq(nodes.status.textContent.indexOf("Your church (sample data)") > 0, true, "status names church");
+eq(nodes.status.textContent.indexOf("heuristic") === -1, true, "status is not the banner");
+var churchCards = nodes.sides.children[1].children.filter(function (node) { return node.className === "results"; })[0];
+eq(churchCards.children.length, 1, "low church cards shown");
+toggleLowConfidence();
+churchCards = nodes.sides.children[1].children.filter(function (node) { return node.className === "results"; })[0];
+var classicCards = nodes.sides.children[0].children.filter(function (node) { return node.className === "results"; })[0];
+eq(churchCards.children.length, 0, "toggle hides only the low side");
+eq(classicCards.children.length, 1, "classic passages stay");
+eq(nodes["hide-low"].focused, true, "focus stays on the toggle");
+
+showSides({ classic: classic, church: churchMissing });
+eq(nodes["hide-low"].hidden, true, "nothing to hide when church is missing");
+var missingStatus = nodes.sides.children[1].children.filter(function (node) { return node.className === "status"; })[0];
+eq(missingStatus.textContent, CHURCH_EMPTY, "column says nothing yet");
+console.log("ok");
+"""
+
+
 @unittest.skipUnless(shutil.which("deno"), "deno not installed")
 class AppJsTests(unittest.TestCase):
+    def test_side_by_side_rendering(self) -> None:
+        result = run_deno(PRELUDE + APP_JS.read_text() + SIDE_CHECKS)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(result.stdout.strip(), "ok")
+
     def test_url_rules(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "check.js"
