@@ -617,13 +617,13 @@ by Part 1 has no church side.
 
 ### Church deploy hard conditions
 
-Every item is **OPEN**. None is met. A church side is not started until the
-CTO marks each one met.
+Every item is **OPEN**. None is met.
 
 - [ ] **OPEN: Pastor permission.** Gaston Community Church's pastor has
   given permission. Until then Gaston sermons are not used or published.
 - [ ] **OPEN: CTO church-deploy approval.** The CTO approves this church
   deploy, in writing.
+- [ ] **OPEN: Patrick's approval** of the church deploy, in writing.
 - [ ] **OPEN: Operator-chosen unguessable slug.** The church slug
   (`--church-library`, or the file's stem) is chosen by the operator and is
   hard to guess. It is not the church's public name: the slug is what a
@@ -643,6 +643,9 @@ CTO marks each one met.
   verification.** One test, with a church side open, under #29's caps,
   covering: health buckets, refusal-log flush, SIGTERM, and the stuck path
   (`tests/test_church_harden.py`, commit `b9833d8`).
+
+A church side is not started until every condition above is met, including
+the CTO's sign-off on each and Patrick's written approval.
 
 Met, for the record (these are not church conditions that stay open):
 
@@ -771,14 +774,15 @@ message. Patterns are anchored to the start of the line. A
 `logging.exception` call adds a traceback on the following lines.
 
 Infra Ops' yaml is `church-alerts.yaml`, sha256
-`c1841274aed5d778b9fa3b9b417a456c53a38555fb9403cb072deba68b676f0e`: 21 rules,
-every one `enabled: false`, pinned to main `76990e8` (post-#48). It was
-drafted at `0f2b553`. The line numbers below are the post-#51 tree (main
-`ad78a75`, which contains #51 `87c0395` / `8cd3104`), grep-verified on this
-merge. That yaml does not yet have D2b or the `stopped cleanly` INFO rule,
-and its D1 and D2 sources predate the reload split. Infra Ops re-pins
-against this tree. All rules stay disabled until Infra Ops enables them
-after deploy approval.
+`447cd7e283cba91169e695feb6d39bdf7642522e3d1c587e959f879ef7ea4f29`: 25 rules,
+every one `enabled: false`. It supersedes the 21-rule file
+`c1841274aed5d778b9fa3b9b417a456c53a38555fb9403cb072deba68b676f0e` (pinned to
+main `76990e8`, drafted at `0f2b553`). The line numbers below are main
+`b224281`. #63 (`3d59132`) added three lines to `app/server.py` (the
+`MAX_QUERY` constant, after the imports), so every `app/server.py` cite at
+the old line 188 or later moved by 3. Grep-verified on this tree. D2b is
+drafted. `INFO stopped cleanly` is `deploy-stopped-cleanly`. All rules stay
+disabled until Infra Ops enables them after deploy approval.
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -843,26 +847,28 @@ BM25 only, with no refusal. Both lines carry a traceback
 
 #### Deploy alerts
 
-These are lines from the Wesley deploy, not the church side. D1-D6 are
-drafted and disabled (Infra Ops, `church-alerts.yaml`); Infra Ops enables
-them after deploy approval. D2 fires only at startup: a reload does not
-emit it. D1, D2 and D2b page once per transition, deduped to at most 1 per
-hour. D2b is OPEN: PAGE, disabled until the church deploy; Infra Ops drafts
-it. D7 is OPEN: Infra Ops drafts it disabled at the re-pin (TICKET, at most
-1 per hour). `INFO stopped cleanly` is an OPEN INFO rule for Infra (the
-other-lines table). D1 or D2 at start is a failed go-live (step 7).
-Severities are the CTO's final rulings.
+These are lines from the Wesley deploy, not the church side. D1-D7, D2b and
+`deploy-index-stamp-unreadable` are drafted and disabled (Infra Ops,
+`church-alerts.yaml`); Infra Ops enables them after deploy approval. D2
+fires only at startup: a reload does not emit it. D1, D2 and D2b page once
+per transition, deduped to at most 1 per hour. D2b is PAGE, disabled until
+deploy approval. D7 (`deploy-abstain-calibration-unusable`) is TICKET, at
+most 1 per hour. `deploy-index-stamp-unreadable` is TICKET, at most 1 per
+rolling hour (the cap survives restarts). `INFO stopped cleanly` is
+`deploy-stopped-cleanly` (INFO; the other-lines table). D1 or D2 at start
+is a failed go-live (step 7). Severities are the CTO's final rulings.
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
 | D1 | PAGE | `deploy-stored-vectors-mismatch-bm25` | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | startup `app/server.py:852` (text `:285`); reload `:1158` via `:1190` | Startup (`logging.exception`) carries a traceback. A reload logs the same line once per transition, when the note changes, with no traceback. Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
 | D2 | PAGE | `deploy-embedding-unavailable-bm25` | `ERROR embedding model unavailable; serving BM25 only` | startup only, `app/server.py:861` (text `:286`) | Fires only at startup, with a traceback. A reload does not emit this line (that path is D2b). Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
-| D2b | PAGE | `deploy-index-status-unreadable-bm25` | `ERROR index status unreadable after reload; serving BM25 only` | `app/server.py:1158` via `:1233` (text `:291`) | Regex `^ERROR index status unreadable after reload; serving BM25 only$`. Reload only, and only when dense search was loaded. Once per transition, no traceback. Pages once per transition, deduped to at most 1 per hour. Disabled until the church deploy. OPEN: Infra Ops drafts this rule. |
+| D2b | PAGE | `deploy-index-status-unreadable-bm25` | `ERROR index status unreadable after reload; serving BM25 only` | `app/server.py:1158` via `:1233` (text `:291`) | Regex `^ERROR index status unreadable after reload; serving BM25 only$`. Reload only, and only when dense search was loaded. Once per transition, no traceback. Pages once per transition, deduped to at most 1 per hour. Rule drafted, disabled until deploy approval. |
 | D3 | PAGE | `deploy-refusing-after-reload` | `ERROR refusing to serve after reload:` | `app/server.py:1141` | A checkout reloaded an index it will not serve. Rule drafted, disabled. |
 | D4 | PAGE | `deploy-refusing-frozen-bundle` | `ERROR refusing to serve:` | `app/server.py:1224` | The frozen bundle index changed after start; every request is `503`. Rule drafted, disabled. |
 | D5 | PAGE | `deploy-stuck-stop` | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3230` | The stuck stop (the 10 s `DRAIN_TIMEOUT_S` line, logged after `stopping` at `:3225`); exit 1. It does not log `stopped cleanly`. Rule drafted, disabled. |
 | D6 | TICKET (server types), INFO (client types) | `deploy-request-failed-server` (TICKET, at most 1 per rolling hour), `deploy-request-failed-client` (INFO) | `ERROR request failed:` | `app/server.py:2020`, `:2025`, `:2070`, `:2072`, `:2132`, `:2372`, `:2393` | The line carries the exception type only. Ordinary clients produce it: a slow header, a keep-alive left idle past 15 s (`REQUEST_TIMEOUT_S`) and a reset give `TimeoutError` and `ConnectionResetError`. The client-caused types `TimeoutError`, `ConnectionResetError`, `BrokenPipeError` and `ConnectionAbortedError` go to the INFO rule; every other type goes to the TICKET rule. Rules drafted, disabled. |
-| D7 | TICKET | | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1797` | At most 1 per hour. Traceback follows. The server serves with no abstain floor. OPEN: Infra Ops drafts this rule disabled at the re-pin. |
+| D7 | TICKET | `deploy-abstain-calibration-unusable` | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1797` | At most 1 per hour. Traceback follows. The server serves with no abstain floor. Rule drafted, disabled. |
+| stamp | TICKET | `deploy-index-stamp-unreadable` | `ERROR could not read the index stamp` | `app/server.py:1110` | Regex `^ERROR could not read the index stamp$`. At most 1 per rolling hour; the cap survives restarts. `enabled: false`. Traceback once per outage, then DEBUG. With dense search loaded, a stamp failure also fires the D2b page (D4 in a frozen bundle): one page for impact, one ticket for cause. Under `--bm25-only` this is the only alert. Recovery is silent (`/healthz` `"dense": true` only). Open suggestion for the CTO: log `INFO dense search restored` when dense search comes back. That line is not logged today. Rule drafted, disabled. |
 
 Observability holds from W3-OBS-GAPS, MET in #51 (`8cd3104`, merged as `87c0395`):
 
@@ -877,25 +883,27 @@ Observability holds from W3-OBS-GAPS, MET in #51 (`8cd3104`, merged as `87c0395`
   already logged why, and D2 (`:861`) fires only at startup. D1 and D2 at
   startup still carry a traceback (`:852`, `:861`). The failed stamp read
   logs `ERROR could not read the index stamp` with a traceback once per
-  outage (`:1110`), then DEBUG while the outage lasts. D2b itself has no
-  traceback.
+  outage (`:1110`), then DEBUG while the outage lasts. With dense search
+  loaded, that also fires the D2b page (D4 in a frozen bundle); under
+  `--bm25-only` the stamp line is the only alert. Recovery is silent
+  (`/healthz` `"dense": true` only). D2b itself has no traceback.
 - [x] **MET: a clean stop logs `INFO stopped cleanly`**
   (`app/server.py:3242`). It is the last line of the clean path, after the
   church connection closes (`:3240`). The stuck path logs D5 (`:3230`) and
-  exits 1, and does not log this line. The INFO rule is OPEN for Infra Ops
-  (other lines table).
+  exits 1, and does not log this line. The INFO rule is
+  `deploy-stopped-cleanly`, drafted and disabled (other lines table).
 
-Other lines this runbook names, all grep-verified on the merge tree (this branch merged with main `ad78a75`). The Rule id column is the INFO rule Infra Ops drafted (disabled), where there is one. `INFO stopped cleanly` has no rule id yet:
+Other lines this runbook names, all grep-verified on main `b224281`. The Rule id column is the INFO rule Infra Ops drafted (disabled), where there is one:
 
 | Line | Rule id | Emitted at | Where it shows |
 | --- | --- | --- | --- |
 | `INFO church side: <slug>, read-only, through the publish gate` | `church-opened` (INFO) | `app/server.py:2885` | Church side opened, at start or on a successful retry. Not a restart marker. |
-| `INFO church side paused: <file> is in WAL journal mode` | | `app/server.py:1521` (direct) or `:1529` (held at start, logged after `listening on`), text from `src/preached/library.py:883-884` (start) or `:962` (the check, before a search, or at start through `:915`) | Pause line, WAL form. |
-| `INFO church side paused: the church file is locked by a writer (...)` | | `app/server.py:1521` or `:1529`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (the check, before a search, or at start through `:915`), `app/server.py:908` (searcher build, at start or on a retry) or `app/server.py:1596` (search) | Pause line, lock form. |
+| `INFO church side paused: <file> is in WAL journal mode` | `church-paused` (INFO) | `app/server.py:1521` (direct) or `:1529` (held at start, logged after `listening on`), text from `src/preached/library.py:883-884` (start) or `:962` (the check, before a search, or at start through `:915`) | Pause line, WAL form. |
+| `INFO church side paused: the church file is locked by a writer (...)` | `church-paused` (INFO) | `app/server.py:1521` or `:1529`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (the check, before a search, or at start through `:915`), `app/server.py:908` (searcher build, at start or on a retry) or `app/server.py:1596` (search) | Pause line, lock form. |
 | `warning: the church file is still in wal journal mode (...)` | | `src/preached/youtube/pipeline.py:333`, text from `src/preached/youtube/library.py:157` | `--ack-review` output (step 4 of the gate). |
 | `INFO listening on http://<host>:<port>` | `process-restart` (INFO) | `app/server.py:2788` | Server up. Infra Ops' restart marker. A start-time `paused` line is logged after it, by `log_startup_pause` called at `:2792` (HD1, MET, fixed in #48). |
 | `INFO stopping` | `deploy-stopping` (INFO) | `app/server.py:3225` | Start of every stop. |
-| `INFO stopped cleanly` | OPEN for Infra (INFO; no rule id yet) | `app/server.py:3242` | Last line of a clean stop. The stuck path (D5) does not log it. OPEN: Infra Ops drafts this rule, disabled, with the other deploy rules. |
+| `INFO stopped cleanly` | `deploy-stopped-cleanly` (INFO) | `app/server.py:3242` | Last line of a clean stop. The stuck path (D5) does not log it. Rule drafted, disabled. |
 | `ERROR <n> handler thread(s) still running after 10s; index left open` | `deploy-stuck-stop` (PAGE) | `app/server.py:3230` | The stuck path; exit 1 (also D5 above). |
 | `WARNING refused <class> <detail> suppressed=N` | `deploy-refusal-warning` (INFO) | `app/server.py:495` | Rate-limited refusal lines. |
 | `WARNING refused <class> flush suppressed=N` | `deploy-refusal-flush` (INFO) | `app/server.py:507` | Counts flushed at stop. |
