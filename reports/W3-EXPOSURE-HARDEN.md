@@ -158,5 +158,46 @@ On a quiet machine this box does not reproduce the flake: `9fa2451` passed 20/20
 ### Notes and limits
 
 - The per-key in-flight request slot (`acquire_slot`) is still released after the response is written, in `_respond`'s `finally`. A client that fires a new search on another connection the instant it reads a response could get a spurious `busy` 503. That is the same race class as M2, but not one the review raised. It is not changed here.
-- Releasing the connection slot in `end_headers` means a closing connection stops counting toward the caps while its last response is still being written, up to the 15 s socket timeout for a slow reader. That is at most one response per connection, after which the handler exits.
+- **Corrected in round 3.** This note said releasing the slot in `end_headers` cost "at most one response per connection". That was wrong. `end_headers` also ends the interim `100 Continue`, and with `Connection: close` already set, a request with `Expect: 100-continue` left both connection caps before its handler even ran. It stayed out of them for its whole life (CTO probe: 18-34 handlers running at cap 4). The early release also let a slow reader of a closing response hold a thread outside the caps for up to the 15 s socket timeout. Round 3 moves the release to `finish`, after the last body is flushed (see below).
 - The `gh` CLI is not installed here, so the PR body could not be updated from this machine.
+
+## Round 3 fixes: CTO round 3 of PR #29 (44-W3-EXPOSURE-FIX3)
+
+Review of `1523103`: CHANGES. Nothing was deployed, nothing was bound to a public interface, the Sprite was not contacted, and no church data was used. No new dependencies. As in round 2, the task named `reports/W3-EXPOSURE.md`, which does not exist, so this section goes in the PR's report. The task record is `reports/W3-EXPOSURE-FIX3.md`.
+
+| Item | What changed | Commit | Tests |
+| --- | --- | --- | --- |
+| **M1, `Expect: 100-continue` + `Connection: close` bypassed both connection caps.** CTO ruling: release only after the final body is flushed (or in `finish`/`shutdown_request`). | The `end_headers` release is gone. `Handler.finish` calls `server.closing(connection)` after `super().finish()` has flushed `wfile`, before `shutdown_request` closes the socket. An interim `100 Continue` never reaches `finish`, and neither does a body still being written to a slow reader, so both stay inside the caps. `finish` runs however a handler ends (a response, a header deadline, an idle close, an eviction, an exception), so the `shutdown_request` override was dropped. The `process_request_thread` release stays as the backstop. `server_close` (refusal flush), `daemon_threads` and `main()` are untouched. | `cd1dc47` | `SlotReleaseTests.test_expect_continue_with_close_keeps_its_slot`, the CTO probe scaled down (cap 4, 2 per peer, 10 Expect + close searches from 5 peers, held): exactly 4 run, the server counts 4, and 4 get 200. Before the fix, 10 ran. `test_a_slow_reader_holds_its_slot_until_the_body_is_flushed`: a 4 MB `Connection: close` body to a client that reads nothing (4 KB buffers both sides). The handler has not finished after 0.5 s, the server still counts the connection, and the same peer at its cap of 1 gets 503. After the body is read, the slot is freed and the peer gets 200. |
+| Should 2: no test for a close without a closing `end_headers`. | Tests only. | `cd1dc47` | `test_header_deadline_close_frees_the_slot_before_the_close` and `test_idle_close_frees_the_slot_before_the_close` hold the handler for 1.5 s after `finish`. The slot must be free while the socket is still open, and the same peer at its cap of 1 must get straight back in. |
+| Should 3: keep the harness join. | Kept (`daemon_threads = False`, `block_on_close = True` in `_Served._serve`). | none | none |
+| Round-2 reconnect test. | `test_slot_is_free_once_a_closing_response_is_read` now holds the handler after `finish`, not before it. It waits (up to 0.5 s) for the slot instead of asserting it at once, checks the socket is still open, and starts each subtest on an empty server (`f3de617`, see Notes). `test_requests_in_flight_are_never_closed` now waits for `_reserved_total == 0` instead of asserting it straight after the 503. | `cd1dc47`, `f3de617` | |
+
+### Mutation checks (round 3)
+
+The new test file was run against each tree (`tests.test_exposure`, 55 tests):
+
+- head `1523103` server (release in `end_headers`): **4 failures**: the Expect probe (10 ran, not 4), the slow reader (`0 != 1`), and both close tests.
+- the CTO's one-line guard (skip the `end_headers` release for 1xx): **3 failures**: the slow reader and both close tests. The Expect probe passes.
+- `finish` without the release (only the after-close backstop is left): **5 failures**: both close tests and all 3 subtests of the round-2 reconnect test.
+
+### Runs (round 3)
+
+`/tmp/fix3/flake.sh N <target>` (not committed) runs `uv run python -X faulthandler -m unittest <target>` N times. "Loaded" means 24 busy-loop processes on 24 cores, as in round 2. Every exit code was 0 or 1 (no 139).
+
+| Tree | Target | Quiet | Loaded |
+| --- | --- | --- | --- |
+| `f3de617` | `tests.test_exposure` (55 tests) | **0/20** failed | **0/5** failed |
+| `f3de617` | `SlotFairnessTests` | **0/20** | **2/20**: `test_trusted_proxy_connections_and_per_client_request_slots` (a `busy` 503 on the per-key `/healthz` request slot, see Notes) and `test_keep_alive_idle_is_bounded_when_scarce` (an early keep-alive handler computed its idle budget after the server went scarce) |
+| `f3de617` | `SlotReleaseTests` | **0/20** | **0/20** |
+| `1523103` (round-2 head, its own tests) | `SlotFairnessTests` | | **2/20**, both `test_trusted_proxy_connections_and_per_client_request_slots` |
+
+Before `f3de617`, `test_slot_is_free_once_a_closing_response_is_read` failed 4 of 13 loaded runs: the previous subtest's reconnect got an accept-time 503 (see Notes).
+
+`uv run python -m unittest discover -s tests`: **784 tests, 116.6 s, OK** (780 + 4 new; `tests.test_exposure` now has 55). `uv lock --check`: clean, 79 packages.
+
+### Notes and limits (round 3)
+
+- **Trade-off of releasing after the flush.** A peer already at its per-peer cap that reconnects the instant it has read a `Connection: close` response can get there before its old handler reaches `finish`. It then gets an accept-time 503 with `Retry-After: 1`. Probe (`/tmp/fix3/reconnect_probe2.py`, not committed): per-peer cap 1, no reserve, 1000 back-to-back `/healthz` reconnects from a separate client process. Quiet: **0/1000** refused. Loaded: **410, 531, 667/1000** refused. The round-2 head (release in `end_headers`) refused 0/1000 loaded. This is the M2 symptom coming back under CPU saturation. It is the cost the ruling accepts so that a slow reader or an `Expect` request cannot run outside the caps. It bites only a peer at its cap (default 4 per peer). The `/healthz` reserve (default 1) absorbs it for health checks. A trusted proxy (the intended Tailscale setup) is exempt from the per-peer cap. Not changed further. Removing it would mean releasing before the last byte goes out, which the ruling rules out unless a test proves the bound. Left to the CTO.
+- The per-key in-flight request slot race (round-2 note above) is what fails `test_trusted_proxy_connections_and_per_client_request_slots` under load, on the round-2 head as well. Not changed.
+- `test_keep_alive_idle_is_bounded_when_scarce` failed once in 20 loaded runs on this tree. It depends on when an idle handler thread is next scheduled, a path round 3 does not touch. Not changed.
+- Neither `gh` nor `sandbox.sh` is installed on this machine. The precondition was checked through the public GitHub API (`state: open`, head `1523103`) and `git ls-remote`. Git ran directly, with merge commits only (none were needed: `origin/feat/w3-exposure` was still `1523103`).
