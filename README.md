@@ -11,6 +11,8 @@ uv run --group bench search/bench.py --models granite-english-r2 --dedupe
 uv run search/query.py "what did Wesley say about worry" --mode hybrid -k 5
 ```
 
+`search/bench.py` exits 1 if any selected model fails to load or score (offline, gated, missing weights), after writing the report with that model marked `error`. `--allow-bm25-only` accepts the run with a loud warning and exits 0.
+
 Corpus text and the SQLite index stay under `/cache`. Weights use `HF_HOME=/cache/huggingface`. The default embedder is IBM Granite English R2, hybrid RRF. How that was chosen is in `reports/W1-B.md`. Labeling notes are in `eval/README.md`.
 
 The page is a stdlib server. From this worktree:

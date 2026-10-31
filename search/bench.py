@@ -34,6 +34,10 @@ and variant in search/abstain.toml (one entry per model, backend, and
 variant; other entries are left in place). Corpus vectors must already be
 embedded (run the plain bench first).
 
+Exit status: 1 if any selected model fails to load or score (the report is
+still written, with that model marked error). --allow-bm25-only turns that
+into a loud warning and exit 0.
+
 Every run also reports each metric per question group (the ``group`` field
 in eval/questions.jsonl: plain, names-topic, title-keyword,
 scripture-keyword, unanswerable) next to the overall numbers. See the
@@ -887,9 +891,25 @@ def run_abstain(args, connection, questions, started) -> None:
         path = abstain.calibration_path()
         path.write_text(abstain.calibration_toml(calibrations))
         print(f"wrote {path}")
+    fail_closed(report, args.allow_bm25_only)
 
 
 # ---------- main ----------
+
+def fail_closed(report: dict, allow_bm25_only: bool) -> None:
+    """Exit 1 when an enabled model did not score; BM25-only needs --allow-bm25-only."""
+    failed = {k: e for k, e in report["models"].items() if e.get("status") != "ok"}
+    if not failed:
+        return
+    names = ", ".join(f"{k} ({e.get('status')}: {e.get('error', 'no detail')})" for k, e in failed.items())
+    if allow_bm25_only:
+        print(f"WARNING: --allow-bm25-only: continuing without {names}. "
+              "Results for these models are missing; do not read this run as a model comparison.", flush=True)
+        return
+    print(f"error: model(s) did not load or score: {names}. "
+          "Fix the cause, or pass --allow-bm25-only to accept a BM25-only run.", file=sys.stderr, flush=True)
+    raise SystemExit(1)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -923,6 +943,8 @@ def main() -> None:
                         help="leave out this question group (repeatable), e.g. to rerun an older set")
     parser.add_argument("--abstain", action="store_true",
                         help="evaluate the nothing-found rule per model (in-sample and leave-one-out)")
+    parser.add_argument("--allow-bm25-only", action="store_true",
+                        help="exit 0 even if a model fails to load or score (default: exit 1 after writing the report)")
     parser.add_argument("--write-calibration", action="store_true",
                         help="with --abstain: store the fitted floors in search/abstain.toml")
     args = parser.parse_args()
@@ -1075,6 +1097,7 @@ def main() -> None:
     json_path.write_text(json.dumps(report, indent=1) + "\n")
     md_path.write_text(markdown(report))
     print(f"\nwrote {json_path}\nwrote {md_path}")
+    fail_closed(report, args.allow_bm25_only)
 
 
 if __name__ == "__main__":
