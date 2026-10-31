@@ -246,11 +246,37 @@ While running a mutant, a test removed and rewrote the shared `/cache/models/gra
 ### Branch state
 0 behind, 20 ahead of `origin/main` (`abdada3`).
 
-DIFFSTAT_PLACEHOLDER
+`git diff --stat origin/main..HEAD`:
+
+```
+ app/server.py                            |  23 +
+ docs/DEPLOY.md                           | 114 ++---
+ docs/adr/0001-onnx-export-determinism.md |  53 +++
+ reports/W4-ONNX-PIN-REPRO.md             | 256 +++++++++++
+ scripts/export_onnx.py                   | 123 ++++-
+ src/preached/artifacts.py                |  31 +-
+ tests/test_deploy_alerts.py              |  97 ++--
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
+ 9 files changed, 1346 insertions(+), 115 deletions(-)
+```
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
 ## Diff stat
 
-DIFFSTAT_PLACEHOLDER
+`git diff --stat origin/main..HEAD`:
+
+```
+ app/server.py                            |  23 +
+ docs/DEPLOY.md                           | 114 ++---
+ docs/adr/0001-onnx-export-determinism.md |  53 +++
+ reports/W4-ONNX-PIN-REPRO.md             | 256 +++++++++++
+ scripts/export_onnx.py                   | 123 ++++-
+ src/preached/artifacts.py                |  31 +-
+ tests/test_deploy_alerts.py              |  97 ++--
+ tests/test_embed_backend.py              |   4 +-
+ tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
+ 9 files changed, 1346 insertions(+), 115 deletions(-)
+```
