@@ -136,7 +136,7 @@ The full suite has zero `test_every_cited_file_line_holds_its_string` failures. 
 
 ### Merge, lock, suite
 
-`git fetch && git merge origin/main` (merge commit, no rebase): main was `abdada3` (#68), 4 commits ahead of the branch. It merged cleanly, adding only `reports/W4-FRESH-CLONE-QA.md`. The branch is now **0 behind, 20 ahead** of `origin/main` `abdada3`. `uv lock --check`: `Resolved 79 packages`, OK. No new dependencies.
+`git fetch && git merge origin/main` (merge commit, no rebase): main was `abdada3` (#68), 4 commits ahead of the branch. It merged cleanly, adding only `reports/W4-FRESH-CLONE-QA.md`. The branch is now **0 behind, 21 ahead** of `origin/main` `abdada3`. `uv lock --check`: `Resolved 79 packages`, OK. No new dependencies.
 
 Full suite, exact command, on `9af1484` (code identical to the head; the later commits touch only this report and the ADR), with scratch caches:
 
@@ -244,7 +244,7 @@ None for `/cache` hosts: the existing `3861025a` export stays valid. A host with
 While running a mutant, a test removed and rewrote the shared `/cache/models/granite-english-r2-onnx/47ea…/`. It was restored from an identical script export (fp32 and tokenizer match their pins; `verify_manifest` OK). The test now refuses to run `main()` outside its temp cache. Details: `reports/W4-ONNX-PIN-REPRO.md` §9.
 
 ### Branch state
-0 behind, 20 ahead of `origin/main` (`abdada3`).
+0 behind, 21 ahead of `origin/main` (`abdada3`).
 
 `git diff --stat origin/main..HEAD`:
 
@@ -252,13 +252,13 @@ While running a mutant, a test removed and rewrote the shared `/cache/models/gra
  app/server.py                            |  23 +
  docs/DEPLOY.md                           | 114 ++---
  docs/adr/0001-onnx-export-determinism.md |  53 +++
- reports/W4-ONNX-PIN-REPRO.md             | 256 +++++++++++
+ reports/W4-ONNX-PIN-REPRO.md             | 282 ++++++++++++
  scripts/export_onnx.py                   | 123 ++++-
  src/preached/artifacts.py                |  31 +-
  tests/test_deploy_alerts.py              |  97 ++--
  tests/test_embed_backend.py              |   4 +-
  tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
- 9 files changed, 1346 insertions(+), 115 deletions(-)
+ 9 files changed, 1372 insertions(+), 115 deletions(-)
 ```
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -272,11 +272,11 @@ While running a mutant, a test removed and rewrote the shared `/cache/models/gra
  app/server.py                            |  23 +
  docs/DEPLOY.md                           | 114 ++---
  docs/adr/0001-onnx-export-determinism.md |  53 +++
- reports/W4-ONNX-PIN-REPRO.md             | 256 +++++++++++
+ reports/W4-ONNX-PIN-REPRO.md             | 282 ++++++++++++
  scripts/export_onnx.py                   | 123 ++++-
  src/preached/artifacts.py                |  31 +-
  tests/test_deploy_alerts.py              |  97 ++--
  tests/test_embed_backend.py              |   4 +-
  tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
- 9 files changed, 1346 insertions(+), 115 deletions(-)
+ 9 files changed, 1372 insertions(+), 115 deletions(-)
 ```
