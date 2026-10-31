@@ -51,3 +51,21 @@ Temp dirs removed only after asserting the resolved path is under `tempfile.gett
  reports/W4-SUBMIT-DRYRUN2-EDITS.md | 44 ++++++++++++++++++++++++++++++++++++++
  3 files changed, 54 insertions(+), 9 deletions(-)
 ```
+
+## CTO wording check (99-WH)
+
+No doc edit needed; the 99-WG head (`8976d5d`) already satisfies all three rulings.
+
+1. Latency: `grep -nE "56 ?ms"` hits only `docs/DEMO-SCRIPT.md:65` ("56 ms p50 / 68 ms p95 is the one-core pinned measurement ... do not say 56 ms on camera unless the server is pinned to one core") and `docs/SUBMISSION-DRAFT.md:35` ("is the one-core pinned measurement"), both qualified, each next to the unpinned p50 72 ms / p95 86 ms. No narration line uses 56 ms alone.
+2. Test count: the only count is `docs/SUBMISSION-DRAFT.md:42` ("more than 1,000 tests; 1081 ran ... on `9fe33ca`"), headline plus exact count with its sha. `docs/SUBMISSION-DRAFT.md:3` says "more than 1,000 tests". `docs/DEMO-SCRIPT.md` has no test count.
+3. Cache: `grep -n "PREACHED_CACHE=" docs/DEMO-SCRIPT.md docs/SUBMISSION-DRAFT.md` returns nothing. The suite row uses scratch caches and says only the maintainer's host verify gate runs against the real cache. The `/cache/...` mentions are index/clip paths, not suite commands.
+
+Finish run: `uv run python -m unittest tests.test_deploy_alerts tests.test_deploy_regex` with PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME, DENO_DIR, XDG_CACHE_HOME, UV_CACHE_DIR in fresh temp dirs: `Ran 17 tests`, `OK (skipped=1)`. Real `/cache` listing (paths, sizes, mtimes), 132,677 lines before and after: no difference.
+
+## PR BODY
+
+Docs-only. CTO wording check found no changes needed; this commit adds the check to the report.
+
+```
+PLACEHOLDER_STAT
+```
