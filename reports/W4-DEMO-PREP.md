@@ -40,3 +40,7 @@ Project description: **247 words** (limit 250), counted with a whitespace split 
 - Skim every "Expected" line against the page on recording day.
 - Eval human review in `eval/review/review-2026-10-30.csv` is still pending; the submission text says so.
 - No `gh` in this sandbox: see the push note below.
+
+## Push
+
+`gh` is not installed in this sandbox, so the branch is pushed and no PR was opened. Open it against `main` titled "W4: demo script + submission draft (for Patrick's review)".
