@@ -10,7 +10,7 @@ Branch `docs/w3-label-sheet`. Date: 2026-10-31. Source: §7 proposal 1 of `repor
 
 ## Labels are re-frozen after Patrick's pass
 
-`reports/W3-LABEL-SHEET.csv` lists the 24 flagged chunks for Patrick's verdicts. **Labels are to be re-frozen after that pass and before the run**: apply the accepted verdicts to `eval/questions.jsonl` in their own commit, record its hash here, and run nothing until then. No label may change between that commit and the final report. Labels are never edited after seeing a run.
+`reports/W3-LABEL-SHEET.csv` lists the 24 flagged chunks for Patrick's verdicts. The sheet is blind: its reviewer-facing cells give only a neutral quote from each chunk and that chunk's own rank, with no prior grades, hit status or strength remarks. Those are kept in `reports/W3-LABEL-SHEET-KEY.md`, which is withheld from the labeller until verdicts are recorded. **Labels are to be re-frozen after that pass and before the run**: apply the accepted verdicts to `eval/questions.jsonl` in their own commit, record its hash here, and run nothing until then. No label may change between that commit and the final report. Labels are never edited after seeing a run.
 
 ## Frozen change
 
