@@ -1,6 +1,6 @@
 """W3-RETRIEVAL-DIAG scratch: per-question dump for plain + plain-blind (exploratory, not product code).
 Usage (from the worktree root): uv run --group bench python reports/w3-retrieval-diag/diag.py OUT.json
-Index path: $PREACHED_CACHE/index/wesley.sqlite (default /cache), via preached.paths, opened read-only."""
+Index path: $PREACHED_CACHE/index/wesley.sqlite (default /cache), via preached.paths, opened mode=ro&immutable=1 (scratch only)."""
 import json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd() / "src"))
@@ -8,16 +8,26 @@ from preached import env  # noqa
 from preached.models import MODELS
 from preached.embed import load_model, encode_query
 from preached.search import Searcher
-from preached.store import open_readonly  # mode=ro + query_only: no WAL pragma, DDL or ALTER
 from preached.paths import INDEX_PATH, questions_path
 from preached.metrics import contains_quote
 from preached.fts import to_fts_query
+
+
+def open_immutable(path):
+    """Scratch only: mode=ro&immutable=1 never touches -shm/-wal (the product's open_readonly does).
+    Uses store.sqlite3, not its own import: tests/test_hard_conditions.py lists the files that import sqlite3."""
+    from preached import store
+    con = store.sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+    con.row_factory = store.sqlite3.Row
+    con.execute("PRAGMA query_only = ON")
+    return con
+
 
 qs = [json.loads(l) for l in open(questions_path())]
 qs = [q for q in qs if q.get("group") in ("plain", "plain-blind")]
 spec = MODELS["granite-english-r2"]
 loaded = load_model(spec, device="cpu", batch_size=1)
-con = open_readonly(INDEX_PATH)
+con = open_immutable(INDEX_PATH)
 s = Searcher(con, model=spec.key)
 print("tokenizer:", con.execute("select sql from sqlite_master where name='chunks_fts'").fetchone()[0], file=sys.stderr)
 out = []

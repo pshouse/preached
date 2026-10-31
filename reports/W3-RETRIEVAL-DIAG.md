@@ -3,13 +3,14 @@
 Branch `docs/w3-retrieval-diag`, from origin/main `5779961`. Agent: Claude (Opus 5.5). Date: 2026-10-31.
 
 Revised by W3-DIAG-FIX (CTO #42 r1): labelling, disclosure and caveats only. Every number is as computed; none was changed. Item-by-item map: `reports/W3-DIAG-FIX.md`.
+Revised again by W3-DIAG-FIX2 (CTO #42 r2): the `diag.py` hash claim corrected (§8), scratch scripts opened `immutable=1`, p-015 moved LEX → VOCAB (blind LEX 5, VOCAB 5), a §4 note, a chunk-content hash. Map: `reports/W3-DIAG-FIX2.md`.
 
 **This changes no search code, no index, no eval set, and no grades.** The only file added by the original report is this report; the scratch scripts behind it are now committed in `reports/w3-retrieval-diag/` (see §8). Large intermediate outputs stay in `/cache/w3-retrieval-diag/` (outside the repo). Every number marked *exploratory* below comes from those scratch scripts, not from shipped code.
 
 ## Bottom line
 
 - **On the questions written blind, the biggest single cause of misses is BM25 inside the fusion, not the embedding model.** ("Blind" is the `plain-blind` group: 30 questions written by an LLM agent, Grok, before it read the corpus, `provenance: llm-written:grok`. Every label on them was proposed by an LLM, Claude, and none is confirmed by a person.) Granite dense alone puts an acceptable passage in the top 10 for 11 of 28 blind questions. The shipped hybrid does it for 3 of 28. On 8 of the 28, dense has one in the top 10 and hybrid does not. Hybrid never rescues one that dense missed (0 of 28). All `plain-blind` numbers in this report are post-hoc, not held out (§5). On the 25 `plain` questions fusion is a wash (it loses 2, gains 3). Everyday questions are long and full of incidental words ("lie awake", "years ago", "drinking", "fires", "church"). The FTS query ORs all of them, BM25 finds Wesley passages that share those words but not the subject, and RRF at equal weight gives them as much say as the dense list.
-- **The second cause is vocabulary**: modern words with no 18th-century bridge, such as "scared of dying" vs "fear of death" and "jealous" vs "envy". Wesley's own "jealous over ourselves" means watchful, so it is a false friend. It is the primary cause for 4 of the 7 `plain` misses and 4 of the 25 blind misses (post-hoc, not held out).
+- **The second cause is vocabulary**: modern words with no 18th-century bridge, such as "scared of dying" vs "fear of death" and "jealous" vs "envy". Wesley's own "jealous over ourselves" means watchful, so it is a false friend. It is the primary cause for 4 of the 7 `plain` misses and 5 of the 25 blind misses (post-hoc, not held out).
 - **The blind score is also partly a measurement problem.** Blind questions have a median of 5 labels; `plain` questions have 17. On 6 of the 25 blind misses, the shipped top 10 already holds an unlabelled passage that, in my reading, plausibly answers the question. "My reading" is Claude's, the same model family that proposed every blind label. These are flagged for Patrick below and were **not** regraded. If Patrick confirmed all of them, blind hit@10 for the shipped default would go from 3/28 to 9/28 (post-hoc, not held out). That is a what-if, not a result.
 - **Chunk size is not the problem.** The labelled chunks have a median of 123 words against a corpus median of 122. Context smoothing with neighbouring chunks did not help (exploratory: −0.04 on `plain`, +0.04 on blind (post-hoc, not held out), both inside noise).
 - **Recommended first intervention (zero dependencies, no RSS or latency cost):** give BM25 half weight in RRF only when the FTS query is the natural-language OR form, and keep full weight for AND/NEAR keyword and scripture queries. Exploratory: blind lenient hit@10 goes from 0.107 to 0.286 (+0.18 [+0.04, +0.32], 5 wins, 0 losses; post-hoc, not held out). `plain` goes from 0.72 to 0.76, and scripture and title keyword queries are unchanged. Overall it is +0.07 [+0.01, +0.14], with 7 wins and 1 loss (`q-worry`). Multiplicity: V10 is the best of 12 variants compared with V0 across 6 groups, picked after the fact, and the intervals are not adjusted for that. On the blind questions V10 equals V3 by construction (§6). These numbers support no accuracy claim. The confirmatory test is a fresh blind set, frozen and committed before any ranker runs on it (§7 #1 step d). That test, and a re-check of the abstain rule, come before Patrick decides.
@@ -105,7 +106,7 @@ The *expected* column gives the grade-2 sermon(s), then the number of grade-1 la
 | p-012 | my son is 15 and he wont talk to me. if i ask about school he shuts the door. i feel like im losing him | ²094 | 026·1 094·45† 031·38 026·22 031·39 | 133·40 094·32† 094·40† 096·23 096·50 | 094·40† 030·54 094·41† 094·45† 094·42† | –/–/– | AMBIG | one label only; top 5 are all from the grade-2 sermon 094 but about choosing a school; the answer is thin |
 | p-013 | Someone at church told people something about me that isn't true, and now half the room is weird with me. They still smile. Do I have to just let it go? | ²049 +3¹ (026 038 083) | 077·35 134·25 053·12 094·55 053·11 | 032·39 049·11⚑ 032·45 081·41 100·19 | 094·54 098·53 032·39 077·35 049·11⚑ | –/42/84 | GRADE | 049-c0011 holds the same Matt 18:15 text as the grade-2 quote, which begins "First," and so matches only 049-c0013; dense 2, hybrid 5 |
 | p-014 | im scared of dying. like actually scared, not just wondering. i think about it when i try to fall asleep | ²137 +4¹ (007 009 028 062) | 114·15 123·44 046·70 002·10 133·83 | 054·32 121·37 041·43 014·35 068·65 | 121·37 112·61 009·66 082·2 133·83 | –/9/22 | VOCAB | "scared of dying" vs "fear of death" (overlap 0); BM25 "fall asleep" noise; dense labelled at 9 |
-| p-015 | God feels far. I used to feel something when I prayed and now it's just quiet, and I don't know if I did something wrong. | ²046 +5¹ (046 077 138) | 120·29 076·9 043·41 014·7 014·15 | 045·33 026·27 028·9⚑ 089·24 087·60 | 045·33 016·79 014·15 045·32 077·55 | 93/–/– | LEX | dense 3 is 028-c0009 ("how soon is our foolish heart darkened ... doubts and fears"), which is labelled grade 1 for q-wilderness-plain but not here; it is not in the hybrid top 10 |
+| p-015 | God feels far. I used to feel something when I prayed and now it's just quiet, and I don't know if I did something wrong. | ²046 +5¹ (046 077 138) | 120·29 076·9 043·41 014·7 014·15 | 045·33 026·27 028·9⚑ 089·24 087·60 | 045·33 016·79 014·15 045·32 077·55 | 93/–/– | VOCAB | "God feels far / just quiet" vs Wesley's "darkness", "desertion", "doubts and fears"; dense has no labelled chunk and no chunk from the expected sermon (046); dense 3 is 028-c0009 ("how soon is our foolish heart darkened ... doubts and fears"), labelled grade 1 for q-wilderness-plain but not here, and not in the hybrid top 10 |
 | p-016 | help i messed up bad | ²006 +8¹ (006 008 021 024 059 086) | (no rows) | 124·15 087·65 099·53 134·59 107·60 | 124·15 087·65 099·53 134·59 107·60 | –/18/18 | AMBIG | four words, so FTS ANDs them: BM25 returns 0 rows; dense finds a labelled chunk at 18 |
 | p-017 | why wont he answer | ²030 +5¹ (016 030 047) | 086·26 086·25 | 082·48 014·60 053·72 101·18 101·41 | 082·48 086·26 014·60 086·25 053·72 | –/–/– | AMBIG | "he" is unresolved; FTS ANDs "wont" and "answer", and "wont" matches archaic "are wont to" in A Call to Backsliders |
 | p-018 | Can God forgive me if I don't feel sorry the way people say I should? I mostly just feel numb. | ²006 +4¹ (005 008 011 043) | 040·97 014·15 043·11 014·14 094·13 | 026·72 005·30 026·73 021·44 021·66 | 021·44 026·72 098·54 043·9 027·87 | –/32/66 | THEME | "forgive" pulls forgiving-others passages (Sermon on the Mount 6) instead of 006 "not contrite enough" |
@@ -127,8 +128,8 @@ The *expected* column gives the grade-2 sermon(s), then the number of grade-1 la
 | category | `plain` (n=25) | `plain-blind` (n=30: 28 answerable + 2 unanswerable) |
 | --- | --- | --- |
 | HIT (labelled chunk in top 10) | 18 | 3 |
-| LEX: BM25 false friend, fusion buries dense's hit | 1 | 6 |
-| VOCAB: vocabulary gap | 4 | 4 |
+| LEX: BM25 false friend, fusion buries dense's hit | 1 | 5 |
+| VOCAB: vocabulary gap | 4 | 5 |
 | GRADE: suspected grading gap | 0 | 6 |
 | AMBIG: ambiguous, too short, or thin answer | 0 | 5 |
 | THEME: wrong sermon, same theme | 2 | 2 |
@@ -182,6 +183,8 @@ Dense recovers some of these (p-014 at rank 9, p-025 at 9), but not into the top
 These are AMBIG in the table; the AND rule itself is documented behaviour (`src/preached/fts.py`), not a bug.
 
 ## 4. Suspected grading gaps (for Patrick; NOT regraded)
+
+**Patrick: do the #43 label pass before reading this section.** Its leaning notes ("weaker", "already grade N") would bias your verdicts.
 
 These unlabelled chunks are in a top 5 above and, in my reading, plausibly meet the bar in `eval/pool/BRIEF.md`. I have changed nothing. Each needs Patrick's call. The flags are Claude's judgment, and Claude is the same model family that proposed every `plain-blind` label, so a flag and the label it questions are not independent readings. Only Patrick's verdicts are.
 
@@ -348,7 +351,7 @@ Prerequisite for all of them: Patrick's label pass on §4. Otherwise every compa
 | --- | --- |
 | What | Rerank the top 30–50 candidates (hybrid V10 or dense) with a cross-encoder. Untested here: no reranker is cached. |
 | Candidates | Only models with a clean lineage under AGENTS.md §3, checked by base and teacher model, not just by name. **Excluded:** anything BGE- (BAAI) or Jina-derived; GTE (Alibaba), including `gte-reranker-modernbert-base`; Qwen3-Reranker; mxbai-rerank-v2 (Qwen2.5 base); and DeepSeek-derived models. The MS MARCO data is licensed for non-commercial research purposes only, which rules out `cross-encoder/ms-marco-*` unless Patrick decides otherwise. **Candidate, needing Patrick's approval:** IBM `granite-embedding-reranker-english-r2`. Per the CTO's r1 check it is 149M parameters, Apache-2.0, on the Granite R2 base, with no MS MARCO in training. I have not re-verified that here. The revision to pin is still unconfirmed, and nothing has been or may be downloaded without Patrick's approval. |
-| Expected effect | This is the only option that reads question and passage together, so it is the one most likely to fix VOCAB, THEME and PASSAGE misses (§3: 8 blind + 6 `plain`). Size unknown until measured. |
+| Expected effect | This is the only option that reads question and passage together, so it is the one most likely to fix VOCAB, THEME and PASSAGE misses (§3: 9 blind + 6 `plain`). Size unknown until measured. |
 | Cost | A new weight download (Patrick to approve). About 150M parameters: estimated +300–600 MB RSS fp32, less with the existing ONNX int8 path. CPU latency is unmeasured; my estimate is 0.3–1.5 s for 30 pairs on the Sprite. If it uses sentence-transformers in the product, that is a new dependency; an ONNX export avoids it. |
 | Overfitting risk | Low if used off the shelf (no tuning). Moderate if k or a fusion with the reranker score is tuned. |
 | Honest test | Same split as #1. Measure RSS and p95 latency with `scripts/bench_api.py` before any decision. |
@@ -371,7 +374,7 @@ The card says no prefix, and §6 shows prefixes hurt the blind questions (−0.0
 
 The scripts behind every number here are committed in `reports/w3-retrieval-diag/` (added by W3-DIAG-SCRIPTS). They are scratch analysis, not product code: nothing under `src/`, `app/` or `tests/` imports them, and `unittest discover -s tests` does not collect them. They were copied from `/cache/w3-retrieval-diag/scripts/` with only two kinds of change: usage docstrings, and paths made configurable (`PREACHED_CACHE` for the index and corpus, which `preached.paths` already honours and which defaults to `/cache`; an optional chunks path and output path for `stats.py`; an optional work directory for `table.py`). The analysis logic is unchanged.
 
-**Read-only (W3-DIAG-FIX, S4).** `diag.py`, `experiments.py` and `prefixes.py` open the index with `preached.store.open_readonly`: a sqlite URI with `mode=ro` plus `PRAGMA query_only`, so no WAL pragma, no DDL and no ALTER. (`store.connect`, used before, runs `migrate`, which does all three.) `stats.py` and `table.py` never touch the index. Their default output is now `$TMPDIR/w3-retrieval-diag/`, never the current directory or the repo root. The bench step below runs on a **copy** of the index, because `search/bench.py` opens its index with `connect` and re-syncs chunks into it (`ensure_chunks`).
+**Read-only (W3-DIAG-FIX, S4).** `diag.py`, `experiments.py` and `prefixes.py` open the index with a local `open_immutable()` helper (W3-DIAG-FIX2, S8; it reaches SQLite through `store.sqlite3` because `tests/test_hard_conditions.py` lists the only files allowed to `import sqlite3`): a sqlite URI with `mode=ro&immutable=1` plus `PRAGMA query_only`, so no WAL pragma, no DDL, no ALTER, and **no `-shm` or `-wal` file is created or touched**. (`store.connect`, used originally, runs `migrate`, which does the first three. W3-DIAG-FIX used the product's `open_readonly`, `mode=ro` only: it leaves the main file unchanged but SQLite creates `-shm` and an empty `-wal` beside it and rewrites `-shm` on every open, so "sha256 and mtime unchanged" covered the main file only. `open_readonly` is unchanged; `immutable=1` is safe here because nothing writes the index while the scripts run.) `stats.py` and `table.py` never touch the index. Their default output is now `$TMPDIR/w3-retrieval-diag/`, never the current directory or the repo root. The bench step below runs on a **copy** of the index, because `search/bench.py` opens its index with `connect` and re-syncs chunks into it (`ensure_chunks`).
 
 ```sh
 cd <checkout of this branch>
@@ -396,27 +399,29 @@ With another cache location, set `PREACHED_CACHE=/path` (it must hold `index/wes
 
 ### Committed files and sha256
 
-Current (W3-DIAG-FIX: the scripts changed for S4, `categories.json` for S6), with the W3-DIAG-SCRIPTS (`832a198`) values for comparison:
+Current (W3-DIAG-FIX2: `diag.py`, `experiments.py` and `prefixes.py` changed for S8, `categories.json` for S9; `stats.py`, `table.py` and `flags.json` are as in W3-DIAG-FIX), with the W3-DIAG-SCRIPTS (`832a198`) values for comparison:
 
 | file | sha256 now | sha256 at `832a198` |
 | --- | --- | --- |
-| `reports/w3-retrieval-diag/diag.py` | `e04e1cd4ec2946df2471ddf8dc0d0e7ae0b696e6df4505b5da8ba40f8f59986e` | `5f8a30977dc391e65e6d31577a87f96ddd4da2b50dedd9734faae8ff8ff3d59b` |
-| `reports/w3-retrieval-diag/experiments.py` | `f9d9d2d5bffacf8af53e8afaa89005638700ef5ac4395292fe5e9b6bc0517c0f` | `185ca95ceaafcbc9eb454f6752c79d0feea0200d2212ec401c1055fa90375ede` |
-| `reports/w3-retrieval-diag/prefixes.py` | `93bf5043f6383df283aab376b803e3d5311d6cfa7d679abf93fd2d0ab669452f` | `53de16cadc74792f451b64e9f4d5899d179cf4d28508af638457cd65cee4024e` |
+| `reports/w3-retrieval-diag/diag.py` | `23879bbb5a25d83311ede4aabef079506779e2b738d84809b15ddee611ad2708` | `5f8a30977dc391e65e6d31577a87f96ddd4da2b50dedd9734faae8ff8ff3d59b` |
+| `reports/w3-retrieval-diag/experiments.py` | `f9925e302d2fdd107d08527508587d53958c7a432736d18bbeedd17fffa60eb7` | `185ca95ceaafcbc9eb454f6752c79d0feea0200d2212ec401c1055fa90375ede` |
+| `reports/w3-retrieval-diag/prefixes.py` | `72a035c62da2393baf62eb034653c9f238606934f419041c53dc9bf379969f6b` | `53de16cadc74792f451b64e9f4d5899d179cf4d28508af638457cd65cee4024e` |
 | `reports/w3-retrieval-diag/stats.py` | `b37a6e8d28b6b54c067f4c0153fa171c4ed156bab52713d2d1f811dc23bf3c58` | `3bf7e8173777181cda906b73bfc160a50a7ecdb46e6d926c0052459a23cf60a5` |
 | `reports/w3-retrieval-diag/table.py` | `cb993d5a834f09eeaf303155de0748c4d2db7c9a28dea20b39d80ccf05f2e87b` | `1f1543ac03d051dc0f8ec95963ff5206c9fcd05f5d178d670c2d0493c71311d4` |
-| `reports/w3-retrieval-diag/categories.json` (hand-written, input to `table.py`) | `fad3bad07e24383a52d730e107f18ba7289ef7d5768a208115edfa506b00afb7` | `e320527e193fe3ddd635dd63c6d56a9ed5ba2585a4285aa22aa4c4485d051477` |
+| `reports/w3-retrieval-diag/categories.json` (hand-written, input to `table.py`) | `c17aeb7eedce94c51a3a020c532f803140bf98d3b95b259e1ea500e6760de10f` | `e320527e193fe3ddd635dd63c6d56a9ed5ba2585a4285aa22aa4c4485d051477` |
 | `reports/w3-retrieval-diag/flags.json` (hand-written, input to `table.py`) | `bbb39c2c1b1acd4ed6c5c6b328b919a710fe9e362d3bd2198cfec378c2b95823` | same |
 
-**Original scratch scripts (restored; `832a198` dropped this table).** The first version of this report (`a2bcbec`) gave the first 12 hex of the scripts as run, in `/cache/w3-retrieval-diag/scripts/`. Those files are untouched, and their full sha256 still match the published prefixes:
+**Original scratch scripts (restored; `832a198` dropped this table).** The first version of this report (`a2bcbec`) gave the first 12 hex of the scripts as run, in `/cache/w3-retrieval-diag/scripts/`. Those files are untouched. Four of the five full sha256 match the published prefixes. **`diag.py` does not:** `a2bcbec` published `9dfaeb558806`, but the full hash below begins `9dfaeb5588c7`. The published value was a transcription error, not a different file (see "`diag.py` hash provenance" below):
 
-| script in `/cache/w3-retrieval-diag/scripts/` | sha256 (a2bcbec published the first 12 hex) |
+| script in `/cache/w3-retrieval-diag/scripts/` | sha256 (a2bcbec published the first 12 hex; `diag.py`: published `9dfaeb558806`, correct `9dfaeb5588c7`) |
 | --- | --- |
 | `diag.py` | `9dfaeb5588c7061d79c6530faed01fb10d63bafa0c0e068141bc29ec7334cd72` |
 | `experiments.py` | `120b33f3c765294a4b5ced424d136c03b02f8897d94d9fa851149161c518d9cc` |
 | `prefixes.py` | `1e10b254cfe7e896eed2650f3abe44216bcb87d40a9fdec05c0c7fd8ce919e78` |
 | `stats.py` | `e5d48880615c45a4705547b2ecded6b9cf706f08183c4e519152940f2c28e8f4` |
 | `table.py` | `5b8f514960ee7ce67a76aaa26c514be427105957f06be561e91a34a33feb5e37` |
+
+**`diag.py` hash provenance (W3-DIAG-FIX2).** The correct value is the full hash in the table, first 12 hex `9dfaeb5588c7`. The `9dfaeb558806` in `a2bcbec` agrees with it in the first 10 hex digits and differs only in the last two (`06` vs `c7`). A different version of the file would not share 10 hex digits by chance (about 1 in 10^12), so the published value is a mistyped copy of this file's hash, not the hash of an earlier file. The pasted draft in `/cache/w3-retrieval-diag/report-end.md` already carries the wrong value, so the error was made when the table was written, and no earlier copy of `diag.py` survives to compare. The file's mtime (04:52:36) is 12 s before `diag.json`'s (04:52:48), and a run takes about a minute, so I cannot show from timestamps alone that the file was not edited just as the run started. What does show it: running this `diag.py` from `/cache/w3-retrieval-diag/scripts/` (on an index copy) now writes a `diag.json` that is byte-identical to the published one (sha256 `a875192f…2c3e1f`).
 
 Small results are in `reports/w3-retrieval-diag/results/`: `experiments.txt` (the §6 tables), `prefixes.txt`, `stats.json` (the §2 signals), `bench-raw.md` (the baseline), `variants.md`. The large intermediates (`diag.json` 975 KB, `experiments.json` 818 KB, `bench-raw.json` 378 KB) are not committed; regenerate them with the commands above.
 
@@ -430,13 +435,27 @@ The index is identified by what it holds, not by a whole-file hash: a byte hash 
 | `meta` `chunks_sha256` (sha256 of the chunk file the index loaded, `chunks_aligned.jsonl`) | `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2` |
 | rows in `chunks` | 8,383 |
 | rows in `embeddings` with `model = 'granite-english-r2'` | 8,383 |
+| sha256 over `chunk_id, sermon_title, scripture, text` of every `chunks` row (S10; see below) | `801b4552f4945bd4b7c9d4d97ced7ae9bd7b4d615ecaa92579a60f8482eee375` |
 
 ```sh
 python3 - <<'EOF'
 import sqlite3
-c = sqlite3.connect("file:/cache/index/wesley.sqlite?mode=ro", uri=True); c.execute("PRAGMA query_only = ON")
+c = sqlite3.connect("file:/cache/index/wesley.sqlite?mode=ro&immutable=1", uri=True); c.execute("PRAGMA query_only = ON")
 print(dict(c.execute("SELECT key, value FROM meta WHERE key IN ('chunks_sha256', 'embeddings:granite-english-r2')")))
 print(c.execute("SELECT count(*) FROM chunks").fetchone(), c.execute("SELECT count(*) FROM embeddings WHERE model = 'granite-english-r2'").fetchone())
+EOF
+```
+
+The content hash is computed as: rows ordered by `chunk_id`; each row is its four fields joined by `\x1f` (NULL as empty), plus `\n`; sha256 of the whole stream.
+
+```sh
+python3 - <<'EOF'
+import sqlite3, hashlib
+c = sqlite3.connect("file:/cache/index/wesley.sqlite?mode=ro&immutable=1", uri=True)
+h = hashlib.sha256(); n = 0
+for row in c.execute("SELECT chunk_id, sermon_title, scripture, text FROM chunks ORDER BY chunk_id"):
+    h.update("\x1f".join("" if v is None else str(v) for v in row).encode() + b"\n"); n += 1
+print(n, h.hexdigest())   # 8383 801b4552f494...
 EOF
 ```
 
@@ -457,6 +476,8 @@ Every script was rerun from `reports/w3-retrieval-diag/` against the inputs abov
 - `search/bench.py` baseline: every score and CI identical. Only the timestamp, the commit hash in the header, and the latency columns (wall-clock, e.g. hybrid_rrf p50/p95 `115.6 / 138.0` vs `114.6 / 138.3` ms) differ between runs.
 
 **Rerun after the read-only change (W3-DIAG-FIX, 2026-10-31).** The `0baa33c` scripts were run against a copy of the index, and the read-only scripts against `/cache/index/wesley.sqlite` itself. `diag.json`, `experiments.json`, `experiments.txt`, `prefixes.txt`, `stats.json`, the `stats.py` printout, `table.md`, `legend.md` and the category counts are byte-identical. The index file's sha256 (`909afd60…7fe972b`) and mtime were the same before and after. The bench step on an index copy gave identical scores and CIs (only the timestamp and latency differ). After that, the S6 recategorisation changed two rows of `table.md` (p-015, p-030) and no count. Details: `reports/W3-DIAG-FIX.md`.
+
+**Rerun after the immutable change and the p-015 recategorisation (W3-DIAG-FIX2, 2026-10-31).** `diag.json`, `experiments.json`, `experiments.txt`, `prefixes.txt`, `stats.json` are byte-identical to the committed results and to the `/cache/w3-retrieval-diag/` originals (`diag.json` sha256 `a875192f…2c3e1f`). On an index copy with the sidecar check, the directory held only `wesley.sqlite` while the `mode=ro&immutable=1` connection was open and after it closed; plain `mode=ro` on a copy leaves `-shm` and `-wal`. The full `diag.py` run on a copy also left only `wesley.sqlite`. The `/cache/index/wesley.sqlite` sha256 (`909afd60…7fe972b`) and mtime, and the `-shm` and `-wal` mtimes, did not change across the run. The only intended change is p-015 (LEX → VOCAB): blind LEX 6 → 5, VOCAB 4 → 5. Details: `reports/W3-DIAG-FIX2.md`.
 
 The run took about 1 minute per script on this box (24 cores, CPU query vectors, cached document vectors).
 
