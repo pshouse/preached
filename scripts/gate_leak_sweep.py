@@ -48,7 +48,7 @@ import numpy as np  # noqa: E402
 import asr_chunks  # noqa: E402
 from app.server import STATIC_DIR, App  # noqa: E402
 from preached.search import SEEK_SLACK_S, Searcher, seek_time  # noqa: E402
-from preached.store import open_readonly  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 from preached.youtube.cli import main as youtube_main  # noqa: E402
 
 MODEL = "granite-english-r2"
@@ -115,7 +115,7 @@ def build(root: Path, transcripts: list[Path], states: list[str], embed, privacy
 
 
 def make_app(index: Path, encode) -> App:
-    connection = open_readonly(index, check_same_thread=False)
+    connection = open_readonly_or_exit(index, check_same_thread=False)
     return App(connection=connection, searcher=Searcher(connection, model=MODEL), encode=encode, fallback_note=None,
                model_name=MODEL, hosts={"127.0.0.1"}, static_dir=STATIC_DIR, library="church")
 

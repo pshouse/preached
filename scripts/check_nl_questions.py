@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -30,6 +29,7 @@ from preached.embed import encode_query, load_model, unload  # noqa: E402
 from preached.models import MODELS  # noqa: E402
 from preached.paths import INDEX_PATH  # noqa: E402
 from preached.search import Searcher  # noqa: E402
+from preached.store import open_readonly_or_exit  # noqa: E402
 
 QUESTIONS = ROOT / "eval" / "nl-questions-w3polish.jsonl"
 ABSTAIN_RUN = ROOT / "eval" / "results" / "2026-10-30-w3polish-abstain.json"
@@ -43,8 +43,7 @@ def main() -> None:
 
     questions = read_jsonl(QUESTIONS)
     fitted = json.loads(ABSTAIN_RUN.read_text())["models"]
-    connection = sqlite3.connect(f"file:{args.index}?mode=ro", uri=True, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
+    connection = open_readonly_or_exit(args.index, check_same_thread=False)
     for key in args.models:
         floor = floor_for(key)
         searcher = Searcher(connection, model=key)

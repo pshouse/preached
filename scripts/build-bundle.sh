@@ -140,7 +140,7 @@ fi
 PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import strip_int8_manifest; strip_int8_manifest(Path(sys.argv[1]))' \
   "$OUT/model/$REVISION/manifest.json"
 
-PYTHONPATH="$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
+PYTHONPATH="$SOURCE/src:$SOURCE" "$PY" -c 'import sys; from pathlib import Path; from scripts.bundle_manifest import copy_index; copy_index(Path(sys.argv[1]), Path(sys.argv[2]))' \
   "$INDEX" "$OUT/index/${LIBRARY}.sqlite"
 
 # The bundle must import on its own: run from the bundle with `python -I`
