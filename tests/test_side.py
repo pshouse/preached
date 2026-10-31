@@ -1391,12 +1391,23 @@ class DescriptorTests(unittest.TestCase):
 class ChurchGateTripwireTests(unittest.TestCase):
     """Fails unless every church searcher goes through #12's publish gate.
 
-    The church side is not served in this PR. When it is wired, it must use
-    ``Searcher(gated=True)`` (``store.visible_sql``: approved sermons only),
-    with no slug, so the public-domain exemption can never apply to it.
+    The church side (40-W3-CHURCH-GATE-WIRE) uses ``Searcher(gated=True)``
+    (``store.visible_sql``: approved sermons only), with no slug, so the
+    public-domain exemption can never apply to it.
     """
 
     GATE = {"gated": True, "library": None}
+
+    def assert_gate(self, gate: dict, context) -> None:
+        """CTO #16 r3 nit: ``gated`` passed by name, and the literal ``True``.
+
+        Dict equality alone would also take ``gated=1``.
+        """
+        self.assertIn("gated", gate, context)
+        self.assertIs(gate["gated"], True, context)
+        self.assertIn("library", gate, context)
+        self.assertIsNone(gate["library"], context)
+        self.assertEqual(gate, self.GATE, context)
 
     def _recorder(self, fail_model: Exception | None = None):
         built: list[dict] = []
@@ -1431,7 +1442,7 @@ class ChurchGateTripwireTests(unittest.TestCase):
                 server.load_church_searcher(object(), "fixture", **kwargs)
             self.assertTrue(built)
             for gate in built:
-                self.assertEqual(gate, self.GATE, (kwargs, failure))
+                self.assert_gate(gate, (kwargs, failure))
 
     def test_cli_church_searcher_is_gated_on_every_path(self) -> None:
         from preached.store import EmbeddingMismatch
@@ -1444,11 +1455,12 @@ class ChurchGateTripwireTests(unittest.TestCase):
             with (
                 patch.object(module, "Searcher", recorder),
                 patch.object(module, "compute_signals", lambda *_a, **_k: signals),
+                patch.object(module, "check_query_variant", lambda *_a, **_k: None),
             ):
                 module.search_index(None, args, np.ones(4, dtype=np.float32), "fixture", fallback_bm25=True, church=True, library="spurgeon")
             self.assertTrue(built)
             for gate in built:
-                self.assertEqual(gate, self.GATE, mode)
+                self.assert_gate(gate, mode)
 
     def test_unapproved_church_sermon_is_not_found_through_either_entry_point(self) -> None:
         import app.server as server
@@ -1617,7 +1629,9 @@ def load_search(connection):
                     church_library="sample",
                 )
                 kept = app.church_searcher
-                self.assertTrue(kept is None or kept.gated is True)
+                self.assertIsNotNone(kept)
+                self.assertIs(kept.gated, True)
+                self.assertIsNone(kept.library)
             finally:
                 connection.close()
                 church.close()
@@ -1867,6 +1881,10 @@ def _plain_marked(path: Path, *, church_import: bool = False) -> None:
 
 
 class SideApiTests(unittest.TestCase):
+    """``both`` has a church file in which nothing is approved (no ``videos``
+    rows): the church side is open, through the gate, and shows nothing.
+    Approved passages are tested in ``test_church_wire``."""
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.tmp = tempfile.TemporaryDirectory()
@@ -1901,17 +1919,21 @@ class SideApiTests(unittest.TestCase):
             self.assertEqual(set(hit), RESULT_KEYS)
             self.assertEqual(hit["audio_url"], CLASSIC_AUDIO)
 
-        # A church slug is not an open library. Same 400 as a server with no church file.
+        # The church slug searches the church file through the gate: nothing approved, nothing shown.
+        status, _, body = self.both.get("/api/search?q=churchonlytoken&library=sample&mode=bm25")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["results"], [])
+        self.assert_no_church_payload(body)
+        # Any other slug is a 400; with no church file the church slug is one too.
+        status, _, body = self.both.get("/api/search?q=churchonlytoken&library=spurgeon&mode=bm25")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body)["error"], "library must be wesley or sample")
         for slug in ("sample", "spurgeon"):
-            status, _, body = self.both.get(f"/api/search?q=churchonlytoken&library={slug}&mode=bm25")
-            self.assertEqual(status, 400, slug)
-            self.assertEqual(json.loads(body)["error"], "library must be wesley")
-            self.assert_no_church_payload(body)
             only_status, _, only_body = self.classic_only.get(
                 f"/api/search?q=churchonlytoken&library={slug}&mode=bm25"
             )
-            self.assertEqual(status, only_status)
-            self.assertEqual(json.loads(body)["error"], json.loads(only_body)["error"])
+            self.assertEqual(only_status, 400, slug)
+            self.assertEqual(json.loads(only_body)["error"], "library must be wesley")
 
         status, _, body = self.both.get("/api/search?q=churchonlytoken&library=wesley&mode=bm25")
         self.assertEqual(status, 200)
@@ -1947,34 +1969,40 @@ class SideApiTests(unittest.TestCase):
         self.assertEqual(len(classic["results"]), 1)
         self.assertIn("classiconlytoken", texts(classic))
         self.assertNotIn("churchonlytoken", texts(classic))
-        self.assert_missing_church(church)
+        self.assert_nothing_approved(church, "bm25")
         self.assert_no_church_payload(json.dumps(church).encode())
 
         only_status, _, only_body = self.classic_only.get("/api/side?q=classiconlytoken&mode=bm25&k=1")
         self.assertEqual(only_status, 200)
         only = json.loads(only_body)
-        self.assertEqual(_without_took(payload), _without_took(only))
+        self.assertEqual(payload["classic"], only["classic"])
+        self.assert_missing_church(only["church"])
 
         status, _, body = self.both.get("/api/side?q=churchonlytoken&mode=bm25&k=5")
         swapped = json.loads(body)
         self.assertEqual(status, 200)
         self.assertTrue(swapped["classic"]["abstain"])
         self.assertEqual(swapped["classic"]["results"], [])
-        self.assert_missing_church(swapped["church"])
+        self.assert_nothing_approved(swapped["church"], "bm25")
         self.assert_no_church_payload(body)
 
-    def test_configured_church_matches_the_no_church_responses(self) -> None:
-        """A fixture church file must not change /api/side, /api/search, or /healthz."""
+    def test_church_with_nothing_approved_adds_no_church_payload(self) -> None:
+        """A church file with nothing approved changes only the church column's
+        header fields; the classic column, /api/search on wesley and /healthz
+        are unchanged."""
         side_both = self.both.get("/api/side?q=sharedpulpit&mode=bm25&k=5")
         side_only = self.classic_only.get("/api/side?q=sharedpulpit&mode=bm25&k=5")
         self.assertEqual(side_both[0], 200)
         self.assertEqual(side_only[0], 200)
         both_payload = json.loads(side_both[2])
         only_payload = json.loads(side_only[2])
-        self.assertEqual(_without_took(both_payload), _without_took(only_payload))
-        self.assert_missing_church(both_payload["church"])
-        self.assertFalse(both_payload["church"]["present"])
+        self.assertEqual(both_payload["classic"], only_payload["classic"])
+        self.assert_nothing_approved(both_payload["church"], "bm25")
+        self.assert_missing_church(only_payload["church"])
         self.assert_no_church_payload(side_both[2])
+        search_both = json.loads(self.both.get("/api/search?q=sharedpulpit&library=wesley&mode=bm25")[2])
+        search_only = json.loads(self.classic_only.get("/api/search?q=sharedpulpit&library=wesley&mode=bm25")[2])
+        self.assertEqual(_without_took(search_both), _without_took(search_only))
 
         health_both = json.loads(self.both.get("/healthz")[2])
         health_only = json.loads(self.classic_only.get("/healthz")[2])
@@ -1989,12 +2017,12 @@ class SideApiTests(unittest.TestCase):
         church = payload["church"]
         self.assertFalse(classic["abstain"])
         self.assertEqual(classic["confidence"]["level"], "strong")
-        self.assert_missing_church(church)
+        self.assert_nothing_approved(church, "hybrid")
         self.assertIn("sharedpulpit", texts(classic))
         self.assertTrue(all(hit["audio_url"] == CLASSIC_AUDIO for hit in classic["results"]))
         self.assert_no_church_payload(json.dumps(church).encode())
         only = json.loads(self.classic_only.get("/api/side?q=sharedpulpit&mode=hybrid&k=5")[2])
-        self.assertEqual(_without_took(payload), _without_took(only))
+        self.assertEqual(payload["classic"], only["classic"])
 
     def test_missing_church_is_an_empty_side_not_an_error(self) -> None:
         status, _, body = self.classic_only.get("/api/side?q=classiconlytoken&mode=bm25")
@@ -2054,12 +2082,14 @@ class SideApiTests(unittest.TestCase):
                 church_library="sample",
             )
             payload = app.side("churchonlytoken", 5, "hybrid")
-            self.assert_missing_church(payload["church"])
+            # No gate columns: visible_sql is "0", so the church side is keyword only and empty.
+            self.assertEqual(payload["church"]["results"], [])
+            self.assertEqual(payload["church"]["mode"], "bm25")
             self.assert_no_church_payload(json.dumps(payload["church"]).encode())
             classic = app.side("classiconlytoken", 5, "hybrid")
             self.assertIn("classiconlytoken", texts(classic["classic"]))
             self.assertTrue(all(hit["audio_url"] == CLASSIC_AUDIO for hit in classic["classic"]["results"]))
-            self.assert_missing_church(classic["church"])
+            self.assertEqual(classic["church"]["results"], [])
 
     def test_classic_side_covers_spurgeon_and_edwards(self) -> None:
         """Spurgeon and edwards are classic libraries. The church column stays empty."""
@@ -2089,6 +2119,7 @@ class SideApiTests(unittest.TestCase):
                 finally:
                     probe.close()
                 connection = reopen(classic_path)
+                church_connection = reopen(church_path)
                 app = App(
                     connection=connection,
                     searcher=Searcher(connection, model="fixture", fingerprint=FIXTURE_FP),
@@ -2099,7 +2130,8 @@ class SideApiTests(unittest.TestCase):
                     static_dir=STATIC_DIR,
                     library=slug,
                     floor=0.5,
-                    church_connection=reopen(church_path),
+                    church_connection=church_connection,
+                    church_searcher=Searcher(church_connection, gated=True),
                     church_library="sample",
                     church_label="Your church",
                 )
@@ -2114,10 +2146,10 @@ class SideApiTests(unittest.TestCase):
                     self.assertNotIn("churchonlytoken", texts(payload))
                     self.assert_no_church_payload(body)
                     bad, _, bad_body = running.get(
-                        "/api/search?q=classiconlytoken&library=sample&mode=bm25"
+                        "/api/search?q=classiconlytoken&library=other&mode=bm25"
                     )
                     self.assertEqual(bad, 400, slug)
-                    self.assertEqual(json.loads(bad_body)["error"], f"library must be {slug}")
+                    self.assertEqual(json.loads(bad_body)["error"], f"library must be {slug} or sample")
                     side_status, _, side_body = running.get(
                         "/api/side?q=classiconlytoken&mode=bm25&k=1"
                     )
@@ -2126,13 +2158,28 @@ class SideApiTests(unittest.TestCase):
                     self.assertEqual(side["classic"]["library"], slug)
                     self.assertEqual(side["classic"]["label"], slug)
                     self.assertIn("classiconlytoken", texts(side["classic"]))
-                    self.assert_missing_church(side["church"])
+                    self.assert_nothing_approved(side["church"], "bm25")
                     self.assert_no_church_payload(json.dumps(side["church"]).encode())
                     health = json.loads(running.get("/healthz")[2])
                     self.assertEqual(health["library"], slug)
                     self.assertIsNone(health["church"])
                 finally:
                     running.close()
+
+    def assert_nothing_approved(self, church: dict, mode: str) -> None:
+        """The church side is open (through the gate) and shows nothing."""
+        self.assertEqual(church["library"], "sample")
+        self.assertEqual(church["label"], "Your church")
+        self.assertTrue(church["sample"])
+        self.assertTrue(church["present"])
+        self.assertTrue(church["empty"])
+        self.assertEqual(church["message"], CHURCH_EMPTY)
+        self.assertEqual(church["mode"], mode)
+        self.assertEqual(church["results"], [])
+        # Nothing found: abstain, like an empty classic column (abstain.church_confidence "none").
+        self.assertTrue(church["abstain"])
+        self.assertEqual(church["confidence"]["level"], "none")
+        self.assertFalse(church["confidence"]["calibrated"])
 
     def assert_missing_church(self, church: dict) -> None:
         self.assertEqual(
@@ -2333,6 +2380,7 @@ class SideCliTests(unittest.TestCase):
             patch.object(module, "Searcher", FakeSearcher),
             patch.object(module, "compute_signals", lambda *_a, **_k: signals),
             patch.object(module, "floor_for", floor_for),
+            patch.object(module, "check_query_variant", lambda *_a, **_k: None),
         ):
             _hits, confidence, *_rest = module.search_index(
                 None, args, vector, "fixture", fallback_bm25=True, church=True
@@ -2340,6 +2388,7 @@ class SideCliTests(unittest.TestCase):
         self.assertEqual(confidence.level, "unrated")
         self.assertEqual(floors, [])
         self.assertEqual(built, [{"gated": True, "library": None}])
+        self.assertIs(built[0]["gated"], True)
         with (
             patch.object(module, "Searcher", FakeSearcher),
             patch.object(module, "compute_signals", lambda *_a, **_k: signals),

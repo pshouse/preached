@@ -640,3 +640,91 @@ def _resolve(path: Path | None) -> Path | None:
         return Path(path).resolve()
     except OSError:
         return None
+
+
+class ChurchRefused(ValueError):
+    """The church file is not searched. The message is the logged refusal."""
+
+
+def _church_identity(path: Path) -> tuple[int, int] | None:
+    ident = _file_id(path)
+    return None if ident is None else ident[:2]
+
+
+def open_church_readonly(path: Path, *, classic: Path | None = None) -> tuple[sqlite3.Connection, tuple[int, int]]:
+    """Open the church file read-only for search, or raise ``ChurchRefused``.
+
+    Returns the connection and the file's ``(st_dev, st_ino)``; pass both to
+    ``church_file_problem`` before every search. Nothing is written: the open
+    is ``store.open_readonly`` (``mode=ro``, ``query_only``), which checks the
+    -wal, -shm and -journal files first (``_sidecar_problem``, #33).
+
+    Refused, in this order: no privacy config (``privacy.required_config``),
+    a missing file, a classic or hardlinked file (``classic_church_refusal``),
+    the classic index itself, an unsafe sidecar, a file that is not a church
+    import (``_church_shape_problem``), a file without the publish-gate
+    columns (``store.visible_sql`` gives ``"0"``), and a file replaced while
+    it was opened. Each one means the church side is empty; the caller logs
+    the message and carries on with the classic side.
+    """
+    from preached.privacy import MissingConfig, required_config
+    from preached.store import UnsafeSidecar, visible_sql
+
+    path = Path(path)
+    try:
+        required_config()
+    except MissingConfig as exc:
+        raise ChurchRefused(f"{exc}; the church side is not searched") from exc
+    except (ValueError, OSError) as exc:
+        raise ChurchRefused(f"privacy config: {exc}; the church side is not searched") from exc
+    if not path.is_file():
+        raise ChurchRefused(f"{path.name} not found; the church side is empty")
+    refusal = classic_church_refusal(None, path)
+    if refusal:
+        raise ChurchRefused(refusal)
+    identity = _church_identity(path)
+    if identity is None:
+        raise ChurchRefused(f"{path.name} cannot be checked; it is not opened")
+    if classic is not None and identity == _church_identity(Path(classic)):
+        raise ChurchRefused(f"{path.name} is the classic index; it cannot be your church")
+    try:
+        connection = open_readonly(path, check_same_thread=False)
+    except UnsafeSidecar as exc:
+        raise ChurchRefused(str(exc)) from exc
+    except (OSError, sqlite3.Error) as exc:
+        raise ChurchRefused(f"{path.name} cannot be opened ({exc})") from exc
+    try:
+        problem = church_file_problem(connection, path, identity)
+        if problem is None and visible_sql(connection, "chunks", gated=True) == "0":
+            problem = f"{path.name} has no publish-gate columns; nothing in it is served"
+    except sqlite3.Error as exc:
+        problem = f"{path.name} cannot be read ({exc})"
+    if problem is not None:
+        connection.close()
+        raise ChurchRefused(problem)
+    return connection, identity
+
+
+def church_file_problem(connection: sqlite3.Connection, path: Path, identity: tuple[int, int]) -> str | None:
+    """Why the open church file may not be searched now, or None. Read-only.
+
+    Run before every church search: the name still points at the file that
+    was opened (same ``(st_dev, st_ino)``, one link, not a classic), its
+    sidecars are still safe (``_sidecar_problem``), and the open file still
+    reads as a church import.
+    """
+    path = Path(path)
+    if _church_identity(path) != identity:
+        return f"{path.name} was replaced after it was opened; refused"
+    reason = _protection(path)
+    if reason == "classic":
+        return _classic_church_error(path.name)
+    if reason is not None:
+        return _hardlink_church_error(path.name, _links(path))
+    sidecar = _sidecar_problem(path)
+    if sidecar is not None:
+        return f"{path.name} {sidecar}; refused"
+    shape = _church_shape_problem(connection)
+    if shape is not None:
+        return f"{path.name} {shape}; refused"
+    return None
