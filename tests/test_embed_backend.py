@@ -698,9 +698,11 @@ class RealOnnxTests(unittest.TestCase):
             self.skipTest("granite onnx artifacts are not in /cache")
         from preached.onnx_embed import OnnxEmbedder
 
-        with tempfile.TemporaryDirectory() as tmp:
+        # The graph is opened with O_NOFOLLOW, so hard-link it (same filesystem).
+        with tempfile.TemporaryDirectory(dir=source.parent) as tmp:
             folder = Path(tmp)
-            for name in ("model.fp32.onnx", "tokenizer.json", "pooling.json"):
+            os.link(source / "model.fp32.onnx", folder / "model.fp32.onnx")
+            for name in ("tokenizer.json", "pooling.json"):
                 (folder / name).symlink_to(source / name)
             manifest = json.loads((source / "manifest.json").read_text())
             # int8 stays named in the manifest and is not on disk.
@@ -730,3 +732,72 @@ class RealOnnxTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FdLoadTests(unittest.TestCase):
+    def _graph(self, folder: Path, data: bytes = b"graph bytes") -> tuple[Path, str]:
+        import hashlib
+
+        path = folder / "model.fp32.onnx"
+        path.write_bytes(data)
+        return path, hashlib.sha256(data).hexdigest()
+
+    def test_matching_file_returns_an_open_fd(self) -> None:
+        from preached.onnx_embed import _open_hashed_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp))
+            fd, actual = _open_hashed_graph(path, digest, digest)
+            try:
+                self.assertEqual(actual, digest)
+                self.assertEqual(Path(f"/proc/self/fd/{fd}").read_bytes(), b"graph bytes")
+            finally:
+                os.close(fd)
+
+    def test_symlinked_graph_is_refused(self) -> None:
+        from preached.onnx_embed import _open_hashed_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            real, digest = self._graph(folder)
+            link = folder / "link.onnx"
+            link.symlink_to(real)
+            with self.assertRaises(ArtifactError):
+                _open_hashed_graph(link, digest, digest)
+
+    def test_wrong_manifest_or_pin_digest_is_refused_and_fd_closed(self) -> None:
+        from preached.onnx_embed import _open_hashed_graph
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path, digest = self._graph(Path(tmp))
+            before = len(os.listdir("/proc/self/fd"))
+            with self.assertRaises(ArtifactError):
+                _open_hashed_graph(path, "0" * 64, digest)
+            with self.assertRaises(ArtifactError):
+                _open_hashed_graph(path, digest, "0" * 64)
+            self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+
+    def test_trim_heap_never_raises(self) -> None:
+        from unittest import mock
+
+        from preached import onnx_embed
+
+        self.assertIsInstance(onnx_embed.trim_heap(), bool)
+        with mock.patch.object(onnx_embed.ctypes, "CDLL", side_effect=OSError):
+            self.assertFalse(onnx_embed.trim_heap())
+
+    def test_load_refuses_a_symlinked_graph(self) -> None:
+        source = artifact_dir()
+        if not (source / "model.fp32.onnx").is_file():
+            self.skipTest("granite onnx artifacts are not in /cache")
+        from preached.onnx_embed import OnnxEmbedder
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for name in ("tokenizer.json", "pooling.json"):
+                (folder / name).symlink_to(source / name)
+            (folder / "model.fp32.onnx").symlink_to(source / "model.fp32.onnx")
+            (folder / "manifest.json").write_text((source / "manifest.json").read_text())
+            # verify_manifest follows the symlink; the fd open must not.
+            with self.assertRaises(ArtifactError):
+                OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1)

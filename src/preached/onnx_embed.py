@@ -7,6 +7,10 @@ so the server can fall back to BM25.
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
+import os
+import stat
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +18,7 @@ import numpy as np
 from preached.artifacts import (
     GRANITE_MODEL_KEY,
     VARIANT_FILES,
+    VARIANT_SHA256,
     ArtifactError,
     artifact_dir,
     resolve_threads,
@@ -23,6 +28,47 @@ from preached.models import MODELS, ModelSpec
 from preached.pooling import HIDDEN_SIZE, MAX_SEQ_LENGTH, pool_cls
 from preached.prefixes import prepare_documents, prepare_query
 from preached.text_tokens import encode_texts
+
+
+def _open_hashed_graph(path: Path, expected: str, pinned: str) -> tuple[int, str]:
+    """Open ``path`` without following a symlink; hash it through that fd.
+
+    Returns the open fd. The caller hands ``/proc/self/fd/N`` to ORT, so the
+    bytes ORT reads are the inode that was hashed here, not a second open
+    of the path. The caller closes the fd.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as exc:
+        raise ArtifactError(f"ONNX artifact cannot be opened: {path.name}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ArtifactError(f"ONNX artifact is not a regular file: {path.name}")
+        if not os.path.exists(f"/proc/self/fd/{fd}"):
+            raise ArtifactError("ONNX loading needs /proc/self/fd")
+        digest = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+        actual = digest.hexdigest()
+        if actual != expected:
+            raise ArtifactError(f"ONNX sha256 mismatch for {path.name}")
+        if actual != pinned:
+            raise ArtifactError(f"ONNX sha256 for {path.name} is not the pinned digest")
+        return fd, actual
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def trim_heap() -> bool:
+    """Return freed heap pages to the OS (glibc). False if unavailable."""
+    try:
+        return bool(ctypes.CDLL("libc.so.6").malloc_trim(0))
+    except (OSError, AttributeError):
+        return False
 
 
 class OnnxEmbedder:
@@ -78,8 +124,9 @@ class OnnxEmbedder:
             )
 
         # Imported here so BM25-only commands and the import guard stay light.
-        # The session and the tokenizer are built from the bytes just hashed,
-        # not from a second open of the path.
+        # The tokenizer is built from the bytes just hashed. The graph is
+        # hashed through an open fd and ORT loads that same fd, so no second
+        # copy of the graph is held in Python.
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
@@ -89,11 +136,20 @@ class OnnxEmbedder:
         options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         options.log_severity_level = 3
-        session = ort.InferenceSession(
-            verified.files[filename],
-            sess_options=options,
-            providers=["CPUExecutionProvider"],
-        )
+        # verify_manifest read the graph once to check the manifest; drop
+        # that copy. The pin is checked again on the fd ORT loads.
+        verified.files.pop(filename, None)
+        expected = verified.manifest["files"][filename]["sha256"]
+        fd, _ = _open_hashed_graph(folder / filename, expected, VARIANT_SHA256[chosen])
+        try:
+            session = ort.InferenceSession(
+                f"/proc/self/fd/{fd}",
+                sess_options=options,
+                providers=["CPUExecutionProvider"],
+            )
+        finally:
+            os.close(fd)
+            trim_heap()
         input_names = {item.name for item in session.get_inputs()}
         if input_names != {"input_ids", "attention_mask"}:
             raise ArtifactError(f"ONNX inputs {sorted(input_names)} are not input_ids and attention_mask")
