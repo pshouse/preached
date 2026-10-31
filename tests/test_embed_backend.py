@@ -7,6 +7,7 @@ artifacts are not under /cache.
 from __future__ import annotations
 
 import errno
+import gc
 import json
 import os
 import shutil
@@ -785,6 +786,7 @@ def _onnx_model(tensor: bytes | None = None, *, in_subgraph: bool = False) -> by
 
 
 def _fd_count() -> int:
+    gc.collect()  # drop fds leaked by earlier tests before the count
     return len(os.listdir("/proc/self/fd"))
 
 
