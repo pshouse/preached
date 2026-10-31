@@ -50,7 +50,7 @@ Read `BRIEF.md` first. This file holds the rules. If it conflicts with BRIEF.md,
 Every task ends with **`reports/<task-id>.md`** on your branch, pushed, containing:
 
 1. What was done
-2. How to run it (exact commands)
+2. How to run it (exact commands). For the full suite use `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`: the flag makes a missing `deno` fail the deno-backed tests instead of skipping them in a passing run.
 3. Results and numbers (benchmarks, throughput, counts)
 4. Open issues, risks, and anything excluded (with reason)
 5. Dependencies added and why
