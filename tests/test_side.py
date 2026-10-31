@@ -1074,6 +1074,208 @@ class ReadOnlyOpenSidecarTests(unittest.TestCase):
         self.assertEqual(self.wesley_state(), before)
 
 
+class RecheckPositionTests(unittest.TestCase):
+    """CTO round 2 on PR #27, item 3: each ``_Checked.recheck`` call has its own test.
+
+    A link planted at one point is caught by every later recheck too, so a
+    test that only asserts a refusal passes with any one recheck removed.
+    Each test here plants a -wal (or -shm) link to wesley.sqlite at one point
+    and asserts what that recheck keeps from happening before the next one:
+    no sibling cleared, no WAL switch, no schema or mark written, no commit,
+    no sibling mark dropped. The planted names cannot redirect a descriptor
+    SQLite already holds, so these assert where the refusal lands, not that
+    Wesley would be written without it.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.index_dir = Path(tmp.name) / "index"
+        self.work = Path(tmp.name) / "work"
+        self.index_dir.mkdir()
+        self.work.mkdir()
+        self.wesley = self.index_dir / "wesley.sqlite"
+        _plain_marked(self.wesley)
+        self.sample = self.work / "sample.sqlite"
+        self.other = self.work / "other.sqlite"
+        for target in (
+            patch("preached.paths.INDEX_DIR", self.index_dir),
+            patch("preached.paths.INDEX_PATH", self.wesley),
+        ):
+            target.start()
+            self.addCleanup(target.stop)
+
+    def plant(self, church: Path, suffix: str = "-wal") -> None:
+        sidecar = Path(f"{church}{suffix}")
+        sidecar.unlink(missing_ok=True)
+        os.link(self.wesley, sidecar)
+        self.addCleanup(sidecar.unlink, missing_ok=True)
+
+    def unplant(self, church: Path, suffix: str = "-wal") -> None:
+        sidecar = Path(f"{church}{suffix}")
+        if sidecar.exists() and os.stat(sidecar).st_ino == os.stat(self.wesley).st_ino:
+            sidecar.unlink()
+
+    def wal_church(self, path: Path, *, marked: bool = False) -> None:
+        rows, vectors = church_rows()
+        build_library(path, rows[:1], vectors[:1], church=marked, church_import=True)
+
+    def journal_mode(self, path: Path) -> str:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as probe:
+            return probe.execute("PRAGMA journal_mode").fetchone()[0]
+
+    def is_marked(self, path: Path) -> bool:
+        with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as probe:
+            return is_your_church(probe)
+
+    def test_the_name_half_of_recheck_refuses_a_name_swapped_after_the_open(self) -> None:
+        """The -shm descriptor is already open, so only the by-name half sees the swap."""
+        self.wal_church(self.sample)
+        checked = library._Checked(self.sample)
+        self.addCleanup(checked.close)
+        self.assertTrue(Path(f"{self.sample}-shm").exists())
+        self.plant(self.sample, "-shm")
+        with self.assertRaises(UnsafeOpen) as caught:
+            checked.recheck()
+        self.assertIn("has a -shm file with 2 hard links", str(caught.exception))
+
+    def test_the_recheck_after_the_first_read_refuses_before_any_sibling_is_cleared(self) -> None:
+        """Planted once the target is connected: the first read opens it (WAL mode)."""
+        self.wal_church(self.sample)
+        self.wal_church(self.other, marked=True)
+        real = sqlite3.connect
+        fired = []
+
+        def plant_after(database, *args, **kwargs):
+            connection = real(database, *args, **kwargs)
+            if not fired and kwargs.get("uri") and database.endswith("?mode=rw") and self.sample.name in database:
+                fired.append(database)
+                self.plant(self.sample)
+            return connection
+
+        cleared = []
+        real_clear = library._clear_church_mark
+
+        def clear(path):
+            cleared.append(path)
+            return real_clear(path)
+
+        with (
+            patch.object(library.sqlite3, "connect", plant_after),
+            patch.object(library, "_clear_church_mark", clear),
+            self.assertRaises(UnsafeOpen) as caught,
+        ):
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(fired)
+        self.assertIn("2 hard links", str(caught.exception))
+        self.assertEqual(cleared, [])
+        self.unplant(self.sample)
+        self.assertTrue(self.is_marked(self.other))
+
+    def test_the_recheck_before_the_wal_switch_leaves_a_rollback_target_unswitched(self) -> None:
+        """Planted while the siblings are cleared; the target is in rollback mode."""
+        _plain_marked(self.sample, church_import=True)
+        with closing(sqlite3.connect(self.sample)) as writer:
+            writer.execute("DELETE FROM meta")
+            writer.commit()
+        self.assertEqual(self.journal_mode(self.sample), "delete")
+        before = self.sample.read_bytes()
+        real_siblings = library._marked_siblings_not_cleared
+
+        def siblings(index_dir, target):
+            found = real_siblings(index_dir, target)
+            self.plant(self.sample)
+            return found
+
+        with patch.object(library, "_marked_siblings_not_cleared", siblings), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertIn("has a -wal file with 2 hard links", str(caught.exception))
+        self.unplant(self.sample)
+        self.assertEqual(self.journal_mode(self.sample), "delete")
+        self.assertEqual(self.sample.read_bytes(), before)
+
+    def test_the_recheck_after_the_wal_switch_refuses_before_the_schema_is_written(self) -> None:
+        """Planted just before ``PRAGMA journal_mode=WAL`` on a rollback target,
+        so the switch opens the planted -wal. Seen by SQLite's trace hook."""
+        _plain_marked(self.sample, church_import=True)
+        with closing(sqlite3.connect(self.sample)) as writer:
+            writer.execute("DELETE FROM meta")
+            writer.commit()
+        fired = []
+        real_checked = library._Checked
+
+        class Traced(real_checked):
+            def __init__(inner, path):
+                super().__init__(path)
+
+                def trace(statement):
+                    if not fired and statement.startswith("PRAGMA journal_mode=WAL"):
+                        fired.append(statement)
+                        self.plant(self.sample)
+
+                inner.connection.set_trace_callback(trace)
+
+        migrated = []
+        real_migrate = library.migrate
+
+        def migrate(connection):
+            migrated.append(connection)
+            return real_migrate(connection)
+
+        with (
+            patch.object(library, "_Checked", Traced),
+            patch.object(library, "migrate", migrate),
+            self.assertRaises(UnsafeOpen) as caught,
+        ):
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(fired)
+        self.assertIn("2 hard links", str(caught.exception))
+        self.assertEqual(migrated, [])
+        self.unplant(self.sample)
+        self.assertFalse(self.is_marked(self.sample))
+
+    def test_the_recheck_before_the_commit_leaves_the_target_unmarked(self) -> None:
+        """Planted after the mark is written; the -wal descriptor is already open."""
+        self.wal_church(self.sample)
+        real_mark = library.mark_your_church
+
+        def mark(connection, **kwargs):
+            real_mark(connection, **kwargs)
+            self.plant(self.sample)
+
+        with patch.object(library, "mark_your_church", mark), self.assertRaises(UnsafeOpen) as caught:
+            mark_your_church_exclusive(self.sample, self.work)
+        self.assertIn("has a -wal file with 2 hard links", str(caught.exception))
+        self.unplant(self.sample)
+        self.assertFalse(self.is_marked(self.sample))
+
+    def test_the_recheck_in_clear_church_mark_keeps_the_sibling_mark(self) -> None:
+        """Planted on the sibling once it is open for writing and its shape is
+        read, before the delete (the read-only ``church_shaped`` reads are skipped)."""
+        self.wal_church(self.sample)
+        self.wal_church(self.other, marked=True)
+        real_shape = library._church_shape_problem
+        fired = []
+
+        def shape(connection):
+            problem = real_shape(connection)
+            files = {Path(row[2]) for row in connection.execute("PRAGMA database_list") if row[2]}
+            writable = not connection.execute("PRAGMA query_only").fetchone()[0]
+            if not fired and writable and self.other.resolve() in files:
+                fired.append(True)
+                self.plant(self.other)
+            return problem
+
+        with patch.object(library, "_church_shape_problem", shape):
+            skipped = mark_your_church_exclusive(self.sample, self.work)
+        self.assertTrue(fired)
+        self.assertEqual([path for path, _why in skipped], [self.other])
+        self.assertIn("has a -wal file with 2 hard links", skipped[0][1])
+        self.unplant(self.other)
+        self.assertTrue(self.is_marked(self.other))
+        self.assertTrue(self.is_marked(self.sample))
+
+
 class DescriptorTests(unittest.TestCase):
     """CTO round 1 on PR #27, should-fixes 1, 2 and 4."""
 
