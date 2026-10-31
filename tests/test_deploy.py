@@ -809,6 +809,11 @@ class BundleTests(unittest.TestCase):
         self.assertNotIn("pins-skipped", text)
         self.assertIn("refuses to start", text)
         self.assertIn("An index outside the bundle is refused.", text)
+        # Round 4: the trust boundary and the release notes.
+        self.assertIn("### `.venv` is a trust boundary", text)
+        self.assertIn("120 requests per 60 seconds", text)
+        for field in ("`disabled`", "`index_version`", "`model_sha256`"):
+            self.assertIn(field, text[text.index("## Release notes"):])
         script = (ROOT / "scripts" / "serve.sh").read_text()
         self.assertNotIn("chmod", script)
         self.assertGreaterEqual(script.count("env -i"), 2)

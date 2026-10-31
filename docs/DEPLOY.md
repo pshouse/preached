@@ -144,14 +144,14 @@ From a bundle the server refuses to start unless all of these hold:
 
 - `MANIFEST.sha256` exists, every line is `<sha256>  <relative path>`,
   sorted, with no comments, blank lines or repeats, and it lists
-  `PREACHED_BUNDLE`;
-- every listed file is a regular file with that sha256;
+  `PREACHED_BUNDLE`.
+- every listed file is a regular file with that sha256.
 - no other file is in the tree. Only `.venv/` and the kill file `KILL` are
   allowed beside it. Any `__pycache__/` or `*.pyc` is refused: every release
   tar has the same mtime, so a leftover `.pyc` whose source size matches
-  would otherwise be loaded in place of the hashed source;
+  would otherwise be loaded in place of the hashed source.
 - the index (`PREACHED_INDEX` or the default) resolves to a listed file
-  under the bundle's own `index/`. An index outside the bundle is refused;
+  under the bundle's own `index/`. An index outside the bundle is refused.
 - `PREACHED_ONNX_DIR` is unset or is the bundle's own `model/`. Another
   directory (an older revision, or an empty one that drops search to BM25)
   is refused. The embed backend must be `onnx`; torch is not shipped.
