@@ -184,6 +184,22 @@ class ScriptReadOnlyOpenTests(_PlantedWesley):
             self.assertEqual(copy.execute("SELECT count(*) FROM chunks").fetchone()[0], 3)
         self.assertEqual(self.wesley_state(), before)
 
+    def test_copy_index_replaces_a_dangling_symlink_without_creating_its_target(self) -> None:
+        # PR #37 r1 nit: exists() is False for a dangling symlink, so it was
+        # left in place and sqlite3.connect followed it.
+        dest = self.root / "bundle" / "index" / "wesley.sqlite"
+        dest.parent.mkdir(parents=True)
+        target = self.root / "elsewhere.sqlite"
+        os.symlink(target, dest)
+        os.symlink(self.root / "elsewhere-shm", Path(f"{dest}-shm"))
+        _load("scripts/bundle_manifest.py", "hc_bundle_manifest_dangling").copy_index(self.index, dest)
+        self.assertFalse(os.path.lexists(target))
+        self.assertFalse(os.path.lexists(self.root / "elsewhere-shm"))
+        self.assertFalse(dest.is_symlink())
+        self.assertFalse(os.path.lexists(f"{dest}-shm"))
+        with closing(sqlite3.connect(f"{dest.as_uri()}?mode=ro", uri=True)) as copy:
+            self.assertEqual(copy.execute("SELECT count(*) FROM chunks").fetchone()[0], 3)
+
 
 # Files outside tests/ that may import sqlite3, and how many raw opens each
 # makes (sqlite3.connect / sqlite3.Connection(...) / dbapi2 / getattr on the
