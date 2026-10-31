@@ -68,8 +68,11 @@ FRAME_S = 0.03
 # A frame is sound when it is within this many dB of the loud end (98th
 # percentile) of the file, above an absolute floor (dBFS), and at least
 # NOISE_MARGIN_DB above the noise floor (the NOISE_PERCENTILE level), so a
-# steady hiss within REL_DB of the speech is not sound.
-REL_DB = 40.0
+# steady hiss within REL_DB of the speech is not sound. 45 dB (was 40): on
+# all 143 Wesley files the absolute floor or the noise guard sets the
+# threshold, so 40 and 45 flag the same spans there; 45 counts quieter
+# speech on louder church recordings (reports/W3-ASR-COVERAGE.md, round 2).
+REL_DB = 45.0
 ABS_FLOOR_DB = -58.0
 NOISE_PERCENTILE = 5
 NOISE_MARGIN_DB = 6.0

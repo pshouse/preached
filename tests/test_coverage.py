@@ -178,7 +178,7 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(sparse_spans(sound, [*words_for((2, 10)), *spread, *words_for((50, 58))]), [])
 
     def test_quiet_speech_counts_as_sound(self) -> None:
-        # S1: speech 33 dB below the loud parts is sound at 40 dB (it was silence at 30 dB).
+        # S1: speech 33 dB below the loud parts is sound (it was silence at 30 dB).
         path = write_wav(self.dir / "a.wav", synth(60.0, [(2, 20), (40, 58)], quiet=[(20, 40)]))
         gaps = check_coverage(path, words_for((2, 20), (40, 58)))
         self.assertEqual(len(gaps), 1)
@@ -186,8 +186,17 @@ class CheckTests(unittest.TestCase):
         self.assertGreaterEqual(gaps[0].end_s, 39)
         self.assertEqual(check_coverage(path, words_for((2, 58))), [])
 
+    def test_speech_43_db_down_is_sound(self) -> None:
+        # CTO round 2 S-g: REL_DB 45. Loud speech at -10 dBFS, quiet speech at -53 (43 dB down), room tone at -90.
+        db = np.full(2000, -90.0)
+        db[100:600] = -10.0
+        db[1000:1500] = -53.0
+        spans = sound_spans_from_db(db)
+        self.assertEqual(len(spans), 2)
+        self.assertAlmostEqual(spans[1].start_s, 1000 * 0.03, places=2)
+
     def test_steady_hiss_is_not_sound(self) -> None:
-        # S1 noise-floor guard: a hiss 30 dB under the speech (inside 40 dB) is not sound.
+        # S1 noise-floor guard: a hiss 30 dB under the speech (inside REL_DB) is not sound.
         path = write_wav(self.dir / "a.wav", synth(60.0, [(2, 20), (40, 58)], floor=0.08 * 10 ** (-30 / 20)))
         self.assertEqual(check_coverage(path, words_for((2, 20), (40, 58))), [])
 
