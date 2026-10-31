@@ -20,6 +20,8 @@
 #   gated = true         Weights need an accepted license and HF_TOKEN.
 #   provenance           "clear", or "unclear: <why>" while a lineage question is open.
 #                        Unclear models are benchmarked and flagged, never shipped by default.
+#   eval_only = true     Benchmark only (search/bench.py). The server, search/query.py
+#                        and Searcher refuse it. Not a product choice.
 #   provenance_sources   Links that support the lineage claim.
 
 # The model search/query.py uses unless --model is given.
@@ -102,7 +104,8 @@ revision = "d8fb21ca8d905d2832ee8b96c894d3298964346b"
 license = "Apache-2.0"
 developer = "Snowflake"
 lineage = "Arctic-Embed 1.0 large, initialized from intfloat/e5-large-unsupervised (Microsoft Research Asia, BERT-large)."
-provenance = "unclear: the Arctic-Embed paper does not name the models used for hard-negative mining or synthetic query generation. Pending Patrick's decision."
+provenance = "unclear: the Arctic-Embed paper does not name the models used for hard-negative mining or synthetic query generation. Excluded from the product by Patrick, Oct 30 2026; kept in the eval for re-runs."
+eval_only = true
 lineage_sources = ["https://huggingface.co/Snowflake/snowflake-arctic-embed-l", "https://arxiv.org/abs/2405.05374"]
 params = "334M"
 dtype_gpu = "fp32"

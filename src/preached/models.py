@@ -40,6 +40,7 @@ class ModelSpec:
     enabled: bool = True
     gated: bool = False
     provenance: str = "clear"
+    eval_only: bool = False
 
     def query_prefix(self, keyword: bool) -> str:
         if keyword and self.keyword_prefix:
@@ -90,6 +91,8 @@ def load_config(path: Path | None = None) -> dict:
     default = raw.get("default")
     if default not in models:
         raise ValueError(f"default model {default!r} is not in models.toml")
+    if models[default].eval_only:
+        raise ValueError(f"default model {default!r} is eval_only")
     if models[default].provenance != "clear":
         raise ValueError(f"default model {default!r} has unresolved provenance")
     return {
@@ -105,6 +108,9 @@ MODELS: dict[str, ModelSpec] = _CONFIG["models"]
 DEFAULT_MODEL: str = _CONFIG["default"]
 REFERENCE: dict = _CONFIG["reference"]
 EXCLUDED: list[dict] = _CONFIG["excluded"]
+# Models the server, CLI, and Searcher may use. eval_only models run in the
+# benchmark only (search/bench.py reads MODELS).
+RUNTIME_MODELS: dict[str, ModelSpec] = {k: v for k, v in MODELS.items() if not v.eval_only}
 
 QUESTION_START = (
     "what", "how", "why", "when", "where", "who", "whom", "whose",
