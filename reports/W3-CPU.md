@@ -36,8 +36,8 @@ uv run python -m unittest discover -s tests
 Export and quantize (bench group, CPU, writes the manifest):
 
 ```bash
-CUDA_VISIBLE_DEVICES="" uv sync --group bench
-CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
+uv sync --group bench
+uv run --group bench python scripts/export_onnx.py
 ```
 
 Benchmark the ONNX index (bench group, because `search/bench.py` records the torch environment even when the embedder is ONNX):

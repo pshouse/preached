@@ -6,11 +6,30 @@ The pinned revision is ``preached.artifacts.GRANITE_REVISION``. Export uses
 that commit, ``trust_remote_code`` is false, and the process hides CUDA so
 the GPU stays with Whisper.
 
-  cd /work/preached/.worktrees/feat/w3-cpu
-  uv sync --group bench
-  CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
+From the repo root (``uv run --group bench`` installs the bench group):
 
-Outputs under ``/cache/models/granite-english-r2-onnx/<revision>/``:
+  uv run --group bench python scripts/export_onnx.py
+
+The export is byte-reproducible and must write the graph pinned in
+``preached.artifacts.FP32_ONNX_SHA256``. Two things move the bytes
+(docs/adr/0001-onnx-export-determinism.md):
+
+- torch's ATen CPU dispatch level. The script sets
+  ``ATEN_CPU_CAPABILITY=avx2`` before torch is imported and refuses a host
+  that is not x86-64 with AVX2.
+- The order of transformers' ModernBERT rotary tables, built in
+  ``set(config.layer_types)`` order, which follows ``PYTHONHASHSEED``. The
+  script re-executes itself under ``PYTHONHASHSEED=1`` and checks the order.
+
+It exits non-zero without a manifest if the graph does not match the pin.
+
+The Hugging Face cache defaults to ``$PREACHED_CACHE/huggingface`` (``/cache``
+only when PREACHED_CACHE is unset); an explicit HF_HOME or hub cache wins.
+
+Outputs go to ``preached.artifacts.artifact_dir()``, the directory the server
+reads: ``$PREACHED_CACHE/models/granite-english-r2-onnx/<revision>/``
+(``/cache`` only when PREACHED_CACHE is unset; PREACHED_ONNX_DIR replaces the
+root). The script removes and rewrites only that directory:
 
   model.fp32.onnx
   model.int8.onnx
@@ -25,24 +44,111 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import sys
 from pathlib import Path
 
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
-os.environ.setdefault("HF_HOME", "/cache/huggingface")
-os.environ.setdefault("HUGGINGFACE_HUB_CACHE", "/cache/huggingface/hub")
+# Before torch is imported: the dispatch level changes the exported bytes.
+EXPORT_CPU_CAPABILITY = "avx2"
+os.environ["ATEN_CPU_CAPABILITY"] = EXPORT_CPU_CAPABILITY
+
+
+def _default_hf_cache(environ) -> None:
+    """Point the HF cache under PREACHED_CACHE (/cache only when it is unset).
+
+    An explicit HF_HOME wins; the hub cache then follows it. An explicit hub
+    cache under either name (HF_HUB_CACHE, which huggingface_hub prefers, or
+    the older HUGGINGFACE_HUB_CACHE) wins over that, and both names are set
+    to the one in use. This runs at import, before the hash-seed restart and
+    before any HF or torch import, and the restart passes os.environ on, so
+    the restarted process sees it.
+    """
+    root = environ.get("PREACHED_CACHE") or "/cache"
+    environ.setdefault("HF_HOME", os.path.join(root, "huggingface"))
+    hub = (
+        environ.get("HF_HUB_CACHE")
+        or environ.get("HUGGINGFACE_HUB_CACHE")
+        or os.path.join(environ["HF_HOME"], "hub")
+    )
+    environ["HF_HUB_CACHE"] = environ["HUGGINGFACE_HUB_CACHE"] = hub
+
+
+_default_hf_cache(os.environ)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from preached.artifacts import (  # noqa: E402
+    FP32_ONNX_SHA256,
     GRANITE_HF_ID,
     GRANITE_REVISION,
     artifact_dir,
     sha256_file,
 )
 from preached.pooling import HIDDEN_SIZE, MAX_SEQ_LENGTH  # noqa: E402
+
+# Under this seed (with avx2 dispatch) CPython 3.12 iterates
+# set(config.layer_types) sliding first and the export is the pinned graph.
+EXPORT_HASHSEED = "1"
+PINNED_TRACE_ORDER = ["sliding_attention", "full_attention"]
+
+
+def _require_avx2(machine: str | None = None, cpuinfo: Path = Path("/proc/cpuinfo")) -> None:
+    """The pin is the avx2 export. Refuse a host that cannot run avx2 kernels."""
+    machine = machine or platform.machine()
+    if machine.lower() not in {"x86_64", "amd64"}:
+        raise SystemExit(
+            f"export needs an x86-64 host with AVX2 (the pinned graph is the "
+            f"ATEN_CPU_CAPABILITY=avx2 export); this host is {machine}"
+        )
+    try:
+        text = cpuinfo.read_text()
+    except OSError as exc:
+        raise SystemExit(f"export needs an x86-64 host with AVX2; cannot read {cpuinfo}: {exc}") from None
+    flags = next((line.split(":", 1)[1].split() for line in text.splitlines() if line.startswith("flags")), [])
+    if "avx2" not in flags:
+        raise SystemExit("export needs an x86-64 host with AVX2; this CPU does not report avx2")
+
+
+def _reexec_with_hashseed() -> None:
+    """String hashing is fixed at interpreter start, so set it and restart.
+
+    The ambient seed (unset, random, or any other value) never reaches the
+    trace. A numeric PYTHONHASHSEED wins over ``-R``, so the variable alone
+    says whether the seed is fixed. (``sys.flags.hash_randomization`` reads 1
+    under any seed but 0, so testing it would restart forever.)
+    """
+    if os.environ.get("PYTHONHASHSEED") == EXPORT_HASHSEED:
+        return
+    os.environ["PYTHONHASHSEED"] = EXPORT_HASHSEED
+    script = str(Path(__file__).resolve())
+    os.execv(sys.executable, [sys.executable, script, *sys.argv[1:]])
+
+
+def _check_trace_order(model) -> None:
+    # modeling_modernbert.py loops `for layer_type in set(self.config.layer_types)`
+    # and calls rotary_emb once per type. Same weights either way; the node
+    # names and wiring of the two rotary tables swap, so the bytes differ.
+    order = list(set(model.config.layer_types))
+    if order != PINNED_TRACE_ORDER:
+        raise SystemExit(
+            f"rotary trace order {order} != {PINNED_TRACE_ORDER} "
+            f"(PYTHONHASHSEED={os.environ.get('PYTHONHASHSEED')!r}); "
+            "this export would not match the pinned graph"
+        )
+
+
+def _check_pin(path: Path) -> None:
+    actual = sha256_file(path)
+    if actual != FP32_ONNX_SHA256:
+        raise SystemExit(
+            f"exported {path.name} sha256 {actual} is not the pin {FP32_ONNX_SHA256}. "
+            "No manifest was written; the runtime will refuse this directory. "
+            "Check the bench group matches uv.lock (torch, transformers, onnx)."
+        )
+    print(f"fp32 sha256 matches the pin {actual}", flush=True)
 
 
 def _pooling_is_cls(snapshot: Path) -> None:
@@ -83,6 +189,7 @@ def _export(model, destination: Path) -> None:
             output = self.inner(input_ids=input_ids, attention_mask=attention_mask)
             return output.last_hidden_state
 
+    _check_trace_order(model)
     encoder = Encoder(model)
     encoder.eval()
     ids = torch.ones(2, 16, dtype=torch.long)
@@ -197,7 +304,10 @@ def main() -> None:
     from huggingface_hub import snapshot_download
 
     if torch.cuda.is_available():
-        raise SystemExit("CUDA is visible; export must run with CUDA_VISIBLE_DEVICES=''")
+        raise SystemExit("CUDA is visible even though the exporter hides it; export runs on CPU only")
+    capability = torch.backends.cpu.get_cpu_capability()
+    if capability != EXPORT_CPU_CAPABILITY.upper():
+        raise SystemExit(f"torch CPU dispatch is {capability}, expected {EXPORT_CPU_CAPABILITY.upper()}")
     snapshot = Path(
         snapshot_download(
             GRANITE_HF_ID,
@@ -225,6 +335,7 @@ def main() -> None:
     fp32 = folder / "model.fp32.onnx"
     print(f"exporting {fp32}", flush=True)
     _export(model, fp32)
+    _check_pin(fp32)
     _check_export(model, fp32)
     int8 = folder / "model.int8.onnx"
     print(f"quantizing {int8}", flush=True)
@@ -248,4 +359,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    _require_avx2()
+    _reexec_with_hashseed()
     main()
