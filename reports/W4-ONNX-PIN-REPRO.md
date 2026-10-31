@@ -74,13 +74,15 @@ All 21 cells: exit 0, `fp32 sha256 matches the pin`, fp32 `3861025a186e45f0978c6
 `app/server.py`, in `load_search`'s `except ArtifactMissing` branch:
 
 - Logs `ERROR embedding model unavailable; serving BM25 only` (`UNAVAILABLE_LOG`). This fixes a regression I introduced in 95: the runbook's D2 page (`deploy-embedding-unavailable-bm25`) matches that line, and 95 had replaced it.
-- Then logs the loud line `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. missing ONNX manifest at …; build it with: CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py`.
+- Then logs the loud line `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. missing ONNX manifest at …; build it with: uv run --group bench python scripts/export_onnx.py`.
 - Returns the new `MISSING_GRAPH_NOTE` ("The search model has not been built; results are BM25 only."). Startup logs it again as a WARNING, and search responses carry it as `note`.
 
 `App.health()` (`/healthz`) gains two fields:
 
 - `search_mode`: `"hybrid"` or `"bm25"`.
 - `search_mode_reason`: `null` when hybrid. When BM25, a code from `SEARCH_MODE_REASONS`: `onnx_graph_not_built`, `model_unavailable`, `stale_vectors`, `index_unreadable`, `bm25_only` (started with `--bm25-only`), or `fallback` for any other note. It is a code, never a path. A graph that is present but not the pin (for example an `aed7adba` export, avx2 with seed 0) is `model_unavailable`.
+
+**Parity hashes.** The two new keys change the three reference hashes that include `/healthz`: HTTP `41ef875c` (was `ead2d78f`); HTTP without church `b0ad4285` (was `a08cb861`); in-process `c3436409` (was `d5490339`). The side, search+sermon and in-process-without-health hashes are unchanged.
 
 ## 4. Equivalence of the two avx2 graphs (evidence kept from task 96)
 
@@ -235,7 +237,7 @@ Four digests come out, one per (order, dispatch) pair: `3861025a` (avx2, sliding
 ### Tests
 `tests/test_onnx_pin_repro.py` (28 tests). No test downloads or writes under `/cache`. `__main__` runs are sandboxed (scratch caches, offline, stubbed `os.execv` and `main`). The three-export byte-identity test writes to TMPDIR and only reads the snapshot. Mutants (each fails, then reverted): avx2 guard removed from `__main__`, seed restart removed, restart drops argv, `_check_pin` removed, `onnx_root` ignoring `PREACHED_CACHE`, `HF_HUB_CACHE` ignored.
 
-Full suite with scratch caches: `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=<tmp> HF_HOME=<tmp> uv run python -m unittest discover -s tests` → `Ran 1033 tests`, `OK (skipped=9)`, 0 failures. The 9 skips need real artifacts. The two real-artifact tests in this file, run separately against `/cache` mounted read-only with the network off: `Ran 2 tests`, `OK`. `uv lock --check` OK. No new dependencies.
+Full suite, final head (R2): `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests` → `Ran 1033 tests`, `OK`, 0 failures, 0 skips (real artifacts present; an earlier scratch-cache run gave `OK (skipped=9)`). The two real-artifact tests in this file, run separately against `/cache` mounted read-only with the network off: `Ran 2 tests`, `OK`. `uv lock --check` OK. No new dependencies.
 
 ### Migration
 None for `/cache` hosts: the existing `3861025a` export stays valid. A host with `PREACHED_CACHE` other than `/cache` that kept the export at `/cache/models/...` must set `PREACHED_ONNX_DIR` or move it.
@@ -280,3 +282,10 @@ While running a mutant, a test removed and rewrote the shared `/cache/models/gra
  tests/test_onnx_pin_repro.py             | 760 +++++++++++++++++++++++++++++++
  9 files changed, 1372 insertions(+), 115 deletions(-)
 ```
+
+## R2 (99-W4-ONNX-R2)
+
+- Parity hashes recorded in §3 and the ADR (the `/healthz` keys change three reference hashes).
+- `EXPORT_COMMAND` (`src/preached/artifacts.py`), the `scripts/export_onnx.py` docstring, the DEPLOY.md D2 detail row and the §3 log line no longer recommend `CUDA_VISIBLE_DEVICES=""`; the script sets it before torch and the bytes are identical either way. The line in §1 and W3/W4-QA reports are records of commands actually run and stay.
+- Verified, no edits: DEPLOY.md cites and `CITED` pins hold at HEAD (the edits above change text within cited lines, not line numbers; zero `test_every_cited_file_line_holds_its_string` failures). No test writes under `/cache`.
+- Suite: `Ran 1033 tests`, `OK`, merge of `origin/main` was a no-op.

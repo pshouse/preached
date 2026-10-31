@@ -50,4 +50,5 @@ Seed 1 + avx2 writes the existing pin, so nothing changes for the runtime. For r
 - An existing `/cache` export of `3861025a…` stays valid; no re-export is needed. A fresh clone's export now writes the same bytes.
 - Export hosts must be x86-64 with AVX2. ARM hosts can still run the server with a graph exported elsewhere.
 - The order fix relies on CPython 3.12's seeded string hash. If a future interpreter maps seed 1 to another order, the export stops with a clear message instead of writing a wrong graph. The lasting fix is upstream `sorted(set(...))`.
+- `/healthz` gains `search_mode` and `search_mode_reason`, so the three parity reference hashes that include `/healthz` change: HTTP `41ef875c` (was `ead2d78f`), HTTP without church `b0ad4285` (was `a08cb861`), in-process `c3436409` (was `d5490339`). The others are unchanged.
 - A torch, transformers or onnx version other than the one in `uv.lock` may trace another graph. The export refuses it and never re-pins.

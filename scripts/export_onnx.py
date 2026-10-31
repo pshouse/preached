@@ -8,7 +8,7 @@ the GPU stays with Whisper.
 
 From the repo root (``uv run --group bench`` installs the bench group):
 
-  CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
+  uv run --group bench python scripts/export_onnx.py
 
 The export is byte-reproducible and must write the graph pinned in
 ``preached.artifacts.FP32_ONNX_SHA256``. Two things move the bytes

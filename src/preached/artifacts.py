@@ -50,7 +50,7 @@ CACHE_ENV = "PREACHED_CACHE"
 DEFAULT_CACHE = "/cache"
 ONNX_SUBDIR = Path("models") / "granite-english-r2-onnx"
 # The one step that builds and checks the graph, named in missing-graph errors.
-EXPORT_COMMAND = 'CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py'
+EXPORT_COMMAND = 'uv run --group bench python scripts/export_onnx.py'
 # One intra-op thread. A 1-vCPU Sprite with 4 threads was slower (134 ms
 # p50 vs 56 ms). Set PREACHED_ORT_INTRA_OP_THREADS=4 on a larger CPU.
 DEFAULT_ORT_THREADS = 1
