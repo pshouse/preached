@@ -128,3 +128,83 @@ PREACHED_PRIVACY=privacy.example.toml uv run search/query.py "mercy" --mode bm25
 ## Dependencies
 
 None added.
+
+## Hard conditions (CTO #33)
+
+Task 41-W3-CHURCH-HARDCOND. CTO ruled should-fixes 1 and 2 from the #33 review hard conditions on church wiring; 3–5 were optional. All five are done. `origin/main` (with #33 merged as `eb4d48a`) was merged into this branch first (merge commit `724a671`). Merge commits only, nothing rebased or force-pushed, no other branch pushed. No new dependencies, nothing deployed, synthetic fixtures only. The review file `/workspace/reports/preached-pr33-review.md` does not exist in this sandbox, so this section works from the CTO ruling as quoted in the task.
+
+### Item → commit / test
+
+| CTO item | Commit | Test (`tests/test_hard_conditions.py`) |
+| --- | --- | --- |
+| 1. Raw read-only connects bypass the sidecar check | `8c2a5a5` | `ScriptReadOnlyOpenTests` (one test per script; `measure_parity` has one subtest per open), `test_the_same_scripts_read_an_index_with_safe_sidecars`, `RawConnectGuardTests` |
+| 2. Realpath half of `_sidecar_problem` untested | `9f80703` (test only) | `RealpathSidecarTests.test_a_symlinked_name_whose_real_shm_links_to_wesley_is_refused` (+ safe-sidecar control) |
+| 3. `App.gated` writable | `566120f` | `AppGatedReadOnlyTests` |
+| 4. Traceback instead of an error line on `UnsafeSidecar` | `8c2a5a5` | `ErrorLineTests` (`open_readonly_or_exit`; `review_sheet`, `smoke_server`, `eval/pool.py` as subprocesses; `build_library.check_target`) |
+| 5. `_clear_church_mark` sibling passed over silently | `2b3cbba` | `SiblingSidecarSkippedTests` |
+
+- **Item 1:** new `store.open_readonly_or_exit` (`open_readonly`, but a missing index or an `UnsafeSidecar` becomes `SystemExit` with one error line). Now used by:
+  - `check_dedupe.py:75`
+  - `check_nl_questions.py:46`
+  - `review_sheet.py:57`
+  - `measure_parity.py` (`load_rows`, `load_torch_docs`, `step_spotcheck`'s shipped-index open, `_copy_index`)
+  - `bundle_manifest.copy_index` (the deploy backup of the live index)
+  - `eval/apply_grades.py`. The CTO list missed this one; the repo-wide grep found it.
+
+  `copy_index` imports `preached.store` lazily, so the manifest part stays stdlib-only. `build-bundle.sh` now puts `src` on `PYTHONPATH` for that call (the same `$PY` already imports `preached.store` for `check_servable`). `measure_parity._connect` was an unused writer and was deleted.
+- **Item 3:** `App.gated` is now a property over `_gated`, set once from the slug in `__init__`. `app.gated = …`, `setattr` and `del` raise `AttributeError`, the same convention as `Searcher.gated`. `app._gated` can still be assigned directly, the same accepted residual as `Searcher._gated`. `App.library` is still a plain attribute. With the gate on it only matters through `public_domain_file`, which checks the file's own marker, so a church file cannot earn the exemption by renaming the slug.
+- **Item 4:** `eval/pool.py`, `eval/timestamps.py`, `scripts/gate_leak_sweep.py`, `scripts/smoke_server.py` and `search/build_library.check_target` print `error: <index> has a -shm file with 2 hard links; it is not opened` and exit non-zero. Before, they printed a traceback (and still refused). `pool.py` keeps its own missing-index message.
+- **Item 5:** in `mark_your_church_exclusive`'s clearing loop, a candidate whose sidecar is unsafe now is reported in `skipped` as `<problem> (not opened)` (no duplicate if the first scan already listed it). Before, `church_shaped` returned False for it and the loop moved on with a bare `continue`. That only happens when the sidecar turns unsafe between the scans and the loop, because both earlier scans already list or exclude it.
+
+### Repo-wide grep (`sqlite3.connect(` / `mode=ro` / `immutable`, outside `tests/`)
+
+No `immutable` anywhere. Every `mode=ro` is in `store.open_readonly` or a docstring. `RawConnectGuardTests` checks, by AST, that exactly these raw `sqlite3.connect` calls remain:
+
+| Where | Why it is not `open_readonly` |
+| --- | --- |
+| `src/preached/store.py` `connect()` | the writer (ingest/migrate) |
+| `src/preached/store.py` `open_readonly()` | the checked open itself |
+| `src/preached/library.py` `_Checked` | church writes: `mode=rw`, sidecars and the opened descriptor checked (#27/#33) |
+| `src/preached/search.py` | `":memory:"` |
+| `scripts/bundle_manifest.py` `copy_index` `dst` | the new bundle copy; its name and sidecars were just unlinked |
+| `scripts/measure_parity.py` `_copy_index` `dst` | a new copy under `/cache/w3-cpu`; refuses the shipped path |
+| `scripts/gate_leak_sweep.py` writer | the synthetic temp index the sweep just built |
+
+The `sqlite3.connect` calls in `tests/` are fixture builders and probes on temp files.
+
+### Planted -shm probe (item 1)
+
+Setup: a synthetic `wesley.sqlite`, plus a WAL-mode synthetic index with no sidecars whose `-shm` name is a hardlink to Wesley. Each script then runs against that index, in-process (models stubbed, a stub `torch` for `measure_parity`, `measure_parity`'s path constants pointed at the temp files). The probe compares Wesley's sha256 before and after. The base is the merge commit `724a671`, extracted with `git archive`; the fix is this branch.
+
+| Script / open | merge base `724a671` | this branch |
+| --- | --- | --- |
+| `check_dedupe` | **CHANGED** | unchanged, refused |
+| `check_nl_questions` | **CHANGED** | unchanged, refused |
+| `review_sheet` | **CHANGED** | unchanged, refused |
+| `apply_grades.load_chunks` | **CHANGED** | unchanged, refused |
+| `bundle_manifest.copy_index` | **CHANGED** | unchanged, refused |
+| `measure_parity.load_rows` (69) | **CHANGED** | unchanged, refused |
+| `measure_parity.load_torch_docs` (81) | **CHANGED** | unchanged, refused |
+| `measure_parity.step_spotcheck` shipped open (148) | **CHANGED** | unchanged, refused |
+| `measure_parity._copy_index` (318) | **CHANGED** | unchanged, refused |
+
+Every refusal on this branch was `SystemExit: error: target.sqlite has a -shm file with 2 hard links; it is not opened`. `ScriptReadOnlyOpenTests` runs the same probe in the suite.
+
+### Mutation checks
+
+Each mutation was applied to the working tree, the named tests were run, and the files were restored with `git checkout`.
+
+| Mutation | Result |
+| --- | --- |
+| M-A: `_sidecar_problem` without the realpath half (`bases = [abspath]`) | `RealpathSidecarTests` fails. Across `test_side`, `test_youtube`, `test_church_wire` and `test_hard_conditions` (147 tests), exactly 1 fails: the new realpath test. Before this task, all side+youtube tests passed with the half dropped. |
+| M-B: each of `check_dedupe`, `check_nl_questions`, `review_sheet`, `apply_grades`, `bundle_manifest`, `measure_parity` reverted to its `724a671` version | `ScriptReadOnlyOpenTests` fails for each (measure_parity: 4 of 4 subtests) |
+| M-C: `App.gated` back to a plain attribute | `AppGatedReadOnlyTests` fails (2) |
+| M-D: item 5 sidecar check removed from the clearing loop | `SiblingSidecarSkippedTests` fails |
+| M-E: `open_readonly_or_exit` lets `UnsafeSidecar` through | `ErrorLineTests` fails (2 failures, 2 errors) |
+
+### Results
+
+- `uv run python -m unittest discover -s tests`: **782 tests, OK** (89.8s). That is 766 after the `origin/main` merge, plus 16 in `tests/test_hard_conditions.py`.
+- `uv lock --check`: passed (79 packages). No dependency changes.
+- No PR body was updated: `gh` is not installed in this sandbox, so the branch was only pushed. The PR body should get this section's item table.
+- Code head before this section: `9f80703`. The branch head is the commit that adds this section.
