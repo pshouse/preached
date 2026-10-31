@@ -469,7 +469,7 @@ class BundleTests(unittest.TestCase):
         ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
         for rel in ("app", "src", "scripts", "search", "ingest/manifest"):
             shutil.copytree(ROOT / rel, source / rel, ignore=ignore)
-        for rel in ("pyproject.toml", "uv.lock", "README.md", "AGENTS.md", ".python-version"):
+        for rel in ("pyproject.toml", "uv.lock", "README.md", "AGENTS.md", ".python-version", "LICENSE", "NOTICE"):
             shutil.copy2(ROOT / rel, source / rel)
         (source / ".venv").symlink_to(ROOT / ".venv")
         model = onnx_root / GRANITE_REVISION
@@ -1077,25 +1077,30 @@ class BundleTests(unittest.TestCase):
 
     # Round 4 (21-W3-DEPLOY-FIX4).
 
-    def _plant_bytecode(self, bundle: Path, canary: Path) -> Path:
+    def _plant_bytecode(
+        self, bundle: Path, canary: Path, rel: str = "src/preached/paths.py", target: bytes | None = None, code: bytes | None = None
+    ) -> Path:
         """Compile a same-size edit of a shipped module into __pycache__, then
         restore the source with its size and mtime. Returns the .pyc."""
-        import importlib.util
         import py_compile
 
-        source = bundle / "src" / "preached" / "paths.py"
+        source = bundle / rel
         original = source.read_bytes()
         st = source.stat()
-        target = b"# Large data never lives in the git tree. HF_HOME is set in preached.env"
+        if target is None:
+            target = b"# Large data never lives in the git tree. HF_HOME is set in preached.env"
         self.assertIn(target, original)
-        code = f"open({str(canary)!r}, 'w').close()  #".encode()
+        if code is None:
+            code = f"open({str(canary)!r}, 'w').close()  #".encode()
         self.assertLessEqual(len(code), len(target))
         modified = original.replace(target, code + b"x" * (len(target) - len(code)), 1)
         self.assertEqual(len(modified), len(original))
         source.chmod(0o644)
         source.write_bytes(modified)
         os.utime(source, ns=(st.st_atime_ns, st.st_mtime_ns))
-        pyc = Path(importlib.util.cache_from_source(str(source)))
+        # The in-tree path, not importlib.util.cache_from_source: importing
+        # app.server sets sys.pycache_prefix in this process too.
+        pyc = source.parent / "__pycache__" / f"{source.stem}.{sys.implementation.cache_tag}.pyc"
         py_compile.compile(str(source), cfile=str(pyc), doraise=True)
         source.write_bytes(original)
         os.utime(source, ns=(st.st_atime_ns, st.st_mtime_ns))
@@ -1132,6 +1137,145 @@ class BundleTests(unittest.TestCase):
             (loose / "src" / "preached" / "paths.pyc").write_bytes(b"")
             self.assertIn("not in", bundle_problem(loose / "index" / "wesley.sqlite", root=loose) or "")
 
+    # Round 5 (30-W3-DEPLOY-FIX5).
+
+    def _direct_start(self, bundle: Path, command: list[str]) -> tuple[bool, int | None, str]:
+        """Start app/server.py without serve.sh: no PYTHONPYCACHEPREFIX, no
+        stdlib pre-check. (listening, exit code or None, output)."""
+        log = bundle.parent / f"{bundle.name}-direct.log"
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": os.environ.get("HOME", "/tmp"),
+            "PREACHED_CACHE": str(bundle),
+            "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+            "UV_OFFLINE": "1",
+        }
+        args = ["app/server.py", "--index", str(bundle / "index" / "wesley.sqlite"), "--port", "0", "--bm25-only"]
+        with log.open("w") as handle:
+            proc = subprocess.Popen(command + args, cwd=bundle, env=env, stdout=handle, stderr=subprocess.STDOUT)
+        try:
+            for _ in range(300):
+                if proc.poll() is not None:
+                    break
+                if "PREACHED_LISTENING" in log.read_text(errors="replace"):
+                    return True, None, log.read_text(errors="replace")
+                time.sleep(0.1)
+            return False, proc.poll(), log.read_text(errors="replace")
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+
+    def test_direct_start_ignores_planted_bundle_bytecode(self) -> None:
+        # Bytecode for app/bundle.py whose bundle_problem returns None. A
+        # direct start imports app.bundle before main() runs the check, so
+        # this must not be read.
+        python = str(ROOT / ".venv" / "bin" / "python")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            canary = root / "canary"
+            target = b'    kind = layout(root)\n    if kind == "checkout":\n        return None\n    root = root.resolve()'
+            code = f"    return open({str(canary)!r}, 'w').close()  #".encode()
+            pyc = self._plant_bytecode(out, canary, rel="app/bundle.py", target=target, code=code)
+            self.assertTrue(pyc.is_file())
+            # Control: a plain import does load the planted bytecode.
+            probe = [python, "-B", "-c", "from app.bundle import bundle_problem; import sys; sys.exit(bundle_problem(sys.argv[1]) is not None)"]
+            subprocess.run(probe + [str(out / "index" / "wesley.sqlite")], cwd=out, env={"PATH": os.environ["PATH"]}, check=True, timeout=60)
+            self.assertTrue(canary.exists())
+            canary.unlink()
+            commands = {"python": [python], "python -B": [python, "-B"]}
+            if shutil.which("uv"):
+                commands["uv run"] = ["uv", "run", "--frozen", "--no-sync", "--no-dev", "--no-default-groups"]
+            for name, command in commands.items():
+                with self.subTest(launcher=name):
+                    listening, code_, log = self._direct_start(out, command)
+                    self.assertFalse(listening, log[-2000:])
+                    self.assertNotEqual(code_, 0, log[-2000:])
+                    self.assertIn("bytecode", log)
+                    self.assertFalse(canary.exists())
+            # The planted file is still there: the server read none of it and
+            # wrote nothing of its own into the tree.
+            self.assertTrue(pyc.is_file())
+            self.assertEqual(sorted(p.name for p in (out / "app" / "__pycache__").iterdir()), [pyc.name])
+
+    def test_direct_start_bundle_serves_and_leaves_no_temp_dir(self) -> None:
+        # Control for the test above: the same clean bundle does start
+        # directly, and the per-process bytecode prefix is removed at exit
+        # (SIGTERM included).
+        python = str(ROOT / ".venv" / "bin" / "python")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            scratch = root / "tmp"
+            scratch.mkdir()
+            with mock.patch.dict(os.environ, {"TMPDIR": str(scratch)}):
+                listening, _code, log = self._direct_start(out, [python])
+            self.assertTrue(listening, log[-2000:])
+            self.assertEqual(list(scratch.iterdir()), [])
+            self.assertFalse((out / "app" / "__pycache__").exists())
+
+    def test_server_sets_its_own_bytecode_prefix_before_any_bundle_import(self) -> None:
+        text = (ROOT / "app" / "server.py").read_text()
+        prefix = text.index("sys.pycache_prefix = ")
+        self.assertLess(text.index("sys.dont_write_bytecode = True"), text.index("from app.bundle import"))
+        self.assertLess(prefix, text.index("from app.bundle import"))
+        self.assertLess(prefix, text.index("from preached"))
+        self.assertLess(prefix, text.index("sys.path.insert"))
+
+    def test_serve_sh_leaves_no_temp_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            scratch = root / "tmp"
+            scratch.mkdir()
+            listening, _code, log = self._start(out, TMPDIR=str(scratch))
+            self.assertTrue(listening, log[-2000:])
+            self.assertEqual(list(scratch.iterdir()), [])
+            # A refused start (preflight fails) cleans up too.
+            listening, code, log = self._start(out, TMPDIR=str(scratch), PREACHED_ONNX_DIR=str(root))
+            self.assertFalse(listening, log[-2000:])
+            self.assertNotEqual(code, 0)
+            self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_frozen_is_wired_from_main(self) -> None:
+        # main passes frozen=True from a bundle and False from a checkout.
+        with tempfile.TemporaryDirectory() as tmp:
+            index = Path(tmp) / "wesley.sqlite"
+            connection = connect(index)
+            _insert(connection, "By grace are ye saved through faith.")
+            connection.commit()
+            connection.close()
+            for bundle in (True, False):
+                with self.subTest(bundle=bundle):
+                    seen = {}
+
+                    def capture(app, host, port):
+                        seen["frozen"] = app.frozen
+                        raise KeyboardInterrupt
+
+                    with mock.patch("app.server.is_bundle", return_value=bundle), mock.patch(
+                        "app.server.bundle_problem", return_value=None
+                    ), mock.patch("app.server.onnx_dir_problem", return_value=None), mock.patch(
+                        "app.server.make_server", side_effect=capture
+                    ), mock.patch.dict(os.environ, {}):
+                        with self.assertRaises(KeyboardInterrupt):
+                            main(["--index", str(index), "--bm25-only", "--port", "0"])
+                    self.assertIs(seen["frozen"], bundle)
+
+    def test_bundle_ships_license_and_notice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = self._built_bundle(root)
+            names = [line.split("  ", 1)[1] for line in (out / "MANIFEST.sha256").read_text().splitlines()]
+            for name in ("LICENSE", "NOTICE"):
+                self.assertIn(name, names)
+                self.assertEqual((out / name).read_bytes(), (ROOT / name).read_bytes())
+
     def _copy_without_bytecode(self, bundle: Path) -> Path:
         dest = bundle.parent / f"clean-{len(list(bundle.parent.iterdir()))}"
         shutil.copytree(bundle, dest, symlinks=True, ignore=shutil.ignore_patterns("__pycache__"))
@@ -1139,8 +1283,11 @@ class BundleTests(unittest.TestCase):
 
     def test_serve_sh_sets_a_fresh_pycache_prefix(self) -> None:
         text = (ROOT / "scripts" / "serve.sh").read_text()
-        self.assertIn('PYTHONPYCACHEPREFIX=$(mktemp -d', text)
-        self.assertIn("pass PYTHONPYCACHEPREFIX", text)
+        self.assertIn('PYCACHE=$(mktemp -d', text)
+        self.assertIn('"PYTHONPYCACHEPREFIX=${PYCACHE}" "$PY"', text)
+        # Removed before the exec; the server sets its own (app/server.py).
+        self.assertNotIn("pass PYTHONPYCACHEPREFIX", text)
+        self.assertLess(text.index('rm -rf -- "$PYCACHE"\ntrap - EXIT'), text.index('exec env -i'))
         # The stdlib check runs, isolated, before the preflight imports app.server.
         check = text.index('-I -B "$ROOT/app/bundle.py"')
         self.assertLess(check, text.index("from app.server import check_servable"))
@@ -1433,6 +1580,23 @@ class FrozenIndexTests(unittest.TestCase):
             status, _, body = _request(port, path)
             self.assertEqual(status, 503, (path, body))
             self.assertNotIn("restart", body.decode() if isinstance(body, bytes) else str(body))
+        self.assertIsNone(app.searcher)
+
+    def test_bundle_refuses_an_in_place_chunk_edit(self) -> None:
+        # Same row count, same chunks_sha256 meta row: index_stamp does not
+        # change. Only PRAGMA data_version sees this commit.
+        port, app, _server = RateAndKillTests._serve(self, frozen=True)
+        status, _, _ = _request(port, "/api/search?q=zealboundary")
+        self.assertEqual(status, 200)
+        stamp = app._stamp
+        path = app.connection.execute("PRAGMA database_list").fetchone()[2]
+        other = sqlite3.connect(path)
+        other.execute("UPDATE chunks SET text = 'zealboundary edited in place'")
+        other.commit()
+        other.close()
+        self.assertEqual(app._capture_stamp(), stamp)
+        status, _, body = _request(port, "/api/search?q=zealboundary")
+        self.assertEqual(status, 503, body)
         self.assertIsNone(app.searcher)
 
     def test_checkout_reloads_an_index_change(self) -> None:
