@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 import unittest
@@ -19,6 +20,11 @@ def load() -> list[dict]:
     return [json.loads(line) for line in (ROOT / "eval" / "questions.jsonl").read_text().splitlines() if line.strip()]
 
 
+def load_verdicts() -> dict[str, str]:
+    with (ROOT / "reports" / "W3-LABEL-VERDICTS.csv").open(newline="", encoding="utf-8") as handle:
+        return {row["row id"]: row["verdict"] for row in csv.DictReader(handle)}
+
+
 class TitleLeakTest(unittest.TestCase):
     def test_plain_questions_do_not_share_title_words(self):
         self.assertEqual(lint.check(load()), {})
@@ -32,23 +38,42 @@ class TitleLeakTest(unittest.TestCase):
             else:
                 self.assertEqual(q["group"] == "unanswerable", q["type"] == "unanswerable", q["id"])
 
+    def check_label(self, p: dict, verdicts: dict[str, str]) -> None:
+        if p.get("status") == "proposed":
+            self.assertTrue(p.get("reason"), p["passage_id"])
+            self.assertEqual(p.get("found_by"), "llm-proposed:claude", p["passage_id"])
+        elif p.get("status") == "confirmed":
+            # Patrick's blind verdict: the sheet row must exist and carry this grade.
+            self.assertRegex(p.get("found_by", ""), r"^human:patrick-blind-w3$", p["passage_id"])
+            self.assertIn(p.get("sheet_row"), verdicts, p["passage_id"])
+            self.assertEqual(verdicts[p["sheet_row"]], str(p["grade"]), p["passage_id"])
+        else:
+            self.assertNotIn("found_by", p, p["passage_id"])
+        # Existing labels carry no status; grading adds "proposed", blind verdicts "confirmed".
+        self.assertIn(p.get("status"), (None, "proposed", "confirmed"), p["passage_id"])
+
     def test_proposed_labels_are_marked_and_explained(self):
+        verdicts = load_verdicts()
         for q in load():
             for p in q["relevant"]:
-                if p.get("status") == "proposed":
-                    self.assertTrue(p.get("reason"), p["passage_id"])
-                    self.assertEqual(p.get("found_by"), "llm-proposed:claude", p["passage_id"])
-                else:
-                    self.assertNotIn("found_by", p, p["passage_id"])
-                # Existing labels carry no status; only grading adds "proposed".
-                self.assertIn(p.get("status"), (None, "proposed"), p["passage_id"])
+                self.check_label(p, verdicts)
             if q["group"] == "plain-blind":
                 self.assertEqual(q.get("provenance"), "llm-written:grok", q["id"])
-                self.assertTrue(all(p.get("status") == "proposed" for p in q["relevant"]), q["id"])
+                self.assertTrue(all(p.get("status") in ("proposed", "confirmed") for p in q["relevant"]), q["id"])
         candidates = [json.loads(line) for line in (ROOT / "eval" / "plain_candidates.jsonl").read_text().splitlines() if line.strip()]
         self.assertEqual(len(candidates), 30)
         for cand in candidates:
             self.assertEqual(cand.get("provenance"), "llm-written:grok", cand["id"])
+
+    def test_confirmed_label_needs_a_valid_sheet_row(self):
+        verdicts = load_verdicts()
+        good = {"passage_id": "x", "grade": 2, "status": "confirmed", "found_by": "human:patrick-blind-w3", "sheet_row": "L02"}
+        self.check_label(good, verdicts)
+        for bad in ({"sheet_row": None}, {"sheet_row": "L99"}, {"sheet_row": "L01"}, {"found_by": "human:someone"}):
+            with self.subTest(bad=bad), self.assertRaises(AssertionError):
+                self.check_label({**good, **bad}, verdicts)
+        with self.assertRaises(AssertionError):
+            self.check_label({k: v for k, v in good.items() if k != "sheet_row"}, verdicts)
 
     def test_each_names_topic_question_has_a_plain_rewrite_with_the_same_labels(self):
         by_id = {q["id"]: q for q in load()}
