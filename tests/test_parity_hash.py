@@ -29,8 +29,8 @@ from test_side import FIXTURE_FP, build_library, classic_rows, encode_fixture  #
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_VERSION = "ab" * 32
 PINNED = {
-    "http": "76a5bfb9d9c51956",
-    "no-church": "f8ae652ee227960c",
+    "http": "b198c5b3546ef6eb",
+    "no-church": "29f0c7e50f011dea",
     "in-process": "2c4e3d735333a6b2",
     "in-process-no-health": "126e6bde69f9049a",
     "search+sermon": "8a7e7554637ecc80",
@@ -38,8 +38,8 @@ PINNED = {
     "church": "0783e6ef1d4a916b",
 }
 PINNED_NO_WHY = {
-    "http": "c293e4922f8c7341",
-    "no-church": "2e08417eed1908c8",
+    "http": "87598c3cb97e7a4e",
+    "no-church": "cc0f371a6b6cdf27",
     "in-process": "ca73b0128ad41a55",
     "in-process-no-health": "b60551efd3fe0919",
     "search+sermon": "f2634f94688508d3",
@@ -153,6 +153,8 @@ class RefusalTests(unittest.TestCase):
 
     def test_strip_of_took_ms_and_why_is_accepted(self) -> None:
         self.assertEqual(run("--strip", "took_ms")[0], 0)
+        self.assertEqual(run("--strip", "why")[0], 0)
+        self.assertEqual(run("--strip", "took_ms", "--strip", "why")[0], 0)
 
     def test_expect_wants_exactly_16_hex_digits(self) -> None:
         for bad in ("side=abc", "side=" + "0" * 17, "side=" + "g" * 16, "side=" + "A" * 16):

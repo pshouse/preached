@@ -43,18 +43,18 @@ The script prints `SET HASH` lines in the order of the table above. On stderr it
 - **Probes:** the `PATHS` list from `scripts/compare_responses.py` at `d4c2e99`, minus `/healthz`, because every set that includes health asks for it first.
 - **Church queries:** `QUERIES` from `tests/test_church_wire.py`, read when the script runs.
 
-**Not a copy of the CTO's list.** The reference hashes below came from an HTTP query list that existed only as uncommitted scratch on the CTO's machine. That list, and the harness that hashed it, were never committed, and earlier reports describe only uncommitted `/tmp` parity scripts. So the exact list cannot be reproduced. The list above is a new definition, rebuilt from the frozen eval queries and the in-repo probe list. Nothing in this repo shows that this harness reproduces the reference hashes.
+**Not a copy of the CTO's list.** The earlier refs (`d3fe8813…` and the rest) were a box example: they came from an HTTP query list and harness that existed only as uncommitted scratch on the CTO's machine, were never committed, and cannot be reproduced. That set is retired and kept only in the gate history. The list above is a new definition, rebuilt from the frozen eval queries and the in-repo probe list. The reference hashes below were generated with this harness, on the machine, index, model and main sha recorded with them; each host takes its own baseline the same way.
 
 ## Reference hashes (canonical definition, Wesley + ONNX)
 
 This harness is the canonical parity definition (CTO ruling, #97). The refs computed earlier with the CTO's uncommitted harness (`d3fe8813…` and the rest, and the pre-#88 `why`-stripped set) are retired: they stay in the gate history and are not compared against this harness.
 
-Baseline computed with this harness on the reviewer box:
+Baseline computed with this harness on the reviewer box (machine `grok-bot-vm`; these are reviewer-box values, not from the machine that edited this page):
 
 | Field | Value |
 |---|---|
-| main | `83121da314137c4d611d1725a814374c7d2bb6fb` |
-| machine | `grok-bot-vm-181711960` (8× Intel Xeon, Python 3.12.15, onnxruntime 1.31.1) |
+| main | `3aef7cacf1907fa7ed57a5251b3894dec6618f00` |
+| machine | `grok-bot-vm-181711960` (8× Intel Xeon, Python 3.12.16, onnxruntime 1.31.1) |
 | index | box-built Wesley classic index (8383 chunks, 141 sermons; placeholder `audio_url`/`reader`), not `/cache` |
 | `index_version` | `154875b509d6dc22d326d8386f1751b449be4c97f7aa69149d5aa48cc88f8a93` |
 | `model_sha256` | `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (fp32 ONNX graph, read from the model file and `/healthz`) |
@@ -63,8 +63,8 @@ Baseline computed with this harness on the reviewer box:
 
 | Set | With `why` | `--strip why` |
 |---|---|---|
-| `http` | `27d7cb2bbe8a82d3` | `5aa8821e0ecc7d22` |
-| `no-church` | `e1fa9ccca05c5aec` | `b393295f9ae9b309` |
+| `http` | `29e0c0786acacc68` | `b72c4dec54111ca1` |
+| `no-church` | `218d30828042a711` | `f76209cb54d87862` |
 | `in-process` | `b2acb9b6b450a470` | `1ea2b8a087d9f371` |
 | `in-process-no-health` | `17be2c66569fab1e` | `72d157b749864101` |
 | `search+sermon` | `e38ec8cba9ddca3e` | `8f6508ffaf72af35` |
@@ -75,6 +75,8 @@ These were identical across 3 runs and under `PYTHONHASHSEED=0` and `12345`. Wit
 
 The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any UI-only change moves those two sets.
 
+**History: the `83121da` baseline.** On main `83121da314137c4d611d1725a814374c7d2bb6fb` (Python 3.12.15, same box, index, model and harness) `http` was `27d7cb2bbe8a82d3` / `5aa8821e0ecc7d22` (`--strip why`) and `no-church` was `e1fa9ccca05c5aec` / `b393295f9ae9b309`; the other five rows were the same as above. Main `3aef7ca` moved only these two because #96 (`5244dc9`) added `slots_stuck` to HTTP `/healthz`; `--strip slots_stuck` gives back the `83121da` values exactly.
+
 **Other hosts.** The hashes hold only for the `index_version` and `model_sha256` above. A host with a different index (the CTO box `/cache/index/wesley.sqlite`, or omarchy, `index_version` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`) needs its own baseline from this harness on its own main, recorded here with the same fields.
 
 ## Host gate command
@@ -82,7 +84,7 @@ The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any U
 From the checkout under test, against the index the baseline was taken on:
 
     uv run python scripts/parity_hash.py --index PATH/TO/wesley.sqlite \
-      --expect http=27d7cb2bbe8a82d3 --expect no-church=e1fa9ccca05c5aec \
+      --expect http=29e0c0786acacc68 --expect no-church=218d30828042a711 \
       --expect in-process=b2acb9b6b450a470 --expect in-process-no-health=17be2c66569fab1e \
       --expect search+sermon=e38ec8cba9ddca3e --expect side=026f0ce37111e4ec \
       --expect church=43dd3d71a14c50bf
