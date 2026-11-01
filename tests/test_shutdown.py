@@ -41,7 +41,7 @@ from preached.artifacts import GRANITE_REVISION, VARIANT_FILES, required_filenam
 from preached.store import connect  # noqa: E402
 
 SERVER = ROOT / "app" / "server.py"
-PYTHON = ROOT / ".venv" / "bin" / "python"
+PYTHON = Path(sys.executable)
 
 
 def _cache_root() -> Path:

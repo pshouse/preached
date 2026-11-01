@@ -797,7 +797,14 @@ class ExportIsByteIdenticalTests(unittest.TestCase):
                 ("c", {"PYTHONHASHSEED": "3", "ATEN_CPU_CAPABILITY": "avx512"}),
             ):
                 out = Path(tmp) / name
-                env = _sandbox_env(Path(tmp), PREACHED_ONNX_DIR=str(out), CUDA_VISIBLE_DEVICES="", **start)
+                # `uv run` (no torch here) builds its env under tmp, not ROOT/.venv.
+                env = _sandbox_env(
+                    Path(tmp),
+                    PREACHED_ONNX_DIR=str(out),
+                    CUDA_VISIBLE_DEVICES="",
+                    UV_PROJECT_ENVIRONMENT=str(Path(tmp) / "uv-env"),
+                    **start,
+                )
                 result = subprocess.run(
                     [*_export_command(), str(ROOT / "scripts" / "export_onnx.py")],
                     cwd=ROOT,
