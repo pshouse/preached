@@ -104,6 +104,24 @@ Finish grep (`72|86 ?ms|56 ?ms|68 ?ms|pinn|well under`) has one hit: `docs/DEMO-
 
 The church/publish-gate paragraph ("`--your-church` sets `meta.role` ... a sermon appears only when it is approved (`--ack-review`)") is byte-identical on `origin/main` (README.md:39) and on `origin/docs/w4-readme-quickstart` (README.md:73, PR #74). The two quoted fragments in SUBMISSION-DRAFT.md:41 occur verbatim in both. The quote is tree-relative; no change needed. (Other README paragraphs, e.g. the `--library` one, differ between the two; they are not quoted.)
 
+## CTO r3 fixes (R4)
+
+Base: `1ae72096daace61ee224573c8e91ae985f71a619`. No benchmark was run.
+
+`git show 9fe33ca:tests/test_privacy_wire_fix.py | sed -n '244,250p'` shows: line 246 is `from test_app_js import need_deno`, line 247 is blank, line 248 is `need_deno(self)` (the call), then the `dom = """` assignment follows. So `:248` is the call.
+
+MF1, `docs/SUBMISSION-DRAFT.md:42` (test-suite row; edits within the one line):
+- Before: `tests/test_privacy_wire_fix.py:246` / After: `tests/test_privacy_wire_fix.py:248`.
+- Before: "Deno was installed on the run machine, and those last paths are hard-coded in the tests, so they did not skip there."
+- After: "The test line numbers and skip behaviour above are as of commit `9fe33ca`; since #78, `tests/test_coverage.py` and `tests/test_shutdown.py` follow `PREACHED_CACHE`. Deno was installed on the run machine, and those last paths were hard-coded at `9fe33ca`, so they did not skip there."
+- Line numbers were not re-cited against main.
+
+MF2, W3-CPU thread count (both docs):
+- `docs/SUBMISSION-DRAFT.md:35`. Before: `... p50 28.2 ms, p95 34.5 ms; \`/api/search\` hybrid ...`. After: `... p50 28.2 ms, p95 34.5 ms (4 ONNX Runtime threads; the demo server defaults to 1 via \`PREACHED_ORT_INTRA_OP_THREADS\`); \`/api/search\` hybrid ...`.
+- `docs/DEMO-SCRIPT.md:65`. Before: `... (p50 28.2 ms, p95 34.5 ms; do not read the numbers out on camera). Method ...`. After: `... (p50 28.2 ms, p95 34.5 ms; do not read the numbers out on camera) (4 ONNX Runtime threads; the demo server defaults to 1 via \`PREACHED_ORT_INTRA_OP_THREADS\`). Method ...`.
+
+Finish grep (`72|86 ?ms|56 ?ms|68 ?ms|pinn|well under`) prints one hit: `docs/DEMO-SCRIPT.md:100`, the passage id `wesley-026-c0072`.
+
 ## PR BODY
 
 Docs-only. Applies CTO latency ruling R3 (see section above); README quote verified on main and PR #74. Stat is `git diff --stat origin/main...HEAD`.
