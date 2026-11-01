@@ -262,6 +262,6 @@ R2: corrected the cause of the Super Bowl/cookie non-abstains (5 content terms s
 `git diff --stat origin/main...HEAD`:
 
 ```
- reports/W5-DEMO-QUERY-SPOTCHECK.md | 260 +++++++++++++++++++++++++++++++++++++
- 1 file changed, 260 insertions(+)
+ reports/W5-DEMO-QUERY-SPOTCHECK.md | 267 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 267 insertions(+)
 ```
