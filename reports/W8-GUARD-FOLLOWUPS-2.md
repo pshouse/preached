@@ -42,5 +42,8 @@ Cache-guard follow-ups after #84. Tests only. The TestResult sentinel, the impor
 Mutants for the sentinel, the temp-dir assert, and the immutable check each went red and were reverted. Full suite on the restored tree, every cache env var on a temp dir, `PREACHED_REQUIRE_DENO=1`: **Ran 1125 tests in 245.469s, OK (skipped=12)**, 0 failures. `find /cache -xdev` before and after: 132732 lines both times, no differences. `app/`, `src/`, and `docs/` are untouched, so DEPLOY.md cites stay as they are.
 
 ```
-STAT
+ reports/W8-GUARD-FOLLOWUPS-2.md |  49 +++++++
+ tests/cache_guard.py            | 105 ++++++++++++--
+ tests/test_cache_guard.py       | 300 ++++++++++++++++++++++++++++++++++++++--
+ 3 files changed, 432 insertions(+), 22 deletions(-)
 ```
