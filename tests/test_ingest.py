@@ -5,6 +5,8 @@ No network and no GPU: downloads go through a fake opener.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import hashlib
 import io
 import json

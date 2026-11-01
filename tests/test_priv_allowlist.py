@@ -7,6 +7,8 @@ Every name below is invented. The classics fixture is built by the real
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import contextlib
 import hashlib
 import io

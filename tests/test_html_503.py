@@ -14,6 +14,8 @@ acceptable and gets JSON (MF2). */* is not text/html and gets JSON.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import select
 import socket
 import sys

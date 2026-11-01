@@ -5,6 +5,8 @@ No network. Listings come from tests/fixtures. Transcription and download are fa
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import json
 import os
 import subprocess
