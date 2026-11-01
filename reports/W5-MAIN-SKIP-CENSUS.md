@@ -105,6 +105,6 @@ Report only: a fresh suite run and a skip-source census on current `main` (`44dc
 - `/cache` snapshot: one mtime change on `/cache/index/cc-speech.sqlite-shm`, not caused by this run's commands (see report).
 
 ```
- reports/W5-MAIN-SKIP-CENSUS.md | 109 +++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 109 insertions(+)
+ reports/W5-MAIN-SKIP-CENSUS.md | 110 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 110 insertions(+)
 ```
