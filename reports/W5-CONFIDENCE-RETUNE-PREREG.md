@@ -252,7 +252,7 @@ Deviations and changes the CTO should check:
 
 P = this file. Line numbers are at the r4 head; §14 sits before `## PR BODY`, so no earlier line moved.
 
-- **MF-R3-1 (G2 HTTP hash).** P:182 now reads exactly: G2's `/api/search` HTTP response sha256 strips only `took_ms`, `abstain` and `confidence`; `why` is included and must be identical on base and on the code-PR head before the floors change. The "not a no-op ... does not cover it" parenthetical is deleted. The §13 `why` bullet (P:247) and the PR BODY r3 `why` bullet (P:322) record that CTO ruled `why` is included in the G2 HTTP hash. `docs/adr/0002-confidence-retune.md` does not repeat the stripped text, so it is untouched.
+- **MF-R3-1 (G2 HTTP hash).** P:182 now reads exactly: G2's `/api/search` HTTP response sha256 strips only `took_ms`, `abstain` and `confidence`; `why` is included and must be identical on base and on the code-PR head before the floors change. The "not a no-op ... does not cover it" parenthetical is deleted. The §13 `why` bullet (P:247) and the PR BODY r3 `why` bullet (P:331) record that CTO ruled `why` is included in the G2 HTTP hash. `docs/adr/0002-confidence-retune.md` does not repeat the stripped text, so it is untouched.
 - **MF-R3-2 (sealed file).** P:124 and P:215 now say Patrick stores the sealed file in a 1Password vault that no agent, bot, service account or CLI integration can read (or on offline media), and deletes the local copy after the sha is printed. No line names `~/preached-sealed/` any more.
 - **SF-R3-1 (not a merge condition).** P:182 notes that once #97 merges, G2 names `scripts/parity_hash.py --strip abstain --strip confidence` (`took_ms` is stripped by default).
 - **Nit.** The PR BODY stat header cites the current base (8d46f14) and the new stat.
@@ -282,8 +282,8 @@ Docs only: step 1 of the CTO's confidence/abstain retune. This PR adds an ADR an
 
 ```
  docs/adr/0002-confidence-retune.md     |  89 +++++++++
- reports/W5-CONFIDENCE-RETUNE-PREREG.md | 328 +++++++++++++++++++++++++++++++++
- 2 files changed, 417 insertions(+)
+ reports/W5-CONFIDENCE-RETUNE-PREREG.md | 337 +++++++++++++++++++++++++++++++++
+ 2 files changed, 426 insertions(+)
 ```
 
 ## r2 (99-XB-RETUNE-ADR-R2): CTO r1 CONDITIONAL at 896c1c43 addressed
