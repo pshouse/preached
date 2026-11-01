@@ -335,15 +335,15 @@ Clean spellings and rewordings of b1 to b6 and c3, plus three extras. Same colum
 
 Reading: x1, x4, x6, x7 and x8 have 0 BM25 rows, so even the correctly-spelt versions of ordinary questions get `weak` and a dense-only list; x2, x3, x5, x9, x10, x11 have BM25 rows and are `strong`. The `theater` rewording (x7, 4 terms with stopwords removed) misses "On Public Diversions" in the top 3; naming the sermon's own words (x8, "public diversions") puts it at #3, with `weak`.
 
-## Recommendations (ranked, at most 6; none implemented)
+## Recommendations (ranked, at most 6; none implemented; #2 is blocked)
 
 All are untested proposals. Anything touching `search/abstain.toml` or the scoring path needs the confirmatory protocol that W3-CONFIRMATORY says is still unmet (no fresh blind set exists), so none of these should be called an accuracy gain on the strength of this probe.
 
-1. **Make the BM25 side return something for short natural questions.** `src/preached/fts.py` `to_fts_query` (line 143): when the AND form is built, also try OR (or a relaxed AND of the rarest terms) if the AND query returns no rows; the retry would go in `Searcher._lexical` / `search.bm25_search`. Evidence: 11 of 30 queries (7 of 12 in groups a and b) had 0 BM25 rows, which caps the banner at `weak` and makes hybrid equal to dense. Pair it with #2, because OR form brings the false friends that W3-RETRIEVAL-DIAG measured.
-2. **Down-weight BM25 in OR form.** `src/preached/search.py` `Searcher.hybrid`, passing `weights` to `rank.reciprocal_rank_fusion`; this is the V10 variant in W3-RETRIEVAL-DIAG variant V10 (+0.18 blind lenient hit@10, post-hoc) and the `w = 0.5` run in W3-CONFIRMATORY (pooled +0.017, no accuracy claim). My a5, a6 and x10 are the same failure. Caveat from this probe: it would make e2 and e6 (quotes) worse, hence #3.
+1. **Make the BM25 side return something for short natural questions. Must not ship without #4.** `src/preached/fts.py` `to_fts_query` (line 143): when the AND form is built, also try OR (or a relaxed AND of the rarest terms) if the AND query returns no rows; the retry would go in `Searcher._lexical` / `search.bm25_search`. Evidence: 11 of 30 queries (7 of 12 in groups a and b) had 0 BM25 rows, which caps the banner at `weak` and makes hybrid equal to dense. OR form brings the false friends that W3-RETRIEVAL-DIAG measured and is what fakes "agreement" in d1, d2, c3 and e6, so this must not ship without #4 (and #4's pre-registered dev set).
+2. **BLOCKED (not a ranked fix): down-weight BM25 in OR form.** `src/preached/search.py` `Searcher.hybrid`, passing `weights` to `rank.reciprocal_rank_fusion`. This is blocked by the w=1.0 HOLD: the fusion weight stays at 1.0 until a future pre-registered study says otherwise, and that study is the only route. The only citable evidence is one sentence of W3-CONFIRMATORY, quoted exactly: "In a pre-registered evaluation (58 questions; relevance labels drafted with AI help, a subset confirmed blind by a human), the tuned fusion weight was statistically indistinguishable from the baseline (hit@10 51 vs 50; paired difference +0.017, 95% CI −0.034 to +0.086)." My a5, a6 and x10 show the same false-friend pattern, but 3 anecdotes do not lift the block. It would also make e2 and e6 (quotes) worse (see #3).
 3. **Let BM25 win when the query is a quote.** Same function, `Searcher.hybrid`, with a quote signal computed in `fts.to_fts_query`: e.g. a quoted-phrase FTS query returns rows, or BM25's top score is far above its second (e2: 31.7 vs 16.4). Only 2 of 6 quote queries are affected here (e2, e6), and e6's wording does not match the text exactly, so a phrase match alone would not catch it; treat this as a hypothesis to test.
-4. **Make "agreement" harder to satisfy on OR-form queries.** `src/preached/abstain.py` `compute_signals`: today a shared row anywhere in two 100-deep lists counts, which is almost automatic for an OR query and is what turned d1 and d2 from `none` into `weak` and made c3 and e6 `strong`. Options to evaluate: depth 20 instead of 100 for the check, or ignore OR matches made only of high-document-frequency words. This changes the calibration, so it needs a re-fit on a labelled set.
-5. **Stop reading "no BM25 rows" as "no agreement".** `src/preached/abstain.py` `decide`: with `bm25_hits == 0` and `dense_top` well above the floor, the level is `weak` and the WEAK note says the passages "may not answer your question" (a1, a2, b1, b2, b4 were good). Consider a separate wording or level for "your words did not appear; these match by meaning". Wording is a UI/API matter (`app/server.py` is owned by PR #88), so the proposal is the level in `decide`.
+4. **Make "agreement" harder to satisfy on OR-form queries.** `src/preached/abstain.py` `compute_signals`: today a shared row anywhere in two 100-deep lists counts, which is almost automatic for an OR query and is what turned d1 and d2 from `none` into `weak` and made c3 and e6 `strong`. Options to evaluate: depth 20 instead of 100 for the check, or ignore OR matches made only of high-document-frequency words. This changes the calibration. Any refit or threshold must use a pre-registered dev set that is disjoint from the frozen eval AND from these 41 probe queries (the 30 plus the 11 controls); tuning on the probe queries would overfit them. #1 must not ship without this.
+5. **Stop reading "no BM25 rows" as "no agreement".** `src/preached/abstain.py` `decide`: with `bm25_hits == 0` and `dense_top` well above the floor, the level is `weak` and the WEAK note says the passages "may not answer your question" (a1, a2, b1, b2, b4 were good). Consider a separate wording or level for "your words did not appear; these match by meaning". Wording is a UI/API matter (`app/server.py` is owned by PR #88), so the proposal is the level in `decide`. Note that a new level changes the API's level set (clients, the UI banner and the tests that enumerate `strong`/`weak`/`none`) and the abstain metric (the eval scores abstention against the current levels), so it needs the same pre-registered dev set as #4 and is a breaking API change to plan, not a wording tweak.
 6. **Do not drop a sermon both rankers like.** `Searcher.hybrid`: RRF scores chunks, so when BM25 and dense both put the same sermon first on different chunks, as for x5 ("On Temptation"), neither chunk gets a fused boost and unrelated chunks that appear in both lists win. Adding a small sermon-level term, or fusing at sermon level before `search.dedupe_adjacent`, would address it. One example only; the weakest recommendation.
 
 ## Cross-check with earlier reports
@@ -358,19 +358,19 @@ All are untested proposals. Anything touching `search/abstain.toml` or the scori
 - **What ran.** `app/server.py` `load_search` with the ONNX fp32 query embedder (`encode.backend = onnx`, `variant = fp32`), `abstain.floor_for(model, backend, variant)` = 0.8129, and `abstain.search_with_confidence(searcher, query, vector, mode, 10, floor)` for each of `hybrid`, `bm25`, `dense`. That is the same call the server makes. One process, one pass, the query vector computed once per query. BM25 mode is run with no floor, as the server does. Timing was not measured.
 - **Judgments** are one LLM reader's (Claude), made on the top 3 with the passage text visible; no second reader and no human review. The queries were written by the same agent after reading the repository's existing retrieval reports, and e1 to e6 were chosen after grepping the corpus for famous phrases. The 30 are not blind, not random, and not a sample of real users. Group sizes of 6 make every percentage coarse.
 - **Privacy.** Only the public Wesley library was searched (Wesley sermons, public domain, ids `wesley-NNN-cNNNN`). No church library, congregant text or private data was opened.
-- **Cache safety.** `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR` and `TORCH_HOME` pointed at fresh `mktemp -d` paths under `/tmp` or at a read-only temp copy (`cp`, then `chmod -R a-w`) of `wesley.sqlite` (the empty WAL was dropped and the copy set to `journal_mode = delete` before locking) and of `models/granite-english-r2-onnx`. `find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort` before and after the runs: **identical (1642 lines, no difference)**. The copy was not deleted by any script of mine.
+- **Cache safety.** `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR` and `TORCH_HOME` pointed at fresh temp paths under `/tmp` (`mktemp -d -t probe.XXXXXX`, so they match the `/tmp/probe.` assert in `probe.py`) or at a read-only temp copy (`chmod -R a-w`) of `wesley.sqlite` and of `models/granite-english-r2-onnx`. The index was copied with the repo's `scripts/bundle_manifest.copy_index` (SQLite backup API, read-only source, DELETE-mode output), see R2 MF3. `find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort` before and after the runs: **depth-3 listing identical (1642 lines, no difference)**. This is a depth-3 listing only, not a full recursive one. **One later difference (R2):** after I ran `copy_index` a second time (to test the corrected how-to-run line), `/cache/index/wesley.sqlite-shm` changed mtime (21:20 to 21:57 on 2026-10-31; size 32768 unchanged). That file is SQLite's shared-memory index, which any reader of a WAL database touches, even `mode=ro`. `wesley.sqlite` (189042688 bytes, mtime Oct 30 15:39) and `wesley.sqlite-wal` (0 bytes) are unchanged, and no other line in the listing differs. The first R2 run's before/after listings were identical; only this extra copy produced the `-shm` mtime change. The copy was not deleted by any script of mine.
 - **No new dependencies; no Chinese-developed models** (Granite English R2 is IBM).
 
 ## How to run it
 
-The probe script is not committed (scope is this report only). Save the script below as `probe.py` outside the repo, put the 41 queries in a JSON file of `{group: [query, ...]}`, then:
+The probe script is not committed (scope is this report only). Save the script below as `probe.py` outside the repo, save the `queries.json` block below (the exact 41 queries; `x` is the controls), then:
 
 ```
-S=$(mktemp -d)
+S=$(mktemp -d -t probe.XXXXXX)   # must match the /tmp/probe. assert in probe.py
 mkdir -p $S/cache/index $S/cache/models
-cp /cache/index/wesley.sqlite $S/cache/index/                        # copy, never the live file
+# never cp the live file (a plain cp of a WAL database can drop -wal frames); use the repo's backup-API copy
+uv run --frozen --offline python -I -c "import sys;sys.path[:0]=['src','.'];from pathlib import Path;from scripts.bundle_manifest import copy_index;copy_index(Path('/cache/index/wesley.sqlite'),Path('$S/cache/index/wesley.sqlite'))"
 cp -r /cache/models/granite-english-r2-onnx $S/cache/models/
-python3 -c "import sqlite3;sqlite3.connect('$S/cache/index/wesley.sqlite').execute('pragma journal_mode=delete')"
 chmod -R a-w $S/cache
 for v in HF_HOME DENO_DIR XDG_CACHE_HOME UV_CACHE_DIR TORCH_HOME; do mkdir -p $S/$v; done
 export PREACHED_CACHE=$S/cache PREACHED_ONNX_DIR=$S/cache/models/granite-english-r2-onnx \
@@ -379,7 +379,7 @@ export PREACHED_CACHE=$S/cache PREACHED_ONNX_DIR=$S/cache/models/granite-english
 cd /work/preached && uv run --frozen --offline python -I probe.py queries.json out.json
 ```
 
-(`-I` drops the current directory from the import path, so `probe.py` adds `src` and `app` itself.) `probe.py`:
+The `uv run` lines must run from `/work/preached` after the `PREACHED_*` exports (with the `-I` flag the `sys.path` insert in the copy line is what makes `scripts` importable). (`-I` drops the current directory from the import path, so `probe.py` adds `src` and `app` itself.) `probe.py`:
 
 ```python
 import json,sys,os,sqlite3,time
@@ -411,11 +411,81 @@ for g,qs in Q.items():
 json.dump(out,open(sys.argv[2],'w'),indent=1)
 ```
 
+### queries.json (the exact 41 queries)
+
+```json
+{
+ "a": [
+  "How do I stop worrying about the future?",
+  "What does the Bible say about forgiving someone who hurt me?",
+  "How can I pray when God feels far away?",
+  "Is it wrong to want to be rich?",
+  "How should I raise my children?",
+  "Why does God allow suffering?"
+ ],
+ "b": [
+  "how do i get rid of anger and bitternes",
+  "what is sanctifacation",
+  "forgivness of sins",
+  "is it ok to be rich and wealthey",
+  "temtation and how to resist it",
+  "hwo do i know im saved"
+ ],
+ "c": [
+  "How do I forgive my father and also stop feeling guilty about my own anger?",
+  "Can a rich person be saved and how should he use his money to help the poor?",
+  "Should Christians go to the theater, and does entertainment lead us away from God?",
+  "What is the difference between faith and works, and can a believer fall away from grace?",
+  "How do I keep from gossiping and what should I do when someone speaks evil of me?",
+  "Does God predestine some people to hell, and how can I be sure I am one of the elect?"
+ ],
+ "d": [
+  "What is a good recipe for chocolate chip cookies?",
+  "Who won the Super Bowl last year?",
+  "How do I fix a flat tire on my bicycle?",
+  "What is the capital of Australia?",
+  "Should I buy Bitcoin or index funds?",
+  "How does a vaccine work?"
+ ],
+ "e": [
+  "Is thine heart right, as my heart is with thy heart?",
+  "Nothing comes by chance; that is a silly word; there is no such thing as chance.",
+  "Gain all you can, save all you can, give all you can.",
+  "if they are elected or not elected then your advice and reproof is as useless as our preaching",
+  "God makes the sun shine and the wind blow and the trees bear fruit, so nothing happens by chance",
+  "the road to hell is paved with good intentions"
+ ],
+ "x": [
+  "how do i get rid of anger and bitterness",
+  "what is sanctification",
+  "forgiveness of sins",
+  "is it ok to be rich and wealthy",
+  "temptation and how to resist it",
+  "how do i know i'm saved",
+  "Should Christians go to the theater?",
+  "theatre plays and public diversions",
+  "How do I know I am saved?",
+  "Why does God allow pain?",
+  "How can I pray when God feels far away"
+ ]
+}
+```
+
+## R2 (response to CTO CHANGES on e8f7d2c)
+
+R2 merged `origin/main` (e434539) into the branch with a normal merge (no conflicts; no `--ours`/`--theirs`).
+
+- **MF1 met.** Rec #2 no longer paraphrases W3-CONFIRMATORY. It quotes the one citable sentence exactly and drops the V10 and `w = 0.5` numbers that I had restated.
+- **MF2 met.** Rec #2 is marked BLOCKED by the w=1.0 HOLD (a future pre-registered study only, not a ranked fix). Rec #4 now says any refit or threshold uses a pre-registered dev set disjoint from the frozen eval AND from these 41 probe queries.
+- **MF3 met.** (a) The run dir is now `mktemp -d -t probe.XXXXXX`, which matches the `/tmp/probe.` assert in `probe.py` (the earlier `mktemp -d` did not); the how-to-run steps are corrected. (b) Re-derived the whole run from an index copied with `scripts/bundle_manifest.copy_index` (backup API) into a `/tmp/probe.*` dir, on the merged tree. Before copying I recorded the live `wesley.sqlite-wal` at **0 bytes** (`wesley.sqlite` 189042688 bytes), so the earlier claim that dropping the WAL cost nothing is now verified, not assumed. **No number changed**: all 30 queries (level, bm25_hits, dense_top to 4 places, hybrid top 3 ids) and all 11 controls match this report exactly; floor 0.8129, backend onnx fp32. (c) The exact 41-query `queries.json` is recorded above. (d) Every cache claim now says "depth-3 listing": the snapshot was `find /cache -maxdepth 3`, 1642 lines, identical before and after the R2 probe run; it is not a full recursive listing. A later extra `copy_index` test changed only the mtime of `wesley.sqlite-shm` (see Method); reported, not hidden.
+- **S1 met.** Rec #1 states it must not ship without rec #4.
+- **S2 met.** Rec #5 notes that a new level changes the API's level set and the abstain metric.
+
 ## PR BODY
 
 PR title: W5 search failure probe (report only)
 
-Summary: 30 queries in five groups plus 11 controls, run in-process on main `d8a0966` through the same `search_with_confidence` call the server uses (Granite ONNX fp32, floor 0.8129). Top 3 findings: (1) 11 of 30 queries, including 7 of 12 everyday and typo questions, get 0 BM25 rows because `to_fts_query` ANDs 4 or fewer terms, so the banner can only say `weak` for them and hybrid equals dense; (2) `strong` is nearly automatic on long queries and sits on bad results for c3 (theater) and e6 (a proverb Wesley quotes), and 2 of 6 out-of-domain queries (recipe, Super Bowl) do not abstain because junk BM25 matches fake agreement; (3) on quotes, hybrid is worse than BM25 alone (e2, e6). Six ranked recommendations, none implemented. No code, eval, label, calibration or doc change. Cache listing identical before and after.
+Summary: 30 queries in five groups plus 11 controls, run in-process on main `d8a0966` through the same `search_with_confidence` call the server uses (Granite ONNX fp32, floor 0.8129). Top 3 findings: (1) 11 of 30 queries, including 7 of 12 everyday and typo questions, get 0 BM25 rows because `to_fts_query` ANDs 4 or fewer terms, so the banner can only say `weak` for them and hybrid equals dense; (2) `strong` is nearly automatic on long queries and sits on bad results for c3 (theater) and e6 (a proverb Wesley quotes), and 2 of 6 out-of-domain queries (recipe, Super Bowl) do not abstain because junk BM25 matches fake agreement; (3) on quotes, hybrid is worse than BM25 alone (e2, e6). Six ranked recommendations, none implemented. No code, eval, label, calibration or doc change. Depth-3 `/cache` listing identical before and after the probe runs (one `wesley.sqlite-shm` mtime change from a later verification `copy_index`, disclosed in Method).
 
 `git diff --stat origin/main...HEAD`:
 
