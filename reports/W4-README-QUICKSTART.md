@@ -423,9 +423,9 @@ Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a sc
 `git diff --stat origin/main...HEAD`:
 
 ```
-STATPLACEHOLDER1
-STATPLACEHOLDER2
-STATPLACEHOLDER3
-STATPLACEHOLDER4
-STATPLACEHOLDER5
+ README.md                       |  70 +++++--
+ reports/W4-README-QUICKSTART.md | 431 ++++++++++++++++++++++++++++++++++++++++
+ src/preached/search.py          |  12 +-
+ tests/test_api_path.py          |  25 +++
+ 4 files changed, 517 insertions(+), 21 deletions(-)
 ```
