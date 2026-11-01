@@ -179,7 +179,7 @@ Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the 
  app/static/app.js             |  30 +++++
  app/static/index.html         |  15 +++
  docs/DEPLOY.md                | 112 ++++++++---------
- reports/W5-WHY-THIS-RESULT.md | 185 ++++++++++++++++++++++++++++
+ reports/W5-WHY-THIS-RESULT.md | 193 +++++++++++++++++++++++++++++
  src/preached/search.py        |  68 ++++++++++-
  tests/test_app_js.py          |  57 +++++++++
  tests/test_deploy_alerts.py   |  86 ++++++-------
@@ -187,7 +187,7 @@ Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the 
  tests/test_server.py          |   1 +
  tests/test_side.py            |   1 +
  tests/test_why_this_result.py | 278 ++++++++++++++++++++++++++++++++++++++++++
- 14 files changed, 779 insertions(+), 107 deletions(-)
+ 14 files changed, 787 insertions(+), 107 deletions(-)
 ```
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
