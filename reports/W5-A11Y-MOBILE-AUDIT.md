@@ -1,8 +1,8 @@
 # W5 accessibility and phone UX audit
 
-Reviewed `origin/main` at `8d46f143f5fb44fb9d01cd2357eaf99404a40d24` (this branch started there; main had not moved). Every `file:line` cite is that tree. Scope is this report. No file under `app/`, `src/`, `tests/`, or `docs/` was edited. Findings that need code are recommendations.
+Reviewed the served UI as it stands on `origin/main` at `6d07f64c944a483e8e107ffbd0673eed17e2359c`. The branch was cut from `8d46f143f5fb44fb9d01cd2357eaf99404a40d24`; main moved before publish (merges of #92, #93, #94, and #96). `git diff 8d46f143f5fb44fb9d01cd2357eaf99404a40d24 6d07f64c944a483e8e107ffbd0673eed17e2359c -- app/static` is empty, so every `app/static` line cite is the same on both commits. `app/server.py` and `docs/DEPLOY.md` cites are the lines on `6d07f64`, read from that tree. Scope is this report. No file under `app/`, `src/`, `tests/`, or `docs/` was edited. Findings that need code are recommendations.
 
-The page judges open is `app/static/index.html`, styled by `app/static/app.css` and driven by `app/static/app.js`. `app/server.py` sends that file unchanged for `GET /` (`_send_page`, `2334`–`2340`). Two other bodies matter on a phone: the accept-thread HTML 503 (`2861`–`2865`) and the JSON 503 the handler returns when the process is disabled (`2246`–`2250`).
+The page judges open is `app/static/index.html`, styled by `app/static/app.css` and driven by `app/static/app.js`. `app/server.py` sends that file unchanged for `GET /` (`_send_page`, `2342`–`2348`). Two other bodies matter on a phone: the accept-thread HTML 503 (`2918`–`2922`) and the JSON 503 the handler returns when the process is disabled (`2250`–`2255`).
 
 ## How this was probed
 
@@ -14,6 +14,8 @@ No browser and no screen reader. Layout, contrast, focus, and announcements are 
 | Disabled and over-cap | 36337 | 660 | `PREACHED_DISABLED=1`, `PREACHED_MAX_CLIENT_CONNECTIONS=1` |
 
 Each process was stopped by that PID. `find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort` was identical before and after (1640 lines, sha256 `7e6961c7f38f52e84c7807ae8bf546375aca4e71c8fe3bf84a7cca1b260736c5`).
+
+Those processes were the server at `8d46f14`. On `6d07f64` the page file, `_OVER_CAP_HTML` (`2918`–`2922`), and the disabled branch (`2250`–`2255`) are the same text: `{"error": "unavailable"}` for every path except `/healthz`, and `/healthz` stays `{"ok": false, "disabled": true}`. An up `/healthz` on `6d07f64` also adds `slots_stuck` when `ok` is true (`app/server.py:2318`). The probe did not capture that field, and the server was not started again after main moved.
 
 `GET /` on port 36335 returned `HTTP/1.1 200 OK`, `Content-Type: text/html; charset=utf-8`, `Content-Length: 5521`, and a body byte-identical to `app/static/index.html`. Same check for the three static files.
 
@@ -147,7 +149,7 @@ The time range is text, not a second control. The jump is the button (archive) o
 
 ### F-01 — High — the over-cap page is not usable on a phone
 
-A browser navigation that arrives while this peer is already at `DEFAULT_MAX_CLIENT_CONNECTIONS` (4, `app/server.py:247`) is answered on the accept thread. `docs/DEPLOY.md:597` records that rule. `docs/DEPLOY.md:1043`–`1046` records that with `PREACHED_TRUSTED_PROXIES` left empty behind `tailscale serve`, every proxied request is limited as `127.0.0.1`, so every phone shares the cap of 4 connections. This probe did not run Tailscale and did not load the page from a phone. It held one connection and sent a second with Chrome's navigation `Accept`.
+A browser navigation that arrives while this peer is already at `DEFAULT_MAX_CLIENT_CONNECTIONS` (4, `app/server.py:247`) is answered on the accept thread. `docs/DEPLOY.md:628` records that rule. `docs/DEPLOY.md:1074`–`1077` records that with `PREACHED_TRUSTED_PROXIES` left empty behind `tailscale serve`, every proxied request is limited as `127.0.0.1`, so every phone shares the cap of 4 connections. This probe did not run Tailscale and did not load the page from a phone. It held one connection and sent a second with Chrome's navigation `Accept`.
 
 On port 36337, 29 of 30 such requests returned this response (the other one was the JSON body, which `docs/DEPLOY.md` already describes for a request whose headers were not buffered yet):
 
@@ -162,7 +164,7 @@ Cache-Control: no-store
 <!DOCTYPE html><html lang=en><head><meta charset=utf-8><meta http-equiv="refresh" content="1"><title>Unavailable</title></head><body><p>Unavailable. Retrying.</p></body></html>
 ```
 
-Those bytes are `_OVER_CAP_HTML` (`app/server.py:2861`–`2865`). The page has a title and one sentence. It has no viewport meta. Mobile browsers then use their fallback layout width of about 980 CSS pixels and scale it into the device width, so on a 390px-wide phone the text is about two-fifths of the authored size. `<meta http-equiv="refresh" content="1">` reloads the page every second. There is no control to pause or extend that, which is WCAG 2.2.1 (Level A) on this response. A screen reader has about a second to say "Unavailable. Retrying." before the document is replaced. There is no heading and no landmark.
+Those bytes are `_OVER_CAP_HTML` (`app/server.py:2918`–`2922`). The page has a title and one sentence. It has no viewport meta. Mobile browsers then use their fallback layout width of about 980 CSS pixels and scale it into the device width, so on a 390px-wide phone the text is about two-fifths of the authored size. `<meta http-equiv="refresh" content="1">` reloads the page every second. There is no control to pause or extend that, which is WCAG 2.2.1 (Level A) on this response. A screen reader has about a second to say "Unavailable. Retrying." before the document is replaced. There is no heading and no landmark.
 
 An in-page search does not hit this HTML. `fetch` sends `Accept: application/json` (`app.js:612`), the body is JSON, and `failureMessage` shows "The search had a problem on our side. Try again in a moment."
 
@@ -239,7 +241,7 @@ With `PREACHED_DISABLED=1`, this request:
 curl -sS -D - -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" http://127.0.0.1:36337/
 ```
 
-returned `HTTP/1.1 503 Service Unavailable`, `Content-Type: application/json; charset=utf-8`, `Content-Length: 24`, body `{"error": "unavailable"}`. The handler does that for every path except `/healthz` (`2246`–`2250`), with no branch on `Accept`. A phone browser shows the JSON. `/healthz` is the other body, `{"ok": false, "disabled": true}`, which is what a monitor should keep.
+returned `HTTP/1.1 503 Service Unavailable`, `Content-Type: application/json; charset=utf-8`, `Content-Length: 24`, body `{"error": "unavailable"}`. The handler does that for every path except `/healthz` (`2250`–`2255`), with no branch on `Accept`. A phone browser shows the JSON. `/healthz` is the other body, `{"ok": false, "disabled": true}`, which is what a monitor should keep.
 
 Recommendation: for `GET /` and `HEAD /` while disabled, send the same short HTML page as F-01 (after that page has a viewport), with security headers and no one-second refresh. Leave `/healthz` and `/api/*` on JSON.
 
@@ -281,7 +283,7 @@ Covered today: no contrast test.
 
 ## Still open from the W3 phone QA
 
-These are unchanged on `8d46f14`. Details and the original measurements are in `reports/W3-MOBILE-UX-QA.md`. They are not new findings.
+These are unchanged on `8d46f14` and on `6d07f64` (`app/static` is the same bytes). Details and the original measurements are in `reports/W3-MOBILE-UX-QA.md`. They are not new findings.
 
 | W3 item | Still true because | Severity there |
 | --- | --- | --- |
