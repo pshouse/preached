@@ -140,6 +140,14 @@ OK (skipped=12)
 
 **/cache diff:** none. I took `find /cache -printf '%p %s %T@'` at 22:14:10 and again at 22:18:24 EDT, before and after the suite. Both had 132,732 entries, and `diff` was empty (no path, size or mtime changed).
 
+## R3: CTO r2 conditional (MF1-r2)
+
+README's `why` bullet had a paraphrase of the similarity sentence, not CTO's sentence. It now carries it byte-for-byte, right after the `similarity` clause, and the paraphrase is dropped so it is not said twice. Only `README.md` changed (one line).
+
+Proof: `grep -cF "Similarity is how close a passage's meaning is to your question on the search model's own scale. It is not a percentage or a chance of being right, and even unrelated passages score fairly high." README.md app/static/index.html` prints `README.md:1` and `app/static/index.html:1`.
+
+No DEPLOY cite moved: `docs/DEPLOY.md` and `tests/test_deploy_alerts.py` do not mention `README.md`, and the edit adds no lines. No tests or caches were run for this README-only change.
+
 ## PR BODY
 
 Each search result now says why it is listed. Every `/api/search` and `/api/side` result gets a `why` object: `keyword_rank` and `meaning_rank` (1-based places in the gated BM25 and dense top-100 lists the ranker fused), `similarity` (dense cosine, 3 places) and `found_by`. They are read off the lists the search already ran, so there is no extra pass (p50 64.48 → 63.32 ms, noise), and through the publish gate, so a hidden chunk never moves a visible rank (tested, including a mutation check). `score` is unchanged. The page shows one muted line per card ("Found by both keyword (#3) and meaning (#1) search · similarity 0.81") and a details block that explains the strong / weak / low / unrated levels. README: "Reading a search result". DEPLOY.md cites and `CITED` pins are re-pinned for the two new `app/server.py` lines. Gate response-hash pins over result bodies will change. They are not pinned in the repo, so they are not re-baselined here: old to new is none for every pin, and the stripped-`why` check against 61da3646 / 1d128a7f / cb0fb974 could not be run because the gate's hashing method is not in the repo (see R2). The details block also says similarity is on the model's own scale, not a percentage or a chance (R2 MF1). Merged with post-#74 main (no conflicts; every #74 hunk verified present, see R-POST74 and R2). Full suite: Ran 1136, OK (skipped=12), `PREACHED_REQUIRE_DENO=1`, temp caches.
