@@ -252,4 +252,9 @@ Report-only spot check of 25 queries against the live demo, to pick demo-video q
 
 R2: corrected the cause of the Super Bowl/cookie non-abstains (5 content terms switch `to_fts_query` to OR, `fts.py:151`; the 100 OR hits count as agreement, `abstain.py:135`; stopwords are removed, so not the cause). Added the latency "not for camera" line, the "Romans 8" no-verse note, "prodigal" as a retrieval miss (5 chunks, 4 sermons), and a no-generalising-the-bitcoin-abstain narration warning.
 
-STAT_PLACEHOLDER
+`git diff --stat origin/main...HEAD`:
+
+```
+ reports/W5-DEMO-QUERY-SPOTCHECK.md | 260 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 260 insertions(+)
+```
