@@ -133,7 +133,12 @@ Round 2: merged `origin/main` `484e68298b514b8489a359602f4340e7662b7615` (#97 pa
 Branch note: the brief names `fix/w5-a11y-side-notices`; this PR is `fix/w5-a11y-side-notes`.
 
 ```
-STATFILL
+ app/static/app.js                  |  11 +++
+ docs/PARITY.md                     |   2 +
+ reports/W5-A11Y-PR-C-SIDE-NOTES.md | 161 +++++++++++++++++++++++++++++++++++++
+ tests/test_app_js.py               |  20 +++++
+ tests/test_parity_hash.py          |   8 +-
+ 5 files changed, 198 insertions(+), 4 deletions(-)
 ```
 
 - Focused (`tests.test_app_js tests.test_mobile_ux tests.test_parity_hash`): `Ran 35 tests in 17.851s, OK (skipped=0)` on merge `e5da0b8` plus the re-pin (run before the final report commit; no code changed since), host `preached-sandbox`.
