@@ -6,7 +6,7 @@ Base: `origin/main` 3a93147a3c71ea2a5127dc77a82a2628d6b5b07f, branch `docs/w5-de
 
 DEMO-SCRIPT
 - New 20 s "why" beat inside shot 2: zoom on the smaller line under card 1, UI words below, narration that does not overclaim.
-- Second question swapped from the Assurance button query to `What is the narrow way to heaven?` (narrow way: a plain question that lands on Sermon on the Mount 11 and 12; BM25 also matches it, 6 rows). The old query stays as a verified fallback. Money (shot 2) and cryptocurrency (shot 3) are kept: they were verified on the page at `9fe33ca`, and #90 did not test them; a #90 pick was swapped in only where it adds something (narrow way shows semantic matching). #90's other picks (justified by faith, witness of the Spirit, born again, repentance) are added to the fallback table with their grades.
+- Second question swapped from the Assurance button query to `What is the narrow way to heaven?` (narrow way: a plain question that lands on Sermon on the Mount 11 and 12; BM25 also matches it, 6 rows). The old query stays as a verified fallback. Money (shot 2) and cryptocurrency (shot 3) are kept: they were verified on the page at `9fe33ca`, and #90 did not test them; a #90 pick was swapped in only where it adds something (narrow way: an everyday question on Wesley's own phrase). #90's other picks (justified by faith, witness of the Spirit, born again, repentance) are added to the fallback table with their grades.
 - Shot 3 gets a "do not generalise" note from #90 section (c) (2 of 4 off-topic queries abstained; 1 false abstain), narration softened to "on a question like this", bitcoin and bicycle as fallbacks that abstained in #90, and an optional "Hide low-confidence results" 5 s.
 - "Avoid on camera" list extended with #90's mislabelled queries (prodigal son, suffering, enemies, Super Bowl, cookie, and the three `weak`-but-good phrasings).
 - Pre-flight: a why-line check, and the staleness of `9fe33ca` stated at the top. "Things not to say" adds: no "knows when it can't answer", no claim of a retune, the why line is not a correctness claim.
@@ -56,7 +56,7 @@ Before: 231. After R1: 241. After R2: 247 (target 247, limit 250).
 
 ## PR BODY
 
-Docs-only refresh of the demo script and submission draft to match `main` 3a93147: adds the per-result "why" beat (UI wording cited to file:line), swaps in a #90 query, carries #90's confidence/abstain cautions, and mentions why-transparency in the description (231 to 247 words, limit 250). Does not touch or claim the confidence retune (#93). Why numbers for the demo queries are not recorded (no server run); pre-flight tells Patrick to read them live.
+Docs-only refresh of the demo script and submission draft to match `main` 3a93147: adds the per-result "why" beat (UI wording cited to file:line), swaps in a #90 query, carries #90's confidence/abstain cautions, and mentions why-transparency in the description (231 to 247 words, limit 250). Does not touch or claim the confidence retune (#93). Why numbers for the demo queries are not recorded (no server run); pre-flight tells Patrick to read them live. R3: the narrow-way query is described as an everyday question on Wesley's own phrase (Matt 7:13-14), consistent with the vocabulary rule.
 
 ## R2 (CTO r1 CONDITIONAL on reviewed head 7a3773e)
 
@@ -87,3 +87,14 @@ Out of scope, untouched: 141 sermons vs "143 recordings".
  reports/W5-DEMO-WHY-REFRESH.md | 68 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
  3 files changed, 107 insertions(+), 25 deletions(-)
 ```
+
+## R3 (CTO r2 CONDITIONAL on reviewed head 8c2e545)
+
+Branch tip confirmed at 8c2e545e53a1408a644332c455f59883bb81bfaa before editing; main not merged, no rebase, no force-push. Docs only; no tests run, no server started, no cache path set. Real-cache listing (path, size, mtime) taken before and after: see the end of this section.
+
+| Item | Where |
+| --- | --- |
+| MF1-r2 | This report's line 9 now ends '(narrow way: an everyday question on Wesley's own phrase)'. |
+| SF1-r2 | `docs/DEMO-SCRIPT.md:31` now reads "an everyday question that uses Wesley's own phrase, "narrow way" from Matt 7:13-14; no Scripture reference given", which agrees with the "preacher's own vocabulary" rule at `:118`. |
+| MF5 narration | `docs/DEMO-SCRIPT.md:29` untouched (CTO approved). |
+| PR BODY | Synced: the in-report PR BODY gains one sentence on R3. |
