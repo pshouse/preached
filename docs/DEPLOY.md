@@ -792,8 +792,7 @@ Infra Ops' yaml is `church-alerts.yaml`, sha256
 every one `enabled: false`. It supersedes the 21-rule file
 `c1841274aed5d778b9fa3b9b417a456c53a38555fb9403cb072deba68b676f0e` (pinned to
 main `76990e8`, drafted at `0f2b553`). The line numbers below are this
-tree: the merged tree this file ships in (main with the keep-alive hand-over (#72), the port-busy hard fail
-(#69), the regex pins (#75), the ONNX pin fix, the HTML 503 page and the listen backlog), in `app/server.py`. Each `app/server.py` cite was read off that file. D2b is
+tree: the merged tree this file ships in (main plus the listen backlog change), in `app/server.py`. Each `app/server.py` cite was read off that file. D2b is
 drafted. `INFO stopped cleanly` is `deploy-stopped-cleanly`. All rules stay
 disabled until Infra Ops enables them after deploy approval.
 

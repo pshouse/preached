@@ -61,3 +61,24 @@ Full suite: 1085 tests OK (skipped=11).
      tests/test_deploy_alerts.py  |  24 ++---
      tests/test_listen_backlog.py | 208 +++++++++++++++++++++++++++++++++++++++++++
      5 files changed, 304 insertions(+), 29 deletions(-)
+
+# R2 (CTO r1 CONDITIONAL on PR #80)
+
+Branch started at 40a6c3b, clean. `origin/main` is already an ancestor, so no merge was needed. `app/server.py` is untouched.
+
+| Item | Change |
+|---|---|
+| MF1 | New real-path case `test_a_body_above_the_peek_size_still_gets_the_whole_503_then_fin`: body is `4 * READ_BOUND` (`READ_BOUND = 65536 + MAX_HEADER_BYTES` = 73 728, so 294 912 bytes), sent from a thread. Asserts the whole JSON 503, then `recv() == b""` (FIN, not RST). The bare-close variant stays at 40 000 bytes and asserts it is under `READ_BOUND`. The new test passed 5 of 5 runs (`FinNotResetTests`, 3 tests OK each time, ~2.4 s). |
+| S1 | Connect limit stays 0.5 s (`CONNECT_LIMIT_S`). The 503 and 200 arrival limits are now `ARRIVAL_LIMIT_S = 2.0`. |
+| S2 | The DEPLOY.md tree sentence no longer lists PRs: "the merged tree this file ships in (main plus the listen backlog change)". |
+
+## Rule 4
+No `app/server.py` line moved and no cited file changed, so no DEPLOY.md cite and no `CITED` pin moved (old -> new: none). The DEPLOY.md edit is one sentence in prose, with no line number in it.
+
+## Cache safety
+The ambient shell has `UV_CACHE_DIR=/cache/uv`, `XDG_CACHE_HOME=/cache/xdg` and `HF_HOME=/cache/huggingface`. Shell state does not persist between tool calls, so my first full-suite run did not have the temp dirs set and ran against those real paths. That was a rule 5 breach. It changed mtimes (not paths or sizes) under `/cache/xdg/deno`, `/cache/xdg/Microsoft/.../onnxruntime.db-*`, `/cache/models` and `/cache/index/cc-speech.sqlite-shm`. Nothing was added or removed. It was not a destructive run, but it should be known. I re-ran with `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR` all set to temp dirs in the same command. Before vs after that run, the only difference is the mtime of `/cache/index/cc-speech.sqlite-shm` (size same); I did not trace what touched it.
+
+## Full suite
+`PREACHED_REQUIRE_DENO=1 uv run python -m unittest discover -s tests` with temp caches: Ran 1086 tests, OK (skipped=10). Zero `test_every_cited_file_line_holds_its_string` failures.
+
+## PR BODY

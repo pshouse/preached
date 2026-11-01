@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from app.server import LISTEN_BACKLOG, PreachedServer  # noqa: E402
+from app.server import LISTEN_BACKLOG, MAX_HEADER_BYTES, PreachedServer  # noqa: E402
 from test_exposure import _Served, _connect, _read_response, _send  # noqa: E402
 
 SOURCES = 10
@@ -35,6 +35,10 @@ PER_SOURCE = 5
 CAP = 4
 # One SYN retry is about 1 s. Anything under this did not take one.
 CONNECT_LIMIT_S = 0.5
+# The 503 and 200 arrivals are not the claim; allow a loaded host.
+ARRIVAL_LIMIT_S = 2.0
+# What the over-cap path reads in its one recv (see _read_over_cap_headers).
+READ_BOUND = 65536 + MAX_HEADER_BYTES
 ROUNDS = 3
 
 
@@ -93,8 +97,8 @@ class BurstTests(_Served):
         want = SOURCES * (PER_SOURCE - CAP)
         by_fd = {sock: index for index, sock in enumerate(socks)}
         refused = []
-        worst_refusal = CONNECT_LIMIT_S
-        deadline = release + CONNECT_LIMIT_S
+        worst_refusal = ARRIVAL_LIMIT_S
+        deadline = release + ARRIVAL_LIMIT_S
         while len(refused) < want and time.monotonic() < deadline:
             readable, _, _ = select.select(list(by_fd), [], [], deadline - time.monotonic())
             for sock in readable:
@@ -138,8 +142,8 @@ class BurstTests(_Served):
             )
             gate = self._gate_accept(server)
             worst_connect, worst_refusal, slowest = self._round(port, server, gate)
-            self.assertLess(worst_refusal, CONNECT_LIMIT_S)
-            self.assertLess(slowest, CONNECT_LIMIT_S)
+            self.assertLess(worst_refusal, ARRIVAL_LIMIT_S)
+            self.assertLess(slowest, ARRIVAL_LIMIT_S)
             print(
                 "burst round %d: connect max %.0f ms, 503 max %.0f ms, 200 max %.0f ms"
                 % (round_number + 1, worst_connect * 1000, worst_refusal * 1000, slowest * 1000),
@@ -148,7 +152,14 @@ class BurstTests(_Served):
 
 
 class FinNotResetTests(_Served):
-    def _full_request_503(self, bare_close: bool) -> None:
+    @staticmethod
+    def _send_all(sock, data) -> None:
+        try:
+            sock.sendall(data)
+        except OSError:
+            pass  # the server closed before taking it all; that is the point
+
+    def _full_request_503(self, bare_close: bool, body_size: int) -> None:
         port, _app, server = self._serve(
             max_connections=64,
             max_per_client=1,
@@ -177,14 +188,18 @@ class FinNotResetTests(_Served):
             # nothing is left unread, so close() itself sends a FIN.
             server.shutdown_request = lambda request: request.close()
 
-        body = b"x" * 40000
+        body = b"x" * body_size
         head = (
             "POST /api/search HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: application/json\r\n"
             "Content-Length: %d\r\n\r\n" % len(body)
         ).encode("latin-1")
         client = _connect(port, "127.0.0.2")
         self.addCleanup(client.close)
-        client.sendall(head + body)
+        # The server does not read a body above the bound, so the send can
+        # block until the server closes; send from a thread.
+        sender = threading.Thread(target=self._send_all, args=(client, head + body))
+        sender.start()
+        self.addCleanup(sender.join, 10)
         client.settimeout(3)
         # Wait for the server's close to land before reading.
         time.sleep(0.5)
@@ -198,10 +213,20 @@ class FinNotResetTests(_Served):
         self.assertEqual(rest, b"")
 
     def test_a_full_request_with_a_body_gets_the_whole_503_then_fin(self) -> None:
-        self._full_request_503(bare_close=False)
+        # Below the read bound: everything is consumed.
+        self._full_request_503(bare_close=False, body_size=40000)
+
+    def test_a_body_above_the_peek_size_still_gets_the_whole_503_then_fin(self) -> None:
+        # Above the bound the server leaves bytes unread; the FIN must still
+        # arrive after the whole 503, not an RST.
+        size = 4 * READ_BOUND
+        self.assertGreater(size, READ_BOUND)
+        self._full_request_503(bare_close=False, body_size=size)
 
     def test_the_bytes_are_consumed_so_a_bare_close_is_a_fin(self) -> None:
-        self._full_request_503(bare_close=True)
+        # Bare close() is a FIN only if nothing is left unread, so stay under the bound.
+        self.assertLess(40000, READ_BOUND)
+        self._full_request_503(bare_close=True, body_size=40000)
 
 
 if __name__ == "__main__":
