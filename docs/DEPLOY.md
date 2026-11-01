@@ -464,6 +464,27 @@ offline Hub flags). `PREACHED_CHURCH_SIDE` is not on it. A token exported in
 the shell is not in the server's environment. `app/server.py` refuses to run
 as root. There is no `PREACHED_ALLOW_ROOT` and no `PREACHED_PYTHON` override.
 
+### Privacy: ONNX Runtime telemetry is off
+
+The official onnxruntime Linux wheels from 1.29 on ship Microsoft 1DS
+telemetry, on by default. It creates a persistent device ID and an event
+database (`deviceid`, `onnxruntime.db`) under
+`$XDG_CACHE_HOME/Microsoft/DeveloperTools/.onnxruntime/` and uploads events
+to Microsoft's OneCollector endpoint (see ORT's `docs/Privacy.md`).
+
+Preached turns it off two ways. `scripts/serve.sh` sets and passes
+`ORT_DISABLE_TELEMETRY=1`, and `src/preached/onnx_embed.py` sets it with
+`os.environ.setdefault` before it imports onnxruntime, then calls
+`onnxruntime.disable_telemetry_events()` when that exists. A direct start
+(not recommended, see below) is covered by the code alone.
+
+To verify on the host: after the service has loaded the model, check that
+`find "$XDG_CACHE_HOME" "$HOME/.cache" -path '*Microsoft/DeveloperTools*'`
+prints nothing, and that
+`tr '\0' '\n' < /proc/<server pid>/environ | grep ORT_DISABLE_TELEMETRY`
+shows `ORT_DISABLE_TELEMETRY=1`. `tests/test_ort_telemetry_off.py` checks the
+first part against a scratch cache.
+
 ### What a direct start does and does not guarantee
 
 A direct start is `python app/server.py`, `python -B app/server.py`, or
