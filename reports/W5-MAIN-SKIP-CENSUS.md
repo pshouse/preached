@@ -65,7 +65,7 @@ Other guards that did not fire on this machine, unchanged since `9fe33ca` apart 
 - `tests/test_coverage.py` (#78): the guard was `Path("/cache/asr-repro/c01.wav").exists()` and is now `PREACHED_CACHE/asr-repro/c01.wav`. It also gained a per-clip `skipTest` (:301). The decorator is still at :291. On scratch caches this test now skips; at `9fe33ca` it ran against the hard-coded `/cache`.
 - `tests/test_shutdown.py` (#78, with the follow-up in `6935b2d`): `REAL_INDEX` and `ONNX_DIR` follow `PREACHED_CACHE`. The `skipUnless` decorator (:173 at `9fe33ca`) became an in-body `hybrid_load_ready` check, with the skip at :224-225. An empty ONNX directory now skips instead of failing. New tests were added: `test_empty_onnx_dir_skips_hybrid_load` and `test_hybrid_load_ready_follows_the_loader_filenames`. On scratch caches the hybrid test now skips.
 - `tests/test_embed_backend.py` (#78): the read-only-mount skip (`if not os.access(source.parent.parent, os.W_OK): skipTest("model mount is read-only...")`, :719 in the draft) was removed. The test now copies the graph under the temp dir. Guard lines moved because of that edit: :740 to :757, :1078 to :1095, :1145 to :1162. :658, :708 and :715 are unchanged.
-- #79 (nits batch 5) and #80 (listen backlog) touched no skip guard. at `44dc592` #84 was not on main (no such merge in `git log 9fe33ca..HEAD`; the log had 18 commits, ending at #80); #84 merged later as `9690f4f`.
+- #79 (nits batch 5) and #80 (listen backlog) touched no skip guard. At `44dc592` #84 was not on main (no such merge in `git log 9fe33ca..HEAD`; the log had 18 commits, ending at #80); #84 merged later as `9690f4f`.
 
 ## Proposed re-anchor wording (text only, not applied)
 
@@ -102,15 +102,15 @@ Report only: a fresh suite run and a skip-source census on current `main` (`44dc
 
 - `Ran 1105 tests in 250.534s`, `OK (skipped=12)`, on scratch caches and on the census machine (the count depends on the machine: deno, the infra alerts yaml); the same sha gives `skipped=11` where the infra alerts yaml is present (all six cache env vars on fresh temp dirs, `HF_HUB_OFFLINE=1`).
 - The 12 skips on the census machine (the count depends on the machine: deno, the infra alerts yaml): 11 from private artifacts absent from the scratch caches (ONNX export 8, index/corpus 1, asr-repro 1, shutdown hybrid 1) plus 1 host-dependent skip (infra alerts file: the default path, overridable by `PREACHED_INFRA_ALERTS` (`tests/test_deploy_regex.py:539`)). Deno 0, read-only mount 0 (the guard was removed in #78).
-- Since `9fe33ca`: `tests/test_coverage.py` and `tests/test_shutdown.py` now follow `PREACHED_CACHE` (two new skips on scratch caches), the read-only-mount skip is gone, and three `tests/test_embed_backend.py` cites moved (:740 to :757, :1078 to :1095, :1145 to :1162).
+- Since `9fe33ca`: `tests/test_coverage.py` and `tests/test_shutdown.py` now follow `PREACHED_CACHE` (two new skips on scratch caches), the read-only-mount skip is gone, and three `tests/test_embed_backend.py` skip lines moved (:740 to :757, :1078 to :1095, :1145 to :1162 from `9fe33ca` to `44dc592`; the same skips are at :759, :1097, :1164 on `9690f4f`/`e434539`).
 - The `9fe33ca` row is on main since #82 (`8e0017d`); at `44dc592` it was not. The proposed re-anchor text is in the report. No docs were edited.
 - `/cache` snapshot: one mtime change on `/cache/index/cc-speech.sqlite-shm`, observation, likely cause a concurrent reader of `cc-speech.sqlite` rewriting `-shm`; unverified. The suite pointed every cache variable at temp dirs, and its cache guard only lists `/cache` read-only (`os.walk`/`lstat`); as far as I know no test opened a file under it (see report).
 
 PR body stat (`git diff --stat origin/main...HEAD`):
 
 ```
- reports/W5-MAIN-SKIP-CENSUS.md | 180 +++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 180 insertions(+)
+ reports/W5-MAIN-SKIP-CENSUS.md | 193 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 193 insertions(+)
 ```
 
 ## R2 (CTO CONDITIONAL at 4aac742)
@@ -118,7 +118,7 @@ PR body stat (`git diff --stat origin/main...HEAD`):
 Report-only fixes. No tests run; no /cache command was run for R2.
 
 - MF1: the `/cache` paragraph and the PR BODY bullet no longer say no command opened `/cache` or that the mtime change was "not caused by this run's commands". Both now give an observation with a likely cause (concurrent reader of `cc-speech.sqlite` rewriting `-shm`), marked unverified. Cites re-read at `44dc592` with `git show`: `tests/cache_guard.py` `snapshot_tree` is :139-151 (`os.walk` at :151, `_entry` lstat at :117-122), `watched_roots` is :196-220, and `tests/test_embed_backend.py:724-725` is the `/cache` check (the CTO's :724 is the `is_dir()` stat; I added :725).
-- MF2: the suggested row sentence no longer says the 12 skips come from artifacts absent from scratch caches. It now reads "12 skipped on `44dc592` on the census machine; the count depends on the machine (deno, the infra alerts yaml) as well as the sha". The infra yaml skip is attributed to the host (fixed path), and the deno wording says deno skips depend on the machine.
+- MF2: the suggested row sentence no longer says the 12 skips come from artifacts absent from scratch caches. It now reads "12 skipped on `44dc592` on the census machine; the count depends on the machine (deno, the infra alerts yaml) as well as the sha". The infra yaml skip is attributed to the host (the default path, overridable by `PREACHED_INFRA_ALERTS`, per R5 S1), and the deno wording says deno skips depend on the machine.
 - S1: if #84 merges first, the re-anchor PR must re-read every cite on its own tree, because most cites move by +2 and the embed skip messages change.
 - S2: `tests/test_onnx_pin_repro.py:772-774` and `tests/test_mobile_ux.py:318` are class decorators, so they skip whole classes, not single tests.
 - PR BODY: stat line replaced by the final `git diff --stat origin/main...HEAD` (see the PR BODY section).
@@ -178,3 +178,13 @@ Report-only. Merged `origin/main` (`e434539`) into this branch with a normal mer
 - S2: the R4 cites are stated as "unchanged at `e434539`".
 
 PR body stat (`git diff --stat origin/main...HEAD`), current: see the PR BODY section.
+
+## R6 (CTO CONDITIONAL at 42d2193)
+
+Report text only. No tests run; no /cache command was run.
+
+- MF1-r5: PR BODY bullet 3 now names its anchors. Read with `git show <sha>:tests/test_embed_backend.py`: the three `skipTest` lines are :740, :1078, :1145 at `9fe33ca`; :757, :1095, :1162 at `44dc592`; :759, :1097, :1164 at `9690f4f` and at `e434539`. The review's suggested wording put :740/:1078/:1145 at `44dc592`; those are the `9fe33ca` numbers, so the bullet says "from `9fe33ca` to `44dc592`".
+- N1: "at `44dc592`" capitalised at the start of the #84 sentence in "Changes vs 9fe33ca".
+- N2: the R2 changelog's MF2 "(fixed path)" now reads "the default path, overridable by `PREACHED_INFRA_ALERTS`, per R5 S1".
+
+PR body stat (`git diff --stat origin/main...HEAD`): see the PR BODY section.
