@@ -326,6 +326,7 @@ RESULT_FIELDS = (
     "text_source",
     "source_url",
     "score",
+    "why",
 )
 
 
@@ -728,6 +729,7 @@ def hit_dict(hit, flagged_audio: str = "none", near_flag: bool = False, sermon_f
         "text_source": hit.text_source,
         "source_url": hit.source_url,
         "score": float(hit.score),
+        "why": hit.why.as_dict() if getattr(hit, "why", None) is not None else None,
     }
     result = {key: payload[key] for key in RESULT_FIELDS}
     flag_end_s = getattr(hit, "flag_end_s", None)
