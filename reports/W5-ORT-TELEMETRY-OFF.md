@@ -38,12 +38,12 @@ Key finding (CTO): on ORT 1.31.1 telemetry starts at `import onnxruntime`, so th
 - S2: `tests/test_ort_telemetry_off.py` uses `importlib.util.find_spec`; `serve.sh` test moved to its own class so it no longer skips without ORT.
 - S3: the dead `PYTHONPATH` line is gone; the child puts the checkout's `src` on `sys.path` itself (the test is `-I`).
 - S4: DEPLOY's `serve.sh` allow-list sentence (about line 463) names `ORT_DISABLE_TELEMETRY`. No `app/server.py` or CITED file touched, so no pins moved; `test_every_cited_file_line_holds_its_string` passes.
-- S5: full suite on host `preached-sandbox` (24 cores), with the merge of origin/main at the commit that adds this section (merge commit 974f1a9: parents 420eefb and 83121da, the latter being origin/main's PR #90 merge; 5b85e89 exists only on `docs/w4-report-stat-nit` and was never merged here), run on that merged tree: 1140 tests, OK, 12 skipped, 0 failures, `PREACHED_REQUIRE_DENO=1`. All seven cache env vars were temp dirs and `ORT_DISABLE_TELEMETRY=1`. A before/after listing of `/cache` (132725 entries, paths, sizes, mtimes) is identical.
+- S5: full suite on host `preached-sandbox` (24 cores), with the merge of origin/main at the commit that adds this section (merge commit 974f1a9: parents 420eefb and 83121da, the latter being origin/main's PR #90 merge; 5b85e89 was not merged into this branch (it reached main later via #95, 8d46f14)), run on that merged tree: 1140 tests, OK, 12 skipped, 0 failures, `PREACHED_REQUIRE_DENO=1`. All seven cache env vars were temp dirs and `ORT_DISABLE_TELEMETRY=1`. A before/after listing of `/cache` (132725 entries, paths, sizes, mtimes) is identical.
 
 ## R3 (fix of CTO r2 CONDITIONAL, reviewed head 7b523c6; text fixes only, code accepted)
 - MF1-r2: the Limit sentence is in `docs/DEPLOY.md` (Privacy section, last paragraph) and in section 4 above, grep sha 7b523c6. No DEPLOY cite moved (no CITED file touched; `onnx_embed.py` is not cited).
 - MF2-r2 (1): section 1 now reads "uploads to OneCollector per ORT's `docs/Privacy.md`; no upload was observed here".
-- MF2-r2 (2): R2 S5 and the PR BODY below now say merge commit 974f1a9 (parents 420eefb and 83121da), and that the 1140 OK / 12 skipped run used that merged tree. 5b85e89 is gone from the report.
+- MF2-r2 (2): R2 S5 and the PR BODY below now say merge commit 974f1a9 (parents 420eefb and 83121da), and that the 1140 OK / 12 skipped run used that merged tree. The R2 S5 statement is now: 5b85e89 was not merged into this branch (it reached main later via #95, 8d46f14).
 - MF2-r2 (3): section 3 lists all five CITED files; the "1122 tests, 12 skipped" figure is labeled r1 head, host `preached-sandbox`.
 - MF2-r2 (4): `__init__.py:5-10` in R2 MF1 above and in DEPLOY.
 - Nit E302: two blank lines before `_open_hashed_graph` in `src/preached/onnx_embed.py`.
@@ -51,8 +51,15 @@ Key finding (CTO): on ORT 1.31.1 telemetry starts at `import onnxruntime`, so th
 - Nit environ: DEPLOY and section 4 say the `/proc/<pid>/environ` check proves the setting only for `serve.sh` starts.
 - Checks: `python -m py_compile src/preached/onnx_embed.py` only; no suite rerun, so no cache env was touched.
 
+## R4 (fix of CTO r3 CONDITIONAL, reviewed head da7123e; text fixes only, no merge of main)
+- MF1-r3: `docs/DEPLOY.md:490-491` now reads "a direct start gets it from `src/preached/__init__.py` instead"; the unpinned "(lines 5-10)" is gone, so no cite escapes the CITE regex. Rewrapped under 80 columns.
+- MF2-r3 (1): this report's R2 S5 (line 41) now says "5b85e89 was not merged into this branch (it reached main later via #95, 8d46f14)".
+- MF2-r3 (2): this report's R3 MF2-r2 (2) (line 46) says the same.
+- Checks: `tests/test_deploy_alerts.py` and `tests/test_ort_telemetry_off.py`, 11 tests OK, 0 skipped, with `.venv/bin/python` and temp dirs for PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME, DENO_DIR, XDG_CACHE_HOME, UV_CACHE_DIR, TORCH_HOME and UV_PYTHON_INSTALL_DIR, plus `ORT_DISABLE_TELEMETRY=1`. A before/after listing of `/cache` (132725 entries, paths, sizes, mtimes) is identical. No CITED file touched, so no pins moved.
+
 ## PR BODY
 Turns off ONNX Runtime 1DS telemetry (1.31.1, observed): `ORT_DISABLE_TELEMETRY=1` set unconditionally in `src/preached/__init__.py:5-10` and in `scripts/serve.sh` (added to the `env -i` allow-list), plus a `hasattr`-guarded `disable_telemetry_events()` backup in `OnnxEmbedder.load`. DEPLOY gets a Privacy section. Uploads to OneCollector are per ORT's `docs/Privacy.md`; no upload was observed here.
 - Limit: a process that imports onnxruntime before any preached module is not covered by `__init__.py`; only the environment (e.g. `serve.sh`) covers it. No product or serve path does this (grep at 7b523c6).
 - Tests: r1 head 1122 OK / 12 skipped; R2 run on merge commit 974f1a9 (parents 420eefb and 83121da) tree: 1140 OK / 12 skipped. R3 is text-only plus an E302 blank line.
 - No dependencies added. No CITED file touched, so no pins moved.
+- R4 (text only): DEPLOY drops the unpinned `__init__.py` line cite; report reworded 5b85e89 as not merged into this branch (reached main later via #95, 8d46f14). Telemetry and deploy tests: 11 OK.

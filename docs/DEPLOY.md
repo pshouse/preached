@@ -488,8 +488,8 @@ prints nothing, and that
 `tr '\0' '\n' < /proc/<server pid>/environ | grep ORT_DISABLE_TELEMETRY`
 shows `ORT_DISABLE_TELEMETRY=1`. That `environ` check only proves the setting
 for a `serve.sh` start; a direct start gets it from `src/preached/__init__.py`
-(lines 5-10) instead. `tests/test_ort_telemetry_off.py` checks the first part
-against a scratch cache.
+instead. `tests/test_ort_telemetry_off.py` checks the first part against a
+scratch cache.
 
 Limit: a process that imports onnxruntime before any preached module is not
 covered by `__init__.py`; only the environment (e.g. `serve.sh`) covers it. No
