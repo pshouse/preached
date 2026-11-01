@@ -1,6 +1,6 @@
 # 99-WQ-WHY-THIS-RESULT: each search result says why it is there
 
-Branch `feat/w5-why-this-result` from `origin/main` `57ccce4` (clean tree confirmed before branching and before editing).
+Branch `feat/w5-why-this-result` from `origin/main` `8e0017d` (clean tree confirmed before branching and before editing). `origin/main` then advanced to `57ccce4` (#85, `reports/W3-LISTEN-BACKLOG.md` only); it was merged in with no conflicts (no rebase, no force-push), and the full suite was re-run on the merged head.
 
 ## 1. What was done
 
