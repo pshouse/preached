@@ -397,7 +397,7 @@ Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a sc
 - 1 in `test_eval_leak`: `test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk`.
 - 1 in `test_deploy_regex`: `test_infra_yaml_matches_when_the_file_is_present`.
 
-Empty scratch caches (no ONNX graph, weights, index or audio) caused all 11 skips in CTO's runs; the count depends on the machine.
+The list above is from this run (10 skips). CTO's review runs, on a different machine, reported `skipped=11`; there, empty scratch caches (no ONNX graph, weights, index or audio) caused all 11 skips. The skip count depends on the machine.
 
 `uv lock --check` with the same scratch `UV_CACHE_DIR`: exit 0, `Resolved 79 packages in 0.52ms`.
 
