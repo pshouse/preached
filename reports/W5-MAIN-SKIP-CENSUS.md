@@ -28,35 +28,37 @@ OK (skipped=12)
 
 ## Skip census table
 
-Guard lines were read on `44dc592`. Reasons are as printed in the `-v` log.
+Guard lines were re-read on `origin/main` `9690f4f` (R4); the skip reasons are verbatim from the `44dc592` run log (after #84 the embed messages read `... not in PREACHED_CACHE`). Reasons are as printed in the `-v` log.
 
 | # | Test id | Skip reason as printed | Guard (file:line) |
 |---|---|---|---|
 | **ONNX export** | | | |
-| 1 | `test_embed_backend.FdLoadTests.test_load_refuses_a_symlinked_graph` | `granite onnx artifacts are not in /cache` | `tests/test_embed_backend.py:1162` |
-| 2 | `test_embed_backend.FdLoadTests.test_real_graph_has_no_external_data` | same | `tests/test_embed_backend.py:1095` |
-| 3 | `test_embed_backend.ImportGuardTests.test_youtube_embed_path_does_not_import_torch` | same (the printed line is the docstring "The import embedder is ONNX. ...") | `tests/test_embed_backend.py:658` |
-| 4 | `test_embed_backend.RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins` | same | `tests/test_embed_backend.py:708` |
-| 5 | `test_embed_backend.RealOnnxTests.test_fp32_directory_without_int8_loads` | same | `tests/test_embed_backend.py:715` |
-| 6 | `test_embed_backend.RealOnnxTests.test_fp32_query_is_unit_normalized` | same | `tests/test_embed_backend.py:757` |
-| 7 | `test_onnx_pin_repro.ExportIsByteIdenticalTests.test_exports_under_any_ambient_seed_are_byte_identical_and_are_the_pin` | `Granite weights are not in PREACHED_CACHE (<scratch>/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b...)` | `tests/test_onnx_pin_repro.py:772-774` (`skipUnless`, message on :774) |
-| 8 | `test_onnx_pin_repro.MutantGraphTests.test_one_flipped_initializer_value_is_refused` | `granite onnx artifacts are not under PREACHED_CACHE (or PREACHED_ONNX_DIR)` | `tests/test_onnx_pin_repro.py:651` |
+| 1 | `test_embed_backend.FdLoadTests.test_load_refuses_a_symlinked_graph` | `granite onnx artifacts are not in /cache` | `tests/test_embed_backend.py:1164` |
+| 2 | `test_embed_backend.FdLoadTests.test_real_graph_has_no_external_data` | same | `tests/test_embed_backend.py:1097` |
+| 3 | `test_embed_backend.ImportGuardTests.test_youtube_embed_path_does_not_import_torch` | same (the printed line is the docstring "The import embedder is ONNX. ...") | `tests/test_embed_backend.py:660` |
+| 4 | `test_embed_backend.RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins` | same | `tests/test_embed_backend.py:710` |
+| 5 | `test_embed_backend.RealOnnxTests.test_fp32_directory_without_int8_loads` | same | `tests/test_embed_backend.py:717` |
+| 6 | `test_embed_backend.RealOnnxTests.test_fp32_query_is_unit_normalized` | same | `tests/test_embed_backend.py:759` |
+| 7 | `test_onnx_pin_repro.ExportIsByteIdenticalTests.test_exports_under_any_ambient_seed_are_byte_identical_and_are_the_pin` | `Granite weights are not in PREACHED_CACHE (<scratch>/huggingface/hub/models--ibm-granite--granite-embedding-english-r2/snapshots/47ea694b...)` | `tests/test_onnx_pin_repro.py:774-777` (`skipUnless`, message on :776) |
+| 8 | `test_onnx_pin_repro.MutantGraphTests.test_one_flipped_initializer_value_is_refused` | `granite onnx artifacts are not under PREACHED_CACHE (or PREACHED_ONNX_DIR)` | `tests/test_onnx_pin_repro.py:653` |
 | **Index / corpus** | | | |
-| 9 | `test_eval_leak.TitleLeakTest.test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk` | `needs chunks.jsonl or the index sqlite in PREACHED_CACHE` | `tests/test_eval_leak.py:233` |
+| 9 | `test_eval_leak.TitleLeakTest.test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk` | `needs chunks.jsonl or the index sqlite in PREACHED_CACHE` | `tests/test_eval_leak.py:235` |
 | **Deno** | none skipped (deno installed) | | |
 | **asr-repro clips** | | | |
-| 10 | `test_coverage.CorruptedAsrFixtureTests.test_envelope_matches_the_audio` | `needs the clips in PREACHED_CACHE/asr-repro` | `tests/test_coverage.py:291-294` (`skipUnless`; a per-clip `skipTest` is at :301) |
+| 10 | `test_coverage.CorruptedAsrFixtureTests.test_envelope_matches_the_audio` | `needs the clips in PREACHED_CACHE/asr-repro` | `tests/test_coverage.py:309` (`skipUnless`, helper `_asr_repro_root` :61; an in-body `skipTest` at :313 and a per-clip `skipTest` at :318) |
 | **Read-only model mount** | none; the guard no longer exists (see below) | | |
 | **Wesley index + pinned ONNX (shutdown)** | | | |
-| 11 | `test_shutdown.LoadedSigtermTests.test_sigterm_under_hybrid_load_exits_zero_and_cleans_up` | `needs the Wesley index and the pinned ONNX model under PREACHED_CACHE` | `tests/test_shutdown.py:224-225` (`hybrid_load_ready` check, `skipTest(_HYBRID_SKIP)`) |
+| 11 | `test_shutdown.LoadedSigtermTests.test_sigterm_under_hybrid_load_exits_zero_and_cleans_up` | `needs the Wesley index and the pinned ONNX model under PREACHED_CACHE` | `tests/test_shutdown.py:237-238` (`hybrid_load_ready` check, `skipTest(_HYBRID_SKIP)`) |
 | **Infra alerts file** | | | |
-| 12 | `test_deploy_regex.DeployRegexTests.test_infra_yaml_matches_when_the_file_is_present` | `infra alerts yaml absent (/workspace/infra-ops/preached/alerts/church-alerts.yaml)` | `tests/test_deploy_regex.py:539` |
+| 12 | `test_deploy_regex.DeployRegexTests.test_infra_yaml_matches_when_the_file_is_present` | `infra alerts yaml absent (/workspace/infra-ops/preached/alerts/church-alerts.yaml)` | `tests/test_deploy_regex.py:541` |
 
 Totals by source: ONNX export 8, index/corpus 1, asr-repro 1, shutdown 1, infra file 1, deno 0, read-only mount 0, other 0. That is 12 on the census machine (the count depends on the machine: deno, the infra alerts yaml).
 
-Other guards that did not fire on this machine, unchanged since `9fe33ca` (files have an empty `git diff 9fe33ca..HEAD`): deno `need_deno` at `tests/test_app_js.py:432-437`, used at `:454` and `:635`; `tests/test_mobile_ux.py:318`; `tests/test_privacy_wire_fix.py:248`; `tests/test_privacy_merge.py:217`.
+Other guards that did not fire on this machine, unchanged since `9fe33ca` apart from the one-line cache-guard `install()` hook that #84 added near the top of each file: deno `need_deno` at `tests/test_app_js.py:434-439`, used at `:456` and `:637`; `tests/test_mobile_ux.py:320`; `tests/test_privacy_wire_fix.py:250`; `tests/test_privacy_merge.py:219`.
 
 ## Changes vs 9fe33ca
+(Cites in this section describe the move from `9fe33ca` to `44dc592` and are left as written; the current lines are in R4.)
+
 
 `git diff 9fe33ca..HEAD --stat` for the skip files: only `tests/test_coverage.py` (+10 lines), `tests/test_embed_backend.py` and `tests/test_shutdown.py` changed. `test_onnx_pin_repro.py`, `test_eval_leak.py`, `test_deploy_regex.py`, `test_app_js.py`, `test_mobile_ux.py`, `test_privacy_wire_fix.py` and `test_privacy_merge.py` are unchanged.
 
@@ -73,13 +75,13 @@ Compared with the `9fe33ca` row on `docs/w4-submit-dryrun2` (`0201049:docs/SUBMI
 - Test count: `1081 ran` becomes `1105 ran`. The "more than 1,000 tests" headline is unchanged.
 - Skips: `10 skipped` becomes `12 skipped` on the census machine (the count depends on the machine: deno, the infra alerts yaml). The two new skips are the `tests/test_coverage.py` envelope test and the `tests/test_shutdown.py` hybrid SIGTERM test. Both now follow `PREACHED_CACHE`, so they skip on scratch caches. The same sha gives `skipped=11` on a machine where the infra alerts yaml is present.
 - Run line: `Ran 1081 tests in 256.461s`, `OK (skipped=10)` becomes `Ran 1105 tests in 250.534s`, `OK (skipped=12)`. The evidence cell should cite this report, `reports/W5-MAIN-SKIP-CENSUS.md`.
-- Cites that move: `tests/test_embed_backend.py` `:740` to `:757`, `:1078` to `:1095`, `:1145` to `:1162`. Unchanged: `:658`, `:708`, `:715`, `tests/test_onnx_pin_repro.py:651`/`:774`, `tests/test_eval_leak.py:233`, `tests/test_deploy_regex.py:539`.
-- Move the `tests/test_coverage.py:291` cite and the `tests/test_shutdown.py` cite (`:173` becomes `:225`) out of the "other tests skip only when a source is missing" list and into the scratch-cache skip list. The scratch-cache skip list would then read ONNX export 8, index/corpus 1, asr-repro 1, shutdown 1 = 11. The twelfth skip, the infra alerts yaml (`tests/test_deploy_regex.py:539`), is host-dependent, not a scratch-cache effect: it stays out of that list and is attributed to the host (fixed path, absent on the census machine). With the yaml present the same sha gives `skipped=11`.
-- Delete the read-only model mount sentence (`tests/test_embed_backend.py:719`). That guard no longer exists.
+- Cites that move: `tests/test_embed_backend.py` `:740` to `:759`, `:1078` to `:1097`, `:1145` to `:1164`, `:658` to `:660`, `:708` to `:710`, `:715` to `:717`; `tests/test_onnx_pin_repro.py` `:651` to `:653` and `:774` to `:776`; `tests/test_eval_leak.py:233` to `:235`; `tests/test_deploy_regex.py:539` to `:541` (all lines as on `origin/main` `9690f4f`).
+- Move the `tests/test_coverage.py:309` cite and the `tests/test_shutdown.py` cite (`:173` becomes `:238`) out of the "other tests skip only when a source is missing" list and into the scratch-cache skip list. The scratch-cache skip list would then read ONNX export 8, index/corpus 1, asr-repro 1, shutdown 1 = 11. The twelfth skip, the infra alerts yaml (`tests/test_deploy_regex.py:539`), is host-dependent, not a scratch-cache effect: it stays out of that list and is attributed to the host (fixed path, absent on the census machine). With the yaml present the same sha gives `skipped=11`.
+- Delete the read-only model mount sentence (`tests/test_embed_backend.py:719` at `9fe33ca`). That guard no longer exists.
 - Drop the sentence "since #78, `tests/test_coverage.py` and `tests/test_shutdown.py` follow `PREACHED_CACHE` ... those last paths were hard-coded at `9fe33ca`, so they did not skip there". It no longer needs a caveat once the anchor is past #78.
-- Deno cites (`tests/test_app_js.py:432-437`, `:454`, `:635`; `tests/test_mobile_ux.py:318`; `tests/test_privacy_wire_fix.py:248`; `tests/test_privacy_merge.py:217`) are unchanged.
+- Deno cites are now `tests/test_app_js.py:434-439`, `:456`, `:637`; `tests/test_mobile_ux.py:320`; `tests/test_privacy_wire_fix.py:250`; `tests/test_privacy_merge.py:219`.
 
-Suggested row sentence: "Test suite: more than 1,000 tests; 1105 ran, OK (...). 12 skipped on `44dc592` on the census machine; the count depends on the machine (deno, the infra alerts yaml) as well as the sha. Eleven skips come from private artifacts absent from the scratch caches: the ONNX export (`tests/test_embed_backend.py:658`, `:708`, `:715`, `:757`, `:1095`, `:1162`; `tests/test_onnx_pin_repro.py:651`, `:774`), the chunked corpus or index (`tests/test_eval_leak.py:233`), the `asr-repro` clips (`tests/test_coverage.py:291`), the Wesley index and the pinned ONNX model (`tests/test_shutdown.py:225`). The twelfth is host-dependent, not a scratch-cache effect: the infra alerts yaml is a fixed host path (`/workspace/infra-ops/preached/alerts/church-alerts.yaml`, not in this repo; `tests/test_deploy_regex.py:539`). Deno tests skip only when deno is missing on the machine (none skipped here) (...)."
+Suggested row sentence: "Test suite: more than 1,000 tests; 1105 ran, OK (...). 12 skipped on `44dc592` on the census machine; the count depends on the machine (deno, the infra alerts yaml) as well as the sha. Eleven skips come from private artifacts absent from the scratch caches: the ONNX export (`tests/test_embed_backend.py:660`, `:710`, `:717`, `:759`, `:1097`, `:1164`; `tests/test_onnx_pin_repro.py:653`, `:776`), the chunked corpus or index (`tests/test_eval_leak.py:235`), the `asr-repro` clips (`tests/test_coverage.py:309`), the Wesley index and the pinned ONNX model (`tests/test_shutdown.py:238`). The twelfth is host-dependent, not a scratch-cache effect: the infra alerts yaml is a fixed host path (`/workspace/infra-ops/preached/alerts/church-alerts.yaml`, not in this repo; `tests/test_deploy_regex.py:541`). Deno tests skip only when deno is missing on the machine (none skipped here) (...)."
 
 ## /cache before/after diff
 
@@ -92,7 +94,7 @@ One difference:
 > /cache/index/cc-speech.sqlite-shm 32768 1793493661.2717475050
 ```
 
-Same size, mtime moved by about 297 s. The suite pointed every cache variable at temp dirs. Its cache guard lists `/cache` read-only (`os.walk`/`lstat`: `tests/cache_guard.py:139-151` `snapshot_tree`, `:196-220` `watched_roots`; `tests/test_embed_backend.py:724-725` also checks `/cache`), and as far as I know no test opened a file under it. The likely cause is a concurrent reader of `cc-speech.sqlite`, which rewrites `-shm`; this is unverified. I did not find the writer (`lsof`/`fuser` showed nothing). Cite lines read at `44dc592`. No path was added, removed or resized.
+Same size, mtime moved by about 297 s. The suite pointed every cache variable at temp dirs. Its cache guard lists `/cache` read-only (`os.walk`/`lstat`: `tests/cache_guard.py:218-256` `snapshot_tree`, `:277-301` `watched_roots`; `tests/test_embed_backend.py:726-727` also checks `/cache`), and as far as I know no test opened a file under it. The likely cause is a concurrent reader of `cc-speech.sqlite`, which rewrites `-shm`; this is unverified. I did not find the writer (`lsof`/`fuser` showed nothing). Cite lines re-read at `origin/main` `9690f4f` (R4). No path was added, removed or resized.
 
 ## PR BODY
 
@@ -130,3 +132,38 @@ Report-only. No tests run; no /cache command was run for R3.
 - Added a note that the same sha gives `skipped=11` on a machine where the infra alerts yaml is present. The raw output at the Result lines section is verbatim.
 - MF1-r2: the PR BODY `/cache` bullet uses the observation wording (mtime change on `-shm`, likely concurrent reader, unverified); there is no "head 4aac742 ... +110" note; the stat line is the current `git diff --stat origin/main...HEAD`.
 - R2 section: "No tests run, no cache touched" changed to "No tests run; no /cache command was run for R2".
+
+## R4 (re-anchor cites to post-#84 `origin/main`)
+
+Report-only. Merged `origin/main` (`9690f4ff67fac5ec36dcd3c527301b37fdce84d4`) into this branch with a normal merge; no conflicts. Every cite below was read from the files on that tree (`sed -n`), not computed. No tests run; no /cache command was run. Paths are tree-relative. Counts and findings are unchanged. Skip-reason strings in the table are still verbatim from the `44dc592` run log.
+
+Differences from the CTO's expected anchors: `tests/cache_guard.py` `snapshot_tree` is :218-256 (expected :174-186), `_entry` is :196-201 (expected :152), `watched_roots` is :277-301 (expected :233-257). The expected `src/preached/embed_backend.py:726-727` does not exist as a path: the `/cache` check is in `tests/test_embed_backend.py:726-727` (`if Path("/cache").is_dir():` and its `refused.append`), which matches the expected line numbers.
+
+| Cite | old (`44dc592`) | new (`9690f4f`) |
+|---|---|---|
+| `tests/test_embed_backend.py` ImportGuard skip | :658 | :660 |
+| `tests/test_embed_backend.py` cached fp32 pins | :708 | :710 |
+| `tests/test_embed_backend.py` fp32 without int8 | :715 | :717 |
+| `tests/test_embed_backend.py` unit-normalized | :757 | :759 |
+| `tests/test_embed_backend.py` no external data | :1095 | :1097 |
+| `tests/test_embed_backend.py` symlinked graph | :1162 | :1164 |
+| `tests/test_embed_backend.py` `/cache` check | :724-725 | :726-727 |
+| `tests/test_onnx_pin_repro.py` mutant graph | :651 | :653 |
+| `tests/test_onnx_pin_repro.py` `skipUnless` | :772-774 (message :774) | :774-777 (message :776) |
+| `tests/test_eval_leak.py` | :233 | :235 |
+| `tests/test_coverage.py` `skipUnless` | :291-294 | :309 (single line; helper `_asr_repro_root` :61) |
+| `tests/test_coverage.py` per-clip `skipTest` | :301 | :318 (new in-body `skipTest` :313) |
+| `tests/test_shutdown.py` hybrid skip | :224-225 | :237-238 |
+| `tests/test_deploy_regex.py` | :539 | :541 |
+| `tests/test_app_js.py` `need_deno` | :432-437 | :434-439 |
+| `tests/test_app_js.py` uses | :454, :635 | :456, :637 |
+| `tests/test_mobile_ux.py` decorator | :318 | :320 (decorator spans :320-324) |
+| `tests/test_privacy_wire_fix.py` | :248 | :250 |
+| `tests/test_privacy_merge.py` | :217 | :219 |
+| `tests/cache_guard.py` `snapshot_tree` | :139-151 | :218-256 (`os.walk` :230) |
+| `tests/cache_guard.py` `_entry` | :117-122 | :196-201 |
+| `tests/cache_guard.py` `watched_roots` | :196-220 | :277-301 |
+
+The "Changes vs 9fe33ca" section keeps its historic `9fe33ca`/`44dc592` line numbers on purpose.
+
+The PR BODY stat above is the current `git diff --stat origin/main...HEAD` after R4.
