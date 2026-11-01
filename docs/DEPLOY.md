@@ -190,8 +190,8 @@ Wire that command as the systemd service. Unit settings:
   `ERROR <n> handler thread(s) still running after 10s; index left open`,
   leaves the classic index, the church index (when one is open) and the
   ONNX session open, waits for that thread, and exits 1
-  (`app/server.py:3368-3386`; the church connection is closed only on the
-  clean path at `:3382`; that path logs `INFO stopped cleanly` at `:3384`;
+  (`app/server.py:3370-3388`; the church connection is closed only on the
+  clean path at `:3384`; that path logs `INFO stopped cleanly` at `:3386`;
   alert table, "deploy alerts"). A second SIGTERM or Ctrl-C does not force an exit.
   `TimeoutStopSec=` (or a SIGKILL by hand) ends it.
 - Logs go to stderr, so under systemd to journald. Set journald's limits
@@ -667,7 +667,7 @@ Every item is **OPEN**. None is met.
 - [ ] **OPEN: The writer-lock fix: fixed in #46, pending CTO deploy
   verification.** A church file that is busy at start (a writer's lock, or
   WAL mode while `--ack-review` runs) is no longer a refusal. The server logs
-  `INFO church side paused: <reason>` (`app/server.py:1532`), retries the open
+  `INFO church side paused: <reason>` (`app/server.py:1534`), retries the open
   after 1 s, doubling to 30 s (`CHURCH_RETRY_FIRST_S`, `CHURCH_RETRY_MAX_S`,
   `app/server.py:285-286`), and the side comes back with no restart.
 - [ ] **OPEN: Church-on integration test: added in #46, pending CTO
@@ -733,40 +733,40 @@ the classic side serves exactly as with no church named.
 What happens, and what is logged:
 
 - **Refused at start.** Any other failed condition at start logs one
-  `ERROR church side refused: <why>` line (`app/server.py:3002`, `:3009`,
-  `:3020`, `:1444`, `:1449`). The church side stays off until restart.
+  `ERROR church side refused: <why>` line (`app/server.py:3004`, `:3011`,
+  `:3022`, `:1446`, `:1451`). The church side stays off until restart.
   When the church searcher cannot be built, the line is
   `ERROR church side refused: its searcher could not be built (<Type>: <why>)`
-  (`app/server.py:922`): one line, no traceback.
+  (`app/server.py:924`): one line, no traceback.
 - **Paused at start.** A church file that is busy at start (a writer's
   lock, `src/preached/library.py:895-896`, `:921-922`; or WAL mode,
   `:883-884`, reason `<file> is in WAL journal mode`; or the start's own
   `church_file_problem` check pausing, `:915`, with the text of `:962` or
-  `:468`; or the searcher build finding the lock, `app/server.py:919`) is
+  `:468`; or the searcher build finding the lock, `app/server.py:921`) is
   not a refusal. The
-  server logs `INFO church side paused: <reason>` (`app/server.py:1532`),
+  server logs `INFO church side paused: <reason>` (`app/server.py:1534`),
   and retries the open on a later church request after 1 s, doubling to 30 s
   (`CHURCH_RETRY_FIRST_S`, `CHURCH_RETRY_MAX_S`). The side returns without a
   restart. A retry runs the whole start again (`open_church`, the searcher
-  build, the install; the `start` closure at `app/server.py:1814`). A failed
+  build, the install; the `start` closure at `app/server.py:1816`). A failed
   retry logs one `ERROR church side refused: <why>` line, the same line a
-  start would log: `app/server.py:3002`, `:3009` or `:3020` (an ordinary
-  refusal), `:922` (the searcher could not be built), `:1444` or `:1449`
+  start would log: `app/server.py:3004`, `:3011` or `:3022` (an ordinary
+  refusal), `:924` (the searcher could not be built), `:1446` or `:1451`
   (the install). Only an unexpected exception logs
   `ERROR church side refused: the church file could not be opened (<exc>)`
-  (`app/server.py:1482`). Either way the retries end and the pause is
-  cleared (`_church_paused = False`, `app/server.py:1490`) with no
+  (`app/server.py:1484`). Either way the retries end and the pause is
+  cleared (`_church_paused = False`, `app/server.py:1492`) with no
   `resumed` line. `INFO church side pause ended: refused`
-  (`app/server.py:1489`) follows any refusal of a retry while paused
-  (rows 1-3), not only `:1482`; the refusal line precedes it. Not an
+  (`app/server.py:1491`) follows any refusal of a retry while paused
+  (rows 1-3), not only `:1484`; the refusal line precedes it. Not an
   alert. The side is off until restart. A file that is busy again
-  on a retry (`ChurchPaused`, also from the searcher build, `app/server.py:919`)
+  on a retry (`ChurchPaused`, also from the searcher build, `app/server.py:921`)
   keeps the pause and doubles the wait, with no new `paused` line. A
   successful retry logs
   `INFO church side: <slug>, read-only, through the publish gate`
   mid-process, so that line is **not** a restart marker. A pause found at
-  start is held and logged by `log_startup_pause` (`app/server.py:1540`,
-  called at `:2934`) after `INFO listening on` (HD1, MET, fixed in #48).
+  start is held and logged by `log_startup_pause` (`app/server.py:1542`,
+  called at `:2936`) after `INFO listening on` (HD1, MET, fixed in #48).
 - **Dropped while serving.** A problem found before a church search (owner,
   mode, inode, link count, sidecars, shape) logs
   `ERROR church side dropped: <why>` once. The side stays off until
@@ -800,7 +800,7 @@ They are not readable from this repo. **Every church rule stays DISABLED
 until the church deploy is approved** (hard conditions above).
 
 Log format: `logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")`
-(`app/server.py:3189`). Each line is the level name, one space, the
+(`app/server.py:3191`). Each line is the level name, one space, the
 message. Patterns are anchored to the start of the line. A
 `logging.exception` call adds a traceback on the following lines.
 
@@ -809,18 +809,18 @@ Infra Ops' yaml is `church-alerts.yaml`, sha256
 every one `enabled: false`. It supersedes the 21-rule file
 `c1841274aed5d778b9fa3b9b417a456c53a38555fb9403cb072deba68b676f0e` (pinned to
 main `76990e8`, drafted at `0f2b553`). The line numbers below are this
-tree: the merged tree this file ships in (main plus the listen backlog change), in `app/server.py`. Each `app/server.py` cite was read off that file. D2b is
+tree: the tree this file ships in, in `app/server.py`. Each `app/server.py` cite was read off that file. D2b is
 drafted. `INFO stopped cleanly` is `deploy-stopped-cleanly`. All rules stay
 disabled until Infra Ops enables them after deploy approval.
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 1 | PAGE | `church-refused` | `ERROR church side refused:` | `app/server.py:1444`, `:1449`, `:3002`, `:3009`, `:3020` | Any refusal, at start or on a retry of a paused start, one line. Start-time lock and WAL are no longer refusals (row 5). |
-| 2 | PAGE | `church-refused` | `ERROR church side refused: its searcher could not be built` | `app/server.py:922` | `ERROR church side refused: its searcher could not be built (<Type>: <why>)`, one line, no traceback. At start or on a retry of a paused start. |
-| 3 | PAGE | `church-refused` | `ERROR church side refused: the church file could not be opened` | `app/server.py:1482` | `ERROR church side refused: the church file could not be opened (<exc>)`, only for an unexpected exception on a retry of a paused start (an ordinary failed retry logs a row 1 or row 2 line). In the paging group with rows 1-2. Any failed retry ends the retries and clears the pause with no `resumed` line. |
-| 4 | PAGE | `church-dropped` | `ERROR church side dropped:` | `app/server.py:1521` | Off until restart: the same effect as a refusal (the church side stays off until restart), so it pages with rows 1-3. Final severity (CTO). |
-| 5 | INFO, then PAGE | `church-paused` -> `church-paused-stuck` / `church-paused-unverified` | `INFO church side paused:` | `app/server.py:1532`, `:1540` | Opens a 15-minute window. Start-time busy file, or a lock or WAL seen while serving. The side retries (1 s doubling to 30 s) and returns without a restart. Closed by `INFO church side resumed` (`app/server.py:1599`), which is logged only after the next church search completes, and also by a refused or dropped line or the restart marker. It pages (`church-paused-stuck`) only on a second `GET /api/side 200` logged after the window, at least 30 s (`confirm_after`) after the first; with no church search, no `resumed` line comes and the rule raises the info notice `church-paused-unverified`, not a page. See the note below. A pause found at start is held and logged after `listening on` (`:1540`, a `%s` of the held text; a grep for `church side paused` in the source misses it). A page for a start-time pause can therefore come late. `church-paused-stuck` PAGE (with the 30 s confirm), `church-paused-unverified` INFO (CTO final). |
-| 6 | TICKET | `church-search-failed` | `ERROR church search failed; that side is empty` | `app/server.py:1602` | At most one ticket per hour. Traceback follows. Final severity TICKET (CTO). |
+| 1 | PAGE | `church-refused` | `ERROR church side refused:` | `app/server.py:1446`, `:1451`, `:3004`, `:3011`, `:3022` | Any refusal, at start or on a retry of a paused start, one line. Start-time lock and WAL are no longer refusals (row 5). |
+| 2 | PAGE | `church-refused` | `ERROR church side refused: its searcher could not be built` | `app/server.py:924` | `ERROR church side refused: its searcher could not be built (<Type>: <why>)`, one line, no traceback. At start or on a retry of a paused start. |
+| 3 | PAGE | `church-refused` | `ERROR church side refused: the church file could not be opened` | `app/server.py:1484` | `ERROR church side refused: the church file could not be opened (<exc>)`, only for an unexpected exception on a retry of a paused start (an ordinary failed retry logs a row 1 or row 2 line). In the paging group with rows 1-2. Any failed retry ends the retries and clears the pause with no `resumed` line. |
+| 4 | PAGE | `church-dropped` | `ERROR church side dropped:` | `app/server.py:1523` | Off until restart: the same effect as a refusal (the church side stays off until restart), so it pages with rows 1-3. Final severity (CTO). |
+| 5 | INFO, then PAGE | `church-paused` -> `church-paused-stuck` / `church-paused-unverified` | `INFO church side paused:` | `app/server.py:1534`, `:1542` | Opens a 15-minute window. Start-time busy file, or a lock or WAL seen while serving. The side retries (1 s doubling to 30 s) and returns without a restart. Closed by `INFO church side resumed` (`app/server.py:1601`), which is logged only after the next church search completes, and also by a refused or dropped line or the restart marker. It pages (`church-paused-stuck`) only on a second `GET /api/side 200` logged after the window, at least 30 s (`confirm_after`) after the first; with no church search, no `resumed` line comes and the rule raises the info notice `church-paused-unverified`, not a page. See the note below. A pause found at start is held and logged after `listening on` (`:1542`, a `%s` of the held text; a grep for `church side paused` in the source misses it). A page for a start-time pause can therefore come late. `church-paused-stuck` PAGE (with the 30 s confirm), `church-paused-unverified` INFO (CTO final). |
+| 6 | TICKET | `church-search-failed` | `ERROR church search failed; that side is empty` | `app/server.py:1604` | At most one ticket per hour. Traceback follows. Final severity TICKET (CTO). |
 
 Rule numbers moved with #46: the old rule 1 (a writer's lock at start is a
 page) is obsolete, and the old rule 2 is split into rows 1-3 above. The old
@@ -871,8 +871,8 @@ BM25 only, with no refusal. Both lines carry a traceback
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
-| 7 | TICKET | `church-vectors-mismatch-bm25` | `ERROR church vectors do not match search/models.toml; that side is BM25 only` | `app/server.py:896` | The church file's stored vectors do not match the configured model. Traceback follows. Rule drafted, disabled. |
-| 8 | TICKET | `church-vectors-unavailable-bm25` | `ERROR church vectors unavailable; that side is BM25 only` | `app/server.py:901` | The church vectors could not be loaded. Traceback follows. Rule drafted, disabled. |
+| 7 | TICKET | `church-vectors-mismatch-bm25` | `ERROR church vectors do not match search/models.toml; that side is BM25 only` | `app/server.py:898` | The church file's stored vectors do not match the configured model. Traceback follows. Rule drafted, disabled. |
+| 8 | TICKET | `church-vectors-unavailable-bm25` | `ERROR church vectors unavailable; that side is BM25 only` | `app/server.py:903` | The church vectors could not be loaded. Traceback follows. Rule drafted, disabled. |
 
 #### Deploy alerts
 
@@ -889,38 +889,38 @@ is a failed go-live (step 7). Severities are the CTO's final rulings.
 
 | # | Severity | Rule id | Line starts with | Emitted at | Notes |
 | --- | --- | --- | --- | --- | --- |
-| D1 | PAGE | `deploy-stored-vectors-mismatch-bm25` | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | startup `app/server.py:863` (text `:296`); reload `:1169` via `:1201` | Startup (`logging.exception`) carries a traceback. A reload logs the same line once per transition, when the note changes, with no traceback. Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
-| D2 | PAGE | `deploy-embedding-unavailable-bm25` | `ERROR embedding model unavailable; serving BM25 only` | startup only, `app/server.py:872` (text `:297`); missing graph `:868` | Fires only at startup, in two forms. A load failure logs it with a traceback (`:872`). A missing ONNX graph or manifest (the export never ran) logs it with `logging.error`, no traceback (`:868`), and the next line is `ERROR ONNX GRAPH NOT BUILT…` (row below). The regex `^ERROR embedding model unavailable; serving BM25 only$` matches both. A reload does not emit this line (that path is D2b). Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
-| D2 detail | none (not an alert; D2 already pages) | none | `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only.` | `app/server.py:869` (text `:300`) | Follows the missing-graph D2 line. The rest of the line is the missing path and the export command (`uv run --group bench python scripts/export_onnx.py`). No traceback. `/healthz` then reports `"search_mode": "bm25"` and `"search_mode_reason": "onnx_graph_not_built"` (`:1348-1349`, codes `:306-312`). The other reasons are `model_unavailable` (D2 with a traceback), `stale_vectors` (D1), `index_unreadable` (D2b), and `bm25_only` (`--bm25-only`). With dense search loaded it is `"hybrid"` and `null`. The reason is a code, never a path. |
-| D2b | PAGE | `deploy-index-status-unreadable-bm25` | `ERROR index status unreadable after reload; serving BM25 only` | `app/server.py:1169` via `:1244` (text `:302`) | Regex `^ERROR index status unreadable after reload; serving BM25 only$`. Reload only, and only when dense search was loaded. Once per transition, no traceback. Pages once per transition, deduped to at most 1 per hour. Rule drafted, disabled until deploy approval. |
-| D3 | PAGE | `deploy-refusing-after-reload` | `ERROR refusing to serve after reload:` | `app/server.py:1152` | A checkout reloaded an index it will not serve. Rule drafted, disabled. |
-| D4 | PAGE | `deploy-refusing-frozen-bundle` | `ERROR refusing to serve:` | `app/server.py:1235` | The frozen bundle index changed after start; every request is `503`. Rule drafted, disabled. |
-| D5 | PAGE | `deploy-stuck-stop` | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3372` | The stuck stop (the 10 s `DRAIN_TIMEOUT_S` line, logged after `stopping` at `:3367`); exit 1. It does not log `stopped cleanly`. Rule drafted, disabled. |
-| D6 | TICKET (server types), INFO (client types) | `deploy-request-failed-server` (TICKET, at most 1 per rolling hour), `deploy-request-failed-client` (INFO) | `ERROR request failed:` | `app/server.py:2031`, `:2036`, `:2081`, `:2083`, `:2143`, `:2383`, `:2404` | The line carries the exception type only. Ordinary clients produce it: a slow header, a keep-alive left idle past 15 s (`REQUEST_TIMEOUT_S`) and a reset give `TimeoutError` and `ConnectionResetError`. The client-caused types `TimeoutError`, `ConnectionResetError`, `BrokenPipeError` and `ConnectionAbortedError` go to the INFO rule; every other type goes to the TICKET rule. Rules drafted, disabled. |
-| D7 | TICKET | `deploy-abstain-calibration-unusable` | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1808` | At most 1 per hour. Traceback follows. The server serves with no abstain floor. Rule drafted, disabled. |
-| stamp | TICKET | `deploy-index-stamp-unreadable` | `ERROR could not read the index stamp` | `app/server.py:1121` | Regex `^ERROR could not read the index stamp$`. At most 1 per rolling hour; the cap survives restarts. `enabled: false`. Traceback once per outage, then DEBUG. With dense search loaded, a stamp failure also fires the D2b page (D4 in a frozen bundle): one page for impact, one ticket for cause. Under `--bm25-only` this is the only alert. Recovery is silent (`/healthz` `"dense": true` only). Open suggestion for the CTO: log `INFO dense search restored` when dense search comes back. That line is not logged today. Rule drafted, disabled. |
+| D1 | PAGE | `deploy-stored-vectors-mismatch-bm25` | `ERROR stored vectors do not match search/models.toml; serving BM25 only` | startup `app/server.py:865` (text `:296`); reload `:1171` via `:1203` | Startup (`logging.exception`) carries a traceback. A reload logs the same line once per transition, when the note changes, with no traceback. Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
+| D2 | PAGE | `deploy-embedding-unavailable-bm25` | `ERROR embedding model unavailable; serving BM25 only` | startup only, `app/server.py:874` (text `:297`); missing graph `:870` | Fires only at startup, in two forms. A load failure logs it with a traceback (`:874`). A missing ONNX graph or manifest (the export never ran) logs it with `logging.error`, no traceback (`:870`), and the next line is `ERROR ONNX GRAPH NOT BUILT…` (row below). The regex `^ERROR embedding model unavailable; serving BM25 only$` matches both. A reload does not emit this line (that path is D2b). Pages once per transition, deduped to at most 1 per hour. Dense search is off. Rule drafted, disabled. |
+| D2 detail | none (not an alert; D2 already pages) | none | `ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only.` | `app/server.py:871` (text `:300`) | Follows the missing-graph D2 line. The rest of the line is the missing path and the export command (`uv run --group bench python scripts/export_onnx.py`). No traceback. `/healthz` then reports `"search_mode": "bm25"` and `"search_mode_reason": "onnx_graph_not_built"` (`:1350-1351`, codes `:306-312`). The other reasons are `model_unavailable` (D2 with a traceback), `stale_vectors` (D1), `index_unreadable` (D2b), and `bm25_only` (`--bm25-only`). With dense search loaded it is `"hybrid"` and `null`. The reason is a code, never a path. |
+| D2b | PAGE | `deploy-index-status-unreadable-bm25` | `ERROR index status unreadable after reload; serving BM25 only` | `app/server.py:1171` via `:1246` (text `:302`) | Regex `^ERROR index status unreadable after reload; serving BM25 only$`. Reload only, and only when dense search was loaded. Once per transition, no traceback. Pages once per transition, deduped to at most 1 per hour. Rule drafted, disabled until deploy approval. |
+| D3 | PAGE | `deploy-refusing-after-reload` | `ERROR refusing to serve after reload:` | `app/server.py:1154` | A checkout reloaded an index it will not serve. Rule drafted, disabled. |
+| D4 | PAGE | `deploy-refusing-frozen-bundle` | `ERROR refusing to serve:` | `app/server.py:1237` | The frozen bundle index changed after start; every request is `503`. Rule drafted, disabled. |
+| D5 | PAGE | `deploy-stuck-stop` | `ERROR <n> handler thread(s) still running after 10s; index left open` | `app/server.py:3374` | The stuck stop (the 10 s `DRAIN_TIMEOUT_S` line, logged after `stopping` at `:3369`); exit 1. It does not log `stopped cleanly`. Rule drafted, disabled. |
+| D6 | TICKET (server types), INFO (client types) | `deploy-request-failed-server` (TICKET, at most 1 per rolling hour), `deploy-request-failed-client` (INFO) | `ERROR request failed:` | `app/server.py:2033`, `:2038`, `:2083`, `:2085`, `:2145`, `:2385`, `:2406` | The line carries the exception type only. Ordinary clients produce it: a slow header, a keep-alive left idle past 15 s (`REQUEST_TIMEOUT_S`) and a reset give `TimeoutError` and `ConnectionResetError`. The client-caused types `TimeoutError`, `ConnectionResetError`, `BrokenPipeError` and `ConnectionAbortedError` go to the INFO rule; every other type goes to the TICKET rule. Rules drafted, disabled. |
+| D7 | TICKET | `deploy-abstain-calibration-unusable` | `ERROR abstain calibration unusable; abstain floor disabled` | `app/server.py:1810` | At most 1 per hour. Traceback follows. The server serves with no abstain floor. Rule drafted, disabled. |
+| stamp | TICKET | `deploy-index-stamp-unreadable` | `ERROR could not read the index stamp` | `app/server.py:1123` | Regex `^ERROR could not read the index stamp$`. At most 1 per rolling hour; the cap survives restarts. `enabled: false`. Traceback once per outage, then DEBUG. With dense search loaded, a stamp failure also fires the D2b page (D4 in a frozen bundle): one page for impact, one ticket for cause. Under `--bm25-only` this is the only alert. Recovery is silent (`/healthz` `"dense": true` only). Open suggestion for the CTO: log `INFO dense search restored` when dense search comes back. That line is not logged today. Rule drafted, disabled. |
 
 Observability holds from W3-OBS-GAPS, MET in #51 (`8cd3104`, merged as `87c0395`):
 
 - [x] **MET: a BM25 fallback during a reload is logged.** The reload
   BM25-fallback hard condition applies to any deploy that can reach the
   reload paths (a checkout deploy and the church site). A frozen bundle
-  still refuses first at `app/server.py:1235` (D4) and does not fall back.
+  still refuses first at `app/server.py:1237` (D4) and does not fall back.
   On a checkout, stored vectors that no longer match log D1 once per
-  transition (`:1169` via `:1201`). An unreadable index status, when dense
-  search was loaded, logs D2b once per transition (`:1169` via `:1244`).
+  transition (`:1171` via `:1203`). An unreadable index status, when dense
+  search was loaded, logs D2b once per transition (`:1171` via `:1246`).
   A server that never loaded weights stays quiet on that path: startup
-  already logged why, and D2 (`:872`) fires only at startup. D1 and D2 at
-  startup still carry a traceback (`:863`, `:872`), except D2's
-  missing-graph form (`:868`), which has none. The failed stamp read
+  already logged why, and D2 (`:874`) fires only at startup. D1 and D2 at
+  startup still carry a traceback (`:865`, `:874`), except D2's
+  missing-graph form (`:870`), which has none. The failed stamp read
   logs `ERROR could not read the index stamp` with a traceback once per
-  outage (`:1121`), then DEBUG while the outage lasts. With dense search
+  outage (`:1123`), then DEBUG while the outage lasts. With dense search
   loaded, that also fires the D2b page (D4 in a frozen bundle); under
   `--bm25-only` the stamp line is the only alert. Recovery is silent
   (`/healthz` `"dense": true` only). D2b itself has no traceback.
 - [x] **MET: a clean stop logs `INFO stopped cleanly`**
-  (`app/server.py:3384`). It is the last line of the clean path, after the
-  church connection closes (`:3382`). The stuck path logs D5 (`:3372`) and
+  (`app/server.py:3386`). It is the last line of the clean path, after the
+  church connection closes (`:3384`). The stuck path logs D5 (`:3374`) and
   exits 1, and does not log this line. The INFO rule is
   `deploy-stopped-cleanly`, drafted and disabled (other lines table).
 
@@ -928,16 +928,16 @@ Other lines this runbook names, all read off this tree. The Rule id column is th
 
 | Line | Rule id | Emitted at | Where it shows |
 | --- | --- | --- | --- |
-| `INFO church side: <slug>, read-only, through the publish gate` | `church-opened` (INFO) | `app/server.py:3027` | Church side opened, at start or on a successful retry. Not a restart marker. |
-| `INFO church side paused: <file> is in WAL journal mode` | `church-paused` (INFO) | `app/server.py:1532` (direct) or `:1540` (held at start, logged after `listening on`), text from `src/preached/library.py:883-884` (start) or `:962` (the check, before a search, or at start through `:915`) | Pause line, WAL form. |
-| `INFO church side paused: the church file is locked by a writer (...)` | `church-paused` (INFO) | `app/server.py:1532` or `:1540`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (the check, before a search, or at start through `:915`), `app/server.py:919` (searcher build, at start or on a retry) or `app/server.py:1607` (search) | Pause line, lock form. |
+| `INFO church side: <slug>, read-only, through the publish gate` | `church-opened` (INFO) | `app/server.py:3029` | Church side opened, at start or on a successful retry. Not a restart marker. |
+| `INFO church side paused: <file> is in WAL journal mode` | `church-paused` (INFO) | `app/server.py:1534` (direct) or `:1542` (held at start, logged after `listening on`), text from `src/preached/library.py:883-884` (start) or `:962` (the check, before a search, or at start through `:915`) | Pause line, WAL form. |
+| `INFO church side paused: the church file is locked by a writer (...)` | `church-paused` (INFO) | `app/server.py:1534` or `:1542`, text from `src/preached/library.py:895-896`, `:921-922` (start), `:468` (the check, before a search, or at start through `:915`), `app/server.py:921` (searcher build, at start or on a retry) or `app/server.py:1609` (search) | Pause line, lock form. |
 | `warning: the church file is still in wal journal mode (...)` | | `src/preached/youtube/pipeline.py:333`, text from `src/preached/youtube/library.py:157` | `--ack-review` output (step 4 of the gate). |
-| `INFO listening on http://<host>:<port>` | `process-restart` (INFO) | `app/server.py:2930` | Server up. Infra Ops' restart marker. A start-time `paused` line is logged after it, by `log_startup_pause` called at `:2934` (HD1, MET, fixed in #48). |
-| `INFO stopping` | `deploy-stopping` (INFO) | `app/server.py:3367` | Start of every stop. |
-| `INFO stopped cleanly` | `deploy-stopped-cleanly` (INFO) | `app/server.py:3384` | Last line of a clean stop. The stuck path (D5) does not log it. Rule drafted, disabled. |
-| `ERROR <n> handler thread(s) still running after 10s; index left open` | `deploy-stuck-stop` (PAGE) | `app/server.py:3372` | The stuck path; exit 1 (also D5 above). |
-| `WARNING refused <class> <detail> suppressed=N` | `deploy-refusal-warning` (INFO) | `app/server.py:506` | Rate-limited refusal lines. |
-| `WARNING refused <class> flush suppressed=N` | `deploy-refusal-flush` (INFO) | `app/server.py:518` | Counts flushed at stop. |
+| `INFO listening on http://<host>:<port>` | `process-restart` (INFO) | `app/server.py:2932` | Server up. Infra Ops' restart marker. A start-time `paused` line is logged after it, by `log_startup_pause` called at `:2936` (HD1, MET, fixed in #48). |
+| `INFO stopping` | `deploy-stopping` (INFO) | `app/server.py:3369` | Start of every stop. |
+| `INFO stopped cleanly` | `deploy-stopped-cleanly` (INFO) | `app/server.py:3386` | Last line of a clean stop. The stuck path (D5) does not log it. Rule drafted, disabled. |
+| `ERROR <n> handler thread(s) still running after 10s; index left open` | `deploy-stuck-stop` (PAGE) | `app/server.py:3374` | The stuck path; exit 1 (also D5 above). |
+| `WARNING refused <class> <detail> suppressed=N` | `deploy-refusal-warning` (INFO) | `app/server.py:507` | Rate-limited refusal lines. |
+| `WARNING refused <class> flush suppressed=N` | `deploy-refusal-flush` (INFO) | `app/server.py:519` | Counts flushed at stop. |
 | `tar exited 1 (file changed as we read it?); attempt N of 3` | `build-tar-flake-retry` (INFO, build stream only) | `scripts/build-bundle.sh:239` | Build machine, the tar flake. Not an alert. |
 | `tar failed (tar 1, gzip 0); no archive written` | `build-tar-flake-exhausted` (INFO, build stream only) | `scripts/build-bundle.sh:243` | Build machine, the tar flake after three attempts: rerun once. Not an alert. |
 | `tar.gz does not match MANIFEST.sha256; no archive written` | | `scripts/build-bundle.sh:247` | Build machine: a real error. |
