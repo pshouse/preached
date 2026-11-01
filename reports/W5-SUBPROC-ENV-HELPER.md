@@ -45,18 +45,20 @@ Machine preached-sandbox. Base origin/main 3aef7ca.
 ## Stat (git diff --stat origin/main..HEAD)
 
 ```
- reports/W5-SUBPROC-ENV-HELPER.md |  47 +++++++++
+ reports/W5-SUBPROC-ENV-HELPER.md |  72 +++++++++++++
  scripts/bench_api.py             |   1 +
  scripts/compare_responses.py     |   1 +
+ tests/README.md                  |  20 ++++
  tests/subproc_env.py             |  56 ++++++++++
  tests/test_cache_guard.py        |  13 ++-
+ tests/test_child_home_guard.py   | 136 ++++++++++++++++++++++++
  tests/test_deploy.py             |  34 +++---
  tests/test_embed_backend.py      |   7 +-
  tests/test_hard_conditions.py    |   3 +-
  tests/test_onnx_pin_repro.py     |  14 ++-
  tests/test_shutdown.py           |   8 +-
  tests/test_subproc_env_guard.py  | 221 +++++++++++++++++++++++++++++++++++++++
- 11 files changed, 365 insertions(+), 40 deletions(-)
+ 13 files changed, 546 insertions(+), 40 deletions(-)
 ```
 
 ## Tests
