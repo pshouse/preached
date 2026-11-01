@@ -143,14 +143,14 @@ The time range is text, not a second control. The jump is the button (archive) o
 | F-05 | Low | "Searching the sermons." is written while an ancestor is `aria-busy="true"` |
 | F-06 | Low | A disabled `GET /` is raw JSON on a phone navigation |
 | F-07 | Low | There is no main landmark, and the skip link targets the next control |
+| F-11 | Low | The play button's accessible name does not contain its visible label (WCAG 2.5.3) |
 | F-08 | Info | Changing View runs a new search with no warning (Patrick's call) |
 | F-09 | Info | The page has no dark-mode colours |
 | F-10 | Info | The card border is below the 3:1 non-text threshold |
-| F-11 | Low | The play button's accessible name does not contain its visible label (WCAG 2.5.3) |
 
 ### F-01 — High — the over-cap page is not usable on a phone
 
-A browser navigation that arrives while this peer is already at `DEFAULT_MAX_CLIENT_CONNECTIONS` (4, `app/server.py:247`) is answered on the accept thread. `docs/DEPLOY.md:628` records that rule, including the meta refresh of the same 1 second. `docs/DEPLOY.md:1074`–`1077` records the empty-`PREACHED_TRUSTED_PROXIES` caveat behind `tailscale serve`: every proxied request is limited as `127.0.0.1`, so every phone shares one cap of 4 connections. The sanctioned exposure path is `PREACHED_TRUSTED_PROXIES=127.0.0.1` (`docs/DEPLOY.md:996`–`1000`, item 9 at `1117`–`1121`), where loopback is exempt from the per-peer cap, so the accept-time 503 is reached only when all 32 connection slots are held and nothing can be evicted (`docs/DEPLOY.md:628`–`629`). Under the sanctioned config the page appears at global saturation (the many-phones-at-once case, which is why it stays High); under the empty-proxy config, at 4 connections across all clients. The over-cap 503 is written on the accept thread and does not start a handler or spend a rate-limit bucket (`app/server.py:2786`–`2790`, `2811`–`2837`), so the 1 s refresh is a bounded per-tab retry (1 connection/s/tab), not a self-amplifying load. The refusal log at `2788` goes through `RefusalLog.note` (`app/server.py:501`–`511`), one line per class per second. A tab that then gets the page loads the four first-load resources, so tabs that recover together are a mild synchronized herd. The F-01 fix must update the coupling comment at `app/server.py:2915`–`2916`, the "meta refresh of the same 1 second" sentence at `docs/DEPLOY.md:628`, and the `content="{retry-after}"` assertion at `tests/test_html_503.py:199` if the refresh is lengthened while `Retry-After` stays 1. This probe did not run Tailscale and did not load the page from a phone. It held one connection and sent a second with Chrome's navigation `Accept`.
+A browser navigation that arrives while this peer is already at `DEFAULT_MAX_CLIENT_CONNECTIONS` (4, `app/server.py:247`) is answered on the accept thread. `docs/DEPLOY.md:628` records that rule, including the meta refresh of the same 1 second. `docs/DEPLOY.md:1074`–`1077` records the empty-`PREACHED_TRUSTED_PROXIES` caveat behind `tailscale serve`: every proxied request is limited as `127.0.0.1`, so every phone shares one cap of 4 connections. The sanctioned exposure path is `PREACHED_TRUSTED_PROXIES=127.0.0.1` (`docs/DEPLOY.md:996`–`1000`, item 9 at `1117`–`1121`), where loopback is exempt from the per-peer cap, so the accept-time 503 is reached only when all 32 connection slots are held and nothing can be evicted (`docs/DEPLOY.md:628`–`629`). At that 32-slot saturation a page load on the `/healthz` reserve gets the handler's JSON 503 (`app/server.py:2261`–`2268`, `_reserved` and not health, body `{"error": "unavailable"}`), as does the per-key slot-busy 503 (`app/server.py:2280`–`2291`, `acquire_slot` refused, the same JSON). Today only the accept-thread over-cap path serves HTML. Under the sanctioned config the page appears at global saturation (the many-phones-at-once case, which is why it stays High); under the empty-proxy config, at 4 connections across all clients. A peer already at that cap may take its own oldest idle keep-alive once that socket has been quiet for 1 second (`docs/DEPLOY.md:628`), and the new connection uses that slot. The over-cap 503 is written on the accept thread and does not start a handler or spend a rate-limit bucket (`app/server.py:2786`–`2790`, `2811`–`2837`), so the 1 s refresh is a bounded per-tab retry (1 connection/s/tab), not a self-amplifying load. The refusal log at `2788` goes through `RefusalLog.note` (`app/server.py:501`–`511`), one line per class per second. A tab that then gets the page loads the four first-load resources, so tabs that recover together are a mild synchronized herd. The F-01 fix must update the coupling comment at `app/server.py:2915`–`2916`, the "meta refresh of the same 1 second" sentence at `docs/DEPLOY.md:628`, and the `content="{retry-after}"` assertion at `tests/test_html_503.py:199` if the refresh is lengthened while `Retry-After` stays 1. This probe did not run Tailscale and did not load the page from a phone. It held one connection and sent a second with Chrome's navigation `Accept`.
 
 On port 36337, 29 of 30 such requests returned this response (the other one was the JSON body, which `docs/DEPLOY.md` already describes for a request whose headers were not buffered yet):
 
@@ -218,7 +218,7 @@ The live hybrid side body on port 36335 has `classic.note` "Embeddings are not l
 
 The same split is what the Deno test locks in for a low-confidence column. `tests/test_app_js.py:674` asserts the status text does not contain "heuristic", while `renderSide` still builds the banner as a child paragraph. A screen reader user who hears the status and does not walk the column misses "Low confidence: these passages may not answer your question." The lede invites this view (`index.html:19`).
 
-Recommendation (PR-C): write each side's fallback note and confidence note into `.notices`. Keep the column text for someone who scrolls. Replace the assertion at `tests/test_app_js.py:674` (the status string omits "heuristic") with an assertion that the banner node is inside `.notices` and is not hidden.
+Recommendation (PR-C): write each side's fallback note and confidence note into `.notices`. Keep the column text for someone who scrolls. Keep the assertion at `tests/test_app_js.py:674` ("status is not the banner"); the `#status` composition does not change. Add assertions that after `showSides`, `#note` carries `<side heading>: <fallback note>` and `#confidence` carries `<side heading>: <confidence note>` (the latter only when that side's results are shown), both are visible and inside `.notices`, and no column node carries `aria-live`.
 
 Covered today: `test_confidence_banner_is_announced` checks the static classic nodes only. `test_side_by_side_rendering` checks the column text and that the status omits "heuristic". It does not check a live region on the column note.
 
@@ -238,7 +238,7 @@ Covered today: the viewport test above. It does not mention `viewport-fit`.
 
 `runSearch` calls `setBusy(true)` and then sets the status to "Searching the sermons." (`591`–`593`). `setBusy` sets `aria-busy` on `#results-section` (`470`–`474`), which is the ancestor of `#status`. ARIA says assistive technologies may hide changes inside a busy subtree until `aria-busy` goes back to false. The results update is safe: `showResults` and `showSides` call `setBusy(false)` before they write the status (`504`, `521`). The loading sentence is the one written while busy. A hybrid search on the real model can take long enough that silence matters. This was not heard on a screen reader.
 
-Recommendation (PR-D, with F-07): set the loading sentence, then set `aria-busy`, with the status node outside the busy element. Move `#status` out of the busy subtree, or put `aria-busy` on `#results` and `#sides` only. Both this and F-07 restructure `index.html` around `#results-section`, so they ship as one PR. Separate PRs would conflict. Update the `aria-busy` assertions at `tests/test_app_js.py:380` (`"true"` while loading) and `:382` (`"false"` after) so they name the node that still means "results are coming".
+Recommendation (PR-D, with F-07): put `aria-busy` on `#results` and `#sides` only, leave `#status` in place, and keep `is-loading` on `#results-section`. The loading sentence stays outside the busy nodes. Both this and F-07 ship as one PR. Update the `aria-busy` assertions at `tests/test_app_js.py:380` (`"true"` while loading) and `:382` (`"false"` after) so they name `#results` and `#sides`.
 
 Covered today: that assertion checks the attribute value. It does not check that the loading sentence is outside the busy subtree.
 
@@ -262,7 +262,7 @@ The skip link is the first tab stop and points at `#q` (`index.html:14`). The ne
 
 There is no `<main>`. Screen-reader landmark navigation has banner, search, the results region, and contentinfo, and no main.
 
-Recommendation (PR-D, with F-05): wrap the results in `<main id="main">` and point the skip link at `#main`. Add a `<main>` and skip-target assertion next to the `aria-busy` assertions this PR already updates (`tests/test_app_js.py:380` and `:382`). Separate from F-05, this would conflict on `index.html`.
+Recommendation (PR-D, with F-05): wrap the form, the examples, and `#results-section` (`index.html:22`–`83`) in `<main id="main">`, not only the results, and point the skip link at `#main`. The F-05 route in this PR is `aria-busy` on `#results` and `#sides`, with `#status` left in place and `is-loading` kept on `#results-section`. Re-pin the `index.html` cites in `docs/DEMO-SCRIPT.md:28`, `:42`, `:123` and `docs/SUBMISSION-DRAFT.md:34`. Add a `<main>` and skip-target assertion next to the `aria-busy` assertions this PR already updates (`tests/test_app_js.py:380` and `:382`).
 
 Covered today: no test looks for a main landmark or for the skip target.
 
@@ -320,7 +320,7 @@ These are unchanged on `8d46f14` and on `6d07f64` (`app/static` is the same byte
 
 ## Prioritized fixes
 
-Four PRs, each with a test, plus two held items. Sequencing: PR-A first (the High), then PR-B. PR-C and PR-D are independent of each other. They conflict only if both touch `showSides` or `resetState`, so rebase whichever lands second.
+Four PRs, each with a test, plus two held items. Sequencing: PR-A any time (it shares no files with B-D and must not move any parity hash); then PR-B -> PR-C -> PR-D, merged serially, each rebased on the one before and restating parity on its own final head, because all three move the `/static/app.js` hash (PR-D also `/`), and PR-B and PR-D both re-pin the same `app.js`/`index.html` line cites in `docs/DEMO-SCRIPT.md:28`, `:42`, `:123` and `docs/SUBMISSION-DRAFT.md:34`, so PR-D goes last.
 
 1. **PR-A: F-01 + F-06, server 503 pages.** Both live in `app/server.py` and share one constant page.
    - The page gets a viewport, an `<h1>`, the sentence, and a refresh of 5 s or more, or a Try again link to `/`.
@@ -330,7 +330,7 @@ Four PRs, each with a test, plus two held items. Sequencing: PR-A first (the Hig
    - Keep the kill-switch tests green. `tests/test_deploy.py:229` asserts a disabled `/api/search` body of `{"error": "unavailable"}`. `tests/test_exposure.py:577`, `:1190`, and `:1330` assert that same JSON body on the in-flight and reconnect 503s. Add an HTML-on-`/` test and a JSON-on-`/api/search` test. The kill switch must stay tested.
    - Rule 4: re-pin every `docs/DEPLOY.md` cite the edit moves, and the `CITED` pins in `tests/test_deploy_alerts.py`.
    - Real client: headless Chromium at a phone viewport against a loopback over-cap server.
-   - Parity: these paths are not probed by the #97 harness (normal mode, no over-cap), so the PR must show the http, no-church, and in-process hashes unchanged.
+   - Parity: PR-A shares no files with B-D and must not move any parity hash. These paths are not probed by the #97 harness (normal mode, no over-cap).
    - F-06 may be a separate PR immediately after F-01. It must reuse F-01's constant page.
 2. **PR-B: F-02 as corrected above, the 44px audio height, and F-11.**
    - Name the audio with `aria-labelledby="now-playing"`.
@@ -338,10 +338,11 @@ Four PRs, each with a test, plus two held items. Sequencing: PR-A first (the Hig
    - Fix the name so it starts with the visible text (WCAG 2.5.3). Example: `Play from 0:01:32, sermon 1`.
    - `audio { min-height: 44px }`.
    - No `aria-pressed`. A second press calls `playClip` again (`app.js:291`–`293`) and does not pause, so a pressed state would misstate the control. Leave the `is-playing` outline visual-only, or use `aria-current="true"`.
-   - No spoken time in the name. Making `#now-playing` itself `aria-live` would announce the caption over the sermon audio on every Play.
+   - No spoken time in the name.
+   - Do not make `#now-playing` itself `aria-live` (it would announce the caption over the sermon audio on every Play).
    - Extend the `tests/test_mobile_ux.py` Deno check: accessible name, live membership of the held-audio sentence, and label-in-name.
-3. **PR-C: F-03.** Write the side-by-side notes into `.notices`. Replace the `tests/test_app_js.py:674` assertion with one that the banner node is inside `.notices` and is not hidden.
-4. **PR-D: F-05 + F-07.** Both restructure `index.html` around `#results-section`: move `#status` out of the busy subtree (or put `aria-busy` on `#results` and `#sides`), wrap the results in `<main id="main">`, and point the skip link at it. Separate PRs would conflict. Update the `tests/test_app_js.py:380` and `:382` `aria-busy` assertions, and add a `<main>` and skip-target assertion.
+3. **PR-C: F-03.** Write the side-by-side notes into `.notices`. Keep the `tests/test_app_js.py:674` assertion that the status is not the banner, since the `#status` composition does not change. After `showSides`, `#note` carries `<side heading>: <fallback note>` and `#confidence` carries `<side heading>: <confidence note>` (the latter only when that side's results are shown); both are visible and inside `.notices`, and no column node carries `aria-live`.
+4. **PR-D: F-05 + F-07.** `<main id="main">` wraps the form, the examples, and `#results-section` (`index.html:22`–`83`), not only the results, and the skip link points at `#main`. `aria-busy` goes on `#results` and `#sides`, with `#status` left in place and `is-loading` kept on `#results-section`. Update the `tests/test_app_js.py:380` and `:382` `aria-busy` assertions so they name those two nodes, and add a `<main>` and skip-target assertion. Re-pin the `index.html` cites in `docs/DEMO-SCRIPT.md:28`, `:42`, `:123` and `docs/SUBMISSION-DRAFT.md:34`.
 
 **Held: F-04.** A real-iPhone check comes first. The `env()` term is dead code until `viewport-fit=cover` is on, and turning cover on is what would introduce the overlap. Only after that check, add cover plus the padding.
 
@@ -349,37 +350,37 @@ Four PRs, each with a test, plus two held items. Sequencing: PR-A first (the Hig
 
 **Wait:** F-09 and F-10.
 
-### Parity with the harness proposed in #97
+### Parity with the harness landed in #97
 
-That harness hashes the raw bytes of `/` and `/static/app.js` (the http set and the no-church set). PR-B, PR-C, and PR-D edit `app.js` and/or `index.html`, and an F-04 change would too, so each moves the http and no-church hashes by design. Each of those PRs must:
+`docs/PARITY.md` is on `origin/main`. The `http` and `no-church` sets include the raw bytes of `/` and `/static/app.js` (`docs/PARITY.md:76`). PR-B, PR-C, and PR-D all move the `/static/app.js` hash, and PR-D also moves `/`, so each moves those two sets by design. They are merged serially, PR-B then PR-C then PR-D, each rebased on the one before and restating parity on its own final head. Each of those PRs must:
 
-- report a record-level diff showing only the probes `/` and `/static/app.js` changed, with the new sha256 of each equal to `git show <head>:app/static/<file> | sha256sum`;
+- report a record-level diff of the probes that moved: `/static/app.js` for PR-B, PR-C, and PR-D, and also `/` for PR-D, with the new sha256 of each equal to `git show <head>:app/static/<file> | sha256sum`;
 - show every other set unchanged;
-- re-baseline the refs in `docs/PARITY.md` if #97 has landed by then. It has not landed on `origin/main` `3aef7ca`. That tree has no `docs/PARITY.md`.
+- re-baseline the refs in `docs/PARITY.md` on that PR's own final head. #97 has landed, and this tree has the page.
 
-An `app.css`-only edit does not move those hashes. PR-A must not move any of them.
+An `app.css`-only edit does not move those hashes. PR-A shares no files with B-D and must not move any parity hash, so it can land any time. An F-04 change that edits `index.html` would move `/` as well.
 
 ## Limits
 
 No phone, no Chromium, no VoiceOver, and no TalkBack. Overlap of the home indicator, the real size of the native audio controls, and whether a screen reader drops one of two polite live regions were not observed. Announcement findings are the accessible names and live-region membership in the DOM. The synthetic index had one chunk, so a low-confidence response that still contains passages was not returned live; that path is the code in `describeResponse` (`377`–`384`) and the existing Deno fixture. The probe's hybrid request did return a real fallback `note`, which is the side-by-side case F-03 cites.
 
-The parity harness proposed in #97 hashes the raw bytes of `/` and `/static/app.js` (the http and no-church sets). Every fix that edits `index.html` or `app.js` therefore moves those two hashes by design. The prioritized fix list records what each of those PRs must show.
+The parity harness landed in #97 hashes the raw bytes of `/` and `/static/app.js` inside the `http` and `no-church` sets (`docs/PARITY.md:76`). PR-B, PR-C, and PR-D move the `/static/app.js` hash, and PR-D also moves `/`, so each moves those two sets by design. The prioritized fix list records what each of those PRs must show.
 
 ## PR BODY
 
-R2 of the accessibility and phone UX audit (PR #100). Report text only. No file under `app/`, `src/`, `tests/`, or `docs/` is edited. `origin/main` `3aef7ca` was merged (merge `01a125c`, no conflicts). The cited `app/server.py`, `app/static/*`, `docs/DEPLOY.md`, and test files are the same bytes as on that main, so no `docs/DEPLOY.md` cite was re-pinned and `tests/test_deploy_alerts.py` is untouched.
+R3 of the accessibility and phone UX audit (PR #100). Report text only. No file under `app/`, `src/`, `tests/`, or `docs/` is edited. `origin/main` `ebc058de95a3c8b6eb3ef51332702c3f8993c3be` was merged as `f22270f13ff7bbd3716a4ce91f158ba51d36595e` (no conflicts). Cited files changed since `3aef7ca`: `docs/PARITY.md` (added), `tests/cache_guard.py`, `tests/test_cache_guard.py`, `tests/test_cache_guard_immutable_fuzz.py`, `tests/test_parity_hash.py` (added), and `tests/test_reject_method_slot.py`. `app/server.py`, `app/static/*`, `docs/DEPLOY.md`, `docs/DEMO-SCRIPT.md`, and `docs/SUBMISSION-DRAFT.md` are unchanged, so no `docs/DEPLOY.md` cite was re-pinned and `tests/test_deploy_alerts.py` is untouched.
 
 Severities: F-01 High; F-02 and F-03 Medium; F-04 Low; F-11 Low (new, WCAG 2.5.3 Label in Name); F-05, F-06, F-07 Low; F-08, F-09, F-10 Info. F-08 is Patrick's product decision. The fix list is four PRs (PR-A F-01+F-06, PR-B F-02 as corrected plus the 44px audio height and F-11, PR-C F-03, PR-D F-05+F-07), with F-04 and F-08 held and F-09 and F-10 waiting. F-02 does not set `aria-pressed`, does not put a spoken time in the name, does not move focus on every Play, and does not make `#now-playing` itself live.
 
-No tests were run. `find /cache -xdev -printf '%p\t%s\t%T@\n' | sort` before the edit and after the report text was written: 132823 lines both times, sha256 `55cb67aa9dcf532de1b634f4af32d4b03569f43e6afee472065eb34610e14c45`, no path, size, or mtime difference. No cache env var was pointed at `/cache`.
+No tests were run. `find /cache -xdev -printf '%p\t%s\t%T@\n' | sort` before the edit and after the report text was written: 132824 lines both times, sha256 `3ca707d7aba4f2aa682a6497f9e481bad4c8087d9304142444a746ace64bca64`, no path, size, or mtime difference. No cache env var was pointed at `/cache`.
 
-R2 content head: `15fc1829e4e1d91e7e3a9072e042a4cf04827481` (parent of the commit that records this sha).
+R3 content head: `0000000000000000000000000000000000000000` (parent of the commit that records this sha).
 
-`git diff --stat origin/main..HEAD`:
+`git diff --stat origin/main...HEAD`:
 
 ```
- reports/W5-A11Y-MOBILE-AUDIT.md | 408 ++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 408 insertions(+)
+ reports/W5-A11Y-MOBILE-AUDIT.md | 427 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 427 insertions(+)
 ```
 
 ## R2
@@ -390,19 +391,37 @@ CTO r1 CONDITIONAL on PR #100 at `3877f7ed249ba9095de51921c23ccb4b48555d68`. Thi
 | --- | --- |
 | MF1. Both reachability cases, the accept-thread 503 (no handler, no rate-limit bucket), the bounded 1 s retry, and the three cites the F-01 fix must update | `:153`. The same fix cites are in the recommendation at `:172` and in PR-A at `:328` |
 | MF2 (a). No `aria-pressed`. A second press calls `playClip` (`app.js:291`–`293`) and does not pause | Recommendation `:199`. PR-B bullet `:340`. The audio section states the same fact at `:133` |
-| MF2 (b). No spoken time in the name. The name must start with the visible text. New Low finding for WCAG 2.5.3 | `:193`, recommendation `:199`, finding F-11 at `:203`–`:209`, table row `:149`, PR-B `:338` |
+| MF2 (b). No spoken time in the name. The name must start with the visible text. New Low finding for WCAG 2.5.3 | `:193`, recommendation `:199`, finding F-11 at `:203`–`:209`, table row `:146`, PR-B `:338` and `:341` |
 | MF2 (c). Announce the held-audio sentence. Move focus only in that branch (`app.js:199`–`203`), if at all | `:199` and PR-B `:337` |
-| MF2 (d). Do not make `#now-playing` itself `aria-live` | `:199` and PR-B `:341` |
-| MF2, F-04 downgraded to Low. Dead code until cover is on. Real iPhone check first | Table `:142`. Heading `:225`. Held paragraph `:233`. Fix item `:346` |
-| S1. F-08 is Info and Patrick's call. In-place results are a change of content, not a 3.2.2 failure | Table `:146`. Heading `:269`. Wording `:273`. Held item `:348` |
-| S2. #97 hashes `/` and `/static/app.js`. Edits to `index.html` or `app.js` move those hashes by design | Limits `:366`. The PR obligations are `:352`–`:360` |
+| MF2 (d). Do not make `#now-playing` itself `aria-live` | `:199` and PR-B `:342` |
+| MF2, F-04 downgraded to Low. Dead code until cover is on. Real iPhone check first | Table `:142`. Heading `:225`. Held paragraph `:233`. Fix item `:347` |
+| S1. F-08 is Info and Patrick's call. In-place results are a change of content, not a 3.2.2 failure | Table `:147`. Heading `:269`. Wording `:273`. Held item `:349` |
+| S2. #97 hashes `/` and `/static/app.js`. Edits to `index.html` or `app.js` move those hashes by design | Limits `:367`. The PR obligations are `:353`–`:361` |
 | N1. `resetState` clears `#note` at `app.js:487` and `#confidence` at `488` | `:215` |
 | N2. The 103px figure is W3 item 2 (`reports/W3-MOBILE-UX-QA.md:43`). Item 10 is the 169px figure | `:100` |
 | N3. `:root` has seven colour variables (`--bg`, `--bg-raised`, `--ink`, `--ink-soft`, `--line`, `--focus`, `--paper`) | `:283` |
 | N4. `PREROLL_S` is `app.js:44`. `46`–`50` is `playStart` | `:129` |
 | N5. CSP cite `app/server.py:206`–`219` left as written. `219` is `frame-ancestors`. The closing paren is `220` | `:51` |
-| Severity table. F-01 High; F-02 and F-03 Medium; F-04 Low; F-11 Low; F-05, F-06, F-07 Low; F-08, F-09, F-10 Info | `:137`–`:149` |
-| Fix list. Four PRs and two held items, in the review's order, each PR with its test | `:321`–`:360` |
-| PR BODY synced to those severities and that fix list | `:368` |
+| Severity table. F-01 High; F-02 and F-03 Medium; F-04, F-05, F-06, F-07 Low; F-11 Low; F-08, F-09, F-10 Info | `:137`–`:149` |
+| Fix list. Four PRs and two held items. PR-A any time (no parity-hash move); then PR-B, PR-C, PR-D serially. PR-C keeps the status-is-not-the-banner assertion and adds the `.notices` assertions. PR-D wraps `index.html:22`–`83` in `<main>` and puts `aria-busy` on `#results` and `#sides` | `:321`–`:361` |
+| PR BODY synced to those severities and that fix list | `:369` |
+
+No suite was run. Cache snapshots are in the PR BODY above.
+
+## R3
+
+CTO r2 CONDITIONAL at `23093fa1b1a4e6a64c8b5e2ccaa8b4b60be39263`. This round edits only `reports/W5-A11Y-MOBILE-AUDIT.md`. `origin/main` `ebc058de95a3c8b6eb3ef51332702c3f8993c3be` was merged as `f22270f13ff7bbd3716a4ce91f158ba51d36595e` (no conflicts). No `--ours` or `--theirs`. `git diff --stat 3aef7ca..origin/main -- app/ docs/ tests/` shows `docs/PARITY.md` (added), `tests/cache_guard.py`, `tests/test_cache_guard.py`, `tests/test_cache_guard_immutable_fuzz.py`, `tests/test_parity_hash.py` (added), and `tests/test_reject_method_slot.py`. `app/server.py`, `app/static/*`, `docs/DEPLOY.md`, `docs/DEMO-SCRIPT.md`, and `docs/SUBMISSION-DRAFT.md` did not change. Nothing in `docs/DEPLOY.md` or `tests/test_deploy_alerts.py` was re-pinned.
+
+| Item | Where it now sits |
+| --- | --- |
+| MF3 (a). PR-A any time (no shared files, no parity-hash move); then PR-B -> PR-C -> PR-D, merged serially, each rebased on the one before and restating parity on its own final head, because all three move the `/static/app.js` hash (PR-D also `/`) and PR-B and PR-D re-pin the same cites | Sequencing `:323`. PR-A parity bullet `:333`. Parity obligations `:353`–`:361` |
+| MF3 (b). Keep `tests/test_app_js.py:674` ("status is not the banner"). After `showSides`, `#note` is `<side heading>: <fallback note>` and `#confidence` is `<side heading>: <confidence note>` (only when that side's results are shown); both visible and inside `.notices`; no column node carries `aria-live` | Recommendation `:221`. PR-C `:344` |
+| MF3 (c). `<main id="main">` wraps the form, the examples, and `#results-section` (`index.html:22`–`83`), not only the results. The skip link points at `#main`. F-05 is `aria-busy` on `#results` and `#sides`, with `#status` left in place and `is-loading` kept on `#results-section`. PR-D re-pins `docs/DEMO-SCRIPT.md:28`, `:42`, `:123` and `docs/SUBMISSION-DRAFT.md:34` | F-05 recommendation `:241`. F-07 recommendation `:265`. PR-D `:345` |
+| Nit 1. Split into two bullets: "No spoken time in the name." and "Do not make `#now-playing` itself `aria-live`" | `:341` and `:342` |
+| Nit 2. Empty-proxy (4-connection) case: a peer already at its cap may take its own oldest idle keep-alive once that socket has been quiet for 1 second (`docs/DEPLOY.md:628`) | `:153` |
+| Nit 3. F-11 moved into the Low group, after F-07 and before F-08 | Table `:146` |
+| Nit 4. At 32-slot saturation a page load on the `/healthz` reserve gets the handler's JSON 503 (`app/server.py:2261`–`2268`), as does the per-key slot-busy 503 (`app/server.py:2280`–`2291`). Only the accept-thread over-cap path serves HTML | `:153` |
+
+Cites read on merged `origin/main` `ebc058de95a3c8b6eb3ef51332702c3f8993c3be`, same lines as on `b1a2b24`: `app/server.py:2250`–`2255` is the kill switch (`{"error": "unavailable"}` except `/healthz`, which stays `{"ok": false, "disabled": true}`); `:2261`–`2268` is `_reserved` and not health, JSON `{"error": "unavailable"}`; `:2280`–`2291` is `acquire_slot` refused, the same JSON; `docs/DEPLOY.md:628` includes "A peer already at its cap may take its own oldest idle keep-alive once that socket has been quiet for 1 second"; `app/static/index.html:22` opens `<form id="search-form"` and `:83` closes `</section>` (`#results-section`); `tests/test_app_js.py:674` is the label "status is not the banner"; `docs/DEMO-SCRIPT.md:28` cites `app.js:217-235`, `:312-313`, and `index.html:63-75`; `:42` cites `index.html:78` and `app.js:338`; `:123` cites `index.html:75`; `docs/SUBMISSION-DRAFT.md:34` cites `app.js:217-235`, `:312-313`, and `index.html:75`; `docs/PARITY.md:76` says the `/` and `/static/app.js` byte hashes are in `http` and `no-church`.
 
 No suite was run. Cache snapshots are in the PR BODY above.
