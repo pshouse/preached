@@ -242,6 +242,12 @@ class OnnxEmbedder:
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
+        # Backup only: it does not stop the device ID or DB write. The real
+        # switch is ORT_DISABLE_TELEMETRY=1, set in preached/__init__.py
+        # before this import. Older ORT builds have no such call.
+        if hasattr(ort, "disable_telemetry_events"):
+            ort.disable_telemetry_events()
+
         options = ort.SessionOptions()
         options.intra_op_num_threads = threads
         options.inter_op_num_threads = 1

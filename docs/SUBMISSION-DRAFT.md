@@ -1,22 +1,22 @@
 # Submission draft (for Patrick's review)
 
-Status: **draft, not submitted anywhere.** Deadline: Nov 27 2026, 11:59 PM ET (BRIEF.md). Everything below describes what is merged on `main` (checked at `9fe33ca`) today. The test-suite row was re-run on that commit (headline: more than 1,000 tests; the exact run is in the table). Live demo queries were re-run on `9fe33ca` (`reports/W4-DEMO-DRYRUN-2.md`); other figures keep the citations in the table. Re-check the claims list if anything merges before you submit.
+Status: **draft, not submitted anywhere.** Deadline: Nov 27 2026, 11:59 PM ET (BRIEF.md). Everything below describes what is merged on `main` today (checked at `3a93147`; the test-suite and demo-query rows were last run on `9fe33ca`, before #88 and #90, and were not re-run for this docs-only refresh). The test-suite row was re-run on that commit (headline: more than 1,000 tests; the exact run is in the table). Live demo queries were re-run on `9fe33ca` (`reports/W4-DEMO-DRYRUN-2.md`); other figures keep the citations in the table. Re-check the claims list if anything merges before you submit.
 
 - **Project name:** Preached
 - **Track:** Discipleship & Spiritual Growth
 - **Tagline:** Ask a question, hear the answer in the preacher's own words.
 
-## Project description (231 words; limit 250)
+## Project description (247 words; limit 250)
 
 Preached lets a church search its whole sermon archive by asking a question, then hear the answer in the preacher's own words.
 
-Ask "How can I know that I am a child of God?" and Preached returns the exact passages, each with the sermon, a timestamp and a Play button that starts the audio just before the moment. It never writes an answer, summary or paraphrase. The AI only transcribes, embeds and ranks, with no chat model. That is a deliberate rule, so no pastor is ever made to say something he did not say.
+Ask "How can I know that I am a child of God?" and Preached returns the exact passages, each with the sermon, a timestamp and a Play button that starts the audio just before the moment. Each result also shows how it was found: keyword search, meaning search or both, with its ranks. It never writes an answer, summary or paraphrase. The AI only transcribes, embeds and ranks, with no chat model. That is a deliberate rule, so no pastor is ever made to say something he did not say.
 
-Today the built-in library is John Wesley's 143 recordings (71.14 hours), with Spurgeon and Edwards as further public-domain libraries. A Side by side view is ready to set a classic preacher beside your own pastor; the church column stays empty until a church's sermons are published.
+Today the built-in library is John Wesley's 143 recordings (71.14 hours). A Side by side view is ready to set a classic preacher beside your own pastor; the church column stays empty until a church's sermons are published.
 
 Any church can build its own library by pasting a YouTube channel. Imports are cautious: names are redacted, announcements, prayer requests and testimonies are never indexed, and our process has a person listen through each recording before publishing. We have not published any church's sermons.
 
-When a question has no good answer, Preached says so with a low-confidence banner instead of bluffing. That check is a heuristic.
+When a question has no good answer, Preached sometimes says so with a low-confidence banner; it can also flag a good answer by mistake. It is a rough heuristic.
 
 It needs only a CPU: no GPU, no vector database, one SQLite file, under a tenth of a second on a desktop CPU.
 
@@ -31,7 +31,8 @@ Every figure is from a file in the repo. The only retrieval-quality statement th
 | Transcript matched to the published CCEL text: mean 98.5% of canonical words anchored (min 93.1%). | `reports/W1-C.md:190` (coverage table) |
 | Play position: the link starts 0.75 s before the stored start time as a safety margin. No measured offset is claimed: the repo holds no measurement data for the earlier 0.42 s / 0.76 s spot-check figures, so they are dropped. | `README.md`; `reports/W1-CLI.md` |
 | Retrieval quality (the only claim): "In a pre-registered evaluation (58 questions; relevance labels drafted with AI help, a subset confirmed blind by a human), the tuned fusion weight was statistically indistinguishable from the baseline (hit@10 51 vs 50; paired difference +0.017, 95% CI −0.034 to +0.086)." No accuracy, "improves" or "better" claim is made. | `reports/W3-CONFIRMATORY.md`; CTO-approved wording |
-| Low-confidence banner when a question has no good match; it is a heuristic fitted to the project's own evaluation questions, so its false-abstain rate is likely optimistic. | `reports/W3-POLISH.md` (caveats, section 6); run live in `reports/W4-DEMO-PREP.md` ("cryptocurrency") |
+| Per-result "why": each result carries `why` (keyword rank, meaning rank, dense similarity, `found_by` of `both`, `keyword` or `meaning`), and the page shows it as one line under the card, in the form "Found by both keyword (#N) and meaning (#M) search · similarity 0.NN". It reports list positions, not correctness; similarity "is not a percentage or a chance of being right". | `src/preached/search.py:63-90` (`Why`), `app/server.py:732`, `app/static/app.js:217-235` and `:312-313`, `app/static/index.html:75`, README "Reading a search result". Exact numbers on the demo queries are not recorded; read them live. |
+| Low-confidence banner when a question has no good match; it is a heuristic fitted to the project's own evaluation questions, so its false-abstain rate is likely optimistic. In a 25-query spot check on the live demo it abstained on 2 of 4 off-topic queries and wrongly on 1 of 21 real questions, and labelled some poor results `strong` (so the description says "sometimes" and notes the false abstain). | `reports/W3-POLISH.md` (caveats, section 6); run live in `reports/W4-DEMO-PREP.md` ("cryptocurrency"); `reports/W5-DEMO-QUERY-SPOTCHECK.md` section (c) |
 | Runs on a CPU: ONNX Runtime fp32; under a tenth of a second on a desktop CPU (`reports/W3-CPU.md` latency table, row "ONNX fp32, 4 threads, full chip": p50 28.2 ms, p95 34.5 ms (4 ONNX Runtime threads; the demo server defaults to 1 via `PREACHED_ORT_INTRA_OP_THREADS`); `/api/search` hybrid, k=10, 40 queries × 3 repeats, one warmup excluded); memory, by setup (never compare across setups): **embedder alone** (no server, no index): 683 MiB RSS / peak (VmHWM) 903 MiB (`reports/W3-RSS.md:23`, `:114`, after the #26 fix); **full server with the Wesley index**, single runs on a desktop: about 730 MiB at start, about 730 to 780 MiB after queries, peak about 950 to 970 MiB, under 1 GiB (`reports/W4-DEMO-PREP.md:55`, `:73`; re-observed at 952 MiB peak in PR #81, `reports/W4-DEMO-DRYRUN-2.md`), so plan on roughly 1 GiB of RAM; the 960 MiB "RSS after load" in the `reports/W3-CPU.md:79` pick table is pre-#26, from that report's own `/api/search` bench server (`W3-CPU.md:148`); runtime install 149 MiB; torch not installed. | `reports/W3-CPU.md` (pick table); `reports/W3-RSS.md`. Measured on a desktop CPU, not on a Sprite or server. |
 | ONNX answers are identical to the torch reference: cosine of fp32 document vectors at least 0.99999988. int8 was rejected for quality. | `reports/W3-CPU.md` (Parity, Eval) |
 | One SQLite file, FTS5 plus brute-force vectors, no vector database. | `AGENTS.md` section 2; `docs/DEPLOY.md` |
@@ -47,4 +48,5 @@ Every figure is from a file in the repo. The only retrieval-quality statement th
 - Any church's sermons being searchable or public (permission pending; no real church data is loaded. Main can serve a church library, in the side-by-side column or alone, only behind the publish gate, and has only been run on synthetic fixtures).
 - A public URL (needs threat model, CTO sign-off, Patrick's approval, kill-switch drill: `docs/DEPLOY.md`).
 - Any "accuracy", "improves" or "better" claim, any retrieval figure beyond the pre-registered sentence above, any user count, any comparison number against spurgeon.ai, SermonAudio or Sermon Shots.
+- That the confidence check has been retuned or improved. A retune is planned but not done and is waiting on an author choice; the description's banner sentence is about the check as it stands.
 - A stacked-phone-layout check in a real browser (`reports/W3-SIDE.md`: not run).

@@ -397,6 +397,8 @@ Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a sc
 - 1 in `test_eval_leak`: `test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk`.
 - 1 in `test_deploy_regex`: `test_infra_yaml_matches_when_the_file_is_present`.
 
+The list above is from this run (10 skips). CTO's review runs, on a different machine, reported `skipped=11`; there, empty scratch caches (no ONNX graph, weights, index or audio) caused all 11 skips. The skip count depends on the machine.
+
 `uv lock --check` with the same scratch `UV_CACHE_DIR`: exit 0, `Resolved 79 packages in 0.52ms`.
 
 **Cache.** `find /cache -printf '%p\t%s\t%T@\n' | sort`, before the suite and after `uv lock --check`. Both listings have 132629 entries. sha256 both `9742ff943e45839c910c6d14434471c5130aefa7ecaf161a43dd7124bd112122`. Paths, sizes and mtimes: no difference. An empty writability probe `/cache/.r3-probe-w4` was created and removed before that before-snapshot. It is not in either listing.
@@ -420,7 +422,7 @@ Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a sc
 
 The count of the retired GPU-mask variable name in this report is `0` (`grep -c` for it returns 0). The retired prefixed export command is replaced by the README command, `uv run --group bench python scripts/export_onnx.py`. The captured missing-graph line in the sandbox log now shows that command too; it was edited, not re-captured. `origin/main` was merged cleanly with no conflicts. That drops the three bench files from the diff.
 
-`git diff --stat origin/main...HEAD`:
+R5 `git diff --stat origin/main...HEAD` (at the R5 head, not the merged stat):
 
 ```
  README.md                       |  70 +++++--
@@ -429,6 +431,18 @@ The count of the retired GPU-mask variable name in this report is `0` (`grep -c`
  tests/test_api_path.py          |  25 +++
  4 files changed, 517 insertions(+), 21 deletions(-)
 ```
+
+Final merged stat for #74, `git diff --stat <merge-base>..b6fce2ec03747cf7eccd6928e2f68d2219b005ae` with merge-base `e6c1f9696ee18f8bcd3e67abdbbdb6783de76863`:
+
+```
+ README.md                       |  70 +++++--
+ reports/W4-README-QUICKSTART.md | 439 ++++++++++++++++++++++++++++++++++++++++
+ src/preached/search.py          |  12 +-
+ tests/test_api_path.py          |  25 +++
+ 4 files changed, 525 insertions(+), 21 deletions(-)
+```
+
+Per file: README +53/-17, this report +439, `src/preached/search.py` +8/-4, `tests/test_api_path.py` +25.
 
 ## R6 (CTO CONDITIONAL at ffd31a5)
 
