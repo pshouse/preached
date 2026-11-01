@@ -5,15 +5,15 @@ Base: `origin/main` 3a93147a3c71ea2a5127dc77a82a2628d6b5b07f, branch `docs/w5-de
 ## What changed and why
 
 DEMO-SCRIPT
-- New 20 s "why" beat inside shot 2: zoom on the grey line under card 1, UI words below, narration that does not overclaim.
-- Second question swapped from the Assurance button query to `What is the narrow way to heaven?` (#90 query 18: strong, graded 2,1,2, finds Sermon on the Mount 11 and 12 from plain wording). The old query stays as a verified fallback. Money (shot 2) and cryptocurrency (shot 3) are kept: they were verified on the page at `9fe33ca`, and #90 did not test them; a #90 pick was swapped in only where it adds something (narrow way shows semantic matching). #90's other picks (justified by faith, witness of the Spirit, born again, repentance) are added to the fallback table with their grades.
+- New 20 s "why" beat inside shot 2: zoom on the smaller line under card 1, UI words below, narration that does not overclaim.
+- Second question swapped from the Assurance button query to `What is the narrow way to heaven?` (narrow way: a plain question that lands on Sermon on the Mount 11 and 12; BM25 also matches it, 6 rows). The old query stays as a verified fallback. Money (shot 2) and cryptocurrency (shot 3) are kept: they were verified on the page at `9fe33ca`, and #90 did not test them; a #90 pick was swapped in only where it adds something (narrow way shows semantic matching). #90's other picks (justified by faith, witness of the Spirit, born again, repentance) are added to the fallback table with their grades.
 - Shot 3 gets a "do not generalise" note from #90 section (c) (2 of 4 off-topic queries abstained; 1 false abstain), narration softened to "on a question like this", bitcoin and bicycle as fallbacks that abstained in #90, and an optional "Hide low-confidence results" 5 s.
 - "Avoid on camera" list extended with #90's mislabelled queries (prodigal son, suffering, enemies, Super Bowl, cookie, and the three `weak`-but-good phrasings).
 - Pre-flight: a why-line check, and the staleness of `9fe33ca` stated at the top. "Things not to say" adds: no "knows when it can't answer", no claim of a retune, the why line is not a correctness claim.
 - Sections 4 and 5 narration trimmed so the longer shot 2 fits.
 
 SUBMISSION-DRAFT
-- Description mentions the per-result "how it was found" with rank; banner sentence now says "often" (honest after #90); Spurgeon/Edwards clause dropped from the description to stay under 250 (they remain in the claims table).
+- Description mentions the per-result "how it was found" with its ranks; banner sentence now says "sometimes" and notes the false abstain (honest after #90); Spurgeon/Edwards clause dropped from the description to stay under 250 (they remain in the claims table).
 - New claims-table row for why; banner row carries the #90 numbers; "Not claimed" lists the retune. Status line now says `3a93147`, and says the test-suite and demo-query rows were last run at `9fe33ca` and not re-run.
 - The confidence retune ADR/prereg (#93) is untouched and is not claimed done.
 
@@ -52,11 +52,30 @@ Shot 1: 35 s. Shot 2: 95 s (45 money and Play, 20 why, 30 second question). Shot
 
 ## Word counts (description block, `sed -n 11,21p | wc -w`)
 
-Before: 231. After: 241. Limit 250.
+Before: 231. After R1: 241. After R2: 247 (target 247, limit 250).
 
 ## PR BODY
 
-Docs-only refresh of the demo script and submission draft to match `main` 3a93147: adds the per-result "why" beat (UI wording cited to file:line), swaps in a #90 query, carries #90's confidence/abstain cautions, and mentions why-transparency in the description (231 to 241 words, limit 250). Does not touch or claim the confidence retune (#93). Why numbers for the demo queries are not recorded (no server run); pre-flight tells Patrick to read them live.
+Docs-only refresh of the demo script and submission draft to match `main` 3a93147: adds the per-result "why" beat (UI wording cited to file:line), swaps in a #90 query, carries #90's confidence/abstain cautions, and mentions why-transparency in the description (231 to 247 words, limit 250). Does not touch or claim the confidence retune (#93). Why numbers for the demo queries are not recorded (no server run); pre-flight tells Patrick to read them live.
+
+## R2 (CTO r1 CONDITIONAL on reviewed head 7a3773e)
+
+Branch tip confirmed at 7a3773e85537ccc0130c73059bddc52b64363a60 before editing; main not merged, no rebase. Docs only; no tests run, no server started, no cache path set or read. Real-cache snapshot diff: none taken or needed because nothing touched `/cache` (no command in this task read or wrote it).
+
+| Item | Where |
+| --- | --- |
+| MF1 | `docs/SUBMISSION-DRAFT.md:21` replaced verbatim. The threads parenthetical stays in the claims row. |
+| MF2 | `docs/SUBMISSION-DRAFT.md:19` replaced verbatim; the banner claims-table row now reads '(so the description says "sometimes" and notes the false abstain)'; same wording at this report's line 16. Heading now says 247 words. |
+| MF3 | `docs/DEMO-SCRIPT.md:33` narration replaced verbatim; this report's line 9 uses the given parenthetical. |
+| MF4 | Claims-table why row in `docs/SUBMISSION-DRAFT.md` (line 34) now says: in the form "Found by both keyword (#N) and meaning (#M) search · similarity 0.NN" (`app/static/app.js:217-235`); the invented 0.81 example is gone. |
+| MF5 | `docs/DEMO-SCRIPT.md:29` why narration cut from 72 to 54 words (about 22 s at 150 wpm, for the 20 s beat). The "54-word version in the report" the task cites is not in this report, so I wrote the 54-word text myself; the beat stays 20 s and the shot timing (285 s) is unchanged. |
+| MF6 | New pre-flight checkbox "Narrow-way cards and why lines" in `docs/DEMO-SCRIPT.md` (before the "Why line" item): read the cards and why lines live; if they differ from #90's, use the fallback question. |
+| SF2 | #93's frozen prereg is not amended. The G4 sentence now sits at `docs/DEMO-SCRIPT.md:118` ("Things not to say") and is still verbatim. "Nothing to re-pin" above covered only DEPLOY.md and the tests. |
+| Nits | "the smaller line under card 1" replaces "quiet grey line" (DEMO-SCRIPT and this report); "with its ranks" (SUBMISSION-DRAFT:13); PR BODY synced (247 words). |
+
+Description word count (`sed -n 11,21p docs/SUBMISSION-DRAFT.md | wc -w`): **247** (target 247, max 250).
+
+Out of scope, untouched: 141 sermons vs "143 recordings".
 
 `git diff --stat origin/main..HEAD`:
 
