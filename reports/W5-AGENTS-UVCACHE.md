@@ -14,7 +14,7 @@ Both lines verified by reading them after the edit.
 Ran 1100 tests in 256s: **OK (skipped=12)**, exit 0.
 
 ## 4. /cache before/after
-Snapshot (`find /cache -printf '%p %s %T@'`, 132697 entries) before and after the run: no differences.
+Snapshot (`find /cache -printf '%p %s %T@'`, 132697 entries) before and after the run: ONE difference: `/cache/index/cc-speech.sqlite-shm` mtime changed (1793492570 -> 1793492869; size 32768 unchanged; no paths added/removed). My run pointed every cache var at mktemp dirs, so I did not intend to touch it; I cannot prove the cause. A `-shm` file is rewritten whenever any process opens/reads that SQLite DB (e.g. another agent or a running server on the shared /cache), so a concurrent reader is the likely explanation, but this is unverified. Flagging for CoS.
 
 ## Rule-4 grep
 `grep -n AGENTS docs/DEPLOY.md tests/test_deploy_alerts.py` returned nothing: no DEPLOY cite points at AGENTS.md, so nothing to re-pin.
