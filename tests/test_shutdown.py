@@ -39,7 +39,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from preached.artifacts import GRANITE_REVISION, VARIANT_FILES, required_filenames  # noqa: E402
 from preached.store import connect  # noqa: E402
-child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
+if __package__:
+    from .subproc_env import child_env
+else:
+    from subproc_env import child_env
 
 SERVER = ROOT / "app" / "server.py"
 PYTHON = ROOT / ".venv" / "bin" / "python"

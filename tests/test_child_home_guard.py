@@ -15,8 +15,15 @@ The guard refuses a source it cannot trust and skips with the reason: a source
 file the test process can write to (unless PREACHED_GUARD_ALLOW_RW_SRC=1), a
 non-empty index/wesley.sqlite-wal, or an existing index/wesley.sqlite-journal.
 Only the main db file is copied, so committed WAL frames would silently be
-missing from the copy. Without the variable, or without the files, the tests
-skip and say why.
+missing from the copy. Only the value "1" allows a writable source. A dangling
+-wal or -journal symlink counts as present. After the copy the guard looks again:
+it refuses if a -wal or -journal appeared, or if a source file's size or mtime
+changed while it was copied. Without the variable, or without the files, the
+tests skip and say why.
+
+Under root every file is writable (``os.access`` is true even for ``chmod a-w``),
+so a read-only copy is refused for root unless the source is a read-only mount
+or PREACHED_GUARD_ALLOW_RW_SRC=1 is set.
 """
 
 from __future__ import annotations
@@ -35,7 +42,10 @@ from unittest.mock import patch
 
 _pkg = "tests." if __package__ else ""
 test_shutdown = importlib.import_module(_pkg + "test_shutdown")
-subproc_env = importlib.import_module(_pkg + "subproc_env")
+if __package__:
+    from . import subproc_env
+else:
+    import subproc_env
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC_ENV = "PREACHED_GUARD_REAL_SRC"
@@ -52,6 +62,48 @@ def _source_files(root: Path) -> list[Path]:
     return [root / "index" / "wesley.sqlite", *(folder / name for name in _NAMES)]
 
 
+def _sidecar_problem(db: Path) -> str | None:
+    """Why a -wal or -journal next to ``db`` makes a byte copy untrustworthy, or None.
+
+    ``lexists`` so that a dangling symlink counts as present (``exists`` follows it).
+    """
+    wal = db.with_name(db.name + "-wal")
+    if os.path.lexists(wal):
+        try:
+            size = wal.stat().st_size
+        except OSError:
+            size = -1  # dangling or unreadable: cannot show it is empty
+        if size != 0:
+            return f"has a non-empty {wal.name}: only the main db is copied, so committed WAL frames would be missing"
+    journal = db.with_name(db.name + "-journal")
+    if os.path.lexists(journal):
+        return f"has a {journal.name}: the db may be mid-transaction"
+    return None
+
+
+def _stamp(root: Path) -> dict[Path, tuple[int, int]]:
+    return {p: (p.stat().st_size, p.stat().st_mtime_ns) for p in _source_files(root)}
+
+
+def _changed_during_copy(root: Path, before: dict[Path, tuple[int, int]]) -> str | None:
+    """Re-check the source after the copy: new -wal/-journal, or a file whose size or mtime moved."""
+    sidecar = _sidecar_problem(root / "index" / "wesley.sqlite")
+    if sidecar:
+        return f"source {sidecar} (after the copy)"
+    moved = [str(p.relative_to(root)) for p, stamp in before.items() if _stamp_of(p) != stamp]
+    if moved:
+        return f"source changed while it was copied: {moved[0]}"
+    return None
+
+
+def _stamp_of(path: Path) -> tuple[int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
 def _skip_reason_for(src: str | None, environ=os.environ) -> str | None:
     if not src:
         return f"{SRC_ENV} is not set: no real index and ONNX model to copy (rule 5 forbids using a real cache directly)"
@@ -63,12 +115,9 @@ def _skip_reason_for(src: str | None, environ=os.environ) -> str | None:
     if missing:
         return f"{SRC_ENV}={src} lacks {missing} under models/granite-english-r2-onnx/{_REV}"
     db = root / "index" / "wesley.sqlite"
-    wal = db.with_name(db.name + "-wal")
-    if wal.exists() and wal.stat().st_size > 0:
-        return f"{SRC_ENV}={src} has a non-empty {wal.name}: only the main db is copied, so committed WAL frames would be missing"
-    journal = db.with_name(db.name + "-journal")
-    if journal.exists():
-        return f"{SRC_ENV}={src} has a {journal.name}: the db may be mid-transaction"
+    sidecar = _sidecar_problem(db)
+    if sidecar:
+        return f"{SRC_ENV}={src} {sidecar}"
     if environ.get(ALLOW_RW_ENV) != "1":
         writable = [str(p.relative_to(root)) for p in _source_files(root) if os.access(p, os.W_OK)]
         if writable:
@@ -94,12 +143,17 @@ class RealModelChildHomeTests(unittest.TestCase):
         cls.cache = Path(tempfile.mkdtemp(prefix="preached-homeguard-")).resolve()
         assert Path(tempfile.gettempdir()).resolve() in cls.cache.parents
         src = Path(_SRC)
+        before = _stamp(src)
         (cls.cache / "index").mkdir()
         shutil.copyfile(src / "index" / "wesley.sqlite", cls.cache / "index" / "wesley.sqlite")
         cls.onnx = cls.cache / "models" / "granite-english-r2-onnx"
         (cls.onnx / _REV).mkdir(parents=True)
         for name in _NAMES:
             shutil.copyfile(src / "models" / "granite-english-r2-onnx" / _REV / name, cls.onnx / _REV / name)
+        problem = _changed_during_copy(src, before)
+        if problem:
+            shutil.rmtree(cls.cache, ignore_errors=True)
+            raise unittest.SkipTest(problem)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -204,6 +258,62 @@ class SourceRefusalTests(unittest.TestCase):
         reason = _skip_reason_for(str(root), {ALLOW_RW_ENV: "1"})
         self.assertIsNotNone(reason)
         self.assertIn("-wal", reason)
+
+    def test_override_values_other_than_one_do_not_allow_a_writable_source(self) -> None:
+        root = self._root()
+        (root / "index" / "wesley.sqlite").chmod(0o644)
+        for value in ("0", "", "true", "yes", "11", " 1", "1 "):
+            reason = _skip_reason_for(str(root), {ALLOW_RW_ENV: value})
+            self.assertIsNotNone(reason, repr(value))
+            self.assertIn("writable", reason)
+
+    def test_a_writable_model_file_alone_is_refused(self) -> None:
+        root = self._root()
+        model = _source_files(root)[1]
+        model.chmod(0o644)
+        if not os.access(model, os.W_OK):
+            self.skipTest("cannot make a file writable here")
+        reason = _skip_reason_for(str(root), {})
+        self.assertIsNotNone(reason)
+        self.assertIn(model.name, reason)
+        self.assertIsNone(_skip_reason_for(str(root), {ALLOW_RW_ENV: "1"}))
+
+    def test_a_dangling_journal_symlink_is_refused(self) -> None:
+        root = self._root()
+        os.symlink(root / "nowhere", root / "index" / "wesley.sqlite-journal")
+        reason = _skip_reason_for(str(root), {ALLOW_RW_ENV: "1"})
+        self.assertIsNotNone(reason)
+        self.assertIn("-journal", reason)
+
+    def test_a_dangling_wal_symlink_is_refused(self) -> None:
+        root = self._root()
+        os.symlink(root / "nowhere", root / "index" / "wesley.sqlite-wal")
+        reason = _skip_reason_for(str(root), {ALLOW_RW_ENV: "1"})
+        self.assertIsNotNone(reason)
+        self.assertIn("-wal", reason)
+
+    def test_recheck_after_copy_sees_a_new_wal_or_journal(self) -> None:
+        root = self._root()
+        before = _stamp(root)
+        self.assertIsNone(_changed_during_copy(root, before))
+        (root / "index" / "wesley.sqlite-journal").write_bytes(b"")
+        self.assertIn("-journal", _changed_during_copy(root, before))
+        (root / "index" / "wesley.sqlite-journal").unlink()
+        (root / "index" / "wesley.sqlite-wal").write_bytes(b"frames")
+        self.assertIn("-wal", _changed_during_copy(root, before))
+
+    def test_recheck_after_copy_sees_a_size_or_mtime_change(self) -> None:
+        root = self._root()
+        db = root / "index" / "wesley.sqlite"
+        before = _stamp(root)
+        os.utime(db, ns=(1, 1))
+        self.assertIn("wesley.sqlite", _changed_during_copy(root, before))
+        before = _stamp(root)
+        model = _source_files(root)[1]
+        os.utime(model, ns=(before[model][1], before[model][1]))  # same mtime, new size below
+        model.chmod(0o644)
+        model.write_bytes(b"longer than before")
+        self.assertIn(model.name, _changed_during_copy(root, before))
 
     def test_empty_wal_is_not_a_refusal(self) -> None:
         root = self._root()
