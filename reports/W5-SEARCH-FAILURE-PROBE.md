@@ -420,6 +420,6 @@ Summary: 30 queries in five groups plus 11 controls, run in-process on main `d8a
 `git diff --stat origin/main...HEAD`:
 
 ```
- reports/W5-SEARCH-FAILURE-PROBE.md | 999 ++++
- 1 file changed, 999 insertions(+)
+ reports/W5-SEARCH-FAILURE-PROBE.md | 425 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 425 insertions(+)
 ```
