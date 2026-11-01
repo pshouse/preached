@@ -1,6 +1,6 @@
 # W5 HTTP security audit
 
-Reviewed `origin/main` at `d8a096693f82e8b00933451cb1060a71efafd80a` (this branch started there; main had not moved). Scope is this report. No file under `app/`, `src/`, `tests/`, or `docs/` was edited. Findings that need code are recommendations.
+Reviewed `origin/main` at `d8a096693f82e8b00933451cb1060a71efafd80a` (this branch started there; main had not moved). Every `file:line` cite in this report is at `d8a096693f82e8b00933451cb1060a71efafd80a` (`app/server.py`, `src/preached/*`, `scripts/serve.sh`, `docs/DEPLOY.md`, `app/static/app.js`). The stdlib cites in F-06 are CPython 3.12.16 `http/server.py`. Scope is this report. No file under `app/`, `src/`, `tests/`, or `docs/` was edited. Findings that need code are recommendations.
 
 The process on main is a stdlib `ThreadingHTTPServer` (`app/server.py`). It serves GET and HEAD only. It sets no cookie and no CORS header. There is no application credential. The bind address is the authorization boundary.
 
@@ -89,7 +89,7 @@ A following `GET /api/search?q=grace&mode=bm25&k=1` from `127.0.0.1` was 200. Th
 
 `scripts/serve.sh` passes `PREACHED_TRUSTED_PROXIES` only when it is set (`137`–`138`). The default is empty, which `docs/DEPLOY.md` already records: behind `tailscale serve`, every client is the socket peer `127.0.0.1` and shares one bucket (known gap, "With `PREACHED_TRUSTED_PROXIES` left empty"). On that deploy, four POSTs from anyone who can open the port stick search, the page, and static files for the whole process, while `/healthz` stays green (until the `POST /healthz` variant below). This probe did not run Tailscale. The per-key behavior was measured; the process-wide reading is that measurement plus the documented shared peer.
 
-``POST /healthz` leaks the health table too (read from the code at `d8a0966`; not run against a server, and nothing was run against the demo on port 8800). `_reject_method` (`2395`) calls `_blocked` (`2230`), which computes `health = path == "/healthz"` (`2250`), passes it to `acquire(key, health=health)` (`2276`), and stores `self._slot_health` (`2287`). `acquire_slot` (`2708`–`2716`) then takes the slot from `_health_slots_by_key` (`2710`) and caps it at `max_requests_per_client`, the same value of 4 as the search table (`2713`, `250`). The 405 path never calls `release_slot`; only `_respond`'s `finally` does (`2362`–`2370`). Four `POST /healthz` from one client key therefore fill that key's health table. The next `GET /healthz` from that key reaches the same busy branch (`2276`–`2285`) and returns 503 `{"error": "unavailable"}` with `Retry-After: 1`, because `_route` (`2299`–`2300`) calls `_blocked` before it builds the health payload (`2307`–`2309`). Four requests fit under the health rate limit (60 per key for `/healthz`, `268`–`269`), so the rate check (`2264`) does not stop them first. That 503 is the busy refusal, not the health payload, but a monitor that polls `/healthz` reads it as down. Behind `tailscale serve` with `PREACHED_TRUSTED_PROXIES` empty, the shared `127.0.0.1` key makes this process-wide. So the earlier statement that `/healthz` stays green holds only for the search-path variant (POST/PUT/DELETE/PATCH to a non-health target).
+`POST /healthz` leaks the health table too (read from the code at `d8a0966`; not run against a server, and nothing was run against the demo on port 8800). `_reject_method` (`2395`) calls `_blocked` (`2230`), which computes `health = path == "/healthz"` (`2250`), passes it to `acquire(key, health=health)` (`2276`), and stores `self._slot_health` (`2287`). `acquire_slot` (`2708`–`2716`) then takes the slot from `_health_slots_by_key` (`2710`) and caps it at `max_requests_per_client`, the same value of 4 as the search table (`2713`, `250`). The 405 path never calls `release_slot`; only `_respond`'s `finally` does (`2362`–`2370`). Four `POST /healthz` from one client key therefore fill that key's health table. The next `GET /healthz` from that key reaches the same busy branch (`2276`–`2285`) and returns 503 `{"error": "unavailable"}` with `Retry-After: 1`, because `_route` (`2299`–`2300`) calls `_blocked` before it builds the health payload (`2307`–`2309`). Four requests fit under the health rate limit (60 per key for `/healthz`, `268`–`269`), so the rate check (`2264`) does not stop them first. That 503 is the busy refusal, not the health payload, but a monitor that polls `/healthz` reads it as down. Behind `tailscale serve` with `PREACHED_TRUSTED_PROXIES` empty, the shared `127.0.0.1` key makes this process-wide. So the earlier statement that `/healthz` stays green holds only for the search-path variant (POST/PUT/DELETE/PATCH to a non-health target).
 
 Browser path (UNTESTED). A cross-origin `fetch(url, {method: "POST", mode: "no-cors"})` is a CORS simple request, so the browser sends it with no preflight. The server checks `Host` (`2223`–`2225`) but never reads `Origin`: `app/server.py` has no `Origin` or `Sec-Fetch-*` handling (a case-insensitive search at `d8a0966` finds none). Any page a tailnet member opens could therefore plausibly send four POSTs to the server's tailnet address and trigger F-01 from that member's browser. This was not tested: no browser was driven, and the page-to-server request was not sent. Two things could change the outcome and were not checked: a browser blocking requests to private or tailnet addresses (Private Network Access behavior varies by browser version), and the `Host` the browser sends having to be on the `--hosts` allowlist, which it is if the attacker page uses the same hostname or address the operator already serves on.
 
@@ -98,6 +98,8 @@ Browser path (UNTESTED). A cross-origin `fetch(url, {method: "POST", mode: "no-c
 Recommendation: release the slot before `_reject_method` returns (the same `finally` as `_respond`), or send the 405 through `_respond`. Add a test that sends four 405s from one peer and then asserts `GET /api/search` is 200 and the slot table is empty.
 
 Covered today: `tests/test_server.py::ServerTests.test_methods_host_and_body_limits` sends one POST and expects 405. `tests/test_exposure.py` `SlotReleaseTests` and `RequestSlotRaceTests` cover `release_slot` on the GET path. Neither sends four 405s and then a GET.
+
+At `e434539`: unchanged (identical lines).
 
 ### F-02 — Medium — a failed church search logs the question
 
@@ -110,6 +112,8 @@ The successful classic search does not do this. A probe query `What did Jane Con
 The church side was not started on the probe (no private index, and `serve.sh` passes no `--church-library` or `--church-index`). This finding is the code path, not a captured church log line. `docs/DEPLOY.md` Part 3 still says the church side is not deployed.
 
 `tests/test_deploy_alerts.py` pins the current call (`app/server.py:1602`, `logging.exception("church search failed; that side is empty")`). That pin records the call. It does not assert that the query is absent. `tests/test_church_harden.py::assert_church_clean` asserts a startup log lacks the failure string. No test asserts that a failed church search omits the MATCH text.
+
+At `e434539`: unchanged (identical lines).
 
 Recommendation: log `type(exc).__name__` only, the same way `_respond_inner` does. The PR that does that has to move the deploy-alert pin and any DEPLOY.md sentence that cites the line. Keep the client body as the empty church side; that part already hides the error.
 
@@ -158,7 +162,7 @@ The switch works, and it is filesystem-only. The probe above engaged a regular f
 
 `main`'s `build_app` call (`3316`–`3330`) does not pass `kill_file`. `disabled` then uses `PREACHED_KILL_FILE` if that variable is set, and otherwise stays off (`1301`–`1306`). `scripts/serve.sh:92` defaults `PREACHED_KILL_FILE` to `$ROOT/KILL` and passes it. A direct `python app/server.py` or `uv run`, with the variable unset, has no kill file to touch.
 
-Nothing logs the transition. The probe log shows the 503 access lines and no line that says the switch engaged or cleared. `PREACHED_DISABLED` is this process's environment (`1288`–`1291`). Another shell cannot flip it. That part matches the hardening table.
+Nothing logs the transition. The probe log shows the 503 access lines and no line that says the switch engaged or cleared. `PREACHED_DISABLED` is this process's environment (read at `app/server.py:1298`–`1300`, at `d8a0966`). Another shell cannot flip it. That part matches the hardening table.
 
 Recommendation: when `main` starts with no kill path, default the same `$ROOT/KILL` path `serve.sh` uses, and log one info line when the switch goes on and one when it goes off. Keep contents and the path out of the client body. Do not add an HTTP disable route; the 404 is the right answer for a listener that may be reachable past loopback.
 
@@ -226,7 +230,7 @@ These were probed or read so the audit would cover them. They are not new findin
 
 ## Prioritized fixes
 
-Four serial cuts, adopting the CTO's order. Each cut re-pins `docs/DEPLOY.md` cites and `tests/test_deploy_alerts.py`. Cuts 3 and 4 may swap, but no two cuts run in parallel.
+Four serial cuts, adopting the CTO's order. Each cut re-pins `docs/DEPLOY.md` cites and `tests/test_deploy_alerts.py`. The order is fixed: F-01, F-02, startup/config, then headers/framing. No two cuts run in parallel.
 
 1. F-01 alone. Release the in-flight slot on every 405, including `POST /healthz` (the health table). Test: four 405s, then `GET /api/search` is 200; four `POST /healthz`, then `GET /healthz` is 200; the slot tables are empty. Consider an `Origin` check in the same cut only if the CTO wants it; the browser path is untested.
 2. F-02. Log a church search failure as the exception type only. Move the `tests/test_deploy_alerts.py` pin in that same cut. This MUST land before any church deploy.
@@ -242,3 +246,12 @@ Limits of this snapshot: it lists path, size, and mtime to depth 3 only. It reco
 One line differs. `/cache/index/wesley.sqlite-shm` stayed 32768 bytes. Its mtime moved from `1793496003.2430169390` to `1793498230.8235476600` (`2026-10-31 21:57:10 EDT`). `/cache/index/wesley.sqlite` and `/cache/index/wesley.sqlite-wal` were unchanged, and the wal file was still 0 bytes. At the after snapshot no process had the real index open.
 
 The cause of that mtime change is unverified. The mtime falls inside the demo refresh window (21:57:08–21:57:12), and #89's `copy_index` run reported the same shm mtime change, but no process was observed touching the file. This audit's server was started with `--index` on a file under `/tmp/w5-audit/` and with all seven cache variables under `/tmp/w5-audit/` (the environ was read from the live process), so it had no reason to open the real index. That is a reason to expect no involvement, not proof of it.
+
+## R3 changes (99-XE-AUDIT-R3)
+
+- MF-r2-1: the sha-of-cites sentence is added at line 3.
+- MF-r2-2: "cuts 3 and 4 may swap" is dropped; the fixed order is stated in Prioritized fixes (line 233).
+- (a) "At `e434539`: unchanged (identical lines)." is added to F-01 (line 102) and F-02 (line 116).
+- (b) The stray double backtick before `POST /healthz` is fixed (line 92).
+- (c) F-05's kill-switch cite is now `app/server.py:1298`–`1300` (line 165).
+- (d) F-04's severity reads Low/Info in the table (line 65) and the heading (line 132). The report has no PR BODY section and no other place that gives it.
