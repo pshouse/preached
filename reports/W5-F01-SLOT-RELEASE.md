@@ -1,6 +1,6 @@
 # W5-F01: 405 releases the in-flight slot
 
-Branch `fix/w5-405-slot-release`, cut from `origin/main` at `e434539`, resynced onto `origin/main` `8d46f14` (see the last section). Audit F-01 (High) in `reports/W5-HTTP-SECURITY-AUDIT.md` (as merged on main). Cause checked on that main before the edit.
+Branch `fix/w5-405-slot-release`, cut from `origin/main` at `e434539`, resynced onto `origin/main` `8d46f14` (see the last section). Audit F-01 (High) in `reports/W5-HTTP-SECURITY-AUDIT.md` (merged on main by PR #91, merge commit `1a0a340`; F-01 at `:62` and `:70`). Cause checked on that main before the edit.
 
 ## Cause
 
@@ -45,7 +45,7 @@ Full suite, with `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `
 
 ```
 Ran 1130 tests in 275.341s
-OK (skipped=12)
+OK (skipped=12) (machine not recorded; tree `8d46f14` + branch)
 ```
 
 `test_every_cited_file_line_holds_its_string` is in that run. The suite exited 0, so that test has no failure from this change.
@@ -60,4 +60,4 @@ Conflicts were in `docs/DEPLOY.md` (cites) and `tests/test_deploy_alerts.py` (CI
 
 Burst tests on the merged branch: RED with `app/server.py` swapped for `origin/main`'s copy (restored after), both four-POST halves fail with `(False, 503) != (True, 200)` and `body=b'{"error": "unavailable"}'`; GREEN on the merged tree, `test_reject_method_slot` 10 tests OK.
 
-Full suite on temp caches (all seven variables on fresh `mktemp -d` dirs): `Ran 1146 tests in 253.312s`, `OK (skipped=12)`. No `test_every_cited_file_line_holds_its_string` failure. `/cache` listing (`find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort`, 1640 lines) is identical before and after.
+Full suite on temp caches (all seven variables on fresh `mktemp -d` dirs): `Ran 1146 tests in 253.312s`, `OK (skipped=12)` (machine not recorded; tree `8d46f14` + branch). No `test_every_cited_file_line_holds_its_string` failure. `/cache` listing (`find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort`, 1640 lines) is identical before and after.
