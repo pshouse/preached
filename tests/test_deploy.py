@@ -23,6 +23,10 @@ from unittest import mock
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+# The interpreter running the suite and its environment. Tests link bundles to
+# this, never to ROOT/.venv: a dangling link makes `uv run` create a bare
+# .venv in the worktree (no numpy), which later tests then pick up.
+VENV = Path(sys.prefix)
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
@@ -445,6 +449,9 @@ class ImportGuardTests(unittest.TestCase):
 class BundleTests(unittest.TestCase):
     def _env(self, **extra) -> dict:
         env = os.environ.copy()
+        # build-bundle.sh falls back to `python3` on PATH when ROOT/.venv is
+        # absent. Put the suite's interpreter first so it is never a bare one.
+        env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
         env.update(extra)
         return env
 
@@ -476,7 +483,7 @@ class BundleTests(unittest.TestCase):
             shutil.copytree(ROOT / rel, source / rel, ignore=ignore)
         for rel in ("pyproject.toml", "uv.lock", "README.md", "AGENTS.md", ".python-version", "LICENSE", "NOTICE"):
             shutil.copy2(ROOT / rel, source / rel)
-        (source / ".venv").symlink_to(ROOT / ".venv")
+        (source / ".venv").symlink_to(VENV)
         model = onnx_root / GRANITE_REVISION
         pins = {
             "FP32_ONNX_SHA256": hashlib.sha256((model / "model.fp32.onnx").read_bytes()).hexdigest(),
@@ -1028,6 +1035,17 @@ class BundleTests(unittest.TestCase):
             onnx = root / "onnx"
             onnx.mkdir()
             log = root / "server.log"
+            # A checkout-shaped tree in the temp dir with the suite's own
+            # environment linked in, so serve.sh never reaches ROOT/.venv.
+            tree = root / "tree"
+            (tree / "scripts").mkdir(parents=True)
+            (tree / ".git").mkdir()
+            script = tree / "scripts" / "serve.sh"
+            script.write_bytes((ROOT / "scripts" / "serve.sh").read_bytes())
+            script.chmod(0o755)
+            (tree / "src").symlink_to(ROOT / "src")
+            (tree / "app").symlink_to(ROOT / "app")
+            (tree / ".venv").symlink_to(VENV)
             env = self._env(
                 PREACHED_LIBRARY="wesley",
                 PREACHED_INDEX=str(index),
@@ -1044,8 +1062,8 @@ class BundleTests(unittest.TestCase):
             )
             with log.open("w") as handle:
                 proc = subprocess.Popen(
-                    ["bash", str(ROOT / "scripts" / "serve.sh")],
-                    cwd=ROOT,
+                    ["bash", str(script)],
+                    cwd=tree,
                     env=env,
                     stdout=handle,
                     stderr=subprocess.STDOUT,
@@ -1159,6 +1177,7 @@ class BundleTests(unittest.TestCase):
 
     def _serve_env(self, **extra: str) -> dict:
         env = os.environ.copy()
+        env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
         for name in list(env):
             if name.startswith("PREACHED_"):
                 env.pop(name)
@@ -1174,7 +1193,7 @@ class BundleTests(unittest.TestCase):
             script.chmod(0o755)
             (bundle / "src").symlink_to(ROOT / "src")
             (bundle / "app").symlink_to(ROOT / "app")
-            (bundle / ".venv").symlink_to(ROOT / ".venv")
+            (bundle / ".venv").symlink_to(VENV)
             index_dir = bundle / "index"
             index_dir.mkdir()
             index = index_dir / "wesley.sqlite"
@@ -1304,7 +1323,7 @@ class BundleTests(unittest.TestCase):
         out = root / "out"
         result = self._build(source, out, onnx_root, index)
         self.assertEqual(result.returncode, 0, result.stderr)
-        (out / ".venv").symlink_to(ROOT / ".venv")
+        (out / ".venv").symlink_to(VENV)
         return out
 
     def _copy(self, bundle: Path, name: str) -> Path:
@@ -1454,7 +1473,7 @@ class BundleTests(unittest.TestCase):
             out = self._built_bundle(root)
             canary = root / "canary"
             self._plant_bytecode(out, canary)
-            probe = [str(ROOT / ".venv" / "bin" / "python"), "-c", "import preached.paths"]
+            probe = [sys.executable, "-c", "import preached.paths"]
             base = {"PATH": os.environ["PATH"], "PYTHONPATH": f"{out / 'src'}:{out}"}
             # Control: without a cache prefix the planted bytecode does run.
             subprocess.run(probe, cwd=root, env=base, check=True, timeout=60)
@@ -1582,7 +1601,7 @@ class BundleTests(unittest.TestCase):
         # Bytecode for app/bundle.py whose bundle_problem returns None. A
         # direct start imports app.bundle before main() runs the check, so
         # this must not be read.
-        python = str(ROOT / ".venv" / "bin" / "python")
+        python = sys.executable
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             out = self._built_bundle(root)
@@ -1615,7 +1634,7 @@ class BundleTests(unittest.TestCase):
         # Control for the test above: the same clean bundle does start
         # directly, and the per-process bytecode prefix is removed at exit
         # (SIGTERM included).
-        python = str(ROOT / ".venv" / "bin" / "python")
+        python = sys.executable
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             out = self._built_bundle(root)
