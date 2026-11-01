@@ -151,6 +151,37 @@ button:hover { background: #000; }
   border-style: dashed;
 }
 
+/* What the confidence banner levels mean. A <details>, so it works by tap,
+   click or keyboard, with no hover-only tooltip. */
+.levels {
+  margin: 0 0 0.75rem;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.levels summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.levels dl {
+  margin: 0;
+}
+
+.levels dt {
+  margin-top: 0.4rem;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.levels dd {
+  margin: 0;
+}
+
 .status.is-error {
   padding: 0.6rem 0.75rem;
   border: 2px solid var(--ink);
@@ -271,15 +302,22 @@ blockquote {
 .timing,
 .reader,
 .asr,
-.text-link {
+.text-link,
+.why {
   margin: 0;
 }
 
 .reader,
 .asr,
-.text-link {
+.text-link,
+.why {
   color: var(--ink-soft);
   font-size: 0.95rem;
+}
+
+/* Why a passage is listed: a quiet line under the card. */
+.why {
+  overflow-wrap: anywhere;
 }
 
 .card a {
