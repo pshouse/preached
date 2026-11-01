@@ -64,12 +64,12 @@ Finish run: `uv run python -m unittest tests.test_deploy_alerts tests.test_deplo
 
 ## CTO amended latency ruling (99-WK-R2)
 
-Exact phrase everywhere: "under a tenth of a second on a desktop CPU", optionally followed by "(p50 72 / p95 86 ms in a demo-style run, unpinned, k=5)". Not "well under"; no 56/68 ms figure, no pinning attribution. Changed lines at this head:
+Exact phrase everywhere: "under a tenth of a second on a desktop CPU", optionally followed by "(p50 72 / p95 86 ms in a demo-style run, unpinned, k=5)" (the optional parenthetical is left out of both docs because the finish grep for `pinn` would match "unpinned"). Not "well under"; no 56/68 ms figure, no pinning attribution. Changed lines at this head:
 
 - `docs/DEMO-SCRIPT.md:64` (narration): "well under a tenth of a second" -> "under a tenth of a second on a desktop CPU".
-- `docs/DEMO-SCRIPT.md:65` (backing): removed the 56 ms / 68 ms one-core pinned figure and the "do not say 56 ms on camera unless pinned" warning; now gives the exact phrase plus the optional unpinned 72 / 86 ms parenthetical (`reports/W4-DEMO-DRYRUN-2.md`). Also "on my desktop CPU, limited to one core" -> "on my desktop CPU".
-- `docs/SUBMISSION-DRAFT.md:21`: "well under a tenth of a second per search on a desktop CPU" -> "under a tenth of a second on a desktop CPU (p50 72 / p95 86 ms in a demo-style run, unpinned, k=5)".
-- `docs/SUBMISSION-DRAFT.md:35`: removed the 56/68 ms one-core pinned measurement and the "unpinned, warm, 1 ORT thread" wording; replaced with the exact phrase and parenthetical.
+- `docs/DEMO-SCRIPT.md:65` (backing): removed the 56 ms / 68 ms one-core pinned figure and the "do not say 56 ms on camera unless pinned" warning; now gives the exact phrase only. Also "on my desktop CPU, limited to one core" -> "on my desktop CPU".
+- `docs/SUBMISSION-DRAFT.md:21`: "well under a tenth of a second per search on a desktop CPU" -> "under a tenth of a second on a desktop CPU".
+- `docs/SUBMISSION-DRAFT.md:35`: removed the 56/68 ms one-core pinned measurement and the "unpinned, warm, 1 ORT thread" wording; replaced with the exact phrase.
 
 Earlier table rows 2, 3, 8 and 9 and the "CTO wording check (99-WH)" item 1 describe the superseded wording; this section replaces them.
 
