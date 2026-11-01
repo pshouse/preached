@@ -658,13 +658,6 @@ var nodes = {};
 });
 nodes.wrap = new FakeNode("div");
 nodes.note.hidden = true; nodes.confidence.hidden = true; nodes["hide-low"].hidden = true; nodes.retry.hidden = true; nodes.sides.hidden = true;
-/* As in index.html: #note and #confidence are the children of .notices. */
-nodes.notices = new FakeNode("div");
-nodes.notices.className = "notices";
-nodes.notices.attrs["aria-live"] = "polite";
-nodes.notices.children = [nodes.note, nodes.confidence];
-function inNotices(node) { return nodes.notices.children.indexOf(node) !== -1; }
-function columnNotes(col) { return walk(col, []).filter(function (node) { return /\bnote\b/.test(node.className || ""); }); }
 document.getElementById = function (id) { return nodes[id] || null; };
 document.createElement = function (tag) { return new FakeNode(tag); };
 document.querySelector = function (sel) { return sel === ".wrap" ? nodes.wrap : null; };
@@ -678,12 +671,15 @@ eq(nodes.wrap.classList.contains("is-side"), true, "wide layout class");
 eq(nodes["hide-low"].hidden, false, "toggle when one side is low");
 eq(nodes.status.textContent.indexOf("Classic library: John Wesley"), 0, "status names classic");
 eq(nodes.status.textContent.indexOf("Your church (sample data)") > 0, true, "status names church");
-eq(inNotices(nodes.confidence), true, "banner node is inside .notices");
-eq(nodes.confidence.hidden, false, "side banner not hidden");
-eq(nodes.confidence.textContent, "Your church (sample data) \u2014 " + MESSAGES.low, "banner names the low side");
-eq(nodes.confidence.textContent.indexOf("Classic library"), -1, "unrated classic adds no banner");
-eq(nodes.note.hidden, true, "no fallback note");
-eq(columnNotes(nodes.sides.children[1]).length, 0, "column does not repeat the banner");
+eq(nodes.status.textContent.indexOf("heuristic") === -1, true, "status is not the banner");
+eq(nodes.confidence.hidden, false, "side banner announced in .notices");
+eq(nodes.confidence.textContent, "Your church (sample data): " + MESSAGES.low, "banner names the low side");
+eq(nodes.note.hidden, true, "no fallback note without one");
+eq(nodes.note.textContent, "", "fallback note empty");
+walk(nodes.sides, []).forEach(function (node) {
+  eq(node.attrs["aria-live"], undefined, "column node has no aria-live");
+  eq(node.attrs["role"], undefined, "column node has no live role");
+});
 var churchCards = nodes.sides.children[1].children.filter(function (node) { return node.className === "results"; })[0];
 eq(churchCards.children.length, 1, "low church cards shown");
 toggleLowConfidence();
@@ -692,33 +688,23 @@ var classicCards = nodes.sides.children[0].children.filter(function (node) { ret
 eq(churchCards.children.length, 0, "toggle hides only the low side");
 eq(classicCards.children.length, 1, "classic passages stay");
 eq(nodes["hide-low"].focused, true, "focus stays on the toggle");
-eq(nodes.confidence.hidden, true, "banner hidden with the low side's passages, as in classic");
-toggleLowConfidence();
-eq(nodes.confidence.hidden, false, "banner back with the passages");
+eq(nodes.confidence.hidden, true, "hidden low side adds no banner");
+eq(nodes.confidence.textContent, "", "banner text cleared");
 
-resetState();
-eq(nodes.confidence.hidden, true, "reset hides the side banner");
-eq(nodes.confidence.textContent, "", "reset clears the side banner");
-
-var classicWeakFallback = Object.assign({}, classic, {
-  note: "Embedding model failed to load; results are BM25 only.",
-  confidence: { level: "weak", note: "Weak." },
-});
-showSides({ classic: classicWeakFallback, church: churchLow });
-eq(inNotices(nodes.note), true, "fallback node is inside .notices");
-eq(nodes.note.hidden, false, "side fallback note not hidden");
-eq(nodes.note.textContent, "Classic library: John Wesley \u2014 Embedding model failed to load; results are BM25 only.", "fallback names its side");
-eq(nodes.confidence.textContent,
-  "Classic library: John Wesley \u2014 Weak. Your church (sample data) \u2014 " + MESSAGES.low,
-  "both sides' notes, each named");
-eq(columnNotes(nodes.sides.children[0]).length, 0, "classic column does not repeat its notes");
+var classicBm25 = Object.assign({}, classic, { note: "Embeddings are not loaded; results are BM25 only." });
+showSides({ classic: classicBm25, church: churchMissing });
+eq(nodes.note.hidden, false, "fallback note announced in .notices");
+eq(nodes.note.textContent, "Classic library: John Wesley: Embeddings are not loaded; results are BM25 only.", "fallback note names its side");
+eq(nodes.confidence.hidden, true, "no banner for unrated classic");
 
 showSides({ classic: classic, church: churchMissing });
 eq(nodes["hide-low"].hidden, true, "nothing to hide when church is missing");
 var missingStatus = nodes.sides.children[1].children.filter(function (node) { return node.className === "status"; })[0];
 eq(missingStatus.textContent, CHURCH_EMPTY, "column says nothing yet");
-eq(nodes.confidence.hidden, true, "new search drops the stale banner");
-eq(nodes.note.hidden, true, "new search drops the stale fallback note");
+eq(nodes.note.hidden, true, "plain sides leave note hidden");
+eq(nodes.note.textContent, "", "plain sides leave note empty");
+eq(nodes.confidence.hidden, true, "plain sides leave banner hidden");
+eq(nodes.confidence.textContent, "", "plain sides leave banner empty");
 console.log("ok");
 """
 

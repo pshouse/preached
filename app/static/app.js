@@ -431,14 +431,15 @@ function describeSide(side, hideLow, which) {
 }
 
 /* One column of cards. Reuses renderCard, so a YouTube hit stays a watch
-   link and an archive.org hit stays the audio player. The column's notes
-   are not drawn here: showSides writes them to the .notices live region. */
+   link and an archive.org hit stays the audio player. */
 function renderSide(side, hideLow, which) {
   var state = describeSide(side, hideLow, which);
   var section = el("section", "side-col");
   var title = el("h2", null, state.heading);
   section.appendChild(title);
+  if (state.fallbackNote) section.appendChild(el("p", "note", state.fallbackNote));
   section.appendChild(el("p", "status", state.status));
+  if (state.confidenceNote) section.appendChild(el("p", "note note-weak", state.confidenceNote));
   var list = el("ol", "results");
   if (state.showResults) {
     for (var i = 0; i < state.results.length; i += 1) list.appendChild(renderCard(state.results[i]));
@@ -515,20 +516,6 @@ function showResults(data) {
   toggle.setAttribute("aria-pressed", hideLowConfidence ? "true" : "false");
 }
 
-/* The side-by-side text for #note or #confidence: each column's note, named
-   by its heading so it is clear which side it belongs to. As in classic, a
-   confidence note is shown only while that column's passages are. */
-function sideNotes(states, key) {
-  var parts = [];
-  for (var i = 0; i < states.length; i += 1) {
-    var state = states[i];
-    if (!state[key]) continue;
-    if (key === "confidenceNote" && !state.showResults) continue;
-    parts.push(state.heading + " \u2014 " + state[key]);
-  }
-  return parts.join(" ");
-}
-
 function showSides(data) {
   resetState();
   setBusy(false);
@@ -536,11 +523,20 @@ function showSides(data) {
   lastView = "side";
   var classicState = describeSide(data && data.classic, hideLowConfidence, "classic");
   var churchState = describeSide(data && data.church, hideLowConfidence, "church");
+  var states = [classicState, churchState];
+  var noteParts = [];
+  var confidenceParts = [];
+  for (var n = 0; n < states.length; n += 1) {
+    if (states[n].fallbackNote) noteParts.push(states[n].heading + ": " + states[n].fallbackNote);
+    if (states[n].confidenceNote && states[n].showResults === true) {
+      confidenceParts.push(states[n].heading + ": " + states[n].confidenceNote);
+    }
+  }
+  setText("note", noteParts.join(" "));
   document.getElementById("status").textContent =
     classicState.heading + ". " + classicState.status + " " +
     churchState.heading + ". " + churchState.status;
-  setText("note", sideNotes([classicState, churchState], "fallbackNote"));
-  setText("confidence", sideNotes([classicState, churchState], "confidenceNote"));
+  setText("confidence", confidenceParts.join(" "));
   var results = document.getElementById("results");
   results.hidden = true;
   var sides = document.getElementById("sides");
