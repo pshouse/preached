@@ -288,11 +288,17 @@ class CorruptedAsrFixtureTests(unittest.TestCase):
             self.assertFalse(any(s.start_s < 80 and s.end_s > 60 for s in coverage.uncovered_spans(sound, corrupt)))
         self.assertTrue(any(s.start_s < 60 and s.end_s > 80 for s in coverage.uncovered_spans(sound, corrupt)))
 
-    @unittest.skipUnless(Path("/cache/asr-repro/c01.wav").exists(), "needs the clips in /cache/asr-repro")
+    @unittest.skipUnless(
+        (Path(os.environ.get("PREACHED_CACHE", "/cache")) / "asr-repro" / "c01.wav").is_file(),
+        "needs the clips in PREACHED_CACHE/asr-repro",
+    )
     def test_envelope_matches_the_audio(self) -> None:
+        root = Path(os.environ.get("PREACHED_CACHE", "/cache")) / "asr-repro"
         for name in self.HOLES:
             db, corrupt, clean = fixture(name)
-            path = Path(f"/cache/asr-repro/{name}.wav")
+            path = root / f"{name}.wav"
+            if not path.is_file():
+                self.skipTest(f"needs {name}.wav in PREACHED_CACHE/asr-repro")
             with self.subTest(clip=name):
                 self.assertEqual(check_coverage(path, corrupt), open_spans(sound_spans_from_db(db), corrupt))
                 self.assertEqual(check_coverage(path, clean), [])

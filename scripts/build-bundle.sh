@@ -10,8 +10,8 @@
 #   scripts/build-bundle.sh /tmp/preached-bundle
 #
 # PREACHED_LIBRARY           wesley (default), spurgeon, or edwards
-# PREACHED_INDEX             sqlite to copy (default /cache/index/<library>.sqlite)
-# PREACHED_ONNX_DIR          model root (default /cache/models/granite-english-r2-onnx)
+# PREACHED_INDEX             sqlite to copy (default $PREACHED_CACHE/index/<library>.sqlite)
+# PREACHED_ONNX_DIR          model root (default $PREACHED_CACHE/models/granite-english-r2-onnx)
 #
 # The ONNX files must match the pins in src/preached/artifacts.py. There is
 # no switch that skips that check. The tests build from a copy of the source
@@ -44,8 +44,8 @@ TAR="${OUT}.tar.gz"
 rm -f -- "$TAR" "$TAR".partial.[0-9]*
 
 LIBRARY=${PREACHED_LIBRARY:-wesley}
-INDEX=${PREACHED_INDEX:-/cache/index/${LIBRARY}.sqlite}
-ONNX_ROOT=${PREACHED_ONNX_DIR:-/cache/models/granite-english-r2-onnx}
+INDEX=${PREACHED_INDEX:-${PREACHED_CACHE:-/cache}/index/${LIBRARY}.sqlite}
+ONNX_ROOT=${PREACHED_ONNX_DIR:-${PREACHED_CACHE:-/cache}/models/granite-english-r2-onnx}
 
 if [ ! -e "$INDEX" ]; then
   echo "missing index ${INDEX}" >&2
