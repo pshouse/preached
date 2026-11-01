@@ -203,7 +203,7 @@ Banner: correct, and a fun one to show: the "wheel" hit is a lexical coincidence
 2. **What is the witness of the Spirit?** Top hit is literally "The Witness of the Spirit, Discourse I", with Discourse II also in top 3. Shows the engine finding the right sermon from a plain question.
 3. **How do I know if I am truly born again?** A real church-member question; all three results are "The New Birth" and read as directly relevant. Strong banner is earned.
 4. **What is the narrow way to heaven?** Finds Sermon on the Mount discourses 11 and 12 on Matt 7:13-14 from everyday wording, no reference given. Good demonstration of semantic matching.
-5. **How should I pray when I'm anxious?** Best "pastoral" moment: the top excerpt ("When trouble and heaviness take hold... always to pray and not to faint") is a great fit. Caveat: the banner says weak, so use it only if the narration embraces "closest matches" or after the confidence fix below. If that is unwanted, substitute **What is repentance?** (2,2,2, strong).
+5. **How should I pray when I'm anxious?** Best "pastoral" moment: the top excerpt ("When trouble and heaviness take hold... always to pray and not to faint") is a great fit. Caveat: the banner says weak, so use it only if the narration embraces "closest matches" or after the outcome of the pre-registered abstain retune (99-WW, Rec 1). If that is unwanted, substitute **What is repentance?** (2,2,2, strong).
 
 Pair with one abstention for contrast: **What is the current price of bitcoin?** (correctly abstains, yet see (c)).
 Avoid on camera: "the prodigal son", "Why does God allow suffering?", "How should I treat my enemies?", and both Super Bowl/cookie queries.
@@ -251,9 +251,16 @@ Requests were serial and spaced; this says nothing about concurrent load. First 
 - Nit: the abstain.py decide cite now reads 162-165 everywhere. Read on origin/main: 162 `if not signals.agreement and low:`, 163 `level = "none"`, 164 `elif not signals.agreement or low:`, 165 `level = "weak"`.
 - Report text only; nothing run against /cache.
 
+## R4 (CTO CONDITIONAL at f483bbe)
+- MF-r3-1: demo pick 5 (line 206) said "or after the confidence fix below", which pointed at the old prescriptive Rec 1 and presented a fix as settled. It now reads "...or after the outcome of the pre-registered abstain retune (99-WW, Rec 1)."
+- Grepped the whole report, PR BODY included, for 'fix below', 'the fix', 'after the fix', 'confidence fix', 'fix', 'retune', 'threshold' and numeric thresholds. Only one hit presented a fix as settled (line 206, now reworded). The other hits are not settled fixes: line 41 and 195 ("fix a flat bicycle tire" is a query title); line 214 ("a dense_top threshold around 0.81") is a labelled hunch about current behaviour, not a proposed threshold; line 236 (Rec 1) and the R3 and PR BODY lines say the report recommends no fix or threshold. No wording changes needed there.
+- Report text only; nothing run against /cache.
+
 ## PR BODY
 
 Report-only spot check of 25 queries against the live demo, to pick demo-video queries. Adds `reports/W5-DEMO-QUERY-SPOTCHECK.md` only.
+
+R4: demo pick 5 no longer points to "the confidence fix below"; it defers to the outcome of the pre-registered abstain retune (99-WW, Rec 1).
 
 R3: rec 1 now defers to the pre-registered abstain retune (99-WW) instead of prescribing a fix or threshold; cite is `abstain.py:162-165`.
 
