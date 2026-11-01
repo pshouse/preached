@@ -107,6 +107,6 @@ Demo dry run 2 against main `9fe33ca`: every DEMO-SCRIPT step passes; stale item
 Diff stat (`git diff --stat origin/main...HEAD`):
 
 ```
- reports/W4-DEMO-DRYRUN-2.md | 112 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ reports/W4-DEMO-DRYRUN-2.md | 112 ++++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 112 insertions(+)
 ```
