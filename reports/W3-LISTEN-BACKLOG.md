@@ -53,18 +53,18 @@ Raise the listen backlog from socketserver's 5 to a named `LISTEN_BACKLOG = 128`
 
 Full suite: 1085 tests OK (skipped=11).
 
-`git diff --stat origin/main..HEAD`:
+`git diff --stat 44dc592^1 44dc592` (the #80 merge commit against its first parent, as merged):
 
-     app/server.py                |  11 +++
-     docs/DEPLOY.md               |  34 +++----
-     reports/W3-LISTEN-BACKLOG.md |  56 ++++++++++++
+     app/server.py                |  11 ++
+     docs/DEPLOY.md               |  35 ++++---
+     reports/W3-LISTEN-BACKLOG.md |  96 ++++++++++++++++++
      tests/test_deploy_alerts.py  |  24 ++---
-     tests/test_listen_backlog.py | 208 +++++++++++++++++++++++++++++++++++++++++++
-     5 files changed, 304 insertions(+), 29 deletions(-)
+     tests/test_listen_backlog.py | 233 +++++++++++++++++++++++++++++++++++++++++++
+     5 files changed, 369 insertions(+), 30 deletions(-)
 
 # R2 (CTO r1 CONDITIONAL on PR #80)
 
-Branch started at 40a6c3b, clean. `origin/main` is already an ancestor, so no merge was needed. `app/server.py` is untouched.
+Branch started at 40a6c3b, clean. `origin/main` was merged into the branch before it landed. `app/server.py` is untouched.
 
 | Item | Change |
 |---|---|
