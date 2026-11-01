@@ -113,6 +113,31 @@ class DisplayExcerptTests(unittest.TestCase):
         ):
             self.assertEqual(display_excerpt(text), text)
 
+    def test_paragraph_number_after_a_verse_reference_is_hidden(self) -> None:
+        # CCEL puts the paragraph number right after the verse, with no
+        # sentence-ending period between them: "Rom. 8:16 1. How many".
+        self.assertEqual(display_excerpt("Rom. 8:16 1. How many"), "Rom. 8:16 How many")
+        # A real number stays. The comma is an inline list, not a paragraph
+        # number, and the verse's own chapter and verse stay too.
+        kept = "See Rom. 8:16, 1. That the Spirit witnesses"
+        self.assertEqual(display_excerpt(kept), kept)
+
+    def test_roman_numeral_after_a_verse_is_hidden(self) -> None:
+        # A Roman section number sits between the verse and the paragraph
+        # number. From the corpus: Rom. 8:16 I. 1. None who believe.
+        raw = 'children of God." Rom. 8:16 I. 1. None who believe'
+        self.assertEqual(
+            display_excerpt(raw),
+            'children of God." Rom. 8:16 None who believe',
+        )
+
+    def test_paragraph_number_after_matt_5_13_16_is_hidden(self) -> None:
+        # "Matt. 5:13-16 1." is a paragraph number after a verse range.
+        self.assertEqual(
+            display_excerpt("Matt. 5:13-16 1. The beauty of holiness"),
+            "Matt. 5:13-16 The beauty of holiness",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
