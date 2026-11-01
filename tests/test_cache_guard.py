@@ -28,6 +28,11 @@ try:
 except ImportError:  # discover -s tests loads this file as a top-level module
     import cache_guard
 
+try:
+    from .subproc_env import child_env
+except ImportError:
+    from subproc_env import child_env
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -679,7 +684,7 @@ class CacheGuardTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, "-c", script],
             cwd=Path(tempfile.gettempdir()),
-            env=env,
+            env=child_env(env, keep=("XDG_CACHE_HOME",)),
             capture_output=True,
             text=True,
             check=False,
@@ -736,7 +741,7 @@ class CacheGuardTests(unittest.TestCase):
             result = subprocess.run(
                 [sys.executable, "-c", script, str(ROOT / "tests")],
                 cwd=str(cache),
-                env=env,
+                env=child_env(env, keep=("XDG_CACHE_HOME",)),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -874,7 +879,7 @@ class ArmingInvocationTests(unittest.TestCase):
         result = subprocess.run(
             argv,
             cwd=cwd,
-            env=self.env,
+            env=child_env(self.env, keep=("XDG_CACHE_HOME",)),
             capture_output=True,
             text=True,
             check=False,
@@ -1131,7 +1136,7 @@ class ProcessGuardTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-c", script, *args],
             cwd=ROOT,
-            env=env,
+            env=child_env(env, keep=("XDG_CACHE_HOME",)),
             capture_output=True,
             text=True,
             check=False,
