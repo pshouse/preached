@@ -57,6 +57,7 @@ RESULT_FIELDS = (
     "text_source",
     "source_url",
     "score",
+    "why",
 )
 
 

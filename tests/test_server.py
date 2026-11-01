@@ -68,6 +68,7 @@ RESULT_KEYS = {
     "text_source",
     "source_url",
     "score",
+    "why",
 }
 
 

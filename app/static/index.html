@@ -59,6 +59,20 @@
         <p id="note" class="note" hidden></p>
         <p id="confidence" class="note note-weak" tabindex="-1" hidden></p>
       </div>
+      <details class="levels">
+        <summary>What the confidence notes mean</summary>
+        <p>Each search is checked two ways: do the keyword search and the meaning search agree on a passage shown, and is the closest meaning match close enough to the question. It is a rough automatic check, so read the passages and judge for yourself.</p>
+        <dl>
+          <dt>Strong</dt>
+          <dd>Both checks pass. No note is shown.</dd>
+          <dt>Weak</dt>
+          <dd>One check fails. The passages are the closest matches, but may not answer your question.</dd>
+          <dt>Low</dt>
+          <dd>Both checks fail. The passages are still shown under a low-confidence note, and you can hide them.</dd>
+          <dt>Unrated</dt>
+          <dd>No meaning check was possible (a search for exact words only), or your church's sermons have not been checked this way yet. The passages are shown with no claim either way.</dd>
+        </dl>
+      </details>
       <div class="state-actions">
         <button type="button" id="hide-low" class="secondary" aria-pressed="false" hidden>Hide low-confidence results</button>
         <button type="button" id="retry" class="secondary" hidden>Try again</button>

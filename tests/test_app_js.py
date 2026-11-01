@@ -425,6 +425,63 @@ console.log("ok");
 """
 
 
+# "Why this result": the line under each card, from the server's why object.
+WHY_CHECKS = """
+function eq(actual, expected, label) {
+  if (actual !== expected) throw new Error(label + ": got " + JSON.stringify(actual) + ", want " + JSON.stringify(expected));
+}
+eq(whyLine({ keyword_rank: 3, meaning_rank: 1, similarity: 0.812, found_by: "both" }),
+   "Found by both keyword (#3) and meaning (#1) search · similarity 0.81", "both");
+eq(whyLine({ keyword_rank: null, meaning_rank: 2, similarity: 0.79, found_by: "meaning" }),
+   "Found by meaning search only (#2) · similarity 0.79", "meaning only");
+eq(whyLine({ keyword_rank: 4, meaning_rank: null, similarity: null, found_by: "keyword" }),
+   "Found by keyword search only (#4)", "keyword only");
+eq(whyLine(null), null, "no why");
+eq(whyLine({}), null, "empty why");
+eq(whyLine({ keyword_rank: 0, meaning_rank: -1, similarity: 0.5 }), null, "bad ranks");
+eq(whyLine({ keyword_rank: "<b>1</b>", meaning_rank: 1.5, similarity: 0.5 }), null, "not integers");
+eq(whyLine({ keyword_rank: 1, similarity: "0.9" }), "Found by keyword search only (#1)", "string similarity dropped");
+eq(whyLine({ meaning_rank: 1, similarity: Infinity }), "Found by meaning search only (#1)", "infinite similarity dropped");
+
+function walk(node, out) {
+  out.push(node);
+  (node.children || []).forEach(function (kid) { walk(kid, out); });
+  return out;
+}
+function whyNodes(item) {
+  return walk(item, []).filter(function (node) { return node.className === "why"; });
+}
+var card = renderCard({ sermon_title: "A", text: "t", start_s: null,
+                        why: { keyword_rank: 2, meaning_rank: 5, similarity: 0.6, found_by: "both" } });
+var lines = whyNodes(card);
+eq(lines.length, 1, "one why line");
+eq(lines[0].tagName, "P", "a paragraph");
+eq(lines[0].textContent, "Found by both keyword (#2) and meaning (#5) search · similarity 0.60", "card text");
+var article = card.children[0];
+eq(article.children[article.children.length - 1], lines[0], "last line of the card");
+eq(whyNodes(renderCard({ sermon_title: "A", text: "t", start_s: null })).length, 0, "older server: no line");
+eq(whyNodes(renderCard({ sermon_title: "A", text: "t", start_s: null, why: null })).length, 0, "null why: no line");
+console.log("ok");
+"""
+
+
+class WhyLineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        need_deno(self)
+
+    def test_why_line_and_card(self) -> None:
+        result = run_deno(PRELUDE + APP_JS.read_text() + WHY_CHECKS)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(result.stdout.strip(), "ok")
+
+    def test_confidence_levels_are_explained_on_the_page(self) -> None:
+        page = (APP_JS.parent / "index.html").read_text()
+        self.assertIn('<details class="levels">', page)
+        for level in ("Strong", "Weak", "Low", "Unrated"):
+            self.assertIn(f"<dt>{level}</dt>", page)
+        help_text = page[page.index('<details class="levels">'):page.index("</details>")]
+        self.assertIsNone(re.search(r"[0-9]", help_text), "no numbers in the help text")
+
 # PREACHED_REQUIRE_DENO=1 turns a missing deno into a failure instead of a skip.
 REQUIRE_DENO = os.environ.get("PREACHED_REQUIRE_DENO") == "1"
 
