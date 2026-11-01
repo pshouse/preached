@@ -664,5 +664,39 @@ class ChurchPathTests(unittest.TestCase):
         self.assertFalse((self.root / "c.jsonl").exists())
 
 
+class CacheRootTests(unittest.TestCase):
+    def test_unset_preached_cache_does_not_fall_back_to_the_cache_path(self) -> None:
+        """PREACHED_CACHE unset must not read /cache, even if that tree has clips.
+
+        ``is_file`` is forced true for /cache so a hard-coded fallback that
+        only returns the path when ``c01.wav`` exists still fails this test.
+        """
+        seen: list[str] = []
+        real_is_file = Path.is_file
+        real_isfile = os.path.isfile
+
+        def tracking_is_file(self: Path) -> bool:
+            text = os.fspath(self)
+            seen.append(text)
+            if text.startswith("/cache"):
+                return True
+            return real_is_file(self)
+
+        def tracking_isfile(path: object) -> bool:
+            text = os.fspath(path)  # type: ignore[arg-type]
+            seen.append(text)
+            if text.startswith("/cache"):
+                return True
+            return real_isfile(path)
+
+        env = {key: value for key, value in os.environ.items() if key != "PREACHED_CACHE"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertNotIn("PREACHED_CACHE", os.environ)
+            with patch.object(Path, "is_file", tracking_is_file), patch("os.path.isfile", tracking_isfile):
+                root = _asr_repro_root()
+        self.assertIsNone(root)
+        self.assertFalse(any(item.startswith("/cache") for item in seen), seen)
+
+
 if __name__ == "__main__":
     unittest.main()

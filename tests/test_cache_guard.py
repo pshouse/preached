@@ -4,7 +4,8 @@ Importing this module calls ``cache_guard.install``. Every other test
 module does the same with one import line, so a ``discover -p`` pattern
 that does not load this file, ``python -m unittest test_x`` from inside
 ``tests/``, and ``python tests/test_x.py`` are armed too. ``install`` is
-idempotent.
+idempotent per process: ``tests.cache_guard`` and top-level ``cache_guard``
+are one module object.
 """
 
 from __future__ import annotations
@@ -45,6 +46,29 @@ def _temp_root() -> Path:
         if root == watched or root.is_relative_to(watched):
             raise AssertionError(f"refusing to use a fixture inside {watched}: {root}")
     return root
+
+
+def _assert_under_temp(path: Path) -> Path:
+    """Resolve ``path`` and refuse to touch it unless it stays under the temp dir."""
+    resolved = path.resolve()
+    temp = Path(tempfile.gettempdir()).resolve()
+    if not resolved.is_relative_to(temp):
+        raise AssertionError(f"refusing to touch a path outside the temp dir: {resolved}")
+    cache = Path("/cache")
+    if cache.exists():
+        cache_resolved = cache.resolve()
+        if resolved == cache_resolved or resolved.is_relative_to(cache_resolved):
+            raise AssertionError(f"refusing to touch the real cache: {resolved}")
+    return resolved
+
+
+def _remove_temp_tree(path: Path) -> None:
+    resolved = _assert_under_temp(path)
+    if not resolved.exists():
+        return
+    import shutil
+
+    shutil.rmtree(resolved)
 
 
 class CacheGuardTests(unittest.TestCase):
@@ -158,6 +182,26 @@ class CacheGuardTests(unittest.TestCase):
         self.assertTrue(any("model.fp32.onnx" in note for note in notes), notes)
         self.assertTrue(all(note.startswith(label + " ") for note in notes))
 
+    def test_builtin_open_under_a_watched_cache_is_remembered_after_it_is_removed(self) -> None:
+        """``open()`` is hooked. pathlib writes go through ``io.open`` and would miss this."""
+        self.assertIsNotNone(cache_guard.current_run(), "the suite hook is not armed")
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        with tempfile.TemporaryDirectory(dir=temp_root) as tmp:
+            root = Path(tmp).resolve()
+            self.assertTrue(root.is_relative_to(temp_root))
+            label = cache_guard.push_root(f"fixture-{root.name}", root)
+            try:
+                with tempfile.TemporaryDirectory(dir=root) as scratch:
+                    scratch_path = Path(scratch).resolve()
+                    self.assertTrue(scratch_path.is_relative_to(temp_root))
+                    victim = scratch_path / "opened.bin"
+                    with open(victim, "wb") as handle:
+                        handle.write(b"x")
+                self.assertFalse(victim.exists())
+            finally:
+                notes = cache_guard.pop_root(label)
+        self.assertTrue(any("opened.bin" in note for note in notes), notes)
+
     def test_tool_caches_stay_outside_the_real_cache(self) -> None:
         cache_guard.install()
         temp_root = Path(tempfile.gettempdir()).resolve()
@@ -252,6 +296,49 @@ class CacheGuardTests(unittest.TestCase):
         self.assertEqual(len(notes), 1, notes)
         self.assertIn("index/wesley.sqlite", notes[0])
         self.assertTrue(notes[0].startswith(label + " "), notes)
+
+    def test_sqlite_uri_with_duplicate_or_non_ro_mode_is_refused(self) -> None:
+        """One mode parameter whose value is exactly ``ro``. Duplicates are refused."""
+        self.assertIsNotNone(cache_guard.current_run(), "the suite hook is not armed")
+        root = _temp_root()
+        label = f"fixture-{root.name}"
+        try:
+            db = root / "index" / "wesley.sqlite"
+            db.parent.mkdir()
+            setup = sqlite3.connect(db)
+            setup.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+            setup.execute("INSERT INTO t(v) VALUES ('base')")
+            setup.commit()
+            setup.close()
+            base = db.resolve().as_uri()
+            cache_guard.push_root(label, root)
+            try:
+                refused = (
+                    "?mode=ro&mode=rw",
+                    "?mode=rw&mode=ro",
+                    "?mode=ro&mode=ro",
+                    "?mode=RO",
+                    "?mode=rwc",
+                )
+                for query in refused:
+                    with self.subTest(query=query):
+                        with self.assertRaises(sqlite3.OperationalError) as caught:
+                            sqlite3.connect(base + query, uri=True)
+                        self.assertIn("cache guard", str(caught.exception))
+                reader = sqlite3.connect(base + "?mode=ro", uri=True)
+                try:
+                    self.assertEqual(reader.execute("SELECT v FROM t").fetchall(), [("base",)])
+                finally:
+                    reader.close()
+                shared = sqlite3.connect(base + "?mode=ro&cache=shared", uri=True)
+                try:
+                    self.assertEqual(shared.execute("SELECT v FROM t").fetchall(), [("base",)])
+                finally:
+                    shared.close()
+            finally:
+                cache_guard.pop_root(label)
+        finally:
+            _remove_temp_tree(root)
 
     def test_same_size_same_mtime_replace_is_caught(self) -> None:
         root = _temp_root()
@@ -358,6 +445,38 @@ class CacheGuardTests(unittest.TestCase):
             import shutil
 
             shutil.rmtree(resolved)
+
+    def test_chmod_or_replace_of_a_protected_directory_is_caught(self) -> None:
+        """Directory comparison is inode and mode. Timestamps alone are not a change."""
+        root = _temp_root()
+        try:
+            models = root / "models"
+            models.mkdir()
+            before = cache_guard.snapshot_tree(root)
+            os.chmod(models, stat.S_IMODE(before["models"].mode) ^ 0o111)
+            after_chmod = cache_guard.snapshot_tree(root)
+            self.assertEqual(before["models"].inode, after_chmod["models"].inode)
+            self.assertNotEqual(before["models"].mode, after_chmod["models"].mode)
+            chmod_lines = cache_guard.diff_lines("fake", before, after_chmod)
+            self.assertTrue(any("changed models " in line for line in chmod_lines), chmod_lines)
+
+            protected = root / "index"
+            protected.mkdir()
+            replacement = root / "index-new"
+            replacement.mkdir()
+            before_replace = cache_guard.snapshot_tree(root)
+            os.chmod(replacement, stat.S_IMODE(before_replace["index"].mode))
+            os.replace(replacement, protected)
+            after_replace = cache_guard.snapshot_tree(root)
+            self.assertNotEqual(before_replace["index"].inode, after_replace["index"].inode)
+            self.assertEqual(
+                stat.S_IMODE(before_replace["index"].mode),
+                stat.S_IMODE(after_replace["index"].mode),
+            )
+            replace_lines = cache_guard.diff_lines("fake", before_replace, after_replace)
+            self.assertTrue(any("changed index " in line for line in replace_lines), replace_lines)
+        finally:
+            _remove_temp_tree(root)
 
     def test_box_store_snap_names_are_ignored(self) -> None:
         """Only ``<sibling>.box-store-snap-<digits>`` regular files are noise.
@@ -516,46 +635,74 @@ def _probe_source() -> str:
     )
 
 
+def _repo_arming_probes() -> list[Path]:
+    leftover = list((ROOT / "tests").glob("test_arming_probe*"))
+    pycache = ROOT / "tests" / "__pycache__"
+    if pycache.is_dir():
+        leftover.extend(pycache.glob("test_arming_probe*"))
+    return leftover
+
+
+_CACHE_ENV_KEYS = (
+    "PREACHED_CACHE",
+    "PREACHED_ONNX_DIR",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "HUGGINGFACE_HUB_CACHE",
+    "DENO_DIR",
+    "XDG_CACHE_HOME",
+    "UV_CACHE_DIR",
+    "TORCH_HOME",
+)
+
+
+def _child_cache_env(scratch: Path, *, pythonpath: str | None) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if pythonpath is None:
+        env.pop("PYTHONPATH", None)
+    else:
+        env["PYTHONPATH"] = pythonpath
+    for key in _CACHE_ENV_KEYS:
+        path = scratch / key.lower()
+        path.mkdir()
+        env[key] = str(path)
+    return env
+
+
 class ArmingInvocationTests(unittest.TestCase):
-    """The three invocations that used to run with the guard uninstalled."""
+    """The three invocations that used to run with the guard uninstalled.
+
+    The probe and a copy of ``cache_guard.py`` live under ``tempfile.mkdtemp``.
+    Nothing is written into the repo's ``tests/`` directory.
+    """
 
     def setUp(self) -> None:
-        self.probe = ROOT / "tests" / "test_arming_probe.py"
+        self.assertEqual(_repo_arming_probes(), [])
+        self.work = _temp_root()
+        self.addCleanup(self._remove, self.work)
+        tests_dir = self.work / "tests"
+        tests_dir.mkdir()
+        source = ROOT / "tests" / "cache_guard.py"
+        dest = tests_dir / "cache_guard.py"
+        _assert_under_temp(dest)
+        dest.write_bytes(source.read_bytes())
+        self.probe = tests_dir / "test_arming_probe.py"
+        _assert_under_temp(self.probe)
         self.probe.write_text(_probe_source())
         self.scratch = _temp_root()
-        self.env = os.environ.copy()
-        self.env["PYTHONDONTWRITEBYTECODE"] = "1"
-        self.env.pop("PYTHONPATH", None)
-        for key in (
-            "PREACHED_CACHE",
-            "PREACHED_ONNX_DIR",
-            "HF_HOME",
-            "HF_HUB_CACHE",
-            "HUGGINGFACE_HUB_CACHE",
-            "DENO_DIR",
-            "XDG_CACHE_HOME",
-            "UV_CACHE_DIR",
-            "TORCH_HOME",
-        ):
-            path = self.scratch / key.lower()
-            path.mkdir()
-            self.env[key] = str(path)
+        self.addCleanup(self._remove, self.scratch)
+        self.env = _child_cache_env(self.scratch, pythonpath=None)
+        self.addCleanup(self._assert_repo_clean)
 
-    def tearDown(self) -> None:
-        if self.probe.exists():
-            self.probe.unlink()
-        pycache = ROOT / "tests" / "__pycache__"
-        if pycache.is_dir():
-            for item in pycache.glob("test_arming_probe*"):
-                item.unlink()
-        resolved = self.scratch.resolve()
-        if not resolved.is_relative_to(Path(tempfile.gettempdir()).resolve()):
-            raise AssertionError(f"refusing to remove {resolved}")
-        import shutil
+    def _remove(self, path: Path) -> None:
+        _remove_temp_tree(path)
 
-        shutil.rmtree(resolved)
+    def _assert_repo_clean(self) -> None:
+        self.assertEqual(_repo_arming_probes(), [])
 
     def _assert_armed(self, argv: list[str], cwd: Path) -> None:
+        _assert_under_temp(cwd)
         result = subprocess.run(
             argv,
             cwd=cwd,
@@ -568,21 +715,23 @@ class ArmingInvocationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, blob)
         self.assertIn("cache guard", blob)
         self.assertIn("leaked.bin", blob)
+        self.assertEqual(_repo_arming_probes(), [])
 
     def test_discover_pattern_that_skips_this_module_is_armed(self) -> None:
         self.assertNotIn("test_cache_guard", "test_arming_probe.py")
         self._assert_armed(
             [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_arming_probe.py"],
-            ROOT,
+            self.work,
         )
 
     def test_unittest_from_inside_tests_is_armed(self) -> None:
-        self._assert_armed([sys.executable, "-m", "unittest", "test_arming_probe"], ROOT / "tests")
+        self._assert_armed([sys.executable, "-m", "unittest", "test_arming_probe"], self.work / "tests")
 
     def test_running_the_file_as_a_script_is_armed(self) -> None:
-        self._assert_armed([sys.executable, "tests/test_arming_probe.py"], ROOT)
+        self._assert_armed([sys.executable, "tests/test_arming_probe.py"], self.work)
 
     def test_every_test_module_imports_the_guard(self) -> None:
+        self.assertEqual(_repo_arming_probes(), [])
         missing = []
         for path in sorted((ROOT / "tests").glob("test_*.py")):
             if path.name == "test_arming_probe.py":
@@ -595,6 +744,174 @@ class ArmingInvocationTests(unittest.TestCase):
             if _ARM not in text:
                 missing.append(path.name)
         self.assertEqual(missing, [])
+
+
+# Importing these modules is what ``python -m unittest <module>`` does before
+# it runs their tests. Each one also imports a top-level test module, which
+# loads ``cache_guard`` a second time. The child then runs one deliberate
+# write so a double-wrapped guard would report two failures.
+_ONCE_SCRIPT = textwrap.dedent(
+    """\
+    import builtins
+    import importlib
+    import io
+    import os
+    import sys
+    import unittest
+
+    real_io = io.open
+    real_builtin = builtins.open
+    importlib.import_module(sys.argv[1])
+    names = [name for name in ("cache_guard", "tests.cache_guard") if name in sys.modules]
+    distinct = {id(sys.modules[name]) for name in names}
+    sys.stdout.write(f"loaded_names={len(names)} distinct={len(distinct)}\\n")
+    if len(names) != 2 or len(distinct) != 1:
+        sys.exit(2)
+    cache = os.environ["PREACHED_CACHE"]
+
+    class Probe(unittest.TestCase):
+        def test_write(self):
+            path = os.path.join(cache, "leaked.bin")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("x")
+
+    stream = io.StringIO()
+    result = unittest.TextTestRunner(stream=stream, verbosity=1).run(
+        unittest.defaultTestLoader.loadTestsFromTestCase(Probe)
+    )
+    guard = [item for item in result.failures if "cache guard" in str(item[1])]
+    sys.stdout.write(stream.getvalue())
+    sys.stdout.write(
+        f"guard_failures={len(guard)} failures={len(result.failures)} errors={len(result.errors)}\\n"
+    )
+    if len(guard) != 1 or len(result.failures) != 1 or result.errors:
+        sys.exit(3)
+    if io.open is not real_io or builtins.open is not real_builtin:
+        sys.stdout.write(
+            f"io_open_restored={io.open is real_io} builtin_restored={builtins.open is real_builtin}\\n"
+        )
+        sys.exit(4)
+    sys.stdout.write("mf3-once-ok\\n")
+    """
+)
+
+_TWICE_SCRIPT = textwrap.dedent(
+    """\
+    import builtins
+    import io
+    import os
+    import sys
+    import tempfile
+    import unittest
+    from pathlib import Path
+
+    sys.path.insert(0, sys.argv[1])
+    import tests.cache_guard
+    import cache_guard
+
+    if sys.modules.get("cache_guard") is not sys.modules.get("tests.cache_guard"):
+        sys.stderr.write("guard loaded twice\\n")
+        sys.exit(2)
+    real_io = io.open
+    real_builtin = builtins.open
+    scratch = Path(sys.argv[2]).resolve()
+    cache = Path(os.environ["PREACHED_CACHE"]).resolve()
+    temp = Path(tempfile.gettempdir()).resolve()
+    if not scratch.is_relative_to(temp) or scratch == cache or scratch.is_relative_to(cache):
+        sys.stderr.write(f"scratch is not a temp dir outside the cache: {scratch}\\n")
+        sys.exit(2)
+
+    class Probe(unittest.TestCase):
+        def test_legitimate_temp_write(self):
+            target = scratch / "ok.txt"
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("hello")
+            self.assertEqual(target.read_text(encoding="utf-8"), "hello")
+            other = scratch / "via-path.bin"
+            other.write_bytes(b"path")
+            self.assertEqual(other.read_bytes(), b"path")
+
+    loader = unittest.defaultTestLoader
+    for index in (1, 2):
+        stream = io.StringIO()
+        try:
+            result = unittest.TextTestRunner(stream=stream, verbosity=1).run(
+                loader.loadTestsFromTestCase(Probe)
+            )
+        except RecursionError:
+            sys.stderr.write(stream.getvalue())
+            sys.stderr.write(f"RecursionError on run {index}\\n")
+            sys.exit(3)
+        if result.errors or result.failures or not result.wasSuccessful():
+            sys.stderr.write(stream.getvalue())
+            blob = "\\n".join(str(item[1]) for item in result.errors + result.failures)
+            sys.stderr.write(blob)
+            sys.stderr.write(f"\\nrun {index} failed\\n")
+            sys.exit(4)
+    if io.open is not real_io or builtins.open is not real_builtin:
+        sys.exit(5)
+    after = scratch / "after.txt"
+    with open(after, "w", encoding="utf-8") as handle:
+        handle.write("after")
+    if after.read_text(encoding="utf-8") != "after":
+        sys.exit(6)
+    sys.stdout.write("mf3-twice-ok\\n")
+    """
+)
+
+
+class ProcessGuardTests(unittest.TestCase):
+    """``python -m unittest tests.test_coverage`` and ``tests.test_church_harden``.
+
+    Those commands import a package test module and, through it, a top-level
+    test module. Both names of the guard load. One deliberate write must be
+    reported once, and both open functions must be the originals afterwards.
+    Two runs in one process must not recurse, and a temp write must work.
+    """
+
+    def _env(self) -> tuple[Path, dict[str, str]]:
+        scratch = _temp_root()
+        self.addCleanup(_remove_temp_tree, scratch)
+        return scratch, _child_cache_env(scratch, pythonpath=str(ROOT))
+
+    def _run(self, script: str, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", script, *args],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=180,
+        )
+
+    def _assert_loaded_once(self, module: str) -> None:
+        _scratch, env = self._env()
+        result = self._run(_ONCE_SCRIPT, [module], env)
+        blob = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, blob)
+        self.assertIn("loaded_names=2 distinct=1", result.stdout)
+        self.assertIn("guard_failures=1", result.stdout)
+        self.assertIn("mf3-once-ok", result.stdout)
+        self.assertNotIn("RecursionError", blob)
+
+    def test_unittest_tests_test_coverage_loads_the_guard_once(self) -> None:
+        self._assert_loaded_once("tests.test_coverage")
+
+    def test_unittest_tests_test_church_harden_loads_the_guard_once(self) -> None:
+        self._assert_loaded_once("tests.test_church_harden")
+
+    def test_two_runs_in_one_process_do_not_recurse_and_a_temp_write_works(self) -> None:
+        scratch, env = self._env()
+        write_dir = _temp_root()
+        self.addCleanup(_remove_temp_tree, write_dir)
+        result = self._run(_TWICE_SCRIPT, [str(ROOT / "tests"), str(write_dir)], env)
+        blob = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, blob)
+        self.assertIn("mf3-twice-ok", result.stdout)
+        self.assertNotIn("RecursionError", blob)
+        self.assertEqual((write_dir / "ok.txt").read_text(encoding="utf-8"), "hello")
+        self.assertEqual((write_dir / "after.txt").read_text(encoding="utf-8"), "after")
 
 
 if __name__ == "__main__":

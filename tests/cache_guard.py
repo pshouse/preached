@@ -1,26 +1,40 @@
 """Fail a unittest run that writes under a real cache.
 
-The suite reads PREACHED_CACHE. It must not create or change anything
-there. Tool caches (XDG_CACHE_HOME, DENO_DIR) are pointed at a temp directory
-so deno and ONNX Runtime do not use /cache/xdg.
+The six cache variables are PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME,
+DENO_DIR, XDG_CACHE_HOME, and UV_CACHE_DIR. The suite reads PREACHED_CACHE.
+It must not create or change anything there. ``install`` points the tool
+caches XDG_CACHE_HOME and DENO_DIR at a temp directory so deno and ONNX
+Runtime do not use /cache/xdg. PREACHED_ONNX_DIR, HF_HOME, and UV_CACHE_DIR
+stay as the process set them; a suite run points those at temp directories
+too.
 
 A before/after listing catches files left behind, including a same-size
 replace, a chmod, a new symlink, an empty directory, and a SQLite -wal
 file written by a connection that is still open. A file created under a
 watched root and deleted before the run ends leaves no trace in that
-listing (b2): the path is absent from both snapshots. Write-mode opens are
-recorded as they happen, so that create-then-delete still fails the run.
-A writable sqlite3.connect under a watched root is refused; mode=ro URIs
-are left alone.
+listing (b2): the path is absent from both snapshots. Write-mode opens,
+including the built-in ``open()``, are recorded as they happen, so that
+create-then-delete still fails the run. Directory inode and mode are
+compared, so a chmod or ``os.replace`` of a protected directory is caught
+too. A writable sqlite3.connect under a watched root is refused. A URI is
+left alone only when it has exactly one ``mode`` parameter and that value
+is ``ro``; ``mode=ro&mode=rw``, ``mode=ro&mode=ro``, and any other mode
+are refused.
 
 Snap noise is only a regular file named ``<sibling>.box-store-snap-<digits>``
 whose sibling entry is in the same directory. A directory of that name, a
 symlink of that name, or a file of that name with no sibling is a real
 entry and is not ignored.
 
-Arming: ``install`` is idempotent. Every test module calls it with one
-import line, so these invocations are armed: ``python -m unittest discover
--s tests`` (including ``-p`` patterns that do not load ``test_cache_guard``),
+Arming: ``install`` is idempotent per process, not per module object.
+``tests.cache_guard`` and top-level ``cache_guard`` are one module: the
+second import aliases itself to the first. A sentinel on
+``unittest.result.TestResult`` stops a second ``install`` from wrapping
+the result hooks again. The real ``builtins.open`` and ``io.open`` are
+captured when that first instance is imported, and restore puts those
+originals back. Every test module calls ``install`` with one import line,
+so these invocations are armed: ``python -m unittest discover -s tests``
+(including ``-p`` patterns that do not load ``test_cache_guard``),
 ``python -m unittest test_x`` with the working directory inside ``tests/``,
 and ``python tests/test_x.py``. ``python -m unittest tests.<module>`` also
 arms through this package's ``__init__``.
@@ -29,6 +43,8 @@ arms through this package's ``__init__``.
 from __future__ import annotations
 
 import atexit
+import builtins
+import io
 import os
 import re
 import sqlite3
@@ -38,6 +54,38 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+
+# Second import name (tests.cache_guard vs top-level cache_guard) must not
+# build its own hooks. The import system returns sys.modules[__name__] after
+# this body finishes, so replacing that entry hands the caller the first copy.
+_GUARD_MODULE = "_preached_cache_guard_module"
+_GUARD_INSTALLED = "_preached_cache_guard_installed"
+
+
+def _adopt_loaded_guard() -> None:
+    """Alias this import name to the guard already loaded in the process."""
+    me = sys.modules.get(__name__)
+    for name in ("cache_guard", "tests.cache_guard"):
+        other = sys.modules.get(name)
+        if other is None or other is me:
+            continue
+        if getattr(other, _GUARD_MODULE, False):
+            sys.modules[__name__] = other
+            return
+    if me is not None:
+        setattr(me, _GUARD_MODULE, True)
+
+
+_adopt_loaded_guard()
+
+# Captured at import of the first instance, before any hook is installed.
+# A second copy of this file may still execute, but its globals are discarded
+# when the alias above wins, and install() refuses to hook twice. Restore
+# always writes these originals back, including after a second run.
+_real_builtin_open = builtins.open
+_real_io_open = io.open
+_real_os_open = os.open
+_real_sqlite_connect = sqlite3.connect
 
 # Top-level directories that other tools rewrite. -shm changes when a
 # read-only connection opens a WAL index, so those sidecars are ignored.
@@ -53,10 +101,6 @@ _installed = False
 _tool_root: Path | None = None
 _depth = 0
 _run: "_Run | None" = None
-_real_builtin_open = open
-_real_os_open = os.open
-_real_io_open = None
-_real_sqlite_connect = sqlite3.connect
 _hooks_on = False
 _in_hook = False
 
@@ -392,21 +436,34 @@ def _sqlite_fs_path(database: object, uri: bool) -> str | None:
     return text
 
 
-def _sqlite_is_readonly(database: object, uri: bool) -> bool:
-    """True only for a URI whose mode parameter is ro."""
-    if not uri:
-        return False
+def _sqlite_mode_values(database: object) -> list[str] | None:
+    """Every ``mode`` query value, or None when ``database`` has no query string.
+
+    The key and the value are exact. ``Mode`` is not ``mode``, and ``RO`` is
+    not ``ro``. Repeated keys stay repeated: ``mode=ro&mode=ro`` is two values.
+    """
     try:
         text = os.fspath(database)  # type: ignore[arg-type]
     except TypeError:
-        return False
+        return None
     if isinstance(text, bytes):
         text = os.fsdecode(text)
     if not isinstance(text, str) or "?" not in text:
-        return False
+        return None
     query = text.split("?", 1)[1].split("#", 1)[0]
-    modes = [item.strip().lower() for item in urllib.parse.parse_qs(query).get("mode", [])]
-    return bool(modes) and all(mode == "ro" for mode in modes)
+    return [
+        value
+        for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True, separator="&")
+        if key == "mode"
+    ]
+
+
+def _sqlite_is_readonly(database: object, uri: bool) -> bool:
+    """True only for a URI with exactly one mode parameter whose value is ``ro``."""
+    if not uri:
+        return False
+    modes = _sqlite_mode_values(database)
+    return modes is not None and len(modes) == 1 and modes[0] == "ro"
 
 
 def _hooked_sqlite_connect(database, *args, **kwargs):
@@ -423,13 +480,11 @@ def _hooked_sqlite_connect(database, *args, **kwargs):
 
 
 def _install_write_hooks() -> None:
-    global _hooks_on, _real_io_open
+    global _hooks_on
     if _hooks_on:
         return
-    import builtins
-    import io
-
-    _real_io_open = io.open
+    # Rebind both names. io.open and builtins.open start as one object, so
+    # replacing only io.open would leave open() unhooked.
     builtins.open = _hooked_builtin_open
     io.open = _hooked_io_open
     os.open = _hooked_os_open
@@ -540,10 +595,19 @@ def _patch_result() -> None:
 
 
 def install() -> None:
-    """Point tool caches at a temp dir and arm the suite hook. Idempotent."""
+    """Point tool caches at a temp dir and arm the suite hook.
+
+    Idempotent per process. A second module object shares this one's hooks
+    via the import alias, and the TestResult sentinel stops a second wrap
+    if that alias was not the module the caller invoked.
+    """
+    from unittest.result import TestResult
+
     global _installed
-    if _installed:
+    if getattr(TestResult, _GUARD_INSTALLED, False):
+        _installed = True
         return
+    setattr(TestResult, _GUARD_INSTALLED, True)
     _installed = True
     _redirect_tool_caches()
     _patch_result()
