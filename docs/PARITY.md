@@ -77,7 +77,31 @@ The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any U
 
 **History: the `83121da` baseline.** On main `83121da314137c4d611d1725a814374c7d2bb6fb` (Python 3.12.15, same box, index, model and harness) `http` was `27d7cb2bbe8a82d3` / `5aa8821e0ecc7d22` (`--strip why`) and `no-church` was `e1fa9ccca05c5aec` / `b393295f9ae9b309`; the other five rows were the same as above. Main `3aef7ca` moved only these two because #96 (`5244dc9`) added `slots_stuck` to HTTP `/healthz`; `--strip slots_stuck` gives back the `83121da` values exactly.
 
-**Other hosts.** The hashes hold only for the `index_version` and `model_sha256` above. A host with a different index (the CTO box `/cache/index/wesley.sqlite`, or omarchy, `index_version` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`) needs its own baseline from this harness on its own main, recorded here with the same fields.
+**omarchy host, main 484e682, index 198339132f68…, model 3861025a…, harness 9bbe1a503f36136f, Python 3.12.16, ORT 1.31.1**
+
+| Field | Value |
+|---|---|
+| main | `484e68298b514b8489a359602f4340e7662b7615` |
+| machine | `omarchy` (12th Gen Intel Core i9-12900K, Python 3.12.16, onnxruntime 1.31.1) |
+| index | omarchy `/cache/index/wesley.sqlite` (sha256 `909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b`), hashed from a byte copy, never opened in place |
+| `index_version` | `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2` |
+| `model_sha256` | `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (fp32 ONNX graph) |
+| church side | synthetic `tests/test_church_wire.build_church` fixture, keyword only |
+| harness | `9bbe1a503f36136f` |
+
+| Set | With `why` | `--strip why` |
+|---|---|---|
+| `http` | `7d0e6ba49fe8628c` | `2185fbe08c600a0a` |
+| `no-church` | `85c8322489268a44` | `514aaa45710f9854` |
+| `in-process` | `38348854d2174db3` | `cd1e87e6cf1df21a` |
+| `in-process-no-health` | `6b584c8f512f52fc` | `f04c1154aef1c232` |
+| `search+sermon` | `706af7bccf0ce3e3` | `e8dc6bf53ca4a967` |
+| `side` | `839941f9bb77e43a` | `f9e8df6ddc959fce` |
+| `church` | `25872f35ebd97d27` | `b05573c7b06e0198` |
+
+Taken by the host operator on byte copies of the index and model (sha256 of source and copy equal), sandboxed, `PYTHONHASHSEED=12345`; the `/cache` listing was identical before and after.
+
+**Other hosts.** The hashes hold only for the `index_version` and `model_sha256` above. omarchy (`index_version` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`) now has its baseline recorded above (the omarchy host block). A host with a different index (the CTO box `/cache/index/wesley.sqlite`) still needs its own baseline from this harness on its own main, recorded here with the same fields.
 
 ## Host gate command
 
