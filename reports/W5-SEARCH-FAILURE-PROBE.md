@@ -487,9 +487,9 @@ PR title: W5 search failure probe (report only)
 
 Summary: 30 queries in five groups plus 11 controls, run in-process on main `d8a0966` through the same `search_with_confidence` call the server uses (Granite ONNX fp32, floor 0.8129). Top 3 findings: (1) 11 of 30 queries, including 7 of 12 everyday and typo questions, get 0 BM25 rows because `to_fts_query` ANDs 4 or fewer terms, so the banner can only say `weak` for them and hybrid equals dense; (2) `strong` is nearly automatic on long queries and sits on bad results for c3 (theater) and e6 (a proverb Wesley quotes), and 2 of 6 out-of-domain queries (recipe, Super Bowl) do not abstain because junk BM25 matches fake agreement; (3) on quotes, hybrid is worse than BM25 alone (e2, e6). Six ranked recommendations, none implemented. No code, eval, label, calibration or doc change. Depth-3 `/cache` listing identical before and after the probe runs (one `wesley.sqlite-shm` mtime change from a later verification `copy_index`, disclosed in Method).
 
-`git diff --stat origin/main...HEAD`:
+`git diff --stat origin/main...HEAD` (origin/main e434539):
 
 ```
- reports/W5-SEARCH-FAILURE-PROBE.md | 425 +++++++++++++++++++++++++++++++++++++
- 1 file changed, 425 insertions(+)
+ reports/W5-SEARCH-FAILURE-PROBE.md | 495 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 495 insertions(+)
 ```
