@@ -373,7 +373,7 @@ Severities: F-01 High; F-02 and F-03 Medium; F-04 Low; F-11 Low (new, WCAG 2.5.3
 
 No tests were run. `find /cache -xdev -printf '%p\t%s\t%T@\n' | sort` before the edit and after the report text was written: 132823 lines both times, sha256 `55cb67aa9dcf532de1b634f4af32d4b03569f43e6afee472065eb34610e14c45`, no path, size, or mtime difference. No cache env var was pointed at `/cache`.
 
-R2 content head: `0000000000000000000000000000000000000000` (parent of the commit that records this sha).
+R2 content head: `15fc1829e4e1d91e7e3a9072e042a4cf04827481` (parent of the commit that records this sha).
 
 `git diff --stat origin/main..HEAD`:
 
