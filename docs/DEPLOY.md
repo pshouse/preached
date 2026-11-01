@@ -281,8 +281,19 @@ running. The numbers from the last run are in `reports/W3-DEPLOY-PREP.md`.
 Run the test suite on the build machine before step 3 as well:
 
 ```bash
-PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests
+PREACHED_REQUIRE_DENO=1 \
+HF_HUB_OFFLINE=1 \
+PREACHED_CACHE=$(mktemp -d) \
+PREACHED_ONNX_DIR=$(mktemp -d) \
+HF_HOME=$(mktemp -d) \
+DENO_DIR=$(mktemp -d) \
+XDG_CACHE_HOME=$(mktemp -d) \
+UV_CACHE_DIR=$(mktemp -d) \
+uv run python -m unittest discover -s tests
 ```
+
+Only the host verify-merge gate runs the suite against the real `/cache`;
+when a test needs real data, use a read-only copy or a read-only bind mount.
 
 `PREACHED_REQUIRE_DENO=1` turns a missing `deno` from a skip into a failure
 for the deno-backed tests that honor it (the set grows as more
@@ -347,9 +358,13 @@ no switch skips it. (The unit tests build from a copy of the source whose
 Index: one SQLite file, opened `mode=ro` with `query_only`. The build copies
 it with SQLite's backup API and sets `journal_mode=DELETE`, so the bundle
 has no `-wal` or `-shm` and the file opens from a directory the process
-cannot write. `/healthz` `index_version` is the `chunks_sha256` meta value
-and `model_sha256` is the digest of the fp32 graph that was loaded; each is
-`null` unless it is 64 hex characters. Neither is a path.
+cannot write. Serving the WAL-mode `/cache` index straight from a checkout
+on a read-only mount is unsupported; use `copy_index` (it checkpoints and
+converts to `journal_mode=DELETE`) for that. Never use `immutable=1` (it
+gives silent stale reads and missed reloads). `/healthz` `index_version` is
+the `chunks_sha256` meta value and `model_sha256` is the digest of the fp32
+graph that was loaded; each is `null` unless it is 64 hex characters.
+Neither is a path.
 
 Static files, and only these: `index.html` (the page), `app.js`, `app.css`,
 `favicon.svg`. There is no directory listing.
