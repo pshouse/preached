@@ -55,6 +55,18 @@ Checked in code and, where a live response is named, on the probe.
 
 ## Findings
 
+Severities follow the CTO's rulings on PR #91.
+
+| ID | Severity | Finding |
+| --- | --- | --- |
+| F-01 | High | A 405 (and `POST /healthz`) holds an in-flight slot until the process exits |
+| F-02 | Medium | A failed church search logs the question. Latent: it MUST land before any church deploy, because the logged MATCH includes user query terms |
+| F-03 | Low | A public bind needs no acknowledgement. It takes an operator breaking `docs/DEPLOY.md:18` |
+| F-04 | Low/Info | The accept-thread 503 omits the handler security headers |
+| F-05 | Low | The kill switch is silent, and a direct start has no default path |
+| F-06 | Low (Info as deployed) | An HTTP/2 preface is answered with a body and no status line |
+| F-07 | Low | Rate and reserve env values have no ceiling, and static files spend the search budget |
+
 ### F-01 — High — a 405 holds an in-flight search slot until the process exits
 
 `_reject_method` (`2395`) calls `_blocked` (`2230`). When the size, host, kill-switch, and rate checks pass, `_blocked` calls `acquire_slot` and stores the key on `self._slot_key` (`2274`–`2287`). The matching `release_slot` runs only in `_respond`'s `finally` (`2362`–`2370`). `do_GET` and `do_HEAD` call `_respond`. `do_POST`, `do_PUT`, `do_DELETE`, and `do_PATCH` call `_reject_method` and do not. The 405 closes the connection (`2409`) and the in-flight count stays at 4.
@@ -75,7 +87,11 @@ Raw requests from `127.0.0.5` to the second probe, in order, each with `Connecti
 
 A following `GET /api/search?q=grace&mode=bm25&k=1` from `127.0.0.1` was 200. The leak is per client key. The log line was `WARNING refused busy 127.0.0.5 127.0.0.5 /api/search suppressed=0`.
 
-`scripts/serve.sh` passes `PREACHED_TRUSTED_PROXIES` only when it is set (`137`–`138`). The default is empty, which `docs/DEPLOY.md` already records: behind `tailscale serve`, every client is the socket peer `127.0.0.1` and shares one bucket (known gap, "With `PREACHED_TRUSTED_PROXIES` left empty"). On that deploy, four POSTs from anyone who can open the port stick search, the page, and static files for the whole process, while `/healthz` stays green. This probe did not run Tailscale. The per-key behavior was measured; the process-wide reading is that measurement plus the documented shared peer.
+`scripts/serve.sh` passes `PREACHED_TRUSTED_PROXIES` only when it is set (`137`–`138`). The default is empty, which `docs/DEPLOY.md` already records: behind `tailscale serve`, every client is the socket peer `127.0.0.1` and shares one bucket (known gap, "With `PREACHED_TRUSTED_PROXIES` left empty"). On that deploy, four POSTs from anyone who can open the port stick search, the page, and static files for the whole process, while `/healthz` stays green (until the `POST /healthz` variant below). This probe did not run Tailscale. The per-key behavior was measured; the process-wide reading is that measurement plus the documented shared peer.
+
+``POST /healthz` leaks the health table too (read from the code at `d8a0966`; not run against a server, and nothing was run against the demo on port 8800). `_reject_method` (`2395`) calls `_blocked` (`2230`), which computes `health = path == "/healthz"` (`2250`), passes it to `acquire(key, health=health)` (`2276`), and stores `self._slot_health` (`2287`). `acquire_slot` (`2708`–`2716`) then takes the slot from `_health_slots_by_key` (`2710`) and caps it at `max_requests_per_client`, the same value of 4 as the search table (`2713`, `250`). The 405 path never calls `release_slot`; only `_respond`'s `finally` does (`2362`–`2370`). Four `POST /healthz` from one client key therefore fill that key's health table. The next `GET /healthz` from that key reaches the same busy branch (`2276`–`2285`) and returns 503 `{"error": "unavailable"}` with `Retry-After: 1`, because `_route` (`2299`–`2300`) calls `_blocked` before it builds the health payload (`2307`–`2309`). Four requests fit under the health rate limit (60 per key for `/healthz`, `268`–`269`), so the rate check (`2264`) does not stop them first. That 503 is the busy refusal, not the health payload, but a monitor that polls `/healthz` reads it as down. Behind `tailscale serve` with `PREACHED_TRUSTED_PROXIES` empty, the shared `127.0.0.1` key makes this process-wide. So the earlier statement that `/healthz` stays green holds only for the search-path variant (POST/PUT/DELETE/PATCH to a non-health target).
+
+Browser path (UNTESTED). A cross-origin `fetch(url, {method: "POST", mode: "no-cors"})` is a CORS simple request, so the browser sends it with no preflight. The server checks `Host` (`2223`–`2225`) but never reads `Origin`: `app/server.py` has no `Origin` or `Sec-Fetch-*` handling (a case-insensitive search at `d8a0966` finds none). Any page a tailnet member opens could therefore plausibly send four POSTs to the server's tailnet address and trigger F-01 from that member's browser. This was not tested: no browser was driven, and the page-to-server request was not sent. Two things could change the outcome and were not checked: a browser blocking requests to private or tailnet addresses (Private Network Access behavior varies by browser version), and the `Host` the browser sends having to be on the `--hosts` allowlist, which it is if the attacker page uses the same hostname or address the operator already serves on.
 
 `OPTIONS` and `TRACE` return 501 from `_handle_parsed` before `_blocked`, so they do not take a slot. A request that fails the size or host check raises `BadRequest` inside `_reject_method` before `acquire_slot`.
 
@@ -97,7 +113,7 @@ The church side was not started on the probe (no private index, and `serve.sh` p
 
 Recommendation: log `type(exc).__name__` only, the same way `_respond_inner` does. The PR that does that has to move the deploy-alert pin and any DEPLOY.md sentence that cites the line. Keep the client body as the empty church side; that part already hides the error.
 
-### F-03 — Medium — a public bind needs no acknowledgement, and the Host list does not stop it
+### F-03 — Low — a public bind needs no acknowledgement, and the Host list does not stop it
 
 `--host` defaults to `127.0.0.1` (`3191`). The probe bound that address and nothing else. `--hosts` defaults to `127.0.0.1,localhost` (`3209`–`3210`).
 
@@ -109,7 +125,7 @@ Recommendation: refuse `--host 0.0.0.0` and `--host ::` unless the operator pass
 
 No current test refuses a public bind. `test_methods_host_and_body_limits` covers a bad `Host` header (421) on a loopback server.
 
-### F-04 — Low — the accept-thread 503 omits the handler security headers
+### F-04 — Low/Info — the accept-thread 503 omits the handler security headers
 
 Handler responses go through `_security_headers`. The accept-thread 503 is a raw byte string (`2752`–`2772`): status, `Content-Type`, `Content-Length`, `Connection: close`, `Retry-After: 1`, `Cache-Control: no-store`, and the body. It does not send CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Server`, or `Date`.
 
@@ -148,7 +164,7 @@ Recommendation: when `main` starts with no kill path, default the same `$ROOT/KI
 
 Behavior of an engaged file is covered by the server tests around `disabled` and by the hardening table. A direct-start default and a transition line are not.
 
-### F-06 — Low — an HTTP/2 preface is answered with a body and no status line
+### F-06 — Low (Info as deployed) — an HTTP/2 preface is answered with a body and no status line
 
 Sending the bytes `PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n` produced exactly `{"error": "bad request"}` (24 bytes) and then a close. There was no status line and no header. The log, from the same connection, was:
 
@@ -175,7 +191,7 @@ No current test sends an HTTP/2 preface.
 
 The limiter that is configured does run. The favicon series above hit 429 at request 121 with `Retry-After: 60` and full handler headers. `/healthz` from the same peer stayed 200, which is the separate health bucket (`docs/DEPLOY.md` `/healthz` bucket row, and `tests/test_exposure.py::HealthBucketTests`).
 
-`/`, `/static/*`, and `/api/search` share the search bucket (`2264`–`2272` uses `health=False` for every path other than `/healthz`). One hundred twenty favicon GETs, at the code default, made the next search 429 for the rest of the window. `serve.sh`'s cap is 60, so the same pattern is a shorter flood. `docs/DEPLOY.md` already says clients behind one NAT share that IP's rate limit. It is worth a line in the same place that a static flood spends the search budget.
+`/`, `/static/*`, and `/api/search` share the search bucket (`_blocked` sets `health = path == "/healthz"` at `2250` and passes it to `app.allow` at `2264`, so every path other than `/healthz` uses `health=False`). One hundred twenty favicon GETs, at the code default, made the next search 429 for the rest of the window. `serve.sh`'s cap is 60, so the same pattern is a shorter flood. `docs/DEPLOY.md` already says clients behind one NAT share that IP's rate limit. It is worth a line in the same place that a static flood spends the search budget.
 
 Recommendation: give each of those env values a documented ceiling in `_positive_int`'s callers, and reject a value above it at startup. Leave the shared search bucket as it is unless a later change gives static files their own small budget. Cite `HealthBucketTests` so a new ceiling does not merge the health bucket back into search.
 
@@ -206,25 +222,23 @@ These were probed or read so the audit would cover them. They are not new findin
 - Query string removed from the access log; refusal lines rate-limited. Tests: `AuditLogTests`.
 - Listen backlog 128. `reports/W3-LISTEN-BACKLOG.md` and `tests/test_listen_backlog.py`.
 
-`docs/DEPLOY.md` "Known gaps" (thread per connection, health reserve is best-effort, the 32-address lockout, trusted-proxy forgery by any local `127.0.0.1` process, one shared bucket when `PREACHED_TRUSTED_PROXIES` is empty behind `tailscale serve`, no TLS in the process, a garbage forwarded hop keys on the proxy) stay as written there. The go-public gate items are still the list in Part 4. F-01 is the new item on top of the shared-peer gap: the shared key can now be stuck, not only rate-limited, and `/healthz` will not show it.
+`docs/DEPLOY.md` "Known gaps" (thread per connection, health reserve is best-effort, the 32-address lockout, trusted-proxy forgery by any local `127.0.0.1` process, one shared bucket when `PREACHED_TRUSTED_PROXIES` is empty behind `tailscale serve`, no TLS in the process, a garbage forwarded hop keys on the proxy) stay as written there. The go-public gate items are still the list in Part 4. F-01 is the new item on top of the shared-peer gap: the shared key can now be stuck, not only rate-limited, and for the search-path 405s `/healthz` will not show it (`POST /healthz` is the exception above).
 
 ## Prioritized fixes
 
-Small PRs, in this order:
+Four serial cuts, adopting the CTO's order. Each cut re-pins `docs/DEPLOY.md` cites and `tests/test_deploy_alerts.py`. Cuts 3 and 4 may swap, but no two cuts run in parallel.
 
-1. Release the in-flight slot on 405 (F-01). Test: four 405s, then `GET /api/search` is 200 and the slot table is empty.
-2. Log a church search failure as the exception type only (F-02). Move the `tests/test_deploy_alerts.py` pin in that same PR.
-3. Add the handler security headers to the accept-thread 503, and `Permissions-Policy`, `Cross-Origin-Opener-Policy`, and `Cross-Origin-Resource-Policy` on handler responses (F-04). Leave HSTS off on plain HTTP.
-4. Default the kill-file path in `main` the way `serve.sh` does, and log one line when it engages and one when it clears (F-05).
-5. Refuse `--host 0.0.0.0` and `--host ::` without an explicit acknowledgement (F-03). Leave public exposure to the go-public gate.
-6. Clamp the rate-limit and health-reserve env values at startup (F-07).
-7. Answer an HTTP/2 preface with a headered 505 and a close (F-06).
-8. Note in the hardening table that static and page GETs spend the search rate budget (F-07). That is a docs sentence, not a second limiter.
+1. F-01 alone. Release the in-flight slot on every 405, including `POST /healthz` (the health table). Test: four 405s, then `GET /api/search` is 200; four `POST /healthz`, then `GET /healthz` is 200; the slot tables are empty. Consider an `Origin` check in the same cut only if the CTO wants it; the browser path is untested.
+2. F-02. Log a church search failure as the exception type only. Move the `tests/test_deploy_alerts.py` pin in that same cut. This MUST land before any church deploy.
+3. Startup and config: F-03 (refuse `--host 0.0.0.0` and `--host ::` without an explicit acknowledgement), F-05 (default the kill-file path in `main` the way `serve.sh` does, and log one line when it engages and one when it clears), and F-07 (clamp the rate-limit and health-reserve env values at startup, plus the `docs/DEPLOY.md` sentence that static and page GETs spend the search rate budget).
+4. Headers and framing: F-04 (handler security headers and `Server: Preached` on the accept-thread 503), F-06 (headered 505 and a close for an HTTP/2 preface), and `Permissions-Policy`, `Cross-Origin-Opener-Policy`, and `Cross-Origin-Resource-Policy` on handler responses. Leave HSTS off on plain HTTP.
 
 ## Cache snapshot
 
 `find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort` was taken before the first probe process and after the last probe process had been stopped by PID.
 
-One line differs. `/cache/index/wesley.sqlite-shm` stayed 32768 bytes. Its mtime moved from `1793496003.2430169390` to `1793498230.8235476600` (`2026-10-31 21:57:10 -0400`). `/cache/index/wesley.sqlite` and `/cache/index/wesley.sqlite-wal` were unchanged, and the wal file was still 0 bytes. At the after snapshot no process had the real index open.
+Limits of this snapshot: it lists path, size, and mtime to depth 3 only. It records no inode and no ctime, so a replaced file, a rewrite that restored an mtime, or a change deeper than three levels would not show.
 
-This audit's server was started with `--index` on a file under `/tmp/w5-audit/` and with all seven cache variables under `/tmp/w5-audit/`. That environ was read from the live process. The shm mtime is the only difference, and it is a reader timestamp on the shared index, not a size change from this audit.
+One line differs. `/cache/index/wesley.sqlite-shm` stayed 32768 bytes. Its mtime moved from `1793496003.2430169390` to `1793498230.8235476600` (`2026-10-31 21:57:10 EDT`). `/cache/index/wesley.sqlite` and `/cache/index/wesley.sqlite-wal` were unchanged, and the wal file was still 0 bytes. At the after snapshot no process had the real index open.
+
+The cause of that mtime change is unverified. The mtime falls inside the demo refresh window (21:57:08–21:57:12), and #89's `copy_index` run reported the same shm mtime change, but no process was observed touching the file. This audit's server was started with `--index` on a file under `/tmp/w5-audit/` and with all seven cache variables under `/tmp/w5-audit/` (the environ was read from the live process), so it had no reason to open the real index. That is a reason to expect no involvement, not proof of it.
