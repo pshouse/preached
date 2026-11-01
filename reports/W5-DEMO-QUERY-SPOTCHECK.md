@@ -220,7 +220,7 @@ Avoid on camera: "the prodigal son", "Why does God allow suffering?", "How shoul
 ## (c) Did abstention behave?
 Partly.
 - True abstains: bitcoin (24) and bicycle (25) correctly returned `abstain: true`, level `none`. Both had dense_top about 0.75 and bm25_hits 0.
-- Missed abstains: Super Bowl (22) and cookie recipe (23) returned level `weak`, `abstain: false`, with a gentler "closest matches" note, even though nothing relevant was returned. Their dense_top (0.755, 0.752) is as low as the two true abstains. The cause is not stopword hits (stopwords are removed by `fts.content_terms`). Both queries have exactly 5 content terms, and `to_fts_query` uses OR above 4 (`src/preached/fts.py:151`), so the lexical list fills to 100 with chunks that contain any one ordinary word. A shown hit that is in both lists counts as `agreement` (`src/preached/abstain.py:135`), and `decide` then gives `weak` rather than `none` (`abstain.py:162-164`: no agreement and low is `none`; low alone is `weak`). The 100 OR hits therefore count as agreement. If the video shows an off-topic query, use the bitcoin or bicycle one (both have fewer than 5 content terms, so AND with zero matches, bm25_hits 0), not a sports or food one.
+- Missed abstains: Super Bowl (22) and cookie recipe (23) returned level `weak`, `abstain: false`, with a gentler "closest matches" note, even though nothing relevant was returned. Their dense_top (0.755, 0.752) is as low as the two true abstains. The cause is not stopword hits (stopwords are removed by `fts.content_terms`). Both queries have exactly 5 content terms, and `to_fts_query` uses OR above 4 (`src/preached/fts.py:151`), so the lexical list fills to 100 with chunks that contain any one ordinary word. A shown hit that is in both lists counts as `agreement` (`src/preached/abstain.py:135`), and `decide` then gives `weak` rather than `none` (`abstain.py:162-165`: no agreement and low is `none`; low alone is `weak`). The 100 OR hits therefore count as agreement. If the video shows an off-topic query, use the bitcoin or bicycle one (both have fewer than 5 content terms, so AND with zero matches, bm25_hits 0), not a sports or food one.
 - False abstain: "How should I treat my enemies?" (13) abstained although the corpus has relevant sermons.
 - On-topic but unanswerable queries ("the prodigal son") did not abstain at all and were labelled strong.
 - Narration must NOT generalise the bitcoin abstain into "it knows when it can't answer": 2 of 4 off-topic queries did not abstain, and the bitcoin results shown on screen are riches passages (the user still sees them under the banner).
@@ -233,22 +233,29 @@ Not for camera. On camera say only "under a tenth of a second on a desktop CPU".
 Requests were serial and spaced; this says nothing about concurrent load. First query was not noticeably slower than the rest (the service was already warm).
 
 ## Recommendations (no code changed here)
-1. Retune the confidence rule so a high dense_top with bm25_hits 0 is not automatically weak, and so a very low dense_top (under about 0.78) abstains even when the OR fallback fills bm25_hits to 100. Consider not counting agreement from an OR query (more than 4 content terms), or requiring agreement from a hit that matches several terms. Stopwords are already removed, so that is not the fix.
+1. Route the confidence and abstain behaviour to the pre-registered abstain retune (99-WW: ADR first, then a held-out split). Its scope is OR-mode agreement that ignores common-word-only matches, with that common-word list taken from document frequency. "Don't count agreement from an OR query (more than 4 content terms)" is one candidate the ADR may evaluate. This report recommends no specific fix or threshold; the Super Bowl and cookie cases above are evidence for the ADR, not a design.
 2. Consider a per-sermon cap or merge in the top results.
 3. Consider parsing chapter-only references ("Romans 8"); `scripture_match` (`src/preached/fts.py:110`) requires a verse, so these fall through to plain "Romans".
 4. If a `why` explanation is expected in the UI, it is not in the API response today; confirm whether that is intended.
 
 ## R2 (CTO CONDITIONAL at e3ee723)
 - MF1: section (d) now says "Not for camera. On camera say only 'under a tenth of a second on a desktop CPU'." right under the numbers.
-- MF2: the stopword explanation was wrong and is replaced in query 22, query 23, section (b)/(c) and rec 1. Verified lines: `src/preached/fts.py:151` is the `" AND " if len(terms) <= 4 else " OR "` joiner (Super Bowl: won, Super, Bowl, last, year; cookie: best, chocolate, chip, cookie, recipe; both 5, so OR, 100 hits); `src/preached/abstain.py:135` is `agreement=any(hit.rowid in both for hit in shown)`; `abstain.py:162-164` turns agreement plus low dense_top into `weak` instead of `none`. Stopwords are removed by `fts.content_terms`. Rec 1 no longer says to ignore stopwords. Merged origin/main first; those lines hold on the merged tree (read, not computed).
+- MF2: the stopword explanation was wrong and is replaced in query 22, query 23, section (b)/(c) and rec 1. Verified lines: `src/preached/fts.py:151` is the `" AND " if len(terms) <= 4 else " OR "` joiner (Super Bowl: won, Super, Bowl, last, year; cookie: best, chocolate, chip, cookie, recipe; both 5, so OR, 100 hits); `src/preached/abstain.py:135` is `agreement=any(hit.rowid in both for hit in shown)`; `abstain.py:162-165` turns agreement plus low dense_top into `weak` instead of `none`. Stopwords are removed by `fts.content_terms`. Rec 1 no longer says to ignore stopwords. Merged origin/main first; those lines hold on the merged tree (read, not computed).
 - S1: noted under "Romans 8" and rec 3: `fts.py:110` (`scripture_match`) parses `Book ch:v` only, so "Romans 8" becomes plain "Romans".
 - S2: "prodigal" is in 5 chunks across 4 sermons (counted live via `/api/search`, bm25 and hybrid), so query 6 is also a retrieval miss.
 - Narration line added in (c): do NOT generalise the bitcoin abstain into "it knows when it can't answer".
 - Demo picks unchanged (approved).
 
+## R3 (CTO CONDITIONAL at dd07122)
+- MF-r2-1: rec 1 no longer prescribes a fix or the ~0.78 threshold. It now points to the pre-registered abstain retune (99-WW: ADR first, held-out split), scoped to OR-mode agreement that ignores common-word-only matches, with the list taken from document frequency. "Don't count agreement from an OR query" is named only as one candidate for the ADR to evaluate. Checked the summary, sections (b)/(c) and this PR BODY: none prescribes a settled fix or a threshold.
+- Nit: the abstain.py decide cite now reads 162-165 everywhere. Read on origin/main: 162 `if not signals.agreement and low:`, 163 `level = "none"`, 164 `elif not signals.agreement or low:`, 165 `level = "weak"`.
+- Report text only; nothing run against /cache.
+
 ## PR BODY
 
 Report-only spot check of 25 queries against the live demo, to pick demo-video queries. Adds `reports/W5-DEMO-QUERY-SPOTCHECK.md` only.
+
+R3: rec 1 now defers to the pre-registered abstain retune (99-WW) instead of prescribing a fix or threshold; cite is `abstain.py:162-165`.
 
 R2: corrected the cause of the Super Bowl/cookie non-abstains (5 content terms switch `to_fts_query` to OR, `fts.py:151`; the 100 OR hits count as agreement, `abstain.py:135`; stopwords are removed, so not the cause). Added the latency "not for camera" line, the "Romans 8" no-verse note, "prodigal" as a retrieval miss (5 chunks, 4 sermons), and a no-generalising-the-bitcoin-abstain narration warning.
 
