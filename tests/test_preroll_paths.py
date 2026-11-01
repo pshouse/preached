@@ -3,6 +3,8 @@ CLI play link seeks max(0, start_s - 0.75) while start_s stays exact."""
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import importlib.util
 import json
 import tempfile

@@ -9,6 +9,8 @@ Searcher still follows ``PRAGMA data_version``. Every name below is invented.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import sqlite3
 from unittest.mock import patch
 

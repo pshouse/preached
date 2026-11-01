@@ -7,13 +7,19 @@ and hybrid aborted in ONNX Runtime on most runs.
 
 Runs per mode: PREACHED_SHUTDOWN_RUNS (default 3). bm25 uses the Wesley
 index under PREACHED_CACHE when that file is present, else a generated one.
-hybrid needs that index and the pinned revision directory (manifest,
-tokenizer, and an fp32 or int8 graph). It is skipped when any of those is
-missing, including when the ONNX directory exists but is empty. An unset
-PREACHED_CACHE stays on a private temp directory.
+hybrid needs that index and the pinned revision directory under
+PREACHED_CACHE (PREACHED_ONNX_DIR when that is set): manifest.json and
+every name from required_filenames("fp32"), including the fp32 graph,
+tokenizer.json, and pooling.json. An int8-only directory is not ready.
+The server would fall back to BM25 and the test would pass without loading
+hybrid, so the test skips instead. The skip names PREACHED_CACHE. An unset
+PREACHED_CACHE stays on a private temp directory. The server subprocess
+receives PREACHED_CACHE when it is set, so model load uses that tree.
 """
 
 from __future__ import annotations
+
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
 
 import http.client
 import os
@@ -39,7 +45,12 @@ PYTHON = ROOT / ".venv" / "bin" / "python"
 
 
 def _cache_root() -> Path:
-    """Shared cache for this process. Unset PREACHED_CACHE stays on a temp directory."""
+    """Shared cache for this process. Unset PREACHED_CACHE stays on a temp directory.
+
+    The path is $PREACHED_CACHE only. There is no hard-coded cache root, so
+    a machine that has the real files elsewhere does not pick them up when
+    the variable is unset.
+    """
     raw = os.environ.get("PREACHED_CACHE")
     if raw:
         return Path(raw)
@@ -55,37 +66,33 @@ RUNS = int(os.environ.get("PREACHED_SHUTDOWN_RUNS", "3"))
 CLIENTS = 16
 WORDS = "grace faith love sin holy spirit law gospel heart repentance mercy prayer".split()
 # The export may leave this beside the fp32 graph. It is not a runtime
-# variant; a directory that has it is still an export, not an empty one.
+# variant. A directory that has only this graph is not hybrid-ready.
 _INT8_GRAPH = "model.int8.onnx"
 _HYBRID_SKIP = "needs the Wesley index and the pinned ONNX model under PREACHED_CACHE"
 
 
-def _loader_export_names() -> tuple[str, str, str]:
-    """manifest, tokenizer, fp32 graph, using the loader's own names.
+def _fp32_export_names() -> tuple[str, ...]:
+    """``manifest.json`` plus every name ``required_filenames("fp32")`` returns.
 
-    ``required_filenames`` and ``VARIANT_FILES`` are what ``OnnxEmbedder.load``
-    looks up. ``load_manifest`` opens ``manifest.json``. Keeping those names
-    here means a rename in the loader changes this skip with it.
+    That is the fp32 graph, ``tokenizer.json``, and ``pooling.json``.
+    ``load_manifest`` opens ``manifest.json``. int8 is not in the list: the
+    server does not load it, and an int8-only directory falls back to BM25.
+    A rename in the loader changes this skip with it.
     """
-    graph = VARIANT_FILES["fp32"]
-    tokenizer = next(name for name in required_filenames("fp32") if "tokenizer" in name)
-    return "manifest.json", tokenizer, graph
+    return ("manifest.json", *required_filenames("fp32"))
 
 
 def hybrid_load_ready(index: Path, onnx_dir: Path) -> bool:
-    """True when the hybrid SIGTERM test can see a real export.
+    """True when hybrid SIGTERM can load the fp32 export, not a BM25 fallback.
 
     The pinned revision directory under ``onnx_dir`` (the same directory
-    ``artifact_dir`` uses) must hold the manifest, the tokenizer, and either
-    the fp32 graph or the int8 graph. An empty ONNX directory is not ready.
+    ``artifact_dir`` uses) must hold every name from ``_fp32_export_names``.
+    An empty directory is not ready. An int8-only directory is not ready.
     """
     if not index.is_file():
         return False
-    manifest, tokenizer, graph = _loader_export_names()
     folder = onnx_dir / GRANITE_REVISION
-    if not (folder / manifest).is_file() or not (folder / tokenizer).is_file():
-        return False
-    return (folder / graph).is_file() or (folder / _INT8_GRAPH).is_file()
+    return all((folder / name).is_file() for name in _fp32_export_names())
 
 
 def _python() -> str:
@@ -106,7 +113,7 @@ def _fixture_index(path: Path, rows: int = 400) -> Path:
 
 
 def _env(tmp: str) -> dict:
-    return {
+    env = {
         "PATH": os.environ["PATH"],
         "HOME": os.environ.get("HOME", tmp),
         "TMPDIR": tmp,
@@ -116,8 +123,14 @@ def _env(tmp: str) -> dict:
         # PR #29's in-flight cap per client (ignored before it lands): all 16
         # clients share 127.0.0.1 and must be searching, not refused.
         "PREACHED_MAX_CLIENT_REQUESTS": "64",
-        **({"PREACHED_ONNX_DIR": os.environ["PREACHED_ONNX_DIR"]} if "PREACHED_ONNX_DIR" in os.environ else {}),
     }
+    # The child must resolve the model from the same tree hybrid_load_ready
+    # checked. Forwarding these keeps an unset variable unset, so the child
+    # does not fall through to the server's default cache root.
+    for key in ("PREACHED_CACHE", "PREACHED_ONNX_DIR"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
 
 
 class _Server:
@@ -248,11 +261,47 @@ class LoadedSigtermTests(unittest.TestCase):
             self.assertEqual(result.errors, [])
             self.assertEqual(len(result.skipped), 1, result.skipped)
             self.assertIn("pinned ONNX", result.skipped[0][1])
+            self.assertIn("PREACHED_CACHE", result.skipped[0][1])
+
+    def test_int8_only_dir_skips_hybrid_load(self) -> None:
+        """int8 is not a runtime variant. The hybrid test must skip, not pass on BM25."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            self.assertTrue(root.is_relative_to(temp_root), root)
+            index = root / "wesley.sqlite"
+            index.write_bytes(b"present")
+            onnx = root / "onnx"
+            revision = onnx / GRANITE_REVISION
+            revision.mkdir(parents=True)
+            for name in _fp32_export_names():
+                if name == VARIANT_FILES["fp32"]:
+                    continue
+                (revision / name).write_bytes(b"{}")
+            (revision / _INT8_GRAPH).write_bytes(b"int8")
+            self.assertFalse((revision / VARIANT_FILES["fp32"]).exists())
+            self.assertTrue((revision / "pooling.json").is_file())
+            self.assertTrue((revision / "manifest.json").is_file())
+            self.assertTrue((revision / _INT8_GRAPH).is_file())
+            # A mutant that treats int8 as enough returns True here, before
+            # the server is started, so the run cannot pass on a BM25 fallback.
+            self.assertFalse(hybrid_load_ready(index, onnx))
+            module = sys.modules[__name__]
+            with patch.object(module, "REAL_INDEX", index), patch.object(module, "ONNX_DIR", onnx):
+                case = LoadedSigtermTests("test_sigterm_under_hybrid_load_exits_zero_and_cleans_up")
+                result = unittest.TestResult()
+                case.run(result)
+            self.assertEqual(result.failures, [])
+            self.assertEqual(result.errors, [])
+            self.assertEqual(len(result.skipped), 1, result.skipped)
+            self.assertIn("PREACHED_CACHE", result.skipped[0][1])
 
     def test_hybrid_load_ready_follows_the_loader_filenames(self) -> None:
-        manifest, tokenizer, graph = _loader_export_names()
-        self.assertEqual(graph, VARIANT_FILES["fp32"])
-        self.assertIn(tokenizer, required_filenames("fp32"))
+        names = _fp32_export_names()
+        self.assertEqual(names, ("manifest.json", *required_filenames("fp32")))
+        self.assertIn(VARIANT_FILES["fp32"], names)
+        self.assertIn("pooling.json", names)
+        self.assertIn("tokenizer.json", names)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             self.assertTrue(root.is_relative_to(Path(tempfile.gettempdir()).resolve()))
@@ -262,15 +311,16 @@ class LoadedSigtermTests(unittest.TestCase):
             revision = onnx / GRANITE_REVISION
             revision.mkdir(parents=True)
             self.assertFalse(hybrid_load_ready(index, onnx))
-            (revision / manifest).write_text("{}")
-            (revision / tokenizer).write_bytes(b"{}")
-            (revision / graph).write_bytes(b"fp32")
+            for name in names:
+                (revision / name).write_bytes(b"{}")
             self.assertTrue(hybrid_load_ready(index, onnx))
-            (revision / graph).unlink()
+            (revision / "pooling.json").unlink()
             self.assertFalse(hybrid_load_ready(index, onnx))
+            (revision / "pooling.json").write_bytes(b"{}")
+            (revision / VARIANT_FILES["fp32"]).unlink()
             (revision / _INT8_GRAPH).write_bytes(b"int8")
-            self.assertTrue(hybrid_load_ready(index, onnx))
-            (revision / tokenizer).unlink()
+            self.assertFalse(hybrid_load_ready(index, onnx))
+            (revision / "tokenizer.json").unlink()
             self.assertFalse(hybrid_load_ready(index, onnx))
             self.assertFalse(hybrid_load_ready(root / "missing.sqlite", onnx))
 

@@ -5,6 +5,8 @@ Nothing here downloads or writes outside a temp dir: the heavy steps are mocked.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import contextlib
 import importlib.util
 import io

@@ -721,11 +721,15 @@ def _finite(value: object) -> bool:
 
 # CCEL keeps Wesley's paragraph numbers inline: "...to myself justice!" 8. Nearly
 # related ...". A number (optionally after a Roman section number, "IV. 1.")
-# is a paragraph number when it starts the excerpt or follows the end of a
-# sentence, and a capital letter or an opening quote follows it. "Eph. 2:8.",
-# "is, 1. That ..." (an inline list) and "p. 5." are left alone.
+# is a paragraph number when it starts the excerpt, follows the end of a
+# sentence, or follows a verse reference ("Rom. 8:16 1. How many", including
+# a range such as "Matt. 5:13-16 1."), and a capital letter or an opening
+# quote follows it. "Eph. 2:8.", "is, 1. That ..." (an inline list, including
+# one after a comma: "Rom. 8:16, 1. That") and "p. 5." are left alone.
+_VERSE_REF = r"(?:[1-3]\s+)?[A-Z][A-Za-z]{1,20}\.?\s+\d{1,3}:\d{1,3}(?:-\d{1,3})?\s+"
 PARAGRAPH_NUMBER = re.compile(
-    r"(^|[.!?][\"'\u201d\u2019)\]]*\s+)(?:[IVXL]{1,5}\.\s+)?\d{1,3}\.\s+(?=[\"'\u201c\u2018(\[]?[A-Z])"
+    rf"(^|[.!?][\"'\u201d\u2019)\]]*\s+|{_VERSE_REF})"
+    r"(?:[IVXL]{1,5}\.\s+)?\d{1,3}\.\s+(?=[\"'\u201c\u2018(\[]?[A-Z])"
 )
 _ABBREVIATION = re.compile(r"(?i)(?:^|\s)(?:p|pp|ver|chap|vol|no|sect|art)\.\s+$")
 

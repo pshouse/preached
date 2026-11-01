@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import unittest
 
 from preached.corpus import chunk_text, split_sentences, word_tokens

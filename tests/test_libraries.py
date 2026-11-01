@@ -3,6 +3,8 @@ which slugs may be ingested, indexed or served as public-domain libraries."""
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import contextlib
 import copy
 import io
