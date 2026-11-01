@@ -26,7 +26,10 @@ Machine `preached-sandbox`, tree `46e4ca2` + this diff. Fresh venv from `uv sync
 ## Stat
 
 ```
-STAT_PLACEHOLDER
+ reports/W5-F01-FOLLOWUPS.md      | 36 ++++++++++++++++++++++++++++++++++++
+ reports/W5-F01-SLOT-RELEASE.md   |  4 ++--
+ tests/test_reject_method_slot.py | 19 +++++++++++++++++--
+ 3 files changed, 55 insertions(+), 4 deletions(-)
 ```
 
 ## PR BODY
