@@ -97,7 +97,7 @@ Controls with `min-height: 44px`: `button` (`100`), `input` and `select` (`88`),
 
 `audio` is `width: 100%` only (`394`). Its pause, seek, and volume controls have no 44px minimum in this CSS. Footer and credit links are inline in a `0.92rem` paragraph (`355`–`370`); the line box is about 22px. That is the deferred item 9 below.
 
-Bottom padding of the page is `8.5rem` (136px at a 16px root). The player is `position: fixed; bottom: 0` (`372`–`380`). A one-line caption is `0.92rem` at the inherited 1.5 line-height (about 22px), plus `0.65rem` top padding, a `0.35rem` gap, the browser's audio control (height not in the CSS), and `0.7rem` bottom padding. `reports/W3-MOBILE-UX-QA.md` item 10 measured about 103px for a short caption and 169px when the held-audio sentence wrapped to four lines, which is taller than 136px. The safe-area term in that padding is inert; see F-04.
+Bottom padding of the page is `8.5rem` (136px at a 16px root). The player is `position: fixed; bottom: 0` (`372`–`380`). A one-line caption is `0.92rem` at the inherited 1.5 line-height (about 22px), plus `0.65rem` top padding, a `0.35rem` gap, the browser's audio control (height not in the CSS), and `0.7rem` bottom padding. The about-103px figure for a short caption is W3 item 2 (`reports/W3-MOBILE-UX-QA.md:43`): the empty player bar on first load ("Choose Play on a passage." plus an empty audio control, 103 px). Item 10 is the 169px figure, measured when the held-audio sentence wrapped to four lines, which is taller than 136px. The safe-area term in that padding is inert; see F-04.
 
 `prefers-reduced-motion: reduce` (`441`–`444`) sets `scroll-behavior: auto` and disables the spinner animation. `revealResults` calls `scrollIntoView({ block: "start" })` with no `behavior`, so it follows that property and should jump rather than animate. There is no `prefers-color-scheme` rule. See F-09.
 
@@ -125,31 +125,32 @@ Side-by-side status, from the same hybrid probe's `/api/side` body (`classic.not
 For the probed hit (`start_s` 92.02, `end_s` 145, sermon number 1, reader "A. Volunteer", archive.org URL), `renderCard` builds:
 
 - A paragraph `0:01:32–0:02:25` (`formatTime`, `15`–`23`, always `H:MM:SS`).
-- A button whose visible text is "Play from 0:01:32" and whose accessible name is the `aria-label` "Play sermon 1 from 0:01:32" (`284`–`287`). The name replaces the visible text for a screen reader.
-- On click, `playClip` seeks to `playStart` 91.27 (start minus `PREROLL_S` 0.75, `46`–`50`) and sets `#now-playing` to "Salvation by Faith · 0:01:32 · Read by A. Volunteer (LibriVox volunteer)". If `play()` rejects, that becomes the same sentence plus ". Press play on the bar if the browser held the audio." (`199`–`207`).
+- A button whose visible text is "Play from 0:01:32" and whose accessible name is the `aria-label` "Play sermon 1 from 0:01:32" (`284`–`287`). The name replaces the visible text for a screen reader, and it does not contain that visible text. See F-11.
+- On click, `playClip` seeks to `playStart` 91.27 (start minus `PREROLL_S` 0.75). `PREROLL_S` is defined at `app.js:44`. `playStart` is `46`–`50`. The click sets `#now-playing` to "Salvation by Faith · 0:01:32 · Read by A. Volunteer (LibriVox volunteer)". If `play()` rejects, that becomes the same sentence plus ". Press play on the bar if the browser held the audio." (`199`–`207`).
 
 The time range is text, not a second control. The jump is the button (archive) or the watch link (YouTube). Enter and Space activate the button. Enter activates the link. The `<audio>` is the pause and seek control, and it is last in the document, after the footer (`96`–`100`). It has `controls` and `preload="none"`, and no `aria-label` or `aria-labelledby`. `#now-playing` is not a live region and is not associated with the audio. See F-02.
 
-`.play.is-playing` draws an outline (`app.css:350`–`353`) and sets no `aria-pressed` or `aria-current`. A second press of the same button calls `playClip` again. There is no `ended` or `pause` listener (`639`–`642` listens for `loadedmetadata`, `canplay`, and `durationchange` only).
+`.play.is-playing` draws an outline (`app.css:350`–`353`) and sets no `aria-pressed` or `aria-current`. A second press of the same button calls `playClip` again (`291`–`293`). It does not pause. There is no `ended` or `pause` listener (`639`–`642` listens for `loadedmetadata`, `canplay`, and `durationchange` only).
 
 ## Findings
 
 | ID | Severity | Finding |
 | --- | --- | --- |
 | F-01 | High | The over-cap HTML page has no viewport and reloads every second |
-| F-02 | Medium | The player has no name, the held-audio instruction is not announced, and focus stays on the card |
+| F-02 | Medium | The player has no name, and the held-audio instruction is not announced |
 | F-03 | Medium | Side by side keeps the confidence and fallback notes out of the live region |
-| F-04 | Medium | The player asks for the safe-area inset, and the viewport never turns that inset on |
+| F-04 | Low | The safe-area `env()` term is inert without `viewport-fit=cover` |
 | F-05 | Low | "Searching the sermons." is written while an ancestor is `aria-busy="true"` |
 | F-06 | Low | A disabled `GET /` is raw JSON on a phone navigation |
 | F-07 | Low | There is no main landmark, and the skip link targets the next control |
-| F-08 | Low | Changing View runs a new search with no warning |
+| F-08 | Info | Changing View runs a new search with no warning (Patrick's call) |
 | F-09 | Info | The page has no dark-mode colours |
 | F-10 | Info | The card border is below the 3:1 non-text threshold |
+| F-11 | Low | The play button's accessible name does not contain its visible label (WCAG 2.5.3) |
 
 ### F-01 — High — the over-cap page is not usable on a phone
 
-A browser navigation that arrives while this peer is already at `DEFAULT_MAX_CLIENT_CONNECTIONS` (4, `app/server.py:247`) is answered on the accept thread. `docs/DEPLOY.md:628` records that rule. `docs/DEPLOY.md:1074`–`1077` records that with `PREACHED_TRUSTED_PROXIES` left empty behind `tailscale serve`, every proxied request is limited as `127.0.0.1`, so every phone shares the cap of 4 connections. This probe did not run Tailscale and did not load the page from a phone. It held one connection and sent a second with Chrome's navigation `Accept`.
+A browser navigation that arrives while this peer is already at `DEFAULT_MAX_CLIENT_CONNECTIONS` (4, `app/server.py:247`) is answered on the accept thread. `docs/DEPLOY.md:628` records that rule, including the meta refresh of the same 1 second. `docs/DEPLOY.md:1074`–`1077` records the empty-`PREACHED_TRUSTED_PROXIES` caveat behind `tailscale serve`: every proxied request is limited as `127.0.0.1`, so every phone shares one cap of 4 connections. The sanctioned exposure path is `PREACHED_TRUSTED_PROXIES=127.0.0.1` (`docs/DEPLOY.md:996`–`1000`, item 9 at `1117`–`1121`), where loopback is exempt from the per-peer cap, so the accept-time 503 is reached only when all 32 connection slots are held and nothing can be evicted (`docs/DEPLOY.md:628`–`629`). Under the sanctioned config the page appears at global saturation (the many-phones-at-once case, which is why it stays High); under the empty-proxy config, at 4 connections across all clients. The over-cap 503 is written on the accept thread and does not start a handler or spend a rate-limit bucket (`app/server.py:2786`–`2790`, `2811`–`2837`), so the 1 s refresh is a bounded per-tab retry (1 connection/s/tab), not a self-amplifying load. The refusal log at `2788` goes through `RefusalLog.note` (`app/server.py:501`–`511`), one line per class per second. A tab that then gets the page loads the four first-load resources, so tabs that recover together are a mild synchronized herd. The F-01 fix must update the coupling comment at `app/server.py:2915`–`2916`, the "meta refresh of the same 1 second" sentence at `docs/DEPLOY.md:628`, and the `content="{retry-after}"` assertion at `tests/test_html_503.py:199` if the refresh is lengthened while `Retry-After` stays 1. This probe did not run Tailscale and did not load the page from a phone. It held one connection and sent a second with Chrome's navigation `Accept`.
 
 On port 36337, 29 of 30 such requests returned this response (the other one was the JSON body, which `docs/DEPLOY.md` already describes for a request whose headers were not buffered yet):
 
@@ -168,7 +169,7 @@ Those bytes are `_OVER_CAP_HTML` (`app/server.py:2918`–`2922`). The page has a
 
 An in-page search does not hit this HTML. `fetch` sends `Accept: application/json` (`app.js:612`), the body is JSON, and `failureMessage` shows "The search had a problem on our side. Try again in a moment."
 
-Recommendation: one small HTML document with `width=device-width, initial-scale=1`, an `h1`, and the sentence "Preached is busy. This page will try again in a moment." Keep `Retry-After: 1` for clients. Make the meta refresh several seconds, or replace it with a "Try again" link to `/`, so the sentence can be read. `tests/test_html_503.py::test_html_navigation_gets_a_refreshing_page` pins the current refresh and the current sentence; that test has to move with the copy. The missing security headers on this same response are already F-04 in `reports/W5-HTTP-SECURITY-AUDIT.md`.
+Recommendation (PR-A, with F-06): one small constant HTML document with `width=device-width, initial-scale=1`, an `h1`, and the sentence "Preached is busy. This page will try again in a moment." Keep `Retry-After: 1` for API clients. Make the meta refresh 5 seconds or more, or replace it with a "Try again" link to `/`, so the sentence can be read. The page stays constant: no request bytes, no script, and no external URL. Keep the negative assertions in `tests/test_html_503.py` (the query, the peer, and `http://` / `https://` stay out of the body). If the refresh is lengthened while `Retry-After` stays 1, update the coupling comment at `app/server.py:2915`–`2916` ("Retry-After and the meta refresh are this same delay"), the "meta refresh of the same 1 second" sentence at `docs/DEPLOY.md:628`, the pinned `content="1"` at `tests/test_html_503.py:198`, and the `content="{retry-after}"` assertion at `tests/test_html_503.py:199`. `tests/test_html_503.py::test_html_navigation_gets_a_refreshing_page` pins the current refresh and the current sentence; that test has to move with the copy. Re-pin every `docs/DEPLOY.md` cite that moves. The missing security headers on this same response are already F-04 in `reports/W5-HTTP-SECURITY-AUDIT.md`.
 
 Covered today: the test above asserts status 503, `text/html`, `Retry-After: 1`, the refresh, and that the query is not echoed. It does not require a viewport or a way to pause the reload.
 
@@ -187,41 +188,49 @@ Covered today: the test above asserts status 503, `text/html`, `Retry-After: 1`,
 
 `playClip` (`182`–`208`) unhides the bar, starts playback, and writes the caption. The caption node is not `aria-live`. The audio node is not `aria-labelledby="now-playing"`. Focus is left on the card button. The audio element is the last focusable control in the document, after every card and the footer links, so Pause is a long tab from the passage that was just activated. On a phone the bar is painted at the bottom, which does not change that order.
 
-When the browser holds `play()`, the only instruction is the second sentence on `#now-playing`. `reports/W3-MOBILE-UX-QA.md` fixed the wording and recorded that headless Chromium held the audio. iOS does this often. The sentence is not in a live region, so a screen reader is not told to use the bar, and a keyboard user is not moved to it.
+When the browser holds `play()`, the only instruction is the second sentence on `#now-playing` (`199`–`203`). `reports/W3-MOBILE-UX-QA.md` fixed the wording and recorded that headless Chromium held the audio. iOS does this often. The sentence is not in a live region, so a screen reader is not told to use the bar. Focus stays on the card button. A focus move, if any, belongs only in this held-audio branch.
 
-The accessible name uses `formatTime`, which is always `H:MM:SS` (`15`–`23`). The probed passage is announced "Play sermon 1 from 0:01:32". Many screen readers read that as digits and colons. The visible clock can stay `0:01:32`; the name can say "1 minute 32 seconds".
+The accessible name uses `formatTime`, which is always `H:MM:SS` (`15`–`23`). The probed passage's visible text is "Play from 0:01:32" and its name is "Play sermon 1 from 0:01:32" (`284`–`287`). The name does not contain the visible label. That is F-11 (WCAG 2.5.3 Label in Name, Level A). A spoken time such as "1 minute 32 seconds" would move the name further from the words on the button, so the fix leaves the clock in the name as `H:MM:SS`.
 
-`.play.is-playing` is visual only (`app.css:350`–`353`). The button does not toggle pause.
+`.play.is-playing` is visual only (`app.css:350`–`353`). The button does not toggle pause. Pressing it again calls `playClip` (`291`–`293`).
 
 `audio` has no `min-height` (`394`). The 44px rule used everywhere else does not apply to the only pause and seek controls.
 
-Recommendation: one PR in `app.js` and `app.css`. Set `aria-labelledby="now-playing"` on the audio. Give `#now-playing` `aria-live="polite"`. On the first show, move focus to the audio element. Set `aria-pressed` on the playing button. Put a spoken time in the `aria-label`. Give `audio` a `min-height` of 44px. `tests/test_mobile_ux.py` already asserts the held-audio string and that the bar unhides; extend that Deno check to the accessible name, the live attribute, and the focus move.
+Recommendation (PR-B): name the audio with `aria-labelledby="now-playing"`. Do not put `aria-live` on `#now-playing`. That would announce the caption over the sermon audio on every Play. Announce only the held-audio sentence, through its own live region, and move focus to the bar only in the held-audio branch (`app.js:199`–`203`), if at all. Do not set `aria-pressed`. A pressed state would say the button pauses, and a second press does not pause. Leave the `is-playing` outline visual-only, or set `aria-current="true"`. Do not put a spoken time in the `aria-label`. The name should start with the visible text, for example `Play from 0:01:32, sermon 1` (F-11). Give `audio` `min-height: 44px`. `tests/test_mobile_ux.py` already asserts the held-audio string and that the bar unhides; extend that Deno check to the accessible name, live membership of the held-audio sentence, and label-in-name.
 
-Covered today: the bar starts hidden, the caption string, the seek to start minus 0.75s, and the `aria-label` "Play sermon 41 from 0:01:32". No test checks a name on `<audio>`, a live region on `#now-playing`, or focus leaving the card.
+Covered today: the bar starts hidden, the caption string, the seek to start minus 0.75s, and the `aria-label` "Play sermon 41 from 0:01:32" (`tests/test_mobile_ux.py:208`). No test checks a name on `<audio>`, a live region for the held-audio sentence, or that the name contains the visible label.
+
+### F-11 — Low — the play name does not contain the visible label
+
+WCAG 2.5.3 Label in Name (Level A). `renderCard` sets the visible text to "Play from " plus `formatTime` (`app.js:284`) and the `aria-label` to "Play " plus the sermon name plus " from " plus the same clock (`284`–`287`). For the probed hit that is visible "Play from 0:01:32" and name "Play sermon 1 from 0:01:32". The name does not contain the visible label, so a voice-control user who says the words on the button does not hit it. The same shape holds for any sermon number: visible "Play from H:MM:SS", name "Play sermon N from H:MM:SS".
+
+Recommendation: ship the rename with F-02 in PR-B. The accessible name starts with the visible text, for example `Play from 0:01:32, sermon 1`. Do not replace the clock with a spoken time.
+
+Covered today: `tests/test_mobile_ux.py:208` requires the current name "Play sermon 41 from 0:01:32". It does not require the name to contain "Play from 0:01:32".
 
 ### F-03 — Medium — side by side does not announce the warning the classic view announces
 
 Classic search puts the low-confidence banner and the BM25 note in `.notices` (`index.html:58`–`61`). That was `reports/W3-MOBILE-UX-QA.md` item 3.
 
-`showSides` (`519`–`541`) never calls `setText` on `#note` or `#confidence`. `resetState` clears both (`488`). The status line is the two headings and the two counts only (`526`–`528`). `renderSide` (`435`–`448`) appends the fallback note and the confidence note as plain paragraphs. They have no `aria-live` and no `role`.
+`showSides` (`519`–`541`) never calls `setText` on `#note` or `#confidence`. `resetState` clears both: `#note` at `app.js:487` and `#confidence` at `488`. The status line is the two headings and the two counts only (`526`–`528`). `renderSide` (`435`–`448`) appends the fallback note and the confidence note as plain paragraphs (`440`, `442`). They have no `aria-live` and no `role`.
 
 The live hybrid side body on port 36335 has `classic.note` "Embeddings are not loaded; results are BM25 only." and `church.message` "Nothing from your church yet." The live region therefore gets the counts and the empty-church sentence. The embeddings sentence is only in the column.
 
 The same split is what the Deno test locks in for a low-confidence column. `tests/test_app_js.py:674` asserts the status text does not contain "heuristic", while `renderSide` still builds the banner as a child paragraph. A screen reader user who hears the status and does not walk the column misses "Low confidence: these passages may not answer your question." The lede invites this view (`index.html:19`).
 
-Recommendation: after `showSides` builds the two states, write each side's `fallbackNote` and `confidenceNote` into the existing `#note` and `#confidence` (or append them inside `.notices`). Keep the column text for someone who scrolls. One function, the nodes that are already live. Update the Deno assertion that the status string omits the banner so it instead asserts the banner node is inside `.notices` and not hidden.
+Recommendation (PR-C): write each side's fallback note and confidence note into `.notices`. Keep the column text for someone who scrolls. Replace the assertion at `tests/test_app_js.py:674` (the status string omits "heuristic") with an assertion that the banner node is inside `.notices` and is not hidden.
 
 Covered today: `test_confidence_banner_is_announced` checks the static classic nodes only. `test_side_by_side_rendering` checks the column text and that the status omits "heuristic". It does not check a live region on the column note.
 
-### F-04 — Medium — the safe-area padding never becomes non-zero
+### F-04 — Low — the safe-area term is dead code until cover is turned on
 
-The player padding is `0.65rem 1rem calc(0.7rem + env(safe-area-inset-bottom))` (`app.css:379`). The viewport is `width=device-width, initial-scale=1` (`index.html:5`). It does not contain `viewport-fit=cover`. WebKit resolves `env(safe-area-inset-*)` to 0 unless the page opts into cover, so the `env()` term adds nothing and the only gap under the audio element is `0.7rem` (about 11px). The home-indicator inset on current iPhones is 34px when cover is on.
+The player padding is `0.65rem 1rem calc(0.7rem + env(safe-area-inset-bottom))` (`app.css:379`). The viewport is `width=device-width, initial-scale=1` (`index.html:5`). It does not contain `viewport-fit=cover`. With no `viewport-fit=cover`, WebKit keeps the layout viewport out of the unsafe area, so `env(safe-area-inset-*)` stays 0. The `env()` term adds nothing. It is dead code, not a visible defect. The only gap under the audio element is `0.7rem` (about 11px). The home-indicator inset on current iPhones is 34px when cover is on. Turning cover on is what would introduce the overlap.
 
-`.wrap`'s bottom padding is a fixed `8.5rem` (`29`). It does not add the inset. Turning cover on without also growing that padding makes the held-audio bar (already measured taller than 136px in the W3 report, item 10) cover the footer by the inset as well.
+`.wrap`'s bottom padding is a fixed `8.5rem` (`29`). It does not add the inset. Turning cover on without also growing that padding makes the held-audio bar (already measured at 169px in the W3 report, item 10, taller than 136px) cover the footer by the inset as well.
 
-This was not looked at on a device. `reports/W3-MOBILE-UX-QA.md` left `env(safe-area-inset-bottom)` under the home indicator as unverified. The new fact is that the declaration cannot take effect with the viewport this page sends.
+This was not looked at on a device. `reports/W3-MOBILE-UX-QA.md` left `env(safe-area-inset-bottom)` under the home indicator as unverified.
 
-Recommendation: add `viewport-fit=cover` to the viewport meta, and change the page's bottom padding to `calc(8.5rem + env(safe-area-inset-bottom))`. Keep the player's existing `calc`. `test_viewport_allows_zoom` already requires `width=device-width` and `initial-scale=1` and rejects `user-scalable` and `maximum-scale`; add a positive check for `viewport-fit=cover`.
+Held. Any F-04 change needs a check on a real iPhone first (Patrick's real-client rule). Only after that check: add `viewport-fit=cover` to the viewport meta, and change the page's bottom padding to `calc(8.5rem + env(safe-area-inset-bottom))`, keeping the player's existing `calc`. `test_viewport_allows_zoom` already requires `width=device-width` and `initial-scale=1` and rejects `user-scalable` and `maximum-scale`. A cover change would add a positive check for `viewport-fit=cover` in that same test. It is not a queued PR.
 
 Covered today: the viewport test above. It does not mention `viewport-fit`.
 
@@ -229,7 +238,7 @@ Covered today: the viewport test above. It does not mention `viewport-fit`.
 
 `runSearch` calls `setBusy(true)` and then sets the status to "Searching the sermons." (`591`–`593`). `setBusy` sets `aria-busy` on `#results-section` (`470`–`474`), which is the ancestor of `#status`. ARIA says assistive technologies may hide changes inside a busy subtree until `aria-busy` goes back to false. The results update is safe: `showResults` and `showSides` call `setBusy(false)` before they write the status (`504`, `521`). The loading sentence is the one written while busy. A hybrid search on the real model can take long enough that silence matters. This was not heard on a screen reader.
 
-Recommendation: set the loading sentence, then set `aria-busy`, with the status node outside the busy element. The smallest HTML change is to move `#status` above the section, or to put `aria-busy` on `#results` and `#sides` only. `tests/test_app_js.py` currently expects `aria-busy="true"` on `#results-section` during the load; point that assertion at the node that still means "results are coming".
+Recommendation (PR-D, with F-07): set the loading sentence, then set `aria-busy`, with the status node outside the busy element. Move `#status` out of the busy subtree, or put `aria-busy` on `#results` and `#sides` only. Both this and F-07 restructure `index.html` around `#results-section`, so they ship as one PR. Separate PRs would conflict. Update the `aria-busy` assertions at `tests/test_app_js.py:380` (`"true"` while loading) and `:382` (`"false"` after) so they name the node that still means "results are coming".
 
 Covered today: that assertion checks the attribute value. It does not check that the loading sentence is outside the busy subtree.
 
@@ -243,9 +252,9 @@ curl -sS -D - -H "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,
 
 returned `HTTP/1.1 503 Service Unavailable`, `Content-Type: application/json; charset=utf-8`, `Content-Length: 24`, body `{"error": "unavailable"}`. The handler does that for every path except `/healthz` (`2250`–`2255`), with no branch on `Accept`. A phone browser shows the JSON. `/healthz` is the other body, `{"ok": false, "disabled": true}`, which is what a monitor should keep.
 
-Recommendation: for `GET /` and `HEAD /` while disabled, send the same short HTML page as F-01 (after that page has a viewport), with security headers and no one-second refresh. Leave `/healthz` and `/api/*` on JSON.
+Recommendation (PR-A, with F-01): for a disabled `GET /` and `HEAD /` with a browser `Accept`, send the same constant HTML page as F-01, including its viewport and with no one-second refresh. Keep `/healthz` as `{"ok": false, "disabled": true}` and `/api/*` on JSON. F-06 can be its own PR immediately after F-01 if that is easier, and it must reuse F-01's constant. Keep the kill-switch assertion at `tests/test_deploy.py:229` green (a disabled `/api/search` body is `{"error": "unavailable"}`) and the JSON 503 assertions at `tests/test_exposure.py:577`, `:1190`, and `:1330`. Add an HTML-on-`/` test and a JSON-on-`/api/search` test. The kill switch must stay tested. Re-pin every `docs/DEPLOY.md` cite the edit moves.
 
-Covered today: server tests expect the JSON error for a disabled page. A new test would assert `text/html` on `GET /` with a browser `Accept`, and JSON on `/api/search`.
+Covered today: `tests/test_deploy.py:229` expects the JSON error for a disabled `/api/search`. The new tests are the HTML page on `GET /` with a browser `Accept`, and JSON on `/api/search`.
 
 ### F-07 — Low — no main landmark, and the skip link does not skip
 
@@ -253,15 +262,17 @@ The skip link is the first tab stop and points at `#q` (`index.html:14`). The ne
 
 There is no `<main>`. Screen-reader landmark navigation has banner, search, the results region, and contentinfo, and no main.
 
-Recommendation: wrap the results section in `<main id="main">` and point the skip link at `#main` (or at `#results-heading`). One HTML edit. Extend `test_every_control_has_a_label` or add a sibling assertion that a `<main>` exists and the skip `href` is that id.
+Recommendation (PR-D, with F-05): wrap the results in `<main id="main">` and point the skip link at `#main`. Add a `<main>` and skip-target assertion next to the `aria-busy` assertions this PR already updates (`tests/test_app_js.py:380` and `:382`). Separate from F-05, this would conflict on `index.html`.
 
 Covered today: no test looks for a main landmark or for the skip target.
 
-### F-08 — Low — the View select searches by itself
+### F-08 — Info — the View select searches by itself (Patrick's call)
 
-Mode waits for Search. View does not. After a query exists, `change` on `#view` calls `runSearch(lastSearch)` (`666`–`671`). The label is "View" (`index.html:36`). Nothing near it says that picking "Side by side" replaces the results. Replacing the results is a change of context on input (WCAG 3.2.2 is the criterion people apply to a select that submits itself). On a phone the native picker commits as soon as the choice is tapped.
+Mode waits for Search. View does not. After a query exists, `change` on `#view` calls `runSearch(lastSearch)` (`666`–`671`). The label is "View" (`index.html:36`). Nothing near it says that picking "Side by side" replaces the results. On a phone the native picker commits as soon as the choice is tapped.
 
-Recommendation: remove the `change` listener and let the next Search use the new value, or add a sentence under the label: "Changing the view searches again." The smaller change is deleting the listener. No current test asserts that a view change starts a fetch.
+Updating results in place is a change of content, not a change of context, so this is not a 3.2.2 failure. The note is advisory. The View auto-search is deliberate demo UX for side by side. Removing it is Patrick's product decision, and it is not a queued fix.
+
+Advisory options, for that decision: leave the listener, remove the `change` listener and let the next Search use the new value, or add a sentence under the label ("Changing the view searches again."). No current test asserts that a view change starts a fetch.
 
 Covered today: nothing in `tests/test_app_js.py` or `tests/test_mobile_ux.py` listens for this `change` handler.
 
@@ -269,7 +280,7 @@ Covered today: nothing in `tests/test_app_js.py` or `tests/test_mobile_ux.py` li
 
 `app.css` handles `prefers-reduced-motion` (`441`) and `prefers-contrast: more` (`446`). It has no `prefers-color-scheme`. A phone set to dark mode gets the light page (`#f3eee4` background, `#1c1915` text). Text contrast on that pair is 15.14:1, so the page stays readable. It will look like a bright sheet in a dark room.
 
-Recommendation: one `@media (prefers-color-scheme: dark)` that remaps the five variables in `:root` (`4`–`10`) and checks the same pairs still clear 4.5:1. Keep the player as light text on a dark bar, or swap it deliberately and update `.player :focus-visible`. Optional for the demo.
+Recommendation: one `@media (prefers-color-scheme: dark)` that remaps the seven colour variables in `:root` (`app.css:4`–`10`: `--bg`, `--bg-raised`, `--ink`, `--ink-soft`, `--line`, `--focus`, `--paper`) and checks the same pairs still clear 4.5:1. Keep the player as light text on a dark bar, or swap it deliberately and update `.player :focus-visible`. Optional for the demo. Wait, with F-10.
 
 Covered today: no test reads `prefers-color-scheme`.
 
@@ -309,19 +320,89 @@ These are unchanged on `8d46f14` and on `6d07f64` (`app/static` is the same byte
 
 ## Prioritized fixes
 
-At most one PR each.
+Four PRs, each with a test, plus two held items. Sequencing: PR-A first (the High), then PR-B. PR-C and PR-D are independent of each other. They conflict only if both touch `showSides` or `resetState`, so rebase whichever lands second.
 
-1. **F-01.** Give the over-cap HTML page a viewport, a heading, and a refresh long enough to read (or a Try again link). Update `tests/test_html_503.py`.
-2. **F-02.** Name the audio from `#now-playing`, announce the caption, move focus to the audio when the bar opens, and set a 44px minimum height on `audio`.
-3. **F-03.** Write the side-by-side confidence and fallback notes into the existing `.notices` live region.
-4. **F-04.** Add `viewport-fit=cover`, and add the same safe-area inset to the page's bottom padding.
-5. **F-05.** Put the loading sentence outside the `aria-busy` subtree.
-6. **F-06.** Serve the short HTML page for a disabled `GET /`, and keep `/healthz` and `/api/*` on JSON.
-7. **F-07.** Add a `<main>` and point the skip link at it.
-8. **F-08.** Do not run a search from the View select's `change` event.
+1. **PR-A: F-01 + F-06, server 503 pages.** Both live in `app/server.py` and share one constant page.
+   - The page gets a viewport, an `<h1>`, the sentence, and a refresh of 5 s or more, or a Try again link to `/`.
+   - It stays constant: no request bytes, no script, and no external URL. Keep the negative assertions in `tests/test_html_503.py`.
+   - `Retry-After: 1` may stay for API clients. If the refresh is lengthened while that header stays 1, update the coupling comment at `app/server.py:2915`–`2916`, the "meta refresh of the same 1 second" sentence at `docs/DEPLOY.md:628`, the pinned `content="1"` at `tests/test_html_503.py:198`, and the `content="{retry-after}"` assertion at `tests/test_html_503.py:199`.
+   - F-06: serve that same page for a disabled `GET /` and `HEAD /` with a browser `Accept`. Keep `/healthz` (`{"ok": false, "disabled": true}`) and `/api/*` on JSON.
+   - Keep the kill-switch tests green. `tests/test_deploy.py:229` asserts a disabled `/api/search` body of `{"error": "unavailable"}`. `tests/test_exposure.py:577`, `:1190`, and `:1330` assert that same JSON body on the in-flight and reconnect 503s. Add an HTML-on-`/` test and a JSON-on-`/api/search` test. The kill switch must stay tested.
+   - Rule 4: re-pin every `docs/DEPLOY.md` cite the edit moves, and the `CITED` pins in `tests/test_deploy_alerts.py`.
+   - Real client: headless Chromium at a phone viewport against a loopback over-cap server.
+   - Parity: these paths are not probed by the #97 harness (normal mode, no over-cap), so the PR must show the http, no-church, and in-process hashes unchanged.
+   - F-06 may be a separate PR immediately after F-01. It must reuse F-01's constant page.
+2. **PR-B: F-02 as corrected above, the 44px audio height, and F-11.**
+   - Name the audio with `aria-labelledby="now-playing"`.
+   - Announce only the held-audio sentence, in a live region. An optional focus move only in that branch (`app.js:199`–`203`).
+   - Fix the name so it starts with the visible text (WCAG 2.5.3). Example: `Play from 0:01:32, sermon 1`.
+   - `audio { min-height: 44px }`.
+   - No `aria-pressed`. A second press calls `playClip` again (`app.js:291`–`293`) and does not pause, so a pressed state would misstate the control. Leave the `is-playing` outline visual-only, or use `aria-current="true"`.
+   - No spoken time in the name. Making `#now-playing` itself `aria-live` would announce the caption over the sermon audio on every Play.
+   - Extend the `tests/test_mobile_ux.py` Deno check: accessible name, live membership of the held-audio sentence, and label-in-name.
+3. **PR-C: F-03.** Write the side-by-side notes into `.notices`. Replace the `tests/test_app_js.py:674` assertion with one that the banner node is inside `.notices` and is not hidden.
+4. **PR-D: F-05 + F-07.** Both restructure `index.html` around `#results-section`: move `#status` out of the busy subtree (or put `aria-busy` on `#results` and `#sides`), wrap the results in `<main id="main">`, and point the skip link at it. Separate PRs would conflict. Update the `tests/test_app_js.py:380` and `:382` `aria-busy` assertions, and add a `<main>` and skip-target assertion.
 
-F-09 and F-10 can wait.
+**Held: F-04.** A real-iPhone check comes first. The `env()` term is dead code until `viewport-fit=cover` is on, and turning cover on is what would introduce the overlap. Only after that check, add cover plus the padding.
+
+**Held: F-08.** Patrick's product call. The auto-search is deliberate demo UX for side by side. It is a change of content, not a 3.2.2 failure, and it is not a queued fix.
+
+**Wait:** F-09 and F-10.
+
+### Parity with the harness proposed in #97
+
+That harness hashes the raw bytes of `/` and `/static/app.js` (the http set and the no-church set). PR-B, PR-C, and PR-D edit `app.js` and/or `index.html`, and an F-04 change would too, so each moves the http and no-church hashes by design. Each of those PRs must:
+
+- report a record-level diff showing only the probes `/` and `/static/app.js` changed, with the new sha256 of each equal to `git show <head>:app/static/<file> | sha256sum`;
+- show every other set unchanged;
+- re-baseline the refs in `docs/PARITY.md` if #97 has landed by then. It has not landed on `origin/main` `3aef7ca`. That tree has no `docs/PARITY.md`.
+
+An `app.css`-only edit does not move those hashes. PR-A must not move any of them.
 
 ## Limits
 
 No phone, no Chromium, no VoiceOver, and no TalkBack. Overlap of the home indicator, the real size of the native audio controls, and whether a screen reader drops one of two polite live regions were not observed. Announcement findings are the accessible names and live-region membership in the DOM. The synthetic index had one chunk, so a low-confidence response that still contains passages was not returned live; that path is the code in `describeResponse` (`377`–`384`) and the existing Deno fixture. The probe's hybrid request did return a real fallback `note`, which is the side-by-side case F-03 cites.
+
+The parity harness proposed in #97 hashes the raw bytes of `/` and `/static/app.js` (the http and no-church sets). Every fix that edits `index.html` or `app.js` therefore moves those two hashes by design. The prioritized fix list records what each of those PRs must show.
+
+## PR BODY
+
+R2 of the accessibility and phone UX audit (PR #100). Report text only. No file under `app/`, `src/`, `tests/`, or `docs/` is edited. `origin/main` `3aef7ca` was merged (merge `01a125c`, no conflicts). The cited `app/server.py`, `app/static/*`, `docs/DEPLOY.md`, and test files are the same bytes as on that main, so no `docs/DEPLOY.md` cite was re-pinned and `tests/test_deploy_alerts.py` is untouched.
+
+Severities: F-01 High; F-02 and F-03 Medium; F-04 Low; F-11 Low (new, WCAG 2.5.3 Label in Name); F-05, F-06, F-07 Low; F-08, F-09, F-10 Info. F-08 is Patrick's product decision. The fix list is four PRs (PR-A F-01+F-06, PR-B F-02 as corrected plus the 44px audio height and F-11, PR-C F-03, PR-D F-05+F-07), with F-04 and F-08 held and F-09 and F-10 waiting. F-02 does not set `aria-pressed`, does not put a spoken time in the name, does not move focus on every Play, and does not make `#now-playing` itself live.
+
+No tests were run. `find /cache -xdev -printf '%p\t%s\t%T@\n' | sort` before the edit and after the report text was written: 132823 lines both times, sha256 `55cb67aa9dcf532de1b634f4af32d4b03569f43e6afee472065eb34610e14c45`, no path, size, or mtime difference. No cache env var was pointed at `/cache`.
+
+R2 content head: `0000000000000000000000000000000000000000` (parent of the commit that records this sha).
+
+`git diff --stat origin/main..HEAD`:
+
+```
+ reports/W5-A11Y-MOBILE-AUDIT.md | 408 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 408 insertions(+)
+```
+
+## R2
+
+CTO r1 CONDITIONAL on PR #100 at `3877f7ed249ba9095de51921c23ccb4b48555d68`. This round edits only `reports/W5-A11Y-MOBILE-AUDIT.md`. `origin/main` is `3aef7cacf1907fa7ed57a5251b3894dec6618f00`. It was merged as `01a125c3ff65dcb1af2c0e9b211a278f141a683d` (parents `3877f7e` and `3aef7ca`). `git merge` reported no conflicts. No `--ours` or `--theirs`. The files this report cites (`app/server.py`, `app/static/app.js`, `app/static/app.css`, `app/static/index.html`, `docs/DEPLOY.md`, `tests/test_html_503.py`, `tests/test_app_js.py`, `tests/test_mobile_ux.py`, `tests/test_deploy.py`, `tests/test_exposure.py`, `reports/W3-MOBILE-UX-QA.md`) are the same blob on this branch and on `3aef7ca`. Every cite below was read on that tree. None had moved, so nothing in `docs/DEPLOY.md` or `tests/test_deploy_alerts.py` was re-pinned. `docs/PARITY.md` is not on `3aef7ca`.
+
+| Item | Where it now sits |
+| --- | --- |
+| MF1. Both reachability cases, the accept-thread 503 (no handler, no rate-limit bucket), the bounded 1 s retry, and the three cites the F-01 fix must update | `:153`. The same fix cites are in the recommendation at `:172` and in PR-A at `:328` |
+| MF2 (a). No `aria-pressed`. A second press calls `playClip` (`app.js:291`–`293`) and does not pause | Recommendation `:199`. PR-B bullet `:340`. The audio section states the same fact at `:133` |
+| MF2 (b). No spoken time in the name. The name must start with the visible text. New Low finding for WCAG 2.5.3 | `:193`, recommendation `:199`, finding F-11 at `:203`–`:209`, table row `:149`, PR-B `:338` |
+| MF2 (c). Announce the held-audio sentence. Move focus only in that branch (`app.js:199`–`203`), if at all | `:199` and PR-B `:337` |
+| MF2 (d). Do not make `#now-playing` itself `aria-live` | `:199` and PR-B `:341` |
+| MF2, F-04 downgraded to Low. Dead code until cover is on. Real iPhone check first | Table `:142`. Heading `:225`. Held paragraph `:233`. Fix item `:346` |
+| S1. F-08 is Info and Patrick's call. In-place results are a change of content, not a 3.2.2 failure | Table `:146`. Heading `:269`. Wording `:273`. Held item `:348` |
+| S2. #97 hashes `/` and `/static/app.js`. Edits to `index.html` or `app.js` move those hashes by design | Limits `:366`. The PR obligations are `:352`–`:360` |
+| N1. `resetState` clears `#note` at `app.js:487` and `#confidence` at `488` | `:215` |
+| N2. The 103px figure is W3 item 2 (`reports/W3-MOBILE-UX-QA.md:43`). Item 10 is the 169px figure | `:100` |
+| N3. `:root` has seven colour variables (`--bg`, `--bg-raised`, `--ink`, `--ink-soft`, `--line`, `--focus`, `--paper`) | `:283` |
+| N4. `PREROLL_S` is `app.js:44`. `46`–`50` is `playStart` | `:129` |
+| N5. CSP cite `app/server.py:206`–`219` left as written. `219` is `frame-ancestors`. The closing paren is `220` | `:51` |
+| Severity table. F-01 High; F-02 and F-03 Medium; F-04 Low; F-11 Low; F-05, F-06, F-07 Low; F-08, F-09, F-10 Info | `:137`–`:149` |
+| Fix list. Four PRs and two held items, in the review's order, each PR with its test | `:321`–`:360` |
+| PR BODY synced to those severities and that fix list | `:368` |
+
+No suite was run. Cache snapshots are in the PR BODY above.
