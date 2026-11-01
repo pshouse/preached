@@ -75,6 +75,8 @@ Branch tip confirmed at 7a3773e85537ccc0130c73059bddc52b64363a60 before editing;
 
 Description word count (`sed -n 11,21p docs/SUBMISSION-DRAFT.md | wc -w`): **247** (target 247, max 250).
 
+R2 content commit: `922bd6ad76cebf34a50a2a1014f8b1f33ea116d0`; stat vs base 3a93147 is below. (Tip after the commit that records this line is given in the PR comment.)
+
 Out of scope, untouched: 141 sermons vs "143 recordings".
 
 `git diff --stat origin/main..HEAD`:
