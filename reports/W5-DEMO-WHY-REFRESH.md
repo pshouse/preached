@@ -98,3 +98,16 @@ Branch tip confirmed at 8c2e545e53a1408a644332c455f59883bb81bfaa before editing;
 | SF1-r2 | `docs/DEMO-SCRIPT.md:31` now reads "an everyday question that uses Wesley's own phrase, "narrow way" from Matt 7:13-14; no Scripture reference given", which agrees with the "preacher's own vocabulary" rule at `:118`. |
 | MF5 narration | `docs/DEMO-SCRIPT.md:29` untouched (CTO approved). |
 | PR BODY | Synced: the in-report PR BODY gains one sentence on R3. |
+
+Cache check: `find /cache -printf '%p %s %T@\n'` before and after, diff empty (nothing read or written).
+
+R3 content commit: `6fa7e90c7cfc929d3c616fc5d0a15f1a5f9286ab`. The final tip (this line's commit) is given in the PR comment.
+
+`git diff --stat 3a93147..6fa7e90`:
+
+```
+ docs/DEMO-SCRIPT.md            |  49 ++++++++++++--------
+ docs/SUBMISSION-DRAFT.md       |  14 +++---
+ reports/W5-DEMO-WHY-REFRESH.md | 100 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 139 insertions(+), 24 deletions(-)
+```
