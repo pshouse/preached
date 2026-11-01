@@ -243,5 +243,6 @@ Report-only spot check of 25 queries against the live demo, to pick demo-video q
 `git diff --stat origin/main...HEAD`:
 
 ```
-DIFFSTAT_PLACEHOLDER
+ reports/W5-DEMO-QUERY-SPOTCHECK.md | 248 ++++++++++++++++++++++++++++++++++++
+ 1 file changed, 248 insertions(+)
 ```
