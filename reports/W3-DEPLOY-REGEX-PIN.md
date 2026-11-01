@@ -22,17 +22,17 @@ Nit, accepted: `side_access_line` sets `_client_key`, so `log_request` takes `_l
 
 Paragraph lines are joined before backtick matching, so a wrapped `^...$` is one pattern. A backtick token that starts with `^` and has no `$` is a failure, not a skip. The expected names are exactly `D2b`, `stamp`, `side-access`.
 
-Infra check: `test_infra_yaml_matches_when_the_file_is_present` compares those regexes to `pattern` / `evidence_pattern` when `church-alerts.yaml` is present (`PREACHED_INFRA_ALERTS` or `/workspace/infra-ops/preached/alerts/church-alerts.yaml`). The file is absent here, so the test skips.
+Infra check: `test_infra_yaml_matches_when_the_file_is_present` compares those regexes to `pattern` / `evidence_pattern` when `church-alerts.yaml` is present (`PREACHED_INFRA_ALERTS` or `/workspace/infra-ops/preached/alerts/church-alerts.yaml`). A loosened regex passes wherever the infra yaml is absent.
 
 ## Proofs
 
-Trial-merge of `86e4ef8` with `origin/fix/w3-keepalive-cap` (#72), scratch tree `5788f83`, not this branch. Clean merge. The side pattern is on line 821. With the marker and this test file, `tests.test_deploy_regex`: Ran 10 tests, OK (skipped=1).
+Trial-merge of `86e4ef8` with `origin/fix/w3-keepalive-cap` (#72), scratch tree `5788f83`, not this branch. Clean merge. The side pattern is on line 821. With the marker and this test file, `tests.test_deploy_regex`: Ran 10 tests, OK (skipped=1; the infra-yaml check on a machine where the file is absent). A loosened regex passes wherever the infra yaml is absent.
 
 The previous test, pointed at #72's `DEPLOY.md`, fails:
 
 `no producer for DEPLOY.md pattern DEPLOY.md:821: add one, do not skip it`
 
-Blank line inserted at the top of a scratch copy of that merged `DEPLOY.md`: Ran 10 tests, OK (skipped=1). Names stay `side-access`, `D2b`, `stamp`.
+Blank line inserted at the top of a scratch copy of that merged `DEPLOY.md`: Ran 10 tests, OK (skipped=1; the infra-yaml check on a machine where the file is absent). A loosened regex passes wherever the infra yaml is absent. Names stay `side-access`, `D2b`, `stamp`.
 
 Marker removed from a scratch copy:
 
@@ -73,7 +73,7 @@ Earlier in the session, before the suite, the same shm files and Claude MCP logs
 
 `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=/cache uv run python -m unittest discover -s tests`
 
-Ran 1021 tests in 262.657s. OK (skipped=1). 0 failures, 0 errors. The skip is `test_infra_yaml_matches_when_the_file_is_present`.
+Ran 1021 tests in 262.657s. OK. 0 failures, 0 errors. The skipped=1 on that run is `test_infra_yaml_matches_when_the_file_is_present`, on a machine where the infra yaml is absent. A loosened regex passes wherever the infra yaml is absent.
 
 ## Diff vs origin/main
 
