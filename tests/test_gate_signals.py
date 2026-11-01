@@ -7,6 +7,8 @@ field of /api/search but ``took_ms`` must come out the same from both.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import sqlite3
 import sys
 import tempfile

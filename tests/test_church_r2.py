@@ -6,6 +6,8 @@ Every church file here is a synthetic fixture. No real church data is used.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import os
 import sqlite3
 import stat

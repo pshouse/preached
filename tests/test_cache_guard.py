@@ -1,8 +1,10 @@
 """The suite fails when a run writes under PREACHED_CACHE or /cache.
 
-Importing this module calls ``cache_guard.install``. ``unittest discover -s
-tests`` loads it as a top-level module and does not import the tests
-package, so the guard still arms for that invocation.
+Importing this module calls ``cache_guard.install``. Every other test
+module does the same with one import line, so a ``discover -p`` pattern
+that does not load this file, ``python -m unittest test_x`` from inside
+``tests/``, and ``python tests/test_x.py`` are armed too. ``install`` is
+idempotent.
 """
 
 from __future__ import annotations
@@ -129,7 +131,10 @@ class CacheGuardTests(unittest.TestCase):
             self.assertIsNone(cache_guard.classify_write(root / "uv" / "pkg", roots))
             self.assertIsNone(cache_guard.classify_write(root / "xdg" / "deno" / "cache", roots))
             self.assertIsNone(cache_guard.classify_write(root / "index" / "wesley.sqlite-shm", roots))
-            snap = root / "index" / "wesley.sqlite.box-store-snap-3"
+            index = root / "index"
+            index.mkdir()
+            (index / "wesley.sqlite").write_bytes(b"s")
+            snap = index / "wesley.sqlite.box-store-snap-3"
             self.assertIsNone(cache_guard.classify_write(snap, roots))
             outside = Path(tempfile.gettempdir()) / "not-a-cache-file"
             self.assertIsNone(cache_guard.classify_write(outside, roots))
@@ -355,6 +360,11 @@ class CacheGuardTests(unittest.TestCase):
             shutil.rmtree(resolved)
 
     def test_box_store_snap_names_are_ignored(self) -> None:
+        """Only ``<sibling>.box-store-snap-<digits>`` regular files are noise.
+
+        A directory, a symlink, a file with no sibling, and a name the old
+        ``*.box-store-snap-*`` glob would hide are real and stay visible.
+        """
         root = _temp_root()
         try:
             index = root / "index"
@@ -363,11 +373,32 @@ class CacheGuardTests(unittest.TestCase):
             before = cache_guard.snapshot_tree(root)
             noise = index / "wesley.sqlite.box-store-snap-4"
             noise.write_bytes(b"noise")
-            (index / ".box-store-snap-9").write_bytes(b"x")
+            orphan = index / "orphan.box-store-snap-4"
+            orphan.write_bytes(b"real-file")
+            dotted = index / ".box-store-snap-9"
+            dotted.write_bytes(b"x")
+            note = index / "wesley.sqlite.box-store-snap-note"
+            note.write_bytes(b"t")
+            as_dir = index / "wesley.sqlite.box-store-snap-8"
+            as_dir.mkdir()
+            (as_dir / "inside").write_bytes(b"i")
+            link = index / "wesley.sqlite.box-store-snap-5"
+            link.symlink_to("wesley.sqlite")
             after = cache_guard.snapshot_tree(root)
-            self.assertTrue(noise.is_file())
-            self.assertEqual(cache_guard.diff_lines("fake", before, after), [])
-            self.assertIsNone(cache_guard.classify_write(noise, [(f"PREACHED_CACHE={root}", root)]))
+            blob = "\n".join(cache_guard.diff_lines("fake", before, after))
+            self.assertNotIn("index/wesley.sqlite.box-store-snap-4 ", blob)
+            self.assertIn("index/orphan.box-store-snap-4 ", blob)
+            self.assertIn("index/.box-store-snap-9 ", blob)
+            self.assertIn("index/wesley.sqlite.box-store-snap-note ", blob)
+            self.assertIn("index/wesley.sqlite.box-store-snap-8 ", blob)
+            self.assertIn("index/wesley.sqlite.box-store-snap-8/inside ", blob)
+            self.assertIn("index/wesley.sqlite.box-store-snap-5 ", blob)
+            roots = [(f"PREACHED_CACHE={root}", root)]
+            self.assertIsNone(cache_guard.classify_write(noise, roots))
+            self.assertIsNotNone(cache_guard.classify_write(orphan, roots))
+            self.assertIsNotNone(cache_guard.classify_write(as_dir, roots))
+            self.assertIsNotNone(cache_guard.classify_write(dotted, roots))
+            self.assertIsNotNone(cache_guard.classify_write(link, roots))
         finally:
             resolved = root.resolve()
             if not resolved.is_relative_to(Path(tempfile.gettempdir()).resolve()):
@@ -462,6 +493,108 @@ class CacheGuardTests(unittest.TestCase):
             import shutil
 
             shutil.rmtree(resolved)
+
+
+# The one-line import every test module uses. install() is idempotent.
+_ARM = '__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()'
+
+
+def _probe_source() -> str:
+    return (
+        '"""Deliberate write under PREACHED_CACHE; the guard must fail the run."""\n'
+        f"{_ARM}\n"
+        "import os\n"
+        "import unittest\n"
+        "from pathlib import Path\n"
+        "\n"
+        "class ArmProbe(unittest.TestCase):\n"
+        "    def test_deliberate_write(self) -> None:\n"
+        '        Path(os.environ["PREACHED_CACHE"]).joinpath("leaked.bin").write_bytes(b"x")\n'
+        "\n"
+        'if __name__ == "__main__":\n'
+        "    unittest.main()\n"
+    )
+
+
+class ArmingInvocationTests(unittest.TestCase):
+    """The three invocations that used to run with the guard uninstalled."""
+
+    def setUp(self) -> None:
+        self.probe = ROOT / "tests" / "test_arming_probe.py"
+        self.probe.write_text(_probe_source())
+        self.scratch = _temp_root()
+        self.env = os.environ.copy()
+        self.env["PYTHONDONTWRITEBYTECODE"] = "1"
+        self.env.pop("PYTHONPATH", None)
+        for key in (
+            "PREACHED_CACHE",
+            "PREACHED_ONNX_DIR",
+            "HF_HOME",
+            "HF_HUB_CACHE",
+            "HUGGINGFACE_HUB_CACHE",
+            "DENO_DIR",
+            "XDG_CACHE_HOME",
+            "UV_CACHE_DIR",
+            "TORCH_HOME",
+        ):
+            path = self.scratch / key.lower()
+            path.mkdir()
+            self.env[key] = str(path)
+
+    def tearDown(self) -> None:
+        if self.probe.exists():
+            self.probe.unlink()
+        pycache = ROOT / "tests" / "__pycache__"
+        if pycache.is_dir():
+            for item in pycache.glob("test_arming_probe*"):
+                item.unlink()
+        resolved = self.scratch.resolve()
+        if not resolved.is_relative_to(Path(tempfile.gettempdir()).resolve()):
+            raise AssertionError(f"refusing to remove {resolved}")
+        import shutil
+
+        shutil.rmtree(resolved)
+
+    def _assert_armed(self, argv: list[str], cwd: Path) -> None:
+        result = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        blob = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, blob)
+        self.assertIn("cache guard", blob)
+        self.assertIn("leaked.bin", blob)
+
+    def test_discover_pattern_that_skips_this_module_is_armed(self) -> None:
+        self.assertNotIn("test_cache_guard", "test_arming_probe.py")
+        self._assert_armed(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_arming_probe.py"],
+            ROOT,
+        )
+
+    def test_unittest_from_inside_tests_is_armed(self) -> None:
+        self._assert_armed([sys.executable, "-m", "unittest", "test_arming_probe"], ROOT / "tests")
+
+    def test_running_the_file_as_a_script_is_armed(self) -> None:
+        self._assert_armed([sys.executable, "tests/test_arming_probe.py"], ROOT)
+
+    def test_every_test_module_imports_the_guard(self) -> None:
+        missing = []
+        for path in sorted((ROOT / "tests").glob("test_*.py")):
+            if path.name == "test_arming_probe.py":
+                continue
+            text = path.read_text()
+            if path.name == "test_cache_guard.py":
+                if "cache_guard.install()" not in text:
+                    missing.append(path.name)
+                continue
+            if _ARM not in text:
+                missing.append(path.name)
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

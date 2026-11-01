@@ -7,6 +7,8 @@ review files, and the privacy-config hash. Every name below is invented.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import http.client
 import json
 import os

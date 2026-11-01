@@ -6,6 +6,8 @@ app.js in Deno against a fake DOM (skipped when Deno is not installed).
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import os
 import re
 import shutil

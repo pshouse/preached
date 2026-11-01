@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import ast
 import hashlib
 import importlib.util

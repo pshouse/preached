@@ -8,6 +8,8 @@ turbo output from an AMX CPU and clean output for the same clips.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import json
 import os
 import sys
@@ -53,6 +55,22 @@ from preached.youtube.words import Word  # noqa: E402
 from test_youtube import embedder, speech_words  # noqa: E402
 
 FIXTURES = Path(__file__).parent / "fixtures" / "asr_repro"
+_ASR_SKIP = "needs the clips in PREACHED_CACHE/asr-repro"
+
+
+def _asr_repro_root() -> Path | None:
+    """WAV clips live in ``$PREACHED_CACHE/asr-repro``. Unset or missing is a skip.
+
+    There is no hard-coded cache root. A process that does not set
+    PREACHED_CACHE does not read a default tree.
+    """
+    raw = os.environ.get("PREACHED_CACHE")
+    if not raw:
+        return None
+    root = Path(raw) / "asr-repro"
+    if not (root / "c01.wav").is_file():
+        return None
+    return root
 
 
 def synth(seconds: float, speech: list[tuple[float, float]], *, quiet: list[tuple[float, float]] = (), floor: float = 3e-5) -> np.ndarray:
@@ -288,12 +306,11 @@ class CorruptedAsrFixtureTests(unittest.TestCase):
             self.assertFalse(any(s.start_s < 80 and s.end_s > 60 for s in coverage.uncovered_spans(sound, corrupt)))
         self.assertTrue(any(s.start_s < 60 and s.end_s > 80 for s in coverage.uncovered_spans(sound, corrupt)))
 
-    @unittest.skipUnless(
-        (Path(os.environ.get("PREACHED_CACHE", "/cache")) / "asr-repro" / "c01.wav").is_file(),
-        "needs the clips in PREACHED_CACHE/asr-repro",
-    )
+    @unittest.skipUnless(_asr_repro_root() is not None, _ASR_SKIP)
     def test_envelope_matches_the_audio(self) -> None:
-        root = Path(os.environ.get("PREACHED_CACHE", "/cache")) / "asr-repro"
+        root = _asr_repro_root()
+        if root is None:
+            self.skipTest(_ASR_SKIP)
         for name in self.HOLES:
             db, corrupt, clean = fixture(name)
             path = root / f"{name}.wav"

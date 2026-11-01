@@ -6,23 +6,31 @@ so deno and ONNX Runtime do not use /cache/xdg.
 
 A before/after listing catches files left behind, including a same-size
 replace, a chmod, a new symlink, an empty directory, and a SQLite -wal
-file written by a connection that is still open. Write-mode opens are
-recorded as they happen, so a file created under the cache and removed
-before the run ends still fails the run. A writable sqlite3.connect under
-a watched root is refused; mode=ro URIs are left alone.
+file written by a connection that is still open. A file created under a
+watched root and deleted before the run ends leaves no trace in that
+listing (b2): the path is absent from both snapshots. Write-mode opens are
+recorded as they happen, so that create-then-delete still fails the run.
+A writable sqlite3.connect under a watched root is refused; mode=ro URIs
+are left alone.
 
-Arming: import the tests package (``python -m unittest tests.<module>``)
-or discover the suite (``python -m unittest discover -s tests`` from any
-directory). Discovery loads ``test_cache_guard``, which calls ``install``
-without going through the package. ``python -m unittest test_x`` with the
-working directory inside tests/ does not arm the guard.
+Snap noise is only a regular file named ``<sibling>.box-store-snap-<digits>``
+whose sibling entry is in the same directory. A directory of that name, a
+symlink of that name, or a file of that name with no sibling is a real
+entry and is not ignored.
+
+Arming: ``install`` is idempotent. Every test module calls it with one
+import line, so these invocations are armed: ``python -m unittest discover
+-s tests`` (including ``-p`` patterns that do not load ``test_cache_guard``),
+``python -m unittest test_x`` with the working directory inside ``tests/``,
+and ``python tests/test_x.py``. ``python -m unittest tests.<module>`` also
+arms through this package's ``__init__``.
 """
 
 from __future__ import annotations
 
 import atexit
-import fnmatch
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -34,10 +42,11 @@ from pathlib import Path
 # Top-level directories that other tools rewrite. -shm changes when a
 # read-only connection opens a WAL index, so those sidecars are ignored.
 # -wal is the log itself: an insert or update with the connection still
-# open changes only that file. The box snapshot daemon's
-# *.box-store-snap-* names are noise. Everything else must stay put.
+# open changes only that file. Snap noise is decided by _snap_noise_file,
+# not by a name glob: a real directory or file must stay visible.
 _EXCLUDED_DIRS = frozenset({"uv", "uv-python", "venvs", "xdg", "demo-kill"})
-_SNAP_NOISE = "*.box-store-snap-*"
+# <sibling>.box-store-snap-<digits>. The sibling group is non-empty.
+_SNAP_FILE_RE = re.compile(r"^(.+)\.box-store-snap-(\d+)$")
 _REAL_CACHE = Path("/cache")
 
 _installed = False
@@ -99,10 +108,36 @@ class _Run:
 
 
 def _ignored_name(name: str) -> bool:
-    if fnmatch.fnmatch(name, _SNAP_NOISE):
-        return True
     # -shm only. -wal of a watched database is itself watched.
+    # Snap names are not decided here. A directory, a symlink, or a real
+    # file that merely looks like snap noise must stay visible, and that
+    # depends on the parent directory and on the file type.
     return name.endswith("-shm")
+
+
+def _snap_noise_file(directory: str, name: str) -> bool:
+    """True when ``name`` is daemon noise beside its sibling.
+
+    The entry must be a regular file named ``<sibling>.box-store-snap-<digits>``,
+    and ``<sibling>`` must already be an entry in ``directory``. A directory
+    or a symlink with that name is real. A file with that name and no sibling
+    is real. A creating open of a not-yet-existing path is noise only when
+    the sibling is already there, which is how the snapshot daemon writes.
+    """
+    match = _SNAP_FILE_RE.fullmatch(name)
+    if match is None:
+        return False
+    path = os.path.join(directory, name)
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        pass
+    else:
+        # On disk and not a regular file: a directory or a symlink is real.
+        if not stat.S_ISREG(mode):
+            return False
+    sibling = match.group(1)
+    return os.path.lexists(os.path.join(directory, sibling))
 
 
 def _ignored_rel(rel: str) -> bool:
@@ -168,6 +203,8 @@ def snapshot_tree(root: Path) -> dict[str, Entry]:
         for name in filenames:
             rel = name if not prefix else prefix + name
             if _ignored_rel(rel):
+                continue
+            if _snap_noise_file(dirpath, name):
                 continue
             entry = _entry(os.path.join(dirpath, name))
             if entry is not None:
@@ -240,6 +277,8 @@ def classify_write(path: object, roots: list[tuple[str, Path]]) -> str | None:
         except ValueError:
             continue
         if _ignored_rel(rel):
+            continue
+        if _snap_noise_file(os.fspath(resolved.parent), resolved.name):
             continue
         return f"{label} write {rel}"
     return None
