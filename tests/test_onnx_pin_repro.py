@@ -46,7 +46,10 @@ from preached.artifacts import (
     sha256_file,
     verify_manifest,
 )
-child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
+if __package__:
+    from .subproc_env import child_env
+else:
+    from subproc_env import child_env
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path(os.environ.get("PREACHED_CACHE", "/cache"))

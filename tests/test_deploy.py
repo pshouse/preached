@@ -40,7 +40,10 @@ from app.server import (  # noqa: E402
 from preached.artifacts import FP32_ONNX_SHA256, GRANITE_REVISION  # noqa: E402
 from preached.search import Searcher  # noqa: E402
 from preached.store import connect  # noqa: E402
-child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
+if __package__:
+    from .subproc_env import child_env
+else:
+    from subproc_env import child_env
 
 SHA = "ab" * 32
 OTHER_SHA = "cd" * 32
