@@ -13,6 +13,8 @@ by a line number. An unknown anchor fails with "no producer".
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import inspect
 import logging
 import os

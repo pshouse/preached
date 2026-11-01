@@ -6,6 +6,8 @@ artifacts are not under /cache.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import errno
 import gc
 import json
@@ -655,7 +657,7 @@ class ImportGuardTests(unittest.TestCase):
     def test_youtube_embed_path_does_not_import_torch(self) -> None:
         """The import embedder is ONNX. Shape, dtype, and norm match the library contract."""
         if not (artifact_dir() / "model.fp32.onnx").is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
+            self.skipTest("granite onnx artifacts are not in PREACHED_CACHE")
         code = (
             "import json\n"
             "import sys\n"
@@ -705,14 +707,14 @@ class RealOnnxTests(unittest.TestCase):
     def test_cached_fp32_and_tokenizer_match_the_pins(self) -> None:
         folder = artifact_dir()
         if not (folder / "model.fp32.onnx").is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
+            self.skipTest("granite onnx artifacts are not in PREACHED_CACHE")
         self.assertEqual(sha256_file(folder / "model.fp32.onnx"), FP32_ONNX_SHA256)
         self.assertEqual(sha256_file(folder / "tokenizer.json"), TOKENIZER_SHA256)
 
     def test_fp32_directory_without_int8_loads(self) -> None:
         source = artifact_dir()
         if not (source / "model.fp32.onnx").is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
+            self.skipTest("granite onnx artifacts are not in PREACHED_CACHE")
         from preached.onnx_embed import OnnxEmbedder
 
         # The graph is opened with O_NOFOLLOW and must have one link, so copy
@@ -754,7 +756,7 @@ class RealOnnxTests(unittest.TestCase):
 
     def test_fp32_query_is_unit_normalized(self) -> None:
         if not (artifact_dir() / "manifest.json").is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
+            self.skipTest("granite onnx artifacts are not in PREACHED_CACHE")
         from preached.onnx_embed import OnnxEmbedder
 
         embedder = OnnxEmbedder.load(variant="fp32", batch_size=2, ort_threads=1)
@@ -1092,7 +1094,7 @@ class FdLoadTests(unittest.TestCase):
 
         path = artifact_dir() / "model.fp32.onnx"
         if not path.is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
+            self.skipTest("granite onnx artifacts are not in PREACHED_CACHE")
         fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC)
         try:
             self.assertFalse(_uses_external_data(fd))
@@ -1159,7 +1161,7 @@ class FdLoadTests(unittest.TestCase):
     def test_load_refuses_a_symlinked_graph(self) -> None:
         source = artifact_dir()
         if not (source / "model.fp32.onnx").is_file():
-            self.skipTest("granite onnx artifacts are not in /cache")
+            self.skipTest("granite onnx artifacts are not in PREACHED_CACHE")
         from preached.onnx_embed import OnnxEmbedder
 
         with tempfile.TemporaryDirectory() as tmp:

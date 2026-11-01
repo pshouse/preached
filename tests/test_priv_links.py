@@ -9,6 +9,8 @@ passage is unchanged. Every name below is invented.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import io
 import json
 import os
