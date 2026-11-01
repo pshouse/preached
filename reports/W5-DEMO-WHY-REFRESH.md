@@ -63,6 +63,6 @@ Docs-only refresh of the demo script and submission draft to match `main` 3a9314
 ```
  docs/DEMO-SCRIPT.md            | 48 ++++++++++++++++++++-------------
  docs/SUBMISSION-DRAFT.md       | 16 ++++++-----
- reports/W5-DEMO-WHY-REFRESH.md | 63 +++++++++++++++++++++++++++++++++++
- 3 files changed, 102 insertions(+), 25 deletions(-)
+ reports/W5-DEMO-WHY-REFRESH.md | 68 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 107 insertions(+), 25 deletions(-)
 ```
