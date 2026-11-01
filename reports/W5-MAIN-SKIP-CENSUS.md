@@ -117,6 +117,6 @@ Report-only fixes. No tests were run.
 - PR BODY: stat line replaced by the final `git diff --stat origin/main...HEAD` (below).
 
 ```
- reports/W5-MAIN-SKIP-CENSUS.md | 122 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ reports/W5-MAIN-SKIP-CENSUS.md | 122 +++++++++++++++++++++++++++++++++++++++++
  1 file changed, 122 insertions(+)
 ```
