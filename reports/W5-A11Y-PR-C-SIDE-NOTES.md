@@ -1,157 +1,127 @@
-# W5 a11y PR-C: side-by-side notes are announced (F-03)
+# W5 a11y PR-C: side-by-side notes are announced (F-03), correction round 1
 
-Branch `fix/w5-a11y-side-notes`, from `origin/main` `3aef7cacf1907fa7ed57a5251b3894dec6618f00`.
-Code commit `e0c2d4b7eb8138ac1d55cfe8c861f519e5bc1d6e`. The pushed head sha40 is in the hand-off message,
-because this report is in that commit.
+Branch `fix/w5-a11y-side-notes` (the brief names it `fix/w5-a11y-side-notices`; the name was
+kept, not renamed, and no second branch exists). Cut from `origin/main`
+`3aef7cacf1907fa7ed57a5251b3894dec6618f00`. `origin/main` has since moved to
+`b1a2b245b19fb6ee173fd20d491fa7f986ab65ad` (#101, cache-guard tests and reports only; no `app/` or
+`tests/test_app_js.py` change). No rebase was needed or done.
+Starting head (local and `origin/fix/w5-a11y-side-notes`, matching): `18a72a0dc537c9fd93fbdba9053d082fcb72378b`.
+Code commit of this round: `e417bc4b3ac7f7fd092ede89d8b61f66f97cf2a0`. The pushed head sha40 is in the hand-off message.
 
-## Cause
+## 1. What was done
 
-In classic view, `showResults` writes the fallback note to `#note` and the
-confidence banner to `#confidence`. Both sit in `<div class="notices" aria-live="polite">`
-(index.html:58-61), so a screen reader hears the low-confidence warning. In side by
-side, `renderSide` appended the same notes to each column as plain `<p class="note">`
-(main app.js:440, 442), outside any live region. `showSides` never wrote `#note`/`#confidence`,
-so the warning was not announced in the demo's main view.
+The authoritative brief replaces round 0. `app/static/app.js` and `tests/test_app_js.py` were reset to
+`origin/main` bytes and redone:
 
-## Change (app/static/app.js only)
+- `showSides` (only function edited): `#note` = for each side (classic, then church) with a
+  `fallbackNote`, `heading + ": " + fallbackNote`, joined with one space, `""` when none. Then `#status`
+  unchanged. Then `#confidence` = for each side with a `confidenceNote` and `showResults === true`,
+  `heading + ": " + confidenceNote`, joined with one space, `""` when none. Both via `setText`.
+- `renderSide`, `resetState`, `setBusy`, `showResults`, `MESSAGES` are byte-identical to main (the
+  column paragraphs stay). Round 0's `sideNotes` helper, em-dash wording and `renderSide` edit are gone.
+- `tests/test_app_js.py`: edits only in `SIDE_CHECKS`. The `:674` "status is not the banner" assertion is kept.
+  `index.html`, `app.css`, `tests/test_mobile_ux.py` are identical to `origin/main` (`git diff origin/main -- FILE` empty).
 
-- `renderSide` no longer draws the notes in the column.
-- New `sideNotes(states, key)` builds the text for each live node. Each side's note is
-  prefixed with its column heading, for example
-  `Your church (sample data) — Low confidence: …`, so it stays clear which side a
-  note belongs to. When both sides have one, the two notes are joined in one node.
-- `showSides` calls `setText("note", …)` and `setText("confidence", …)` with that text.
-  These are the same nodes and the same `.notices` live region that classic uses.
-- Same rule as classic: a side's confidence note is shown only while that side's
-  passages are shown. When "Hide low-confidence results" hides the low side, its
-  banner hides too. The column status already says "Low-confidence results hidden."
-  This is a small visible change. Before, the column kept its banner while its
-  passages were hidden.
-- Reset and new search: `showSides`, `runSearch` and `showFailure` all start with
-  `resetState`, which already does `setText("note", "")` / `setText("confidence", "")`.
-  So no stale warning is left behind.
-- Classic path (`showResults`) is untouched. `index.html` and `app.css` are unchanged:
-  the nodes and styles already exist.
-- The audio/player code (PR-B) is untouched. `resetState` is unchanged, so this PR does not
-  touch that part of PR-D's code. `showSides` gains two lines.
+## 2. How to run it
 
-DEPLOY cites: `docs/DEPLOY.md` names `app.js` only in a file list (line 371, no line
-cite). `tests/test_deploy_alerts.py` has no pin on `app.js` or `test_app_js.py`. Nothing
-needed re-pinning. The suite shows 0 `test_every_cited_file_line_holds_its_string` failures.
+All variables under one `mktemp -d` (`PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `HF_HUB_CACHE`,
+`HUGGINGFACE_HUB_CACHE`, `DENO_DIR`, `XDG_CACHE_HOME`, `TORCH_HOME`, `UV_PROJECT_ENVIRONMENT`,
+`UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, `HOME`), plus `ORT_DISABLE_TELEMETRY=1`, `HF_HUB_OFFLINE=1`,
+`PREACHED_REQUIRE_DENO=1`; `PREACHED_GUARD_REAL_SRC` unset.
 
-## Tests (tests/test_app_js.py, `SIDE_CHECKS`)
+    PREACHED_REQUIRE_DENO=1 uv run python -m unittest tests.test_app_js tests.test_mobile_ux
+    PREACHED_REQUIRE_DENO=1 HF_HUB_OFFLINE=1 ORT_DISABLE_TELEMETRY=1 uv run python -m unittest discover -s tests
 
-- The fake DOM now has a `.notices` node (`aria-live="polite"`) whose children are
-  `#note` and `#confidence`, as in index.html. index.html's own containment is still
-  checked by `test_mobile_ux.test_confidence_banner_is_announced`.
-- As ruled, the old `:674` assertion ("status is not the banner") is replaced with:
-  the banner node is inside `.notices` and not hidden. The new checks also cover:
-  - the text is `Your church (sample data) — <MESSAGES.low>`;
-  - the unrated classic side adds nothing;
-  - the column does not repeat the note;
-  - the banner hides with the low side's passages and comes back with them;
-  - `resetState()` hides and empties it;
-  - a weak classic side with a fallback note puts both notes in `.notices`, each named
-    (`#note` and `#confidence` not hidden);
-  - a later search (church missing) drops the stale banner and note.
+## 3. Results
 
-Red, with `origin/main`'s app.js put in place temporarily and HEAD's restored afterwards:
+Host `preached-sandbox`, code commit `e417bc4b3ac7f7fd092ede89d8b61f66f97cf2a0`.
 
-```
-FAIL: test_side_by_side_rendering
-Error: side banner not hidden: got true, want false
-Ran 10 tests ... FAILED (failures=1)
-```
+- Focused: `Ran 19 tests in 0.360s, OK` (test_mobile_ux unchanged, skipped=0).
+- Full: `Ran 1156 tests in 256.723s, OK (skipped=12)`. Zero `test_every_cited_file_line_holds_its_string` failures.
+- Cites re-read on this head: `docs/DEMO-SCRIPT.md:28,:42` and `docs/SUBMISSION-DRAFT.md:34` cite
+  `app.js:217-235` (`whyLine` ... `}`), `:312-313` (`whyLine(hit.why)` / `card.appendChild`), `:338` (`lowHidden`).
+  All hold; this PR edits only after line 519.
+- `/cache` snapshot (`find /cache -xdev -printf '%p\t%s\t%T@\n' | sort`): before 132824 lines,
+  sha256 `3ca707d7aba4f2aa682a6497f9e481bad4c8087d9304142444a746ace64bca64`; after 132824 lines, same sha256; diff: none.
+  No `Microsoft`/`DeveloperTools` dirs were created.
 
-Green at HEAD: `tests.test_app_js` + `tests.test_mobile_ux`: 19 tests OK.
+Mutation proof (each applied alone to `app/static/app.js`, `tests.test_app_js` run, reverted, `cmp` against pre-mutant bytes):
 
-## Parity
-
-`docs/PARITY.md` is not on `origin/main`: #97 has not landed. So PARITY.md is **not** touched.
-
-I took the harness from PR #97's branch without checking it out:
-`git show origin/chore/w5-parity-harness:scripts/parity_hash.py` and `eval/parity/requests.json`.
-I put them into `git archive` copies of `origin/main` and of HEAD under `/tmp/prc_parity/`.
-A driver in a separate dir ran it. The sandbox has no Wesley index or ONNX model outside `/cache`,
-and `/cache` must not be read. So the driver ran it the way `tests/test_parity_hash.py` does:
-synthetic `build_library(classic_rows())` index in a temp dir, fixture loader, `chunks_sha256 = "ab"*32`.
-The driver also captured every record per set, which gave the record-level diff.
-The `/` and `/static/app.js` bytes come from the tree, not from the index, so the probe records do not
-depend on which index is used. Harness hash `9bbe1a503f36136f`.
-The main run reproduces #97's `PINNED` synthetic hashes exactly.
-
-| Set | main | head | records changed |
+| Mutant | Result | Assertion that failed | revert `cmp` |
 |---|---|---|---|
-| http | `b198c5b3546ef6eb` | `e487e72f580466aa` | 1 of 225: `/static/app.js` |
-| no-church | `29f0c7e50f011dea` | `b23edff07cf3930e` | 1 of 225: `/static/app.js` |
-| in-process | `2c4e3d735333a6b2` | `2c4e3d735333a6b2` | 0 of 212 |
-| in-process-no-health | `126e6bde69f9049a` | `126e6bde69f9049a` | 0 of 211 |
-| search+sermon | `8a7e7554637ecc80` | `8a7e7554637ecc80` | 0 of 96 |
-| side | `3a734e17aff1638d` | `3a734e17aff1638d` | 0 of 93 |
-| church | `0783e6ef1d4a916b` | `0783e6ef1d4a916b` | 0 of 22 |
+| (i) delete new `setText("confidence", …)` | red | `side banner announced in .notices` | identical |
+| (ii) delete new `setText("note", …)` | red | `fallback note announced in .notices` | identical |
+| (iii) drop the `showResults === true` condition | red | `hidden low side adds no banner` | identical |
+| (iv) `aria-live` on `section.side-col` (and, separately, on `#sides`) | red | `column node has no aria-live` (via `walk()`) | identical |
 
-The one changed record (#12 in both `http` and `no-church`), `/static/app.js` body sha256:
-`0e21b3b3e2e072c9ec2d568da0028a56b15d337feb0d3f981e2e27a6556dac62` →
-`5b4ce261052a436666bb554797f204ec7aa820436e0ec7721c67aef4a789fedc`. This equals
-`git show HEAD:app/static/app.js | sha256sum`. Main's value equals `git show origin/main:app/static/app.js | sha256sum`.
-The probe `/` did not change, because this PR does not edit `index.html`. Its sha256 is
-`ec6bcef68ae1d70514f4e69c937e388b9bfd2665a19ee2f81f299d9999ddd86b` at both trees.
-The real-index (Wesley + ONNX) http/no-church refs were not computed here. They will move by the same one record.
+Parity (#97 not merged; harness from PR #97 head `c2f74e9b40fc0572af4febff5327b87aff95c9bd` in a temporary detached worktree,
+removed afterwards, nothing committed). #97's base is `3aef7ca`, so its `app/` tree equals main's. Index: the harness's
+synthetic test index (`tests/test_side` builders, fixture encoder), not a real index. The old run reproduces #97's own `PINNED` values.
 
-## Full suite
+| Field | Value |
+|---|---|
+| main | `3aef7cacf1907fa7ed57a5251b3894dec6618f00` |
+| machine | `preached-sandbox`, Python 3.14.8 |
+| index_version | `abab…ab` (`"ab"*32`, as in `tests/test_parity_hash.py`) |
+| model_sha256 | `None` (fixture encoder, no model file) |
+| harness hash | `9bbe1a503f36136f` |
+| old app.js sha256 (`git show 3aef7ca:app/static/app.js`) | `0e21b3b3e2e072c9ec2d568da0028a56b15d337feb0d3f981e2e27a6556dac62` |
+| new app.js sha256 (`HEAD`) | `3a08bf550d5208b3eddecdd2a8a3b5006aab90a899be1c0dd12732d37a00dd9f` |
 
-Machine `preached-sandbox` (24 CPUs, Python 3.12.16, deno 2.9.8), tree `e0c2d4b` (the report adds no code).
-All of these were fresh dirs under one `mktemp -d /tmp/prc.XXXXXX`: `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`,
-`DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR`, `TORCH_HOME`, `UV_PYTHON_INSTALL_DIR`, `UV_PROJECT_ENVIRONMENT`.
-Also set: `ORT_DISABLE_TELEMETRY=1`, `PREACHED_REQUIRE_DENO=1`, `HF_HUB_OFFLINE=1`, and `PREACHED_GUARD_REAL_SRC` unset.
+| Set | Old | New | Records |
+|---|---|---|---|
+| http | `b198c5b3546ef6eb` | `a698343bd83ea865` | only `/static/app.js` differs (225 records) |
+| no-church | `29f0c7e50f011dea` | `153267cefae0f1df` | only `/static/app.js` differs (225 records) |
+| in-process | `2c4e3d735333a6b2` | same | identical |
+| in-process-no-health | `126e6bde69f9049a` | same | identical |
+| search+sermon | `8a7e7554637ecc80` | same | identical |
+| side | `3a734e17aff1638d` | same | identical |
+| church | `0783e6ef1d4a916b` | same | identical |
 
-```
-uv run python -m unittest discover -s tests
-Ran 1156 tests in 258.140s
-OK (skipped=12)
-```
+The record-level diff (uncommitted script over the harness's stripped record lists) shows the only differing records are
+`/static/app.js` in `http` and `no-church`, with body `{"sha256": …}` equal to the two sha256s above. `/` (index.html) is identical.
+These values are for the synthetic index; a reviewer-box (Wesley + ONNX) baseline must be recomputed by whoever merges, and
+PARITY.md/`PINNED` were not re-pinned (they do not exist on this branch). If PR-B merges first, recompute on the final head.
 
-## /cache
+## 4. Open issues, risks
 
-`find /cache -printf '%p %s %T@\n' | sort` before and after all runs: 132824 lines each, `diff` empty,
-both listings sha256 `d967c6be6aac584c56b5dce991fa76b76ee359c6e1722a1cd81ddbdf86077006`. Nothing under
-`/cache` was opened.
+- #97 is unmerged, so `docs/PARITY.md`, `PINNED` and `PINNED_NO_WHY` are not touched. After #97 merges, the
+  `http` and `no-church` keys need a re-pin in whichever of PR-B/PR-C merges second (guaranteed textual conflict, per the brief).
+- Visible change: a column's note now also appears at the top, in `.notices`; the column copy stays.
+- No browser check (375px/1280px) was run.
+- Main moved to `b1a2b24` (no overlap). Rebase after PR-B is for CoS to schedule.
 
-## Stat
+## 5. Dependencies added
 
-```
-$ git diff --stat origin/main..HEAD
- app/static/app.js                  |  21 ++++-
- reports/W5-A11Y-PR-C-SIDE-NOTES.md | 157 +++++++++++++++++++++++++++++++++++++
- tests/test_app_js.py               |  36 ++++++++-
- 3 files changed, 210 insertions(+), 4 deletions(-)
-```
+None.
+
+## Gap status (round 1)
+
+1 scope: fixed; only `app.js`, `test_app_js.py`, this report differ; `index.html`, `app.css`, `test_mobile_ux.py` empty diff. 2 location: fixed; code only in `showSides`.
+3 mechanism: fixed; existing `#note`/`#confidence` via `setText`, no new nodes, aria or focus moves. 4 text/order: fixed (note, status, confidence).
+5 confidence only when shown: fixed, mutant (iii). 6 `:674`: fixed, restored. 7 tests: fixed, brief's `SIDE_CHECKS` extensions; round-0 reset and
+extra tests removed. 8 mutation: done, table above. 9 parity: done, #97 unmerged branch. 10 cites: hold. 11 rule 5: done. 12 report: this file.
+13 commands: as above.
 
 ## PR BODY
 
-**F-03 (Medium): side-by-side fallback and confidence notes are now announced.**
+Side by side (F-03): the low-confidence banner and the BM25-only fallback note are now written into the existing
+`#note` and `#confidence` nodes in the `.notices` polite live region, as classic view does. Text is
+`heading + ": " + note`, one space between sides; the confidence note only while that side's passages are shown.
+Only `showSides` changes. Column paragraphs, `#status`, `resetState`, `setBusy`, `index.html` and CSS are unchanged.
 
-Before this change, side by side drew each column's notes as plain `<p>`, outside any live region, so the
-low-confidence warning was not announced in the demo's main view. Now `showSides` writes them to
-`#note` / `#confidence` inside `.notices` (`aria-live="polite"`), the same nodes classic uses. Each note is
-prefixed with its column heading (`Your church (sample data) — Low confidence: …`), so it stays clear which
-side it belongs to. As in classic, a side's banner hides when its low-confidence passages are hidden.
-`resetState` clears both nodes on reset and on each new search. Classic view, `index.html`, `app.css` and
-the audio code are unchanged.
-
-- Tests: the `test_app_js.py:674` assertion is replaced, as ruled, with "the banner node is inside `.notices`
-  and not hidden". New checks cover the side naming, both sides at once, the fallback note, hide/show,
-  reset, and a stale note after a new search. Red on main's app.js (`side banner not hidden`), green at head.
-- Parity (#97 harness from its branch, synthetic index; PARITY.md is not on main, so it is not touched):
-  only record `/static/app.js` changes in `http` and `no-church`. The new sha256 `5b4ce261…fedc` equals
-  `git show HEAD:app/static/app.js | sha256sum`. `/` is unchanged, and every other set has the same hash.
-- Full suite (temp caches): 1156 tests OK, 12 skipped. `/cache` listing unchanged.
+Branch note: the brief names `fix/w5-a11y-side-notices`; this PR is `fix/w5-a11y-side-notes`.
 
 ```
- app/static/app.js                  |  21 ++++-
- reports/W5-A11Y-PR-C-SIDE-NOTES.md | 157 +++++++++++++++++++++++++++++++++++++
- tests/test_app_js.py               |  36 ++++++++-
- 3 files changed, 210 insertions(+), 4 deletions(-)
+ app/static/app.js                  |  11 ++++
+ reports/W5-A11Y-PR-C-SIDE-NOTES.md | 127 +++++++++++++++++++++++++++++++++++++
+ tests/test_app_js.py               |  20 ++++++
+ 3 files changed, 158 insertions(+)
 ```
 
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+- Focused: `Ran 19 tests in 0.360s, OK` on `e417bc4b3ac7f7fd092ede89d8b61f66f97cf2a0`, host `preached-sandbox`.
+- Full: `Ran 1156 tests in 256.723s, OK (skipped=12)`, same sha and host.
+- Mutants (i) delete confidence `setText`, (ii) delete note `setText`, (iii) drop `showResults` condition, (iv) `aria-live` on `section.side-col`: all red, each reverted with `cmp` identical.
+- Parity (synthetic index, #97 head `c2f74e9`, #97 unmerged; main `3aef7ca`; harness `9bbe1a503f36136f`; index_version `ab`×32; model_sha256 None): only `/static/app.js` in `http` (`b198c5b3546ef6eb` → `a698343bd83ea865`) and `no-church` (`29f0c7e50f011dea` → `153267cefae0f1df`) moves, `0e21b3b3…ac62` → `3a08bf55…dd9f`; every other set and `/` identical. The move is intended. PARITY.md/PINNED not touched (#97 unmerged).
+- `/cache` snapshot: 132824 lines before and after, sha256 `3ca707d7…ca64` both, diff none.
+- DEPLOY cites are untouched.
