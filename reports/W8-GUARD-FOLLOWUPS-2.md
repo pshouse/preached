@@ -50,7 +50,7 @@ Mutants for the sentinel, the temp-dir assert, and the immutable check each went
 
 ## R2
 
-CTO review of `12c687a` (PR #92). `origin/main` had moved to `83121da`; that merge was clean. This round edits only `tests/cache_guard.py`, `tests/test_cache_guard.py`, `tests/test_cache_guard_immutable_fuzz.py`, and this report. `app/`, `src/`, and `docs/` are not edited here, so DEPLOY.md cites are not re-pinned. The paragraph above still describes the round-1 check (a non-zero atoi). The code now uses the clearly-false rule below. The round-1 sentence that said the test refused "a later `immutable=1` after `immutable=0`" was wrong: the query was `immutable=1` followed by `immutable=0`. That sentence is corrected in the paragraph above (`reports/W8-GUARD-FOLLOWUPS-2.md:13`).
+CTO review of `12c687a` (PR #92). `origin/main` had moved to `83121da`; that merge was clean. This round edits only `tests/cache_guard.py`, `tests/test_cache_guard.py`, `tests/test_cache_guard_immutable_fuzz.py`, and this report. `app/`, `src/`, and `docs/` are not edited here, so DEPLOY.md cites are not re-pinned. The (e) bullet still describes the round-1 check (a non-zero atoi). The code now uses the clearly-false rule below. The round-1 sentence that said the test refused "a later `immutable=1` after `immutable=0`" was wrong: the query was `immutable=1` followed by `immutable=0`. That sentence is corrected in the paragraph above (`reports/W8-GUARD-FOLLOWUPS-2.md:13`).
 
 SQLite in this run is 3.53.1 (`uv run python`). Red and green used the guard bytes from `12c687a` (the merge did not touch `tests/cache_guard.py`).
 
@@ -84,7 +84,7 @@ SQLite 3.53.1 keeps the first value and matches the key with strcmp, so `?mode=r
 
 Cache snapshot, `find /cache -xdev -printf '%p\t%s\t%T@\n' | sort`, before any test run and after the suite: 132725 lines before, 132725 after. added 0, removed 0, changed 0. No env var in these runs pointed at `/cache`.
 
-Head: `0000000000000000000000000000000000000000`
+Head: `a1b8f26a7546357bbf0ffeab9dfc56dbc0608107` (parent of the commit that records this sha).
 
 ```
  reports/W8-GUARD-FOLLOWUPS-2.md          |  95 ++++++++++
