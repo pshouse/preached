@@ -8,6 +8,8 @@ so no extra pass, and a hidden chunk never moves a visible chunk's rank.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import sys
 import tempfile
 import unittest

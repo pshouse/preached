@@ -66,9 +66,45 @@ PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=$(mktemp -d) HF_HOME=$(mktemp -d) PREACHE
 
 None added.
 
+## R-POST74: merge of post-#74 main
+
+`origin/main` at `e4345392019f16ee22226925a247cb145456e6cf` (#74, 28 commits ahead of this branch at `e14bcd8`) was merged with a normal `git merge` in commit `42014ca`. No rebase, no force-push.
+
+**Conflicts.** None. Git merged every file cleanly. Both sides changed `README.md`, `src/preached/search.py`, `docs/DEPLOY.md`, `tests/test_app_js.py`, `tests/test_deploy_alerts.py`, `tests/test_embed_backend.py`, `tests/test_server.py` and `tests/test_side.py`, but in hunks that do not overlap. I read each merged file to check that both sides are kept:
+- `README.md`: main's quickstart rewrite (`$PREACHED_CACHE` paths, export steps, `SLUG`) is all there, and this branch's "Reading a search result" section still follows the `--library SLUG` paragraph.
+- `src/preached/search.py`: main's `_VERSE_REF` / `PARAGRAPH_NUMBER` change (around line 700) sits next to this branch's `Why` dataclass, `Hit.why` and `_pack` lists. They do not interact: `why` is built from rowids and ranks, not from excerpt text.
+- `docs/DEPLOY.md`: main's temp-dir suite command and `copy_index` paragraph are kept, along with this branch's re-pinned cites.
+- the four test files: main's `cache_guard` arming line is kept, along with this branch's additions.
+
+No `--ours`/`--theirs` or whole-file picks were used.
+
+**Semantic fix after the merge.** Main (#84) added `test_cache_guard.test_every_test_module_imports_the_guard`. This branch's new `tests/test_why_this_result.py` did not import the guard, so the first post-merge suite run had 1 failure. I added the same arming line the other modules use (`__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()`) after `from __future__ import annotations`.
+
+**DEPLOY cites (rule 4).** Re-pinned: none, old to new: none. The merge changed none of the cited files (`git diff 57ccce4 origin/main -- app/ src/preached/library.py src/preached/youtube/` is empty), and the post-merge diff of those files against `e14bcd8` is empty. I read every `app/server.py`, `src/preached/library.py`, `src/preached/youtube/library.py` and `src/preached/youtube/pipeline.py` cite in `docs/DEPLOY.md` on the merged tree, one line per cite, and each still holds its string. The tree sentence is already tree-relative ("The line numbers below are this tree"). `test_every_cited_file_line_holds_its_string` passes.
+
+**Parity refs.** Unchanged, and nothing is re-baselined (CTO ruling). I expect the `why` field to move every gate parity ref that hashes an `/api/search` or `/api/side` body with at least one result: the HTTP, in-process and no-church response hashes. Empty-result bodies, `/healthz` and static-file refs should not move. Main's `PARAGRAPH_NUMBER` change also changes some displayed excerpts on its own, so CTO's two hash sets separate the two causes.
+
+**Suite** (merged tree plus the guard fix; `PREACHED_REQUIRE_DENO=1 HF_HUB_OFFLINE=1`, with `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR` and `TORCH_HOME` each a fresh `mktemp -d`):
+
+```
+Ran 1136 tests in 254.188s
+
+OK (skipped=12)
+```
+
+Before the guard fix: `Ran 1136 tests in 248.874s` / `FAILED (failures=1, skipped=12)`. The one failure was `test_every_test_module_imports_the_guard` (`['test_why_this_result.py']`).
+
+**/cache diff.** I took a listing of `/cache` (`find -printf '%p %s %T@'`, 132,732 entries) before the first run and after the second. Entry count and sizes are identical. Three mtimes changed, all under `/cache/xdg`:
+- `/cache/xdg` (directory) 21:05:34 to 22:04:39.
+- `/cache/xdg/Microsoft/DeveloperTools/.onnxruntime/onnxruntime.db-shm` and `onnxruntime.db-wal`, 21:57:10 to 22:06:46. Sizes are unchanged.
+
+None of these is project data (index, corpus, models). The `.onnxruntime` WAL is onnxruntime's own telemetry DB. It was already being written at 21:57:10, before my first snapshot and before I ran anything. It was written again at 22:09:58, when only `sleep` was running here. So something outside my runs also writes it. All seven test cache dirs were temp. My temp `XDG_CACHE_HOME` stayed empty, and no process in my namespace other than the agent shell had `XDG_CACHE_HOME=/cache/xdg`.
+
+One exception: I ran a single `uv run python -c 'import onnxruntime'` lookup (not a test) in a shell that had not sourced the temp env. That probably caused the 22:07:39 WAL write. The `/cache/xdg` directory mtime at 22:04:39 fell during my suite, and I cannot attribute it. Every entry left in `/cache/xdg` has an older mtime, so an entry was created and then removed there.
+
 ## PR BODY
 
-Each search result now says why it is listed. Every `/api/search` and `/api/side` result gets a `why` object: `keyword_rank` and `meaning_rank` (1-based places in the gated BM25 and dense top-100 lists the ranker fused), `similarity` (dense cosine, 3 places) and `found_by`. They are read off the lists the search already ran, so there is no extra pass (p50 64.48 → 63.32 ms, noise), and through the publish gate, so a hidden chunk never moves a visible rank (tested, including a mutation check). `score` is unchanged. The page shows one muted line per card ("Found by both keyword (#3) and meaning (#1) search · similarity 0.81") and a details block that explains the strong / weak / low / unrated levels. README: "Reading a search result". DEPLOY.md cites and `CITED` pins are re-pinned for the two new `app/server.py` lines. Gate response-hash pins over result bodies will change (not pinned in the repo; see the report). Full suite: 1121 OK, skipped=12, `PREACHED_REQUIRE_DENO=1`, temp caches.
+Each search result now says why it is listed. Every `/api/search` and `/api/side` result gets a `why` object: `keyword_rank` and `meaning_rank` (1-based places in the gated BM25 and dense top-100 lists the ranker fused), `similarity` (dense cosine, 3 places) and `found_by`. They are read off the lists the search already ran, so there is no extra pass (p50 64.48 → 63.32 ms, noise), and through the publish gate, so a hidden chunk never moves a visible rank (tested, including a mutation check). `score` is unchanged. The page shows one muted line per card ("Found by both keyword (#3) and meaning (#1) search · similarity 0.81") and a details block that explains the strong / weak / low / unrated levels. README: "Reading a search result". DEPLOY.md cites and `CITED` pins are re-pinned for the two new `app/server.py` lines. Gate response-hash pins over result bodies will change (not pinned in the repo; see the report). Merged with post-#74 main (no conflicts; see R-POST74). Full suite: Ran 1136, OK (skipped=12), `PREACHED_REQUIRE_DENO=1`, temp caches.
 
 Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the query vector here is a stored document vector, so similarity 1.0 at #1 is expected):
 
