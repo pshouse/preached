@@ -88,11 +88,11 @@ FORBIDDEN_REQUIREMENTS = (
 )
 
 
-def _request(port: int, path: str, headers: dict | None = None):
+def _request(port: int, path: str, headers: dict | None = None, method: str = "GET"):
     import http.client
 
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
-    conn.request("GET", path, headers=headers or {})
+    conn.request(method, path, headers=headers or {})
     response = conn.getresponse()
     body = response.read()
     header_map = {key: value for key, value in response.getheaders()}
@@ -233,6 +233,67 @@ class RateAndKillTests(unittest.TestCase):
             status, _, body = _request(port, "/healthz")
             self.assertEqual(status, 200)
             self.assertTrue(json.loads(body)["ok"])
+
+    def test_disabled_browser_root_gets_the_shared_busy_page(self) -> None:
+        # GET / and HEAD / with a browser Accept get the over-cap page.
+        # /healthz stays the disabled object. A non-HTML Accept stays JSON.
+        browser = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        from app.server import _BUSY_PAGE
+
+        with tempfile.TemporaryDirectory() as tmp:
+            kill = Path(tmp) / "KILL"
+            port, app, _server = self._serve(kill_file=kill)
+            kill.write_text("operator-note\n")
+            self.assertTrue(app.disabled())
+            status, headers, body = _request(port, "/?q=secretquery", {"Accept": browser})
+            self.assertEqual(status, 503)
+            self.assertEqual(headers.get("Content-Type"), "text/html; charset=utf-8")
+            self.assertEqual(body, _BUSY_PAGE)
+            self.assertNotIn(b"secretquery", body)
+            self.assertNotIn(b"operator-note", body)
+            self.assertNotIn(b"KILL", body)
+            self.assertIn(b'name="viewport"', body)
+            self.assertIn(b"width=device-width", body)
+            self.assertIn(b"initial-scale=1", body)
+            self.assertIn(b"<h1>", body)
+            self.assertIn(b"Preached is busy. This page will try again in a moment.", body)
+            self.assertNotIn(b"<script", body.lower())
+            self.assertNotIn(b"http://", body)
+            self.assertNotIn(b"https://", body)
+            again = _request(port, "/?q=othertoken", {"Accept": browser})[2]
+            self.assertEqual(again, body)
+            status, headers, body = _request(port, "/", {"Accept": browser}, method="HEAD")
+            self.assertEqual(status, 503)
+            self.assertEqual(headers.get("Content-Type"), "text/html; charset=utf-8")
+            self.assertEqual(body, b"")
+            self.assertEqual(headers.get("Content-Length"), str(len(_BUSY_PAGE)))
+            status, _, body = _request(port, "/healthz", {"Accept": browser})
+            self.assertEqual(status, 503)
+            self.assertEqual(json.loads(body), {"ok": False, "disabled": True})
+            for accept in (None, "text/html;q=0", "*/*", "application/json"):
+                sent = {"Accept": accept} if accept else None
+                status, _, body = _request(port, "/", sent)
+                self.assertEqual(status, 503, accept)
+                self.assertEqual(json.loads(body), {"error": "unavailable"}, accept)
+
+    def test_disabled_api_search_stays_json_with_a_browser_accept(self) -> None:
+        browser = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        with tempfile.TemporaryDirectory() as tmp:
+            kill = Path(tmp) / "KILL"
+            port, _app, _server = self._serve(kill_file=kill)
+            kill.write_text("off\n")
+            status, headers, body = _request(
+                port, "/api/search?q=secretquery", {"Accept": browser}
+            )
+            self.assertEqual(status, 503)
+            self.assertEqual(headers.get("Content-Type"), "application/json; charset=utf-8")
+            self.assertEqual(json.loads(body), {"error": "unavailable"})
+            self.assertNotIn(b"secretquery", body)
+            self.assertNotIn(b"text/html", body)
+            self.assertNotIn(b"<h1>", body)
+            status, _, body = _request(port, "/static/app.js", {"Accept": browser})
+            self.assertEqual(status, 503)
+            self.assertEqual(json.loads(body), {"error": "unavailable"})
 
     def test_disabled_env_is_a_kill_switch(self) -> None:
         port, _app, _server = self._serve()
