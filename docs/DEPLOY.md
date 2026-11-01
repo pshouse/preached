@@ -459,10 +459,41 @@ sets `PREACHED_CACHE` to the bundle root, opens
 `<bundle root>/KILL`.
 
 The server process is started with `env -i` and an allow-list (PATH, HOME,
-LANG, LC_ALL, TMPDIR, the `PREACHED_*` variables the process reads, and the
-offline Hub flags). `PREACHED_CHURCH_SIDE` is not on it. A token exported in
-the shell is not in the server's environment. `app/server.py` refuses to run
-as root. There is no `PREACHED_ALLOW_ROOT` and no `PREACHED_PYTHON` override.
+LANG, LC_ALL, TMPDIR, the `PREACHED_*` variables the process reads, the
+offline Hub flags, and `ORT_DISABLE_TELEMETRY`). `PREACHED_CHURCH_SIDE` is not
+on it. A token exported in the shell is not in the server's environment.
+`app/server.py` refuses to run as root. There is no `PREACHED_ALLOW_ROOT` and no
+`PREACHED_PYTHON` override.
+
+### Privacy: ONNX Runtime telemetry is off
+
+The official onnxruntime Linux wheels ship Microsoft 1DS telemetry, on by
+default (observed on 1.31.1). It starts at `import onnxruntime`, and creates a
+persistent device ID and an event database (`deviceid`, `onnxruntime.db`)
+under `$XDG_CACHE_HOME/Microsoft/DeveloperTools/.onnxruntime/`. Events include
+device/OS/CPU/memory, the python executable path, and ORT session/EP info; no
+query text observed. ORT's `docs/Privacy.md` says events go to Microsoft's
+OneCollector endpoint; no upload was observed here.
+
+Preached turns it off two ways. `scripts/serve.sh` sets and passes
+`ORT_DISABLE_TELEMETRY=1`, and `src/preached/__init__.py` sets it
+unconditionally (there is no opt-in) before any preached module can import
+onnxruntime. The variable is read once, at import, so it has to be set first.
+`OnnxEmbedder.load` also calls `onnxruntime.disable_telemetry_events()` when
+that exists, but only as a backup: it does not stop the device ID or DB write.
+
+To verify on the host: after the service has loaded the model, check that
+`find "$XDG_CACHE_HOME" "$HOME/.cache" -path '*Microsoft/DeveloperTools*'`
+prints nothing, and that
+`tr '\0' '\n' < /proc/<server pid>/environ | grep ORT_DISABLE_TELEMETRY`
+shows `ORT_DISABLE_TELEMETRY=1`. That `environ` check only proves the setting
+for a `serve.sh` start; a direct start gets it from `src/preached/__init__.py`
+instead. `tests/test_ort_telemetry_off.py` checks the first part against a
+scratch cache.
+
+Limit: a process that imports onnxruntime before any preached module is not
+covered by `__init__.py`; only the environment (e.g. `serve.sh`) covers it. No
+product or serve path does this (grep at 7b523c6).
 
 ### What a direct start does and does not guarantee
 
