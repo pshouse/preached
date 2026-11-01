@@ -86,5 +86,8 @@ The church/publish-gate paragraph ("`--your-church` sets `meta.role` ... a sermo
 Docs-only. Applies the CTO amended latency ruling (see section above); README quote verified on main and PR #74. Stat is `git diff --stat 9fe33ca..HEAD` (the branch base; `origin/main` has since moved).
 
 ```
-STAT
+ docs/DEMO-SCRIPT.md                |   9 ++--
+ docs/SUBMISSION-DRAFT.md           |  10 ++---
+ reports/W4-SUBMIT-DRYRUN2-EDITS.md |  94 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 104 insertions(+), 9 deletions(-)
 ```
