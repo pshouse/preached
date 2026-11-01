@@ -28,9 +28,9 @@ CTO r1 on PR #76 (42f0f83) asked for changes. This round fixes MF1-MF4, S1 and S
 ## Diff stat (base abdada3..HEAD, in-scope files only)
 ```
  README.md                         |   2 +
- reports/W5-BENCH-FAILCLOSED-R2.md |  29 +++++++
+ reports/W5-BENCH-FAILCLOSED-R2.md |  36 ++++++++
  search/bench.py                   |  25 ++++++
  tests/test_bench_failclosed.py    | 167 ++++++++++++++++++++++++++++++++++++++
- 4 files changed, 223 insertions(+)
+ 4 files changed, 230 insertions(+)
 ```
 Head sha: see the PR (this report is part of the head commit).

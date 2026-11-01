@@ -31,7 +31,8 @@ An abstained answerable question counts as a miss for R@5 and MRR@10. It
 writes eval/results/YYYY-MM-DD-abstain[-tag][-N].json and .md. Add
 --write-calibration to store the in-sample floor for this --embed-backend
 and variant in search/abstain.toml (one entry per model, backend, and
-variant; other entries are left in place). Corpus vectors must already be
+variant; other entries are left in place, but a hand-edited abstain.toml is
+rewritten in canonical form). Corpus vectors must already be
 embedded (run the plain bench first).
 
 Exit status: 1 if any selected model fails to load or score (the report is
@@ -948,7 +949,7 @@ def main() -> None:
     parser.add_argument("--allow-bm25-only", action="store_true",
                         help="exit 0 even if a model fails to load or score (default: exit 1 after writing the report)")
     parser.add_argument("--write-calibration", action="store_true",
-                        help="with --abstain: store the fitted floors in search/abstain.toml")
+                        help="with --abstain: store the fitted floors in search/abstain.toml (a hand-edited file is rewritten in canonical form)")
     args = parser.parse_args()
     if args.write_calibration and not args.abstain:
         parser.error("--write-calibration needs --abstain")
