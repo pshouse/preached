@@ -25,7 +25,7 @@ mkdir -p "$PREACHED_CACHE"
 unset HF_HOME HUGGINGFACE_HUB_CACHE
 ```
 
-Then the README blocks, in order: `corpus/fetch_wesley.py`, `corpus/chunk_sermons.py`, `eval/validate.py`, `search/bench.py --models granite-english-r2` under `--group bench`, `uv sync --group bench`, `CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py`, the hybrid money query, `uv sync`, `uv run app/server.py`. Alignment, the church shape, `--bm25-only`, the bm25 `--side` query, and the three quoted YouTube lines follow. The test command is the discover line above.
+Then the README blocks, in order: `corpus/fetch_wesley.py`, `corpus/chunk_sermons.py`, `eval/validate.py`, `search/bench.py --models granite-english-r2` under `--group bench`, `uv sync --group bench`, `uv run --group bench python scripts/export_onnx.py`, the hybrid money query, `uv sync`, `uv run app/server.py`. Alignment, the church shape, `--bm25-only`, the bm25 `--side` query, and the three quoted YouTube lines follow. The test command is the discover line above.
 
 The required suite, from this worktree:
 
@@ -48,7 +48,7 @@ Wall time is the wrapper around each command (`date +%s.%N`). Unittest's own `Ra
 | validate | 0 | 136.736 | `uv run python eval/validate.py` |
 | bench | 0 | 154.637 | `uv run --group bench search/bench.py --models granite-english-r2` |
 | sync bench | 0 | 0.009 | `uv sync --group bench` |
-| export | 0 | 14.885 | `CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py` |
+| export | 0 | 14.885 | `uv run --group bench python scripts/export_onnx.py` |
 | query hybrid | 0 | 1.543 | `uv run search/query.py "how should a Christian use money" --mode hybrid -k 5` |
 | sync runtime | 0 | 0.594 | `uv sync` |
 | server hybrid | 0 | 3.038 | `uv run app/server.py` after the export |
@@ -106,7 +106,7 @@ After that index existed, the same server command with `PREACHED_ONNX_DIR` point
 
 ```
 ERROR embedding model unavailable; serving BM25 only
-ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. missing ONNX manifest at /tmp/w4-empty-onnx/47ea694b257b703fee9253d75c2b1f2985180498/manifest.json; build it with: CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py
+ERROR ONNX GRAPH NOT BUILT. Hybrid search is OFF; results are BM25 only. missing ONNX manifest at /tmp/w4-empty-onnx/47ea694b257b703fee9253d75c2b1f2985180498/manifest.json; build it with: uv run --group bench python scripts/export_onnx.py
 WARNING The search model has not been built; results are BM25 only.
 PREACHED_LISTENING http://127.0.0.1:8000
 ```
@@ -253,7 +253,7 @@ None.
 
 `scripts/export_onnx.py` was not edited on this branch. It arrived with the first merge.
 
-**README.** The export command is `uv run --group bench python scripts/export_onnx.py`, with no environment variables on the line. `CUDA_VISIBLE_DEVICES=""` is not on that line. The script assigns `os.environ["CUDA_VISIBLE_DEVICES"] = ""` before it imports torch, so a prefix cannot reach the export. This round did not run a second export with the prefix set. The run below left the variable unset and wrote the pin. The missing-graph sentence still quotes `CUDA_VISIBLE_DEVICES="" uv run --group bench python scripts/export_onnx.py`, which is `EXPORT_COMMAND` in `src/preached/artifacts.py`. That file was not edited here.
+**README.** The export command is `uv run --group bench python scripts/export_onnx.py`, with no environment variables on the line. The script disables the GPU itself (`scripts/export_onnx.py:52`) before it imports torch, so no prefix is needed. This round did not run a second export with a prefix set. The run below wrote the pin. The missing-graph sentence still quotes `uv run --group bench python scripts/export_onnx.py`, which is `EXPORT_COMMAND` in `src/preached/artifacts.py`. That file was not edited here.
 
 The `/cache` caveat is gone. An `HF_HOME` already set is kept. When it is unset, the export sets `$PREACHED_CACHE/huggingface`, and `/cache/huggingface` only when `PREACHED_CACHE` is unset. The sentence in §1 that says an unset `HF_HOME` reads `/cache/huggingface` is the export at `59b44fb`, not `1907d1f`.
 
@@ -261,7 +261,7 @@ The README names the pin `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027e
 
 Finding 2 in the table was deferred to #71. That head is merged. The open pin item in §7 is closed by this section. The table cell is the first-round status.
 
-**Re-run.** Fresh `PREACHED_CACHE=/cache/w4-readme-resync`, deleted afterwards. Unset: `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `PYTHONHASHSEED`, `ATEN_CPU_CAPABILITY`, `CUDA_VISIBLE_DEVICES`. `PREACHED_ONNX_DIR=$PREACHED_CACHE/onnx`, so the export's delete could not touch `/cache/models/granite-english-r2-onnx/`. That shared file's mtime stayed `2026-10-30 11:58:17` and its sha256 stayed `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`.
+**Re-run.** Fresh `PREACHED_CACHE=/cache/w4-readme-resync`, deleted afterwards. Unset: `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `PYTHONHASHSEED`, `ATEN_CPU_CAPABILITY`. `PREACHED_ONNX_DIR=$PREACHED_CACHE/onnx`, so the export's delete could not touch `/cache/models/granite-english-r2-onnx/`. That shared file's mtime stayed `2026-10-30 11:58:17` and its sha256 stayed `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`.
 
 Host: x86-64, and `/proc/cpuinfo` flags include `avx2`.
 
@@ -321,14 +321,14 @@ Exit 0. Wall 271.101 s. `Ran 1027 tests in 270.453s`, `OK`, no skip line. The 52
 
 ## 10. CTO review, on #71 at 27ed9cb
 
-**Precondition.** After `git fetch`, `origin/fix/w4-onnx-pin-repro` is `27ed9cb`. `artifacts.onnx_root()` is `PREACHED_ONNX_DIR` when that variable is set, otherwise `$PREACHED_CACHE/models/granite-english-r2-onnx`, otherwise `/cache/models/granite-english-r2-onnx`. `EXPORT_COMMAND` in `src/preached/artifacts.py` is `uv run --group bench python scripts/export_onnx.py`, with no `CUDA_VISIBLE_DEVICES`. Not blocked.
+**Precondition.** After `git fetch`, `origin/fix/w4-onnx-pin-repro` is `27ed9cb`. `artifacts.onnx_root()` is `PREACHED_ONNX_DIR` when that variable is set, otherwise `$PREACHED_CACHE/models/granite-english-r2-onnx`, otherwise `/cache/models/granite-english-r2-onnx`. `EXPORT_COMMAND` in `src/preached/artifacts.py` is `uv run --group bench python scripts/export_onnx.py`. Not blocked.
 
 **Merges.** Merge commits, no rebase and no force.
 
 - `b662a0b` merges `origin/fix/w4-onnx-pin-repro` (`27ed9cb`). Clean (`ort`). The files that merge brings are `docs/DEPLOY.md`, `docs/adr/0001-onnx-export-determinism.md`, `reports/W4-ONNX-PIN-REPRO.md`, `scripts/export_onnx.py`, `src/preached/artifacts.py`, `tests/test_deploy_alerts.py`, and `tests/test_onnx_pin_repro.py`.
 - `git merge origin/main` (`abdada3`) was already up to date. No second merge commit.
 
-**README.** One knob, `PREACHED_CACHE`. The corpus, the SQLite index, the Hugging Face files, and the ONNX graph all live under it. The README does not name `PREACHED_ONNX_DIR`, and it does not describe an `HF_HOME` or `/cache/huggingface` caveat. The export line is `uv run --group bench python scripts/export_onnx.py`. It does not carry `CUDA_VISIBLE_DEVICES=""`. The missing-graph sentence quotes that same command, which is `EXPORT_COMMAND` at this head. The pin is `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The script forces `ATEN_CPU_CAPABILITY=avx2` before torch and re-executes under `PYTHONHASHSEED=1`. An x86-64 host with AVX2 is required. A GPU is recommended for the bench. A CPU-only bench takes about 9 minutes (541.9 s measured on 8 cores). The README does not say the bench needs a GPU. Until the bench fail-closed change lands, a judge checks the bench output for an `error:` line: a model that fails to load currently falls back to BM25-only and the bench exits 0. The pre-registered sentence is unchanged, including U+2212 in `−0.034`. No other retrieval figure was added.
+**README.** One knob, `PREACHED_CACHE`. The corpus, the SQLite index, the Hugging Face files, and the ONNX graph all live under it. The README does not name `PREACHED_ONNX_DIR`, and it does not describe an `HF_HOME` or `/cache/huggingface` caveat. The export line is `uv run --group bench python scripts/export_onnx.py`. It carries no environment prefix. The missing-graph sentence quotes that same command, which is `EXPORT_COMMAND` at this head. The pin is `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`. The script forces `ATEN_CPU_CAPABILITY=avx2` before torch and re-executes under `PYTHONHASHSEED=1`. An x86-64 host with AVX2 is required. A GPU is recommended for the bench. A CPU-only bench takes about 9 minutes (541.9 s measured on 8 cores). The README does not say the bench needs a GPU. Until the bench fail-closed change lands, a judge checks the bench output for an `error:` line: a model that fails to load currently falls back to BM25-only and the bench exits 0. The pre-registered sentence is unchanged, including U+2212 in `−0.034`. No other retrieval figure was added.
 
 **Cites.** The 52 `test_every_cited_file_line_holds_its_string` failures in §3 came from #71 at `59b44fb`. They are gone at `4d6ae86`. §3's walkthrough started on `59b44fb`, where #71's own report counted those 52 subtests. #71's report at `4d6ae86` records `Ran 1023 tests in 266.212s`, `OK`, and zero `test_every_cited_file_line_holds_its_string` failures. §7's "unchanged / out of scope" and §9's "this section closes the cite failures" were the wrong attribution. §9's re-run is later than `4d6ae86`, so those 52 were already gone before that re-sync.
 
@@ -365,7 +365,7 @@ Exit 0. `Ran 1036 tests in 269.285s`, `OK`, no skip line. Zero `test_every_cited
 
 **README conflict.** Kept this branch's quickstart, including the single `PREACHED_CACHE` knob and the `eval/validate.py` paragraph. Did not take main's sentence that weights use `HF_HOME=/cache/huggingface`. That sentence is the old workaround; Hugging Face files and the ONNX graph both live under `PREACHED_CACHE` (README line 7). Main's new sentence is the fail-closed behaviour. It replaces the interim note on this branch ("Until the bench fail-closed change lands… the bench exits 0"). The words are main's README line 14, now README line 20 here.
 
-**Pin and seed, read on the r3d tree** (`src/preached/artifacts.py` and `scripts/export_onnx.py` at `1275223`, unchanged by this resync). `FP32_ONNX_SHA256` is `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (`src/preached/artifacts.py:36`). The comment at `src/preached/artifacts.py:30-32` says the export fixes `ATEN_CPU_CAPABILITY=avx2` and `PYTHONHASHSEED=1`. `EXPORT_HASHSEED = "1"` is `scripts/export_onnx.py:94`. `_reexec_with_hashseed` sets that value and re-executes (`scripts/export_onnx.py:123-127`). `EXPORT_COMMAND` is `uv run --group bench python scripts/export_onnx.py` (`src/preached/artifacts.py:53`). The README export block (lines 25-27) is that command, with no `CUDA_VISIBLE_DEVICES`. The script itself assigns `os.environ["CUDA_VISIBLE_DEVICES"] = ""` at `scripts/export_onnx.py:52`, before torch. The README does not name `PREACHED_ONNX_DIR` or `HF_HOME`. `onnx_root()` still honours `PREACHED_ONNX_DIR` when set (`src/preached/artifacts.py:72-76`); the quickstart does not document that override.
+**Pin and seed, read on the r3d tree** (`src/preached/artifacts.py` and `scripts/export_onnx.py` at `1275223`, unchanged by this resync). `FP32_ONNX_SHA256` is `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (`src/preached/artifacts.py:36`). The comment at `src/preached/artifacts.py:30-32` says the export fixes `ATEN_CPU_CAPABILITY=avx2` and `PYTHONHASHSEED=1`. `EXPORT_HASHSEED = "1"` is `scripts/export_onnx.py:94`. `_reexec_with_hashseed` sets that value and re-executes (`scripts/export_onnx.py:123-127`). `EXPORT_COMMAND` is `uv run --group bench python scripts/export_onnx.py` (`src/preached/artifacts.py:53`). The README export block (lines 25-27) is that command. The script itself disables the GPU at `scripts/export_onnx.py:52`, before it imports torch. The README does not name `PREACHED_ONNX_DIR` or `HF_HOME`. `onnx_root()` still honours `PREACHED_ONNX_DIR` when set (`src/preached/artifacts.py:72-76`); the quickstart does not document that override.
 
 **Bench.** A GPU is recommended. A CPU-only bench takes about 9 minutes (541.9 s measured on 8 cores). README line 20. The fail-closed behaviour is what `search/bench.py` does on `97537ae`: the module docstring (`search/bench.py:37-41`) says exit 1 if any selected model fails to load or score, the report is still written, the model is marked `error`, or `skipped_gated` when the failure looks like a gated repo, and gated still fails. Under `--abstain` a gated failure is recorded as plain `error`. `--allow-bm25-only` turns that into a warning on stderr and exit 0. `run_abstain` always sets `entry["status"] = "error"` (`search/bench.py:880-882`). The plain loop sets `skipped_gated` only when `is_gated` matches (`search/bench.py:1067-1070`). Both paths write the json and markdown, then call `fail_closed` (`search/bench.py:1099-1102` and `889-896`). `fail_closed` (`search/bench.py:901-913`) exits 1 unless `--allow-bm25-only`, which prints the warning to stderr and returns.
 
