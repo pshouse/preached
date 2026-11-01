@@ -19,7 +19,7 @@ Branch `feat/w5-why-this-result` from `origin/main` `8e0017d` (clean tree confir
 
 **Docs.** `README.md` has a new section, "Reading a search result", after the server paragraph that already describes `/api/search`. It covers `score` (RRF `1/(60+rank)` per list, top 100 each; BM25 score / cosine in the single modes), the `why` fields, and the confidence signals (agreement, `dense_top` against the calibrated floor in `search/abstain.toml`, and the levels). Cites are tree-relative (`src/preached/search.py`, `src/preached/abstain.py`).
 
-**DEPLOY cites (rule 4).** The two new `app/server.py` lines (one at `RESULT_FIELDS`, one in `hit_dict`) move every cite after line 314. I re-pinned all affected `docs/DEPLOY.md` cites (`app/server.py:N` and the `` `:N` `` shorthands that refer to server.py; library.py's `:468`, `:915`, `:962`, `:883-884` and `:921-922` were left alone) and every `CITED` pin in `tests/test_deploy_alerts.py`. `test_every_cited_file_line_holds_its_string` passes, which checks each pin against the file's text. I also spot-read several pins by hand (507, 519, 865, 870-874, 898, 903, 921, 924, 3386). The DEPLOY sentence that named the tree ("the merged tree this file ships in (main plus the listen backlog change)") now reads tree-relative: "The line numbers below are this tree: the tree this file ships in". `docs/DEPLOY.md` is outside the listed file scope, but rule 4 requires this edit.
+**DEPLOY cites (rule 4).** The two new `app/server.py` lines insert at 329 (`RESULT_FIELDS`) and 732 (`hit_dict`), numbered on this tree (`git diff -U0 origin/main...HEAD -- app/server.py`: `@@ -328,0 +329 @@` and `@@ -730,0 +732 @@`). Cites below 329 do not move, cites from 329 to 731 move by 1, and cites from 732 on move by 2. I re-pinned all affected `docs/DEPLOY.md` cites (`app/server.py:N` and the `` `:N` `` shorthands that refer to server.py; library.py's `:468`, `:915`, `:962`, `:883-884` and `:921-922` were left alone) and every `CITED` pin in `tests/test_deploy_alerts.py`. `test_every_cited_file_line_holds_its_string` passes, which checks each pin against the file's text. I also spot-read several pins by hand (507, 519, 865, 870-874, 898, 903, 921, 924, 3386). The DEPLOY sentence that named the tree ("the merged tree this file ships in (main plus the listen backlog change)") now reads tree-relative: "The line numbers below are this tree: the tree this file ships in". `docs/DEPLOY.md` is outside the listed file scope, but rule 4 requires this edit.
 
 ## 2. How to run it
 
@@ -102,9 +102,47 @@ None of these is project data (index, corpus, models). The `.onnxruntime` WAL is
 
 One exception: I ran a single `uv run python -c 'import onnxruntime'` lookup (not a test) in a shell that had not sourced the temp env. That probably caused the 22:07:39 WAL write. The `/cache/xdg` directory mtime at 22:04:39 fell during my suite, and I cannot attribute it. Every entry left in `/cache/xdg` has an older mtime, so an entry was created and then removed there.
 
+## R2: CTO conditional (MF1, N1, N2, N4, resync audit, re-baseline)
+
+Checkout: `/work/preached` (clean `git status` before editing), on `feat/w5-why-this-result` at origin head `4b98f33`. `origin/main` (`e434539`) is already an ancestor, so no new merge was needed. No rebase, no force-push, no `--ours`/`--theirs`.
+
+| item | how it was met | commit |
+| --- | --- | --- |
+| MF1 | `app/static/index.html`: the `<details class="levels">` explainer ends with CTO's exact sentence, as a `<p>` after the `<dl>`: "Similarity is how close a passage's meaning is to your question on the search model's own scale. It is not a percentage or a chance of being right, and even unrelated passages score fairly high." It has no digits, and `test_confidence_levels_are_explained_on_the_page` passes. README's `why` bullet now says, next to `similarity`, that it is "on the model's own scale: it is not a percentage or a chance of being right, and even unrelated passages score fairly high". | `e6bec88` |
+| N1 | Section 1 now says the two `app/server.py` lines insert at 329 and 732. I read this off `git diff -U0 origin/main...HEAD -- app/server.py` (`@@ -328,0 +329 @@`, `@@ -730,0 +732 @@`) and checked it with `sed -n '329p;732p' app/server.py` (`"why",` and the `hit_dict` `"why":` line). | this commit |
+| N2 | README: `unrated` is "a search with results but no dense signal (BM25-only search), or a church library with results"; "A search with no results is `none` ("nothing found") in every mode, BM25-only and church included." That matches `abstain.decide` (`not has_results` gives `none` before the `dense_top is None` check gives `unrated`) and `abstain.church_confidence`. Every server path passes `has_results` (`search_with_confidence` and `church_confidence(signals, has_results=bool(kept))`). | `e6bec88` |
+| N4 | README: "fitted on very few questions (five unanswerable ones; see `reports/W3-POLISH.md`)". The floor fit and its five-question basis are described in W3-POLISH.md, sections 1 and 4 and "Fitting the floor". | `e6bec88` |
+
+No DEPLOY.md re-pin: this round changes no file that `docs/DEPLOY.md` cites (`app/server.py` and `src/preached/` are untouched, and `README.md` and `index.html` are not cited). `test_every_cited_file_line_holds_its_string` passes.
+
+**Resync audit (CTO a).** The post-#74 merge is `42014ca` (parents `e14bcd8`, `e434539`).
+- **Conflicted hunks: none.** `git show --remerge-diff 42014ca` is empty for every file, so Git resolved the whole merge with no conflicts and no hand edits. That means there is no conflicted hunk to list or to explain.
+- **#74 hunks in the two files.** #74 is `e434539^1..e434539`, and its branch tip is `b6fce2e`. It has three hunks: `README.md` `@@ -1,44 +1,78 @@` (the quickstart rewrite) and `@@ -53,15 +87,17 @@` (the `$PREACHED_CACHE` / `--library SLUG` paragraph), and `src/preached/search.py` `@@ -665,11 +665,15 @@` (`_VERSE_REF` / `PARAGRAPH_NUMBER`).
+- **All three survived. Nothing was restored.** I checked this three ways:
+  1. A fresh `git merge-file` of each file (base `57ccce4`, ours `e14bcd8`, theirs `e434539`) exits 0, and its output is byte-identical to HEAD.
+  2. Every `+` line of the #74 diff for both files is present in HEAD.
+  3. For both files, the changed lines of `git diff -U0 e434539 HEAD` are exactly the changed lines of `git diff -U0 57ccce4 e14bcd8`, which are this branch's own changes. HEAD differs from main in these files only by #88's changes.
+
+**Re-baseline (CTO c): NOT DONE. Stopped as the task directs. No pins were committed.**
+- Set (1) has nothing to update. No test on this branch or on `origin/main` pins a response-parity hash. `git grep -n "61da3646\|cb0fb974\|1d128a7f" origin/main` finds nothing. `git log --all -S61da3646` finds only this report. The side, search+sermon and church-side refs are not in main's tests either.
+- I cannot build set (2) "the same way the existing tests do", because the method is not in the repo. Earlier parity harnesses were uncommitted `/tmp` scripts (`reports/40-W3-CHURCH-GATE-WIRE.md`, `reports/W3-CHURCH-FIX2.md`). `scripts/compare_responses.py` compares two trees on `--bm25-only` and hashes nothing.
+- Without the hashing method and inputs, I cannot check the stripped set against HTTP `61da3646`, no-church `1d128a7f` and in-process `cb0fb974`. I did not guess a method, because a hash from a guessed method would be a pin nobody can verify.
+- By CTO's rule, a stripped set that cannot be shown to equal the refs is not a pass. Old to new values: none changed (no pins exist in the repo).
+- To unblock: commit the gate's hash harness (or give its exact method: requests, index, flags, what is masked, and the digest prefix). With that, both sets can be added as tests in a follow-up.
+
+**Suite** on `e6bec88` (the tree with the MF1/N2/N4 edits; this commit adds only the report). Machine: sandbox `preached-sandbox` on the omarchy host. The count depends on the machine. `PREACHED_REQUIRE_DENO=1 HF_HUB_OFFLINE=1`, and `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR` and `TORCH_HOME` were each a fresh `mktemp -d`:
+
+```
+Ran 1136 tests in 246.899s
+
+OK (skipped=12)
+```
+
+**/cache diff:** none. I took `find /cache -printf '%p %s %T@'` at 22:14:10 and again at 22:18:24 EDT, before and after the suite. Both had 132,732 entries, and `diff` was empty (no path, size or mtime changed).
+
 ## PR BODY
 
-Each search result now says why it is listed. Every `/api/search` and `/api/side` result gets a `why` object: `keyword_rank` and `meaning_rank` (1-based places in the gated BM25 and dense top-100 lists the ranker fused), `similarity` (dense cosine, 3 places) and `found_by`. They are read off the lists the search already ran, so there is no extra pass (p50 64.48 → 63.32 ms, noise), and through the publish gate, so a hidden chunk never moves a visible rank (tested, including a mutation check). `score` is unchanged. The page shows one muted line per card ("Found by both keyword (#3) and meaning (#1) search · similarity 0.81") and a details block that explains the strong / weak / low / unrated levels. README: "Reading a search result". DEPLOY.md cites and `CITED` pins are re-pinned for the two new `app/server.py` lines. Gate response-hash pins over result bodies will change (not pinned in the repo; see the report). Merged with post-#74 main (no conflicts; see R-POST74). Full suite: Ran 1136, OK (skipped=12), `PREACHED_REQUIRE_DENO=1`, temp caches.
+Each search result now says why it is listed. Every `/api/search` and `/api/side` result gets a `why` object: `keyword_rank` and `meaning_rank` (1-based places in the gated BM25 and dense top-100 lists the ranker fused), `similarity` (dense cosine, 3 places) and `found_by`. They are read off the lists the search already ran, so there is no extra pass (p50 64.48 → 63.32 ms, noise), and through the publish gate, so a hidden chunk never moves a visible rank (tested, including a mutation check). `score` is unchanged. The page shows one muted line per card ("Found by both keyword (#3) and meaning (#1) search · similarity 0.81") and a details block that explains the strong / weak / low / unrated levels. README: "Reading a search result". DEPLOY.md cites and `CITED` pins are re-pinned for the two new `app/server.py` lines. Gate response-hash pins over result bodies will change. They are not pinned in the repo, so they are not re-baselined here: old to new is none for every pin, and the stripped-`why` check against 61da3646 / 1d128a7f / cb0fb974 could not be run because the gate's hashing method is not in the repo (see R2). The details block also says similarity is on the model's own scale, not a percentage or a chance (R2 MF1). Merged with post-#74 main (no conflicts; every #74 hunk verified present, see R-POST74 and R2). Full suite: Ran 1136, OK (skipped=12), `PREACHED_REQUIRE_DENO=1`, temp caches.
 
 Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the query vector here is a stored document vector, so similarity 1.0 at #1 is expected):
 
@@ -131,9 +169,9 @@ Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the 
  app/server.py                 |   2 +
  app/static/app.css            |  42 ++++++-
  app/static/app.js             |  30 +++++
- app/static/index.html         |  14 +++
+ app/static/index.html         |  15 +++
  docs/DEPLOY.md                | 112 ++++++++---------
- reports/W5-WHY-THIS-RESULT.md | 147 ++++++++++++++++++++++
+ reports/W5-WHY-THIS-RESULT.md | 185 ++++++++++++++++++++++++++++
  src/preached/search.py        |  68 ++++++++++-
  tests/test_app_js.py          |  57 +++++++++
  tests/test_deploy_alerts.py   |  86 ++++++-------
@@ -141,7 +179,7 @@ Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the 
  tests/test_server.py          |   1 +
  tests/test_side.py            |   1 +
  tests/test_why_this_result.py | 278 ++++++++++++++++++++++++++++++++++++++++++
- 14 files changed, 740 insertions(+), 107 deletions(-)
+ 14 files changed, 779 insertions(+), 107 deletions(-)
 ```
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
