@@ -107,8 +107,8 @@ Report only: a fresh suite run and a skip-source census on current `main` (`44dc
 PR body stat (`git diff --stat origin/main...HEAD`):
 
 ```
- reports/W5-MAIN-SKIP-CENSUS.md | 129 +++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 129 insertions(+)
+ reports/W5-MAIN-SKIP-CENSUS.md | 132 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 132 insertions(+)
 ```
 
 ## R2 (CTO CONDITIONAL at 4aac742)
