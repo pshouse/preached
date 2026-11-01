@@ -348,7 +348,7 @@ class CacheGuardTests(unittest.TestCase):
         and a key cut at NUL (``immutable%00junk=1``) all enable. So does any
         later enabling occurrence, ``IMMUTABLE=0&immutable=1`` and
         ``immutable=0&immutable=1``. ``mode=ro`` still reads. Empty, ``no`` /
-        ``off`` / ``false``, and all-decimal zeros (``0``, ``00``) do not
+        ``off`` / ``false``, and all-decimal zeros (``0``, ``00``, ``0%00``) do not
         enable. A path outside the watched root is left alone.
         """
         self.assertIsNotNone(cache_guard.current_run(), "the suite hook is not armed")
@@ -415,6 +415,7 @@ class CacheGuardTests(unittest.TestCase):
                     "?mode=ro&immutable=no",
                     "?mode=ro&immutable=off",
                     "?mode=ro&IMMUTABLE=0",
+                    "?mode=ro&immutable=0%00",
                 )
                 for query in allowed:
                     with self.subTest(query=query):

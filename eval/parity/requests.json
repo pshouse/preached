@@ -1,0 +1,399 @@
+{
+ "about": "Inputs of scripts/parity_hash.py. Frozen: edit only together with a re-pin (docs/PARITY.md).",
+ "sources": {
+  "queries": "eval/questions.jsonl, blob f8d8de3c69c3beae2297f0475b8f5861c8eb4d9a (origin/main d4c2e99): every id and query, in file order",
+  "probes": "scripts/compare_responses.py PATHS at origin/main d4c2e99, minus /healthz (each set that includes health asks for it first)",
+  "church_queries": "tests/test_church_wire.py QUERIES, read at run time with the church fixture from build_church"
+ },
+ "k": 10,
+ "side_k": 5,
+ "queries": [
+  {
+   "id": "q-worry",
+   "q": "I keep worrying about money and what will happen tomorrow. What did Wesley say about anxiety and taking thought for the future?"
+  },
+  {
+   "id": "q-worry-plain",
+   "q": "Bills keep piling up and I lie awake fretting about how we'll get by next month. How do I stop being so anxious about what's coming?"
+  },
+  {
+   "id": "q-assurance",
+   "q": "How can I know that I am really a child of God? What did Wesley teach about the assurance of salvation?"
+  },
+  {
+   "id": "q-assurance-plain",
+   "q": "Some days I feel sure God has forgiven me and other days I'm not sure at all. Is there any way to actually be certain I belong to him?"
+  },
+  {
+   "id": "q-money",
+   "q": "Is it wrong for a Christian to try to earn more money? What did Wesley say about making a living?"
+  },
+  {
+   "id": "q-money-plain",
+   "q": "Is it okay to work hard for a bigger paycheck, or should a follower of Jesus not care about getting ahead?"
+  },
+  {
+   "id": "q-riches",
+   "q": "Can a Christian be wealthy without it hurting their soul? What did Wesley say about the danger of riches?"
+  },
+  {
+   "id": "q-riches-plain",
+   "q": "I've done well in business and now have a lot more than I need. Could having all this be bad for me spiritually?"
+  },
+  {
+   "id": "q-prayer",
+   "q": "How should I pray when I am alone? What did Wesley say about private prayer?"
+  },
+  {
+   "id": "q-forgiveness",
+   "q": "Someone hurt me and I cannot let it go. What did Wesley say about forgiving people who wrong us?"
+  },
+  {
+   "id": "q-perfection",
+   "q": "What does Wesley mean by Christian perfection? Can a believer be made perfect in this life?"
+  },
+  {
+   "id": "q-perfection-plain",
+   "q": "Is it possible to stop sinning altogether and love God with my whole heart before I die, or will I always fall short?"
+  },
+  {
+   "id": "q-heaviness",
+   "q": "I have been sad for a long time and my faith feels heavy. What did Wesley say about heaviness and sorrow in a believer?"
+  },
+  {
+   "id": "q-heaviness-plain",
+   "q": "I've felt low and weighed down for months, even though I still trust God. Is something wrong with me spiritually?"
+  },
+  {
+   "id": "q-mourning",
+   "q": "My child died and I do not know how to grieve. What did Wesley say about mourning the dead?"
+  },
+  {
+   "id": "q-mourning-plain",
+   "q": "My little boy passed away last month and I can't stop crying. How do I go on after losing a child?"
+  },
+  {
+   "id": "q-satan",
+   "q": "I feel like the devil is attacking my faith. What did Wesley say about Satan's devices?"
+  },
+  {
+   "id": "q-satan-plain",
+   "q": "Something keeps pulling me away from God and wearing me down until I want to give up. How do I stand firm?"
+  },
+  {
+   "id": "q-temptation",
+   "q": "The temptation I am facing feels too strong to bear. What did Wesley say about God making a way to escape?"
+  },
+  {
+   "id": "q-temptation-plain",
+   "q": "I keep getting pulled toward something I know is wrong and I feel too weak to say no. Will God help me get through it?"
+  },
+  {
+   "id": "q-communion",
+   "q": "How often should a Christian receive the Lord's Supper? What did Wesley teach about communion?"
+  },
+  {
+   "id": "q-communion-plain",
+   "q": "How often should I take the bread and the cup at church? Is a few times a year enough?"
+  },
+  {
+   "id": "q-means",
+   "q": "What are the means of grace, and do they actually help a person grow?"
+  },
+  {
+   "id": "q-means-plain",
+   "q": "Do things like praying, reading the Bible and going to church actually help me get closer to God, or are they just habits?"
+  },
+  {
+   "id": "q-salvation",
+   "q": "If I cannot earn heaven, how is a person saved? What did Wesley say about salvation by faith?"
+  },
+  {
+   "id": "q-salvation-plain",
+   "q": "I'll never be good enough for heaven no matter how hard I try. So how does anybody get right with God?"
+  },
+  {
+   "id": "q-justification",
+   "q": "What does it mean to be justified? Does Wesley say God justifies good people or ungodly people?"
+  },
+  {
+   "id": "q-justification-plain",
+   "q": "Does God only accept good people, or will he forgive someone who has done terrible things?"
+  },
+  {
+   "id": "q-faith-works",
+   "q": "If we are saved by faith alone, do good works still matter? What did Wesley say about faith and works together?"
+  },
+  {
+   "id": "q-faith-works-plain",
+   "q": "If trusting Jesus is what puts me right with God, does it matter how I live or whether I help people? Do the things I do count for anything?"
+  },
+  {
+   "id": "q-new-birth",
+   "q": "What does it mean to be born again? What did Wesley preach about the new birth?"
+  },
+  {
+   "id": "q-new-birth-plain",
+   "q": "People at church say I need God to give me a whole fresh start on the inside. What actually changes in a person when that happens?"
+  },
+  {
+   "id": "q-sin-believers",
+   "q": "I am a Christian and I still struggle with pride and unbelief. Did Wesley say that sin remains in believers?"
+  },
+  {
+   "id": "q-sin-believers-plain",
+   "q": "I gave my life to Jesus years ago but I still catch myself being proud and doubting. Does that mean I was never really saved?"
+  },
+  {
+   "id": "q-original-sin",
+   "q": "Are people basically good? What did Wesley teach about original sin and the human heart?"
+  },
+  {
+   "id": "q-original-sin-plain",
+   "q": "Are people good deep down and just pick up bad habits, or is something wrong with us from the very start?"
+  },
+  {
+   "id": "q-catholic-spirit",
+   "q": "How should I treat Christians who disagree with me on doctrine? What did Wesley mean by a catholic spirit?"
+  },
+  {
+   "id": "q-catholic-spirit-plain",
+   "q": "My friend goes to a church that teaches very differently from mine. Can we still be close and work together without pretending our differences don't matter?"
+  },
+  {
+   "id": "q-backsliders",
+   "q": "I used to believe and then I fell away. What did Wesley say to backsliders who think God will not take them back?"
+  },
+  {
+   "id": "q-backsliders-plain",
+   "q": "I walked away from God years ago. I want to come back, but I'm scared he won't have me. Is it too late?"
+  },
+  {
+   "id": "q-self-denial",
+   "q": "What does it mean to deny yourself and take up your cross? What did Wesley say about self-denial?"
+  },
+  {
+   "id": "q-self-denial-plain",
+   "q": "Do I really have to give up things I want in order to follow Jesus? How much is God asking me to let go of?"
+  },
+  {
+   "id": "q-wandering-thoughts",
+   "q": "My mind wanders when I try to pray. Are wandering thoughts a sin? What did Wesley say?"
+  },
+  {
+   "id": "q-wandering-thoughts-plain",
+   "q": "When I pray, my mind keeps drifting off to my shopping list and my job. Is God upset with me for that?"
+  },
+  {
+   "id": "q-wilderness",
+   "q": "I used to feel close to God, and now everything feels dark. What did Wesley say about the wilderness state?"
+  },
+  {
+   "id": "q-wilderness-plain",
+   "q": "A few years ago I felt so close to God and full of joy. Now I feel empty and far away from him. What happened, and can I get that back?"
+  },
+  {
+   "id": "q-evil-speaking",
+   "q": "Is it gossip if what I say about someone is true? What did Wesley teach about evil-speaking?"
+  },
+  {
+   "id": "q-evil-speaking-plain",
+   "q": "Is it wrong to talk about a coworker behind their back if everything I say is true?"
+  },
+  {
+   "id": "k-romans-8-16",
+   "q": "Romans 8:16"
+  },
+  {
+   "id": "k-christian-perfection",
+   "q": "Christian perfection"
+  },
+  {
+   "id": "k-means-of-grace",
+   "q": "means of grace"
+  },
+  {
+   "id": "k-witness-of-the-spirit",
+   "q": "witness of the Spirit"
+  },
+  {
+   "id": "k-gain-all-you-can",
+   "q": "Gain all you can"
+  },
+  {
+   "id": "k-philippians-3-12",
+   "q": "Philippians 3:12"
+  },
+  {
+   "id": "k-1-corinthians-10-13",
+   "q": "1 Corinthians 10:13"
+  },
+  {
+   "id": "k-matthew-6-34",
+   "q": "Matthew 6:34"
+  },
+  {
+   "id": "k-2-corinthians-2-11",
+   "q": "2 Corinthians 2:11"
+  },
+  {
+   "id": "k-luke-22-19",
+   "q": "Luke 22:19"
+  },
+  {
+   "id": "u-book-of-mormon",
+   "q": "What did Wesley say about the Book of Mormon?"
+  },
+  {
+   "id": "u-nuclear-weapons",
+   "q": "What did Wesley teach about nuclear weapons?"
+  },
+  {
+   "id": "u-smartphones",
+   "q": "What did Wesley say about smartphones and social media?"
+  },
+  {
+   "id": "u-vaccines",
+   "q": "What did Wesley say about vaccines?"
+  },
+  {
+   "id": "u-pretrib-rapture",
+   "q": "Did Wesley teach a secret pre-tribulation rapture of the church?"
+  },
+  {
+   "id": "p-001",
+   "q": "I don't know how to pray anymore. It just feels like I'm talking to the ceiling and nothing comes back."
+  },
+  {
+   "id": "p-002",
+   "q": "my mom died last month and i cant stop crying at work. does the sad part ever get smaller"
+  },
+  {
+   "id": "p-003",
+   "q": "We are so broke. I feel guilty buying the kids anything that isn't on sale. What are we supposed to do with money when there isn't enough?"
+  },
+  {
+   "id": "p-004",
+   "q": "sorry this is a mess. my wife says shes done trying and i dont even know what im asking i just dont want my family to fall apart"
+  },
+  {
+   "id": "p-005",
+   "q": "I'm not even sure God is real anymore. I go on Sundays because my family does, but I feel like I'm faking it."
+  },
+  {
+   "id": "p-006",
+   "q": "theres something i did a long time ago that i never told anyone. i say ive moved on but i still feel dirty about it"
+  },
+  {
+   "id": "p-007",
+   "q": "I yelled at my kids again tonight and I saw the look on my daughter's face. I don't want to be this angry."
+  },
+  {
+   "id": "p-008",
+   "q": "i told everyone i quit drinking and then i bought a bottle on the way home. i dont know why i keep doing this"
+  },
+  {
+   "id": "p-009",
+   "q": "I can be in a full room at church and still feel completely alone. I don't have one person I could call."
+  },
+  {
+   "id": "p-010",
+   "q": "work has taken over my whole life and im still behind. is it bad that i daydream about quitting and disappearing for a while"
+  },
+  {
+   "id": "p-011",
+   "q": "They found something on the scan and I have to wait two weeks to know how bad it is. I can't sleep. What do I even say to God?"
+  },
+  {
+   "id": "p-012",
+   "q": "my son is 15 and he wont talk to me. if i ask about school he shuts the door. i feel like im losing him"
+  },
+  {
+   "id": "p-013",
+   "q": "Someone at church told people something about me that isn't true, and now half the room is weird with me. They still smile. Do I have to just let it go?"
+  },
+  {
+   "id": "p-014",
+   "q": "im scared of dying. like actually scared, not just wondering. i think about it when i try to fall asleep"
+  },
+  {
+   "id": "p-015",
+   "q": "God feels far. I used to feel something when I prayed and now it's just quiet, and I don't know if I did something wrong."
+  },
+  {
+   "id": "p-016",
+   "q": "help i messed up bad"
+  },
+  {
+   "id": "p-017",
+   "q": "why wont he answer"
+  },
+  {
+   "id": "p-018",
+   "q": "Can God forgive me if I don't feel sorry the way people say I should? I mostly just feel numb."
+  },
+  {
+   "id": "p-019",
+   "q": "i get jealous of my friends and their vacations and then i hate that this is who i am"
+  },
+  {
+   "id": "p-020",
+   "q": "My dad was mean when I was little. Now I have a baby and I'm scared I'm going to turn into him."
+  },
+  {
+   "id": "p-021",
+   "q": "ive been praying for my sister for months and she just keeps getting worse. im starting to feel stupid for asking"
+  },
+  {
+   "id": "p-022",
+   "q": "Our church is splitting into sides and people are talking about each other. I love these people but I don't want to pick a team."
+  },
+  {
+   "id": "p-023",
+   "q": "i work sunday mornings so we can pay rent. i miss church and i feel guilty and i also cant quit the shift"
+  },
+  {
+   "id": "p-024",
+   "q": "i keep looking at stuff on my phone late at night that i shouldnt. i delete the apps and then i put them right back. i feel gross"
+  },
+  {
+   "id": "p-025",
+   "q": "My doctor put me on medicine for anxiety and a lady at church said that means I'm not trusting God. I still take the pill. Am I wrong?"
+  },
+  {
+   "id": "p-026",
+   "q": "cant stop scrolling tiktok at like 2am and then i feel like everyone else has a better life. is that just me being weak"
+  },
+  {
+   "id": "p-027",
+   "q": "I met a guy on a dating app and we might get serious. Is that a bad way to find someone to marry, or is it fine?"
+  },
+  {
+   "id": "p-028",
+   "q": "im scared about the climate and that my kids wont get a normal future. i lie awake thinking about fires and floods. what do i do with that"
+  },
+  {
+   "id": "p-029",
+   "q": "My company is replacing people with AI and I might not have a job next year. How do I stop panicking?"
+  },
+  {
+   "id": "p-030",
+   "q": "is it ok if church is just me watching the livestream in bed. i havent actually gone in months and i kinda dont want to"
+  }
+ ],
+ "probes": [
+  "/api/search?q=christian+perfection&k=5",
+  "/api/search?q=grace&mode=keyword&k=3",
+  "/api/search?q=faith&mode=hybrid",
+  "/api/search?q=",
+  "/api/search?q=x&k=999",
+  "/api/sermon/wesley-001",
+  "/api/sermon/wesley-040",
+  "/api/sermon/nope",
+  "/api/sermon/..%2f",
+  "/api/side?q=love",
+  "/",
+  "/static/app.js",
+  "/missing"
+ ]
+}
