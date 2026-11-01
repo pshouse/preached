@@ -521,6 +521,26 @@ class BundleTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, result.stderr)
                 self.assertIn(library, result.stderr)
 
+    def test_default_index_follows_preached_cache(self) -> None:
+        script = ROOT / "scripts" / "build-bundle.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "scratch-root"
+            cache.mkdir()
+            env = self._env(PREACHED_CACHE=str(cache))
+            env.pop("PREACHED_INDEX", None)
+            env.pop("PREACHED_ONNX_DIR", None)
+            result = subprocess.run(
+                ["bash", str(script), str(Path(tmp) / "out")],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(str(cache / "index" / "wesley.sqlite"), result.stderr)
+        self.assertNotIn("/cache/index/wesley.sqlite", result.stderr)
+
     def test_refuses_a_renamed_church_path_and_a_symlink(self) -> None:
         script = ROOT / "scripts" / "build-bundle.sh"
         with tempfile.TemporaryDirectory() as tmp:

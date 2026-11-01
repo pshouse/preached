@@ -715,18 +715,35 @@ class RealOnnxTests(unittest.TestCase):
             self.skipTest("granite onnx artifacts are not in /cache")
         from preached.onnx_embed import OnnxEmbedder
 
-        if not os.access(source.parent.parent, os.W_OK):
-            self.skipTest("model mount is read-only; the test copies the 597 MB graph beside it")
         # The graph is opened with O_NOFOLLOW and must have one link, so copy
-        # it. The temp folder sits outside the ONNX root, on disk (not tmpfs).
-        with tempfile.TemporaryDirectory(dir=source.parent.parent) as tmp:
-            folder = Path(tmp)
-            shutil.copyfile(source / "model.fp32.onnx", folder / "model.fp32.onnx")
+        # it. The copy is under the temp dir, never under PREACHED_CACHE.
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        refused = [temp_root]
+        if os.environ.get("PREACHED_CACHE"):
+            refused.append(Path(os.environ["PREACHED_CACHE"]).resolve())
+        if Path("/cache").is_dir():
+            refused.append(Path("/cache").resolve())
+        for root in refused[1:]:
+            if temp_root == root or temp_root.is_relative_to(root):
+                self.fail(f"temp dir {temp_root} is inside {root}; refusing to copy the graph there")
+        with tempfile.TemporaryDirectory(dir=temp_root) as tmp:
+            folder = Path(tmp).resolve()
+            if not folder.is_relative_to(temp_root):
+                self.fail(f"refusing to write the fp32 copy outside the temp dir: {folder}")
+            for root in refused[1:]:
+                if folder == root or folder.is_relative_to(root):
+                    self.fail(f"refusing to write the fp32 copy under {root}: {folder}")
+            graph = folder / "model.fp32.onnx"
+            shutil.copyfile(source / "model.fp32.onnx", graph)
+            graph.chmod(0o644)
+            folder.chmod(0o700)
             for name in ("tokenizer.json", "pooling.json"):
                 (folder / name).symlink_to(source / name)
             manifest = json.loads((source / "manifest.json").read_text())
             # int8 stays named in the manifest and is not on disk.
-            (folder / "manifest.json").write_text(json.dumps(manifest))
+            manifest_path = folder / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest))
+            manifest_path.chmod(0o644)
             embedder = OnnxEmbedder.load(variant="fp32", directory=folder, ort_threads=1, batch_size=1)
             self.assertEqual(embedder.variant, "fp32")
             self.assertEqual(embedder.model_sha256, FP32_ONNX_SHA256)

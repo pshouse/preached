@@ -5,9 +5,12 @@ SIGTERM, and require exit 0 with the private bytecode directory removed.
 Before the drain (PR #36 r1) bm25 segfaulted (sqlite closed under a handler)
 and hybrid aborted in ONNX Runtime on most runs.
 
-Runs per mode: PREACHED_SHUTDOWN_RUNS (default 3). bm25 uses the real Wesley
-index when /cache has it, else a generated one. hybrid needs the real index
-and the pinned ONNX model; it is skipped without them.
+Runs per mode: PREACHED_SHUTDOWN_RUNS (default 3). bm25 uses the Wesley
+index under PREACHED_CACHE when that file is present, else a generated one.
+hybrid needs that index and the pinned revision directory (manifest,
+tokenizer, and an fp32 or int8 graph). It is skipped when any of those is
+missing, including when the ONNX directory exists but is empty. An unset
+PREACHED_CACHE stays on a private temp directory.
 """
 
 from __future__ import annotations
@@ -23,19 +26,66 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from preached.artifacts import GRANITE_REVISION, VARIANT_FILES, required_filenames  # noqa: E402
 from preached.store import connect  # noqa: E402
 
 SERVER = ROOT / "app" / "server.py"
 PYTHON = ROOT / ".venv" / "bin" / "python"
-REAL_INDEX = Path("/cache/index/wesley.sqlite")
-ONNX_DIR = Path(os.environ.get("PREACHED_ONNX_DIR", "/cache/models/granite-english-r2-onnx"))
+
+
+def _cache_root() -> Path:
+    """Shared cache for this process. Unset PREACHED_CACHE stays on a temp directory."""
+    raw = os.environ.get("PREACHED_CACHE")
+    if raw:
+        return Path(raw)
+    return Path(tempfile.gettempdir()) / "preached-shutdown-nocache"
+
+
+_CACHE = _cache_root()
+REAL_INDEX = _CACHE / "index" / "wesley.sqlite"
+ONNX_DIR = Path(os.environ["PREACHED_ONNX_DIR"]) if os.environ.get("PREACHED_ONNX_DIR") else (
+    _CACHE / "models" / "granite-english-r2-onnx"
+)
 RUNS = int(os.environ.get("PREACHED_SHUTDOWN_RUNS", "3"))
 CLIENTS = 16
 WORDS = "grace faith love sin holy spirit law gospel heart repentance mercy prayer".split()
+# The export may leave this beside the fp32 graph. It is not a runtime
+# variant; a directory that has it is still an export, not an empty one.
+_INT8_GRAPH = "model.int8.onnx"
+_HYBRID_SKIP = "needs the Wesley index and the pinned ONNX model under PREACHED_CACHE"
+
+
+def _loader_export_names() -> tuple[str, str, str]:
+    """manifest, tokenizer, fp32 graph, using the loader's own names.
+
+    ``required_filenames`` and ``VARIANT_FILES`` are what ``OnnxEmbedder.load``
+    looks up. ``load_manifest`` opens ``manifest.json``. Keeping those names
+    here means a rename in the loader changes this skip with it.
+    """
+    graph = VARIANT_FILES["fp32"]
+    tokenizer = next(name for name in required_filenames("fp32") if "tokenizer" in name)
+    return "manifest.json", tokenizer, graph
+
+
+def hybrid_load_ready(index: Path, onnx_dir: Path) -> bool:
+    """True when the hybrid SIGTERM test can see a real export.
+
+    The pinned revision directory under ``onnx_dir`` (the same directory
+    ``artifact_dir`` uses) must hold the manifest, the tokenizer, and either
+    the fp32 graph or the int8 graph. An empty ONNX directory is not ready.
+    """
+    if not index.is_file():
+        return False
+    manifest, tokenizer, graph = _loader_export_names()
+    folder = onnx_dir / GRANITE_REVISION
+    if not (folder / manifest).is_file() or not (folder / tokenizer).is_file():
+        return False
+    return (folder / graph).is_file() or (folder / _INT8_GRAPH).is_file()
 
 
 def _python() -> str:
@@ -170,9 +220,59 @@ class LoadedSigtermTests(unittest.TestCase):
             index = REAL_INDEX if REAL_INDEX.is_file() else _fixture_index(Path(tmp) / "wesley.sqlite")
             self._loaded_runs("bm25", index, ["--bm25-only"])
 
-    @unittest.skipUnless(REAL_INDEX.is_file() and (ONNX_DIR).is_dir(), "needs /cache/index/wesley.sqlite and the pinned ONNX model")
     def test_sigterm_under_hybrid_load_exits_zero_and_cleans_up(self) -> None:
+        if not hybrid_load_ready(REAL_INDEX, ONNX_DIR):
+            self.skipTest(_HYBRID_SKIP)
         self._loaded_runs("hybrid", REAL_INDEX, [])
+
+    def test_empty_onnx_dir_skips_hybrid_load(self) -> None:
+        """An empty ONNX directory used to pass ``is_dir`` and the load then failed."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            temp_root = Path(tempfile.gettempdir()).resolve()
+            self.assertTrue(root.is_relative_to(temp_root), root)
+            index = root / "wesley.sqlite"
+            index.write_bytes(b"present")
+            onnx = root / "onnx"
+            onnx.mkdir()
+            # The old guard ran this case: the index is a file and the ONNX
+            # directory exists. The loader has nothing to open, so skip.
+            self.assertTrue(index.is_file() and onnx.is_dir())
+            self.assertFalse(hybrid_load_ready(index, onnx))
+            module = sys.modules[__name__]
+            with patch.object(module, "REAL_INDEX", index), patch.object(module, "ONNX_DIR", onnx):
+                case = LoadedSigtermTests("test_sigterm_under_hybrid_load_exits_zero_and_cleans_up")
+                result = unittest.TestResult()
+                case.run(result)
+            self.assertEqual(result.failures, [])
+            self.assertEqual(result.errors, [])
+            self.assertEqual(len(result.skipped), 1, result.skipped)
+            self.assertIn("pinned ONNX", result.skipped[0][1])
+
+    def test_hybrid_load_ready_follows_the_loader_filenames(self) -> None:
+        manifest, tokenizer, graph = _loader_export_names()
+        self.assertEqual(graph, VARIANT_FILES["fp32"])
+        self.assertIn(tokenizer, required_filenames("fp32"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            self.assertTrue(root.is_relative_to(Path(tempfile.gettempdir()).resolve()))
+            index = root / "wesley.sqlite"
+            index.write_bytes(b"present")
+            onnx = root / "onnx"
+            revision = onnx / GRANITE_REVISION
+            revision.mkdir(parents=True)
+            self.assertFalse(hybrid_load_ready(index, onnx))
+            (revision / manifest).write_text("{}")
+            (revision / tokenizer).write_bytes(b"{}")
+            (revision / graph).write_bytes(b"fp32")
+            self.assertTrue(hybrid_load_ready(index, onnx))
+            (revision / graph).unlink()
+            self.assertFalse(hybrid_load_ready(index, onnx))
+            (revision / _INT8_GRAPH).write_bytes(b"int8")
+            self.assertTrue(hybrid_load_ready(index, onnx))
+            (revision / tokenizer).unlink()
+            self.assertFalse(hybrid_load_ready(index, onnx))
+            self.assertFalse(hybrid_load_ready(root / "missing.sqlite", onnx))
 
 
 class ServingSigtermTests(unittest.TestCase):
