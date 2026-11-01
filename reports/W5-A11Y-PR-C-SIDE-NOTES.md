@@ -103,6 +103,24 @@ None.
 extra tests removed. 8 mutation: done, table above. 9 parity: done, #97 unmerged branch. 10 cites: hold. 11 rule 5: done. 12 report: this file.
 13 commands: as above.
 
+## Round 2 (99-XVC-PR-C-MAIN-REPIN-R2)
+
+- Start head `67abe0d85fb74a73a4b790349ba45ceec6d8dba3` (local == `origin/fix/w5-a11y-side-notes`); status clean. Merged `origin/main` `484e68298b514b8489a359602f4340e7662b7615` (#97 parity harness included) with `git merge`, no rebase.
+- Conflicts: none. The merge was clean, no side-pick, no `--ours/--theirs`. All main-side hunks are present.
+- `git diff origin/main HEAD -- app tests` before re-pinning showed only round 1's `showSides` (+11) and `SIDE_CHECKS` (+20) edits. SIDE_CHECKS and the mobile UX tests pass.
+- Parity (merged harness `scripts/parity_hash.py`, harness hash `9bbe1a503f36136f`, synthetic index, uncommitted record-diff script run on a `git archive` of `origin/main` and on this head): the only differing records are `/static/app.js` in `http` and in `no-church` (225 records each), body sha256 `0e21b3b3e2e072c9ec2d568da0028a56b15d337feb0d3f981e2e27a6556dac62` (= `git show origin/main:app/static/app.js | sha256sum`) to `3a08bf550d5208b3eddecdd2a8a3b5006aab90a899be1c0dd12732d37a00dd9f` (= `git show HEAD:app/static/app.js | sha256sum`). `in-process` (212), `in-process-no-health` (211), `search+sermon` (96), `side` (93) and `church` (22) have 0 differing records; `/` is identical. On main the script reproduces the old pins exactly.
+- Re-pinned `PINNED["http"]` `b198c5b3546ef6eb` to `a698343bd83ea865`, `PINNED["no-church"]` `29f0c7e50f011dea` to `153267cefae0f1df`, `PINNED_NO_WHY["http"]` `87598c3cb97e7a4e` to `692ae6d888dc2fb7`, `PINNED_NO_WHY["no-church"]` `cc0f371a6b6cdf27` to `15c9ee63ad285b64`. No other key changed. The move is intended.
+- docs/PARITY.md: added a history row naming PR #103 with the old and new values. **Deviation:** the reference table there holds reviewer-box values (real Wesley index + ONNX, main `3aef7ca`). They cannot be recomputed here (the real index is off limits under rule 5), so the table rows and the host gate command were left as they are, and the new row says the reviewer box must re-take `http` and `no-church` on the merged main. I did not invent box values.
+- Cites re-read on this head: `docs/DEMO-SCRIPT.md:28` (`app.js:217-235` is `whyLine`, `:312-313` is the `why` line in `renderCard`), `:42` (`app.js:338` is `lowHidden`), `docs/SUBMISSION-DRAFT.md:34` (same cites). All hold, no re-pin. `app/server.py` and DEPLOY.md are untouched.
+- Runs: all cache env vars under one `mktemp -d` under `/tmp` (`PREACHED_GUARD_REAL_SRC` unset, `HOME` for children there too).
+
+| Mutant (alone, run, revert) | `tests.test_app_js tests.test_mobile_ux` | `cmp` after revert |
+|---|---|---|
+| (i) delete new `setText("confidence", ...)` | red (failures=1) | identical |
+| (ii) delete new `setText("note", ...)` | red (failures=1) | identical |
+| (iii) drop the `showResults` condition | red (failures=1) | identical |
+| (iv) `aria-live` on `section.side-col` | red (failures=1) | identical |
+
 ## PR BODY
 
 Side by side (F-03): the low-confidence banner and the BM25-only fallback note are now written into the existing
@@ -110,18 +128,29 @@ Side by side (F-03): the low-confidence banner and the BM25-only fallback note a
 `heading + ": " + note`, one space between sides; the confidence note only while that side's passages are shown.
 Only `showSides` changes. Column paragraphs, `#status`, `resetState`, `setBusy`, `index.html` and CSS are unchanged.
 
+Round 2: merged `origin/main` `484e68298b514b8489a359602f4340e7662b7615` (#97 parity harness merged) with no conflicts, and re-pinned parity.
+
 Branch note: the brief names `fix/w5-a11y-side-notices`; this PR is `fix/w5-a11y-side-notes`.
 
 ```
- app/static/app.js                  |  11 ++++
- reports/W5-A11Y-PR-C-SIDE-NOTES.md | 127 +++++++++++++++++++++++++++++++++++++
- tests/test_app_js.py               |  20 ++++++
- 3 files changed, 158 insertions(+)
+STATFILL
 ```
 
-- Focused: `Ran 19 tests in 0.360s, OK` on `e417bc4b3ac7f7fd092ede89d8b61f66f97cf2a0`, host `preached-sandbox`.
-- Full: `Ran 1156 tests in 256.723s, OK (skipped=12)`, same sha and host.
-- Mutants (i) delete confidence `setText`, (ii) delete note `setText`, (iii) drop `showResults` condition, (iv) `aria-live` on `section.side-col`: all red, each reverted with `cmp` identical.
-- Parity (synthetic index, #97 head `c2f74e9`, #97 unmerged; main `3aef7ca`; harness `9bbe1a503f36136f`; index_version `ab`×32; model_sha256 None): only `/static/app.js` in `http` (`b198c5b3546ef6eb` → `a698343bd83ea865`) and `no-church` (`29f0c7e50f011dea` → `153267cefae0f1df`) moves, `0e21b3b3…ac62` → `3a08bf55…dd9f`; every other set and `/` identical. The move is intended. PARITY.md/PINNED not touched (#97 unmerged).
-- `/cache` snapshot: 132824 lines before and after, sha256 `3ca707d7…ca64` both, diff none.
+- Focused (`tests.test_app_js tests.test_mobile_ux tests.test_parity_hash`): `Ran 35 tests in 17.851s, OK (skipped=0)` on tree `e5829b94a5acb5878e8b0f6f96e9f9ba844910c7` (the code is unchanged by the report commit), host `preached-sandbox`.
+- Full: `Ran 1172 tests in 279.843s, OK (skipped=12)`, same tree and host. No `test_every_cited_file_line_holds_its_string` failure.
+- Mutants (each alone, run, revert, `cmp` identical):
+
+| Mutant | Result |
+|---|---|
+| (i) delete confidence `setText` | red |
+| (ii) delete note `setText` | red |
+| (iii) drop `showResults` condition | red |
+| (iv) `aria-live` on `section.side-col` | red |
+
+- Parity (#97 merged; main `484e68298b514b8489a359602f4340e7662b7615`; harness `9bbe1a503f36136f`; synthetic index, index_version `ab`x32, model_sha256 None):
+  - `PINNED["http"]` `b198c5b3546ef6eb` to `a698343bd83ea865`; `PINNED["no-church"]` `29f0c7e50f011dea` to `153267cefae0f1df`.
+  - `PINNED_NO_WHY["http"]` `87598c3cb97e7a4e` to `692ae6d888dc2fb7`; `PINNED_NO_WHY["no-church"]` `cc0f371a6b6cdf27` to `15c9ee63ad285b64`.
+  - Record level: the only differing records are `/static/app.js` in `http` and `no-church`, body sha256 `0e21b3b3e2e072c9ec2d568da0028a56b15d337feb0d3f981e2e27a6556dac62` (main) to `3a08bf550d5208b3eddecdd2a8a3b5006aab90a899be1c0dd12732d37a00dd9f` (head); `in-process`, `in-process-no-health`, `search+sermon`, `side`, `church` and `/` are identical.
+  - The move is intended. docs/PARITY.md has a history row naming PR #103. Its reviewer-box table (real Wesley index) was not recomputed, so the box must re-take `http`/`no-church` on the merged main.
+- `/cache` snapshot: 132824 lines before and after, sha256 `3ca707d7aba4f2aa682a6497f9e481bad4c8087d9304142444a746ace64bca64` both, diff none.
 - DEPLOY cites are untouched.

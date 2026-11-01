@@ -29,8 +29,8 @@ from test_side import FIXTURE_FP, build_library, classic_rows, encode_fixture  #
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_VERSION = "ab" * 32
 PINNED = {
-    "http": "b198c5b3546ef6eb",
-    "no-church": "29f0c7e50f011dea",
+    "http": "a698343bd83ea865",
+    "no-church": "153267cefae0f1df",
     "in-process": "2c4e3d735333a6b2",
     "in-process-no-health": "126e6bde69f9049a",
     "search+sermon": "8a7e7554637ecc80",
@@ -38,8 +38,8 @@ PINNED = {
     "church": "0783e6ef1d4a916b",
 }
 PINNED_NO_WHY = {
-    "http": "87598c3cb97e7a4e",
-    "no-church": "cc0f371a6b6cdf27",
+    "http": "692ae6d888dc2fb7",
+    "no-church": "15c9ee63ad285b64",
     "in-process": "ca73b0128ad41a55",
     "in-process-no-health": "b60551efd3fe0919",
     "search+sermon": "f2634f94688508d3",
