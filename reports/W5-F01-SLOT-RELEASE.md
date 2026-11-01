@@ -1,6 +1,6 @@
 # W5-F01: 405 releases the in-flight slot
 
-Branch `fix/w5-405-slot-release`, cut from `origin/main` at `e434539`. Audit F-01 (High) in `reports/W5-HTTP-SECURITY-AUDIT.md` on `origin/qa/w5-http-security-audit`. Cause checked on that main before the edit.
+Branch `fix/w5-405-slot-release`, cut from `origin/main` at `e434539`, resynced onto `origin/main` `8d46f14` (see the last section). Audit F-01 (High) in `reports/W5-HTTP-SECURITY-AUDIT.md` on `origin/qa/w5-http-security-audit`. Cause checked on that main before the edit.
 
 ## Cause
 
@@ -51,3 +51,13 @@ OK (skipped=12)
 `test_every_cited_file_line_holds_its_string` is in that run. The suite exited 0, so that test has no failure from this change.
 
 `find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort` before the first `uv run` and after the suite: 1640 lines, byte-identical. No path, size or mtime changed.
+
+## Resync with origin/main (99-XG-F01-RESYNC)
+
+`origin/main` merged into this branch with a normal merge commit (no rebase). The branch was based on `e434539`; the merge base with `origin/main` (`8d46f14`) is the new base. Main changed `app/server.py` by two lines since `e434539` (the `why` field: `"why"` in the hit field list and `"why": hit.why.as_dict() ...` in the hit dict). Both are present after the merge, and no F-01 hunk was touched: the diff of `app/server.py` against `origin/main` is the same set of added and removed lines as this branch's own diff against `e434539`. The `why` field's responses are not changed by the merge.
+
+Conflicts were in `docs/DEPLOY.md` (cites) and `tests/test_deploy_alerts.py` (CITED pins) only. They were resolved by editing, not by picking a side: main's text kept, then every `app/server.py` cite and pin re-derived against the merged `app/server.py` by finding each pinned string, then the cites read by `test_every_cited_file_line_holds_its_string` and `test_the_runbook_cites_exactly_the_pinned_lines`. The slot-fairness row, the "W5 405 in-flight slot" note and the tree-relative sentence ("this tree's `app/server.py`, the copy beside this document") are kept.
+
+Burst tests on the merged branch: RED with `app/server.py` swapped for `origin/main`'s copy (restored after), both four-POST halves fail with `(False, 503) != (True, 200)` and `body=b'{"error": "unavailable"}'`; GREEN on the merged tree, `test_reject_method_slot` 10 tests OK.
+
+Full suite on temp caches (all seven variables on fresh `mktemp -d` dirs): `Ran 1146 tests in 253.312s`, `OK (skipped=12)`. No `test_every_cited_file_line_holds_its_string` failure. `/cache` listing (`find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort`, 1640 lines) is identical before and after.

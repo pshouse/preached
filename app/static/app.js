@@ -207,6 +207,33 @@ function playClip(url, start, button, caption) {
   document.getElementById("now-playing").textContent = caption;
 }
 
+function positiveRank(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/* One plain line on why a passage is listed, from the server's ``why``
+   (its place in the keyword and meaning lists, and the meaning similarity).
+   Pure, so it is tested in Deno. Null when there is nothing to say. */
+function whyLine(why) {
+  if (!why || typeof why !== "object") return null;
+  var keyword = positiveRank(why.keyword_rank);
+  var meaning = positiveRank(why.meaning_rank);
+  var line;
+  if (keyword && meaning) {
+    line = "Found by both keyword (#" + keyword + ") and meaning (#" + meaning + ") search";
+  } else if (keyword) {
+    line = "Found by keyword search only (#" + keyword + ")";
+  } else if (meaning) {
+    line = "Found by meaning search only (#" + meaning + ")";
+  } else {
+    return null;
+  }
+  if (typeof why.similarity === "number" && Number.isFinite(why.similarity)) {
+    line += " · similarity " + why.similarity.toFixed(2);
+  }
+  return line;
+}
+
 function renderCard(hit) {
   var item = document.createElement("li");
   var card = el("article", "card");
@@ -281,6 +308,9 @@ function renderCard(hit) {
     line.appendChild(link);
     card.appendChild(line);
   }
+
+  var why = whyLine(hit.why);
+  if (why) card.appendChild(el("p", "why", why));
 
   return item;
 }
