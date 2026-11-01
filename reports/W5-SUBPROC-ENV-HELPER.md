@@ -12,6 +12,9 @@ Since #94, `src/preached/__init__.py` keeps ORT telemetry off for children that 
 - `tests/test_subproc_env_guard.py` (arms `cache_guard` first): an AST scan that fails on any `subprocess.run/Popen/call/check_call/check_output` with `env=` in `tests/` that does not trace to `child_env`. The same scan holds `scripts/` to "names ORT_DISABLE_TELEMETRY". 10 detector tests cover what it flags and passes.
 - Deliberate exception: `tests/test_ort_telemetry_off.py` sets or drops the variable on purpose to prove `preached` turns it off, so it is left alone; the scan passes it because the enclosing function names the flag.
 - No `app/server.py` or DEPLOY-cited file changed, so no DEPLOY cites moved. DEPLOY.md mentions test files by name only, not by line.
+- R2: `test_shutdown._env` and every other builder already went through `child_env` in R1 (the audit found no allow-list builder left in `tests/` or `scripts/`; `scripts/` set the flag inline). `test_shutdown._env` no longer forwards the real `HOME`: `child_env` gives the hybrid server child a scratch `HOME` and `XDG_CACHE_HOME`.
+- R2: `tests/test_child_home_guard.py` (arms `cache_guard` first) runs test_shutdown's hybrid server child with a real index and the pinned fp32 model in a fresh temp HOME and asserts no `Microsoft`/`DeveloperTools` directory appears under HOME or XDG_CACHE_HOME. A second test runs a child that imports onnxruntime BEFORE preached and opens the model. A third proves the check can fail: the old shape (no flag, no XDG) writes a `Microsoft` dir. The tests need `PREACHED_GUARD_REAL_SRC`; they copy only the Wesley index and the fp32 export into a temp dir (rule 5), and skip with that reason when it is unset or the files are missing.
+- R2: `tests/README.md` states that allow-listed children inherit `HOME` and must use the shared helper.
 
 No new dependencies.
 
@@ -29,6 +32,15 @@ Green, on the branch:
 
     Ran 13 tests in 0.732s
     OK
+
+## R2
+
+Machine preached-sandbox. Base origin/main 3aef7ca.
+
+- Real-model guard: RAN with `PREACHED_GUARD_REAL_SRC=/cache` (read-only copy of index/wesley.sqlite and the fp32 export into a temp dir; the server answered `mode: hybrid`). 3 tests OK in 3.7s, together with `test_subproc_env_guard` 16 OK. In the default suite run (variable unset) the 3 tests SKIP with reason "PREACHED_GUARD_REAL_SRC is not set: no real index and ONNX model to copy".
+- Red/green: `test_guard_sees_a_telemetry_write` is the red case (child with no flag and no XDG_CACHE_HOME, importing onnxruntime first, creates `Microsoft/DeveloperTools` in the temp HOME); the other two are green. Finding: with the flag dropped from the server child's env, the server itself wrote nothing, because `preached` (since #94) sets the flag before onnxruntime loads. So the shutdown guard passes with or without the helper on current main; it locks the property, and the import-first child is the case that depends on the helper.
+- Full suite (rule-5 temp caches, command below, no `PREACHED_GUARD_REAL_SRC`): `Ran 1172 tests in 253.9s, OK (skipped=15)` (12 old skips + 3 new). Zero `test_every_cited_file_line_holds_its_string` failures. No DEPLOY-cited file changed.
+- /cache before/after: `find /cache -printf '%p %s %T@\n' | sort`, 132823 entries before and after, `diff` empty.
 
 ## Stat (git diff --stat origin/main..HEAD)
 
