@@ -1,12 +1,13 @@
 """Fail a unittest run that writes under a real cache.
 
-The six cache variables are PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME,
-DENO_DIR, XDG_CACHE_HOME, and UV_CACHE_DIR. The suite reads PREACHED_CACHE.
+The cache variables this guard is about are PREACHED_CACHE, PREACHED_ONNX_DIR,
+HF_HOME, DENO_DIR, and XDG_CACHE_HOME. The suite reads PREACHED_CACHE.
 It must not create or change anything there. ``install`` points the tool
 caches XDG_CACHE_HOME and DENO_DIR at a temp directory so deno and ONNX
-Runtime do not use /cache/xdg. PREACHED_ONNX_DIR, HF_HOME, and UV_CACHE_DIR
-stay as the process set them; a suite run points those at temp directories
-too.
+Runtime do not use /cache/xdg. PREACHED_ONNX_DIR and HF_HOME stay as the
+process set them; a suite run points those at temp directories too.
+The uv cache is excluded from the guard: a top-level directory named
+``uv`` under a watched root is not snapshotted and is not a refused write.
 
 A before/after listing catches files left behind, including a same-size
 replace, a chmod, a new symlink, an empty directory, and a SQLite -wal
@@ -19,7 +20,16 @@ compared, so a chmod or ``os.replace`` of a protected directory is caught
 too. A writable sqlite3.connect under a watched root is refused. A URI is
 left alone only when it has exactly one ``mode`` parameter and that value
 is ``ro``; ``mode=ro&mode=rw``, ``mode=ro&mode=ro``, and any other mode
-are refused.
+are refused. The ``mode`` key and value are exact: ``Mode`` and ``RO`` do
+not match. An ``immutable`` parameter enables unless its value is clearly
+false: empty, ``no`` / ``off`` / ``false`` in any case, or all decimal
+zeros (``0``, ``00``). The decoded key and value are cut at the first
+NUL, and the key is case-folded, so hex (``0x1``, ``0X1``), a NUL-cut
+value (``yes%00``, ``true%00x``), a NUL-cut key (``immutable%00junk=1``),
+and a later enabling occurrence (``immutable=0&immutable=1``,
+``IMMUTABLE=0&immutable=1``) all count. Over-refusing ``0x0`` is intended.
+SQLite itself matches that key with strcmp and keeps the first value; the
+guard refuses any enabling occurrence.
 
 Snap noise is only a regular file named ``<sibling>.box-store-snap-<digits>``
 whose sibling entry is in the same directory. A directory of that name, a
@@ -436,11 +446,11 @@ def _sqlite_fs_path(database: object, uri: bool) -> str | None:
     return text
 
 
-def _sqlite_mode_values(database: object) -> list[str] | None:
-    """Every ``mode`` query value, or None when ``database`` has no query string.
+def _sqlite_query_pairs(database: object) -> list[tuple[str, str]] | None:
+    """Decoded query pairs, or None when ``database`` has no query string.
 
-    The key and the value are exact. ``Mode`` is not ``mode``, and ``RO`` is
-    not ``ro``. Repeated keys stay repeated: ``mode=ro&mode=ro`` is two values.
+    Percent-encoding is decoded. ``+`` is a space, matching ``parse_qsl``.
+    The fragment after ``#`` is not part of the query.
     """
     try:
         text = os.fspath(database)  # type: ignore[arg-type]
@@ -451,11 +461,68 @@ def _sqlite_mode_values(database: object) -> list[str] | None:
     if not isinstance(text, str) or "?" not in text:
         return None
     query = text.split("?", 1)[1].split("#", 1)[0]
-    return [
-        value
-        for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True, separator="&")
-        if key == "mode"
-    ]
+    return urllib.parse.parse_qsl(query, keep_blank_values=True, separator="&")
+
+
+def _sqlite_mode_values(database: object) -> list[str] | None:
+    """Every ``mode`` query value, or None when ``database`` has no query string.
+
+    The key and the value are exact. ``Mode`` is not ``mode``, and ``RO`` is
+    not ``ro``. Repeated keys stay repeated: ``mode=ro&mode=ro`` is two values.
+    """
+    pairs = _sqlite_query_pairs(database)
+    if pairs is None:
+        return None
+    return [value for key, value in pairs if key == "mode"]
+
+
+def _cut_at_nul(text: str) -> str:
+    """Drop the bytes after the first NUL.
+
+    ``sqlite3ParseUri`` writes a decoded ``%00`` into the key or value and
+    the C string ends there. ``yes%00x`` is ``yes``. ``immutable%00junk``
+    is ``immutable``.
+    """
+    end = text.find("\x00")
+    if end < 0:
+        return text
+    return text[:end]
+
+
+def _sqlite_immutable_value_enables(value: str) -> bool:
+    """True unless ``value`` is clearly false.
+
+    Clearly false is empty, ``no`` / ``off`` / ``false`` in any case, or a
+    run of decimal zeros (``0``, ``00``). Hex such as ``0x1`` and ``0x0``
+    is not clearly false. Over-refusing ``0x0`` is intended.
+    """
+    if value == "":
+        return False
+    if value.casefold() in {"no", "off", "false"}:
+        return False
+    if all(character == "0" for character in value):
+        return False
+    return True
+
+
+def _sqlite_immutable_enabled(database: object) -> bool:
+    """True when any ``immutable`` parameter enables the flag.
+
+    Each decoded key and value is cut at the first NUL before the
+    comparison. The key match is case-insensitive. Any enabling
+    occurrence counts, not only the first: ``IMMUTABLE=0&immutable=1``
+    and ``immutable=0&immutable=1`` both enable. ``immutable=0``,
+    ``immutable=00``, and ``immutable=false`` do not.
+    """
+    pairs = _sqlite_query_pairs(database)
+    if not pairs:
+        return False
+    for key, value in pairs:
+        if _cut_at_nul(key).casefold() != "immutable":
+            continue
+        if _sqlite_immutable_value_enables(_cut_at_nul(value)):
+            return True
+    return False
 
 
 def _sqlite_is_readonly(database: object, uri: bool) -> bool:
@@ -467,15 +534,28 @@ def _sqlite_is_readonly(database: object, uri: bool) -> bool:
 
 
 def _hooked_sqlite_connect(database, *args, **kwargs):
-    """Refuse a writable open under a watched root. mode=ro URIs pass through."""
+    """Refuse a writable or immutable open under a watched root.
+
+    A URI with exactly one ``mode=ro`` passes through unless an ``immutable``
+    parameter enables. Hex (``0x1``), a NUL-cut ``yes`` or ``true``, and a
+    NUL-cut key all enable, and so does a later enabling occurrence.
+    An immutable URI outside a watched root is left alone.
+    """
     uri = _connect_uri(args, kwargs)
-    if not _sqlite_is_readonly(database, uri):
+    immutable = bool(uri) and _sqlite_immutable_enabled(database)
+    if immutable or not _sqlite_is_readonly(database, uri):
         path = _sqlite_fs_path(database, uri)
         if path is not None and _run is not None and not _in_hook:
             note = classify_write(path, _run.live_roots)
             if note is not None:
                 _record(path)
-                raise sqlite3.OperationalError(f"cache guard: refusing a writable SQLite open ({note})")
+                if immutable:
+                    raise sqlite3.OperationalError(
+                        f"cache guard: refusing an immutable SQLite open ({note})"
+                    )
+                raise sqlite3.OperationalError(
+                    f"cache guard: refusing a writable SQLite open ({note})"
+                )
     return _real_sqlite_connect(database, *args, **kwargs)
 
 
