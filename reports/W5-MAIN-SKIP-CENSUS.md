@@ -79,7 +79,7 @@ Compared with the `9fe33ca` row on `docs/w4-submit-dryrun2` (`0201049:docs/SUBMI
 - Drop the sentence "since #78, `tests/test_coverage.py` and `tests/test_shutdown.py` follow `PREACHED_CACHE` ... those last paths were hard-coded at `9fe33ca`, so they did not skip there". It no longer needs a caveat once the anchor is past #78.
 - Deno cites (`tests/test_app_js.py:432-437`, `:454`, `:635`; `tests/test_mobile_ux.py:318`; `tests/test_privacy_wire_fix.py:248`; `tests/test_privacy_merge.py:217`) are unchanged.
 
-Suggested row sentence: "Test suite: more than 1,000 tests; 1105 ran, OK, 12 skipped on `44dc592` with scratch caches (...). The 12 skips come from private artifacts absent from those scratch caches: the ONNX export (`tests/test_embed_backend.py:658`, `:708`, `:715`, `:757`, `:1095`, `:1162`; `tests/test_onnx_pin_repro.py:651`, `:774`), the chunked corpus or index (`tests/test_eval_leak.py:233`), the `asr-repro` clips (`tests/test_coverage.py:291`), the Wesley index and the pinned ONNX model (`tests/test_shutdown.py:225`), and an infra alerts file that is not in this repo (`tests/test_deploy_regex.py:539`). Deno tests skip only when deno is missing (...)."
+Suggested row sentence: "Test suite: more than 1,000 tests; 1105 ran, OK (...). 12 skipped on `44dc592` on the census machine; the count depends on the machine (deno, the infra alerts yaml) as well as the sha. Eleven skips come from private artifacts absent from the scratch caches: the ONNX export (`tests/test_embed_backend.py:658`, `:708`, `:715`, `:757`, `:1095`, `:1162`; `tests/test_onnx_pin_repro.py:651`, `:774`), the chunked corpus or index (`tests/test_eval_leak.py:233`), the `asr-repro` clips (`tests/test_coverage.py:291`), the Wesley index and the pinned ONNX model (`tests/test_shutdown.py:225`). The twelfth is host-dependent, not a scratch-cache effect: the infra alerts yaml is a fixed host path (`/workspace/infra-ops/preached/alerts/church-alerts.yaml`, not in this repo; `tests/test_deploy_regex.py:539`). Deno tests skip only when deno is missing on the machine (none skipped here) (...)."
 
 ## /cache before/after diff
 
@@ -92,7 +92,7 @@ One difference:
 > /cache/index/cc-speech.sqlite-shm 32768 1793493661.2717475050
 ```
 
-Same size, mtime moved by about 297 s. The suite ran on scratch caches only, and no test or command in this run opened `/cache`. This is an SQLite shared-memory file, which a live reader of `cc-speech.sqlite` on this host updates on its own. I did not find the writer (`lsof`/`fuser` showed nothing). I am reporting it, not claiming it is unrelated with certainty. No path was added, removed or resized.
+Same size, mtime moved by about 297 s. The suite pointed every cache variable at temp dirs. Its cache guard lists `/cache` read-only (`os.walk`/`lstat`: `tests/cache_guard.py:139-151` `snapshot_tree`, `:196-220` `watched_roots`; `tests/test_embed_backend.py:724-725` also checks `/cache`), and as far as I know no test opened a file under it. The likely cause is a concurrent reader of `cc-speech.sqlite`, which rewrites `-shm`; this is unverified. I did not find the writer (`lsof`/`fuser` showed nothing). Cite lines read at `44dc592`. No path was added, removed or resized.
 
 ## PR BODY
 
@@ -102,9 +102,20 @@ Report only: a fresh suite run and a skip-source census on current `main` (`44dc
 - The 12 skips: ONNX export 8, index/corpus 1, asr-repro 1, shutdown hybrid 1, infra alerts file 1. Deno 0, read-only mount 0 (the guard was removed in #78).
 - Since `9fe33ca`: `tests/test_coverage.py` and `tests/test_shutdown.py` now follow `PREACHED_CACHE` (two new skips on scratch caches), the read-only-mount skip is gone, and three `tests/test_embed_backend.py` cites moved (:740 to :757, :1078 to :1095, :1145 to :1162).
 - The `9fe33ca` row is on `docs/w4-submit-dryrun2`, not main. The proposed re-anchor text is in the report. No docs were edited.
-- `/cache` snapshot: one mtime change on `/cache/index/cc-speech.sqlite-shm`, not caused by this run's commands (see report).
+- `/cache` snapshot: one mtime change on `/cache/index/cc-speech.sqlite-shm`, observation, likely cause a concurrent reader of `cc-speech.sqlite` rewriting `-shm`; unverified. The suite pointed every cache variable at temp dirs, and its cache guard only lists `/cache` read-only (`os.walk`/`lstat`); as far as I know no test opened a file under it (see report).
+
+PR body stat (`git diff --stat origin/main...HEAD`): see the final stat in the PR description; only this file changes.
+
+## R2 (CTO CONDITIONAL at 4aac742)
+
+Report-only fixes. No tests were run.
+
+- MF1: the `/cache` paragraph and the PR BODY bullet no longer say no command opened `/cache` or that the mtime change was "not caused by this run's commands". Both now give an observation with a likely cause (concurrent reader of `cc-speech.sqlite` rewriting `-shm`), marked unverified. Cites re-read at `44dc592` with `git show`: `tests/cache_guard.py` `snapshot_tree` is :139-151 (`os.walk` at :151, `_entry` lstat at :117-122), `watched_roots` is :196-220, and `tests/test_embed_backend.py:724-725` is the `/cache` check (the CTO's :724 is the `is_dir()` stat; I added :725).
+- MF2: the suggested row sentence no longer says the 12 skips come from artifacts absent from scratch caches. It now reads "12 skipped on `44dc592` on the census machine; the count depends on the machine (deno, the infra alerts yaml) as well as the sha". The infra yaml skip is attributed to the host (fixed path), and the deno wording says deno skips depend on the machine.
+- S1: if #84 merges first, the re-anchor PR must re-read every cite on its own tree, because most cites move by +2 and the embed skip messages change.
+- S2: `tests/test_onnx_pin_repro.py:772-774` and `tests/test_mobile_ux.py:318` are class decorators, so they skip whole classes, not single tests.
+- PR BODY: stat line replaced by the final `git diff --stat origin/main...HEAD` (below).
 
 ```
- reports/W5-MAIN-SKIP-CENSUS.md | 110 +++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 110 insertions(+)
+STAT_PLACEHOLDER
 ```
