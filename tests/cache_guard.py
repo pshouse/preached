@@ -1,12 +1,13 @@
 """Fail a unittest run that writes under a real cache.
 
-The six cache variables are PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME,
-DENO_DIR, XDG_CACHE_HOME, and UV_CACHE_DIR. The suite reads PREACHED_CACHE.
+The cache variables this guard is about are PREACHED_CACHE, PREACHED_ONNX_DIR,
+HF_HOME, DENO_DIR, and XDG_CACHE_HOME. The suite reads PREACHED_CACHE.
 It must not create or change anything there. ``install`` points the tool
 caches XDG_CACHE_HOME and DENO_DIR at a temp directory so deno and ONNX
-Runtime do not use /cache/xdg. PREACHED_ONNX_DIR, HF_HOME, and UV_CACHE_DIR
-stay as the process set them; a suite run points those at temp directories
-too.
+Runtime do not use /cache/xdg. PREACHED_ONNX_DIR and HF_HOME stay as the
+process set them; a suite run points those at temp directories too.
+The uv cache is excluded from the guard: a top-level directory named
+``uv`` under a watched root is not snapshotted and is not a refused write.
 
 A before/after listing catches files left behind, including a same-size
 replace, a chmod, a new symlink, an empty directory, and a SQLite -wal
@@ -20,11 +21,15 @@ too. A writable sqlite3.connect under a watched root is refused. A URI is
 left alone only when it has exactly one ``mode`` parameter and that value
 is ``ro``; ``mode=ro&mode=rw``, ``mode=ro&mode=ro``, and any other mode
 are refused. The ``mode`` key and value are exact: ``Mode`` and ``RO`` do
-not match. An ``immutable`` parameter that SQLite would turn on is refused
-as well, including a case-folded key or boolean word and a percent-encoded
-key or value (``IMMUTABLE=1``, ``immutable=TRUE``, ``immutable=%31``,
-``%69mmutable=1``). SQLite itself matches that key with strcmp and keeps
-the first value; the guard refuses any enabling value.
+not match. An ``immutable`` parameter enables unless its value is clearly
+false: empty, ``no`` / ``off`` / ``false`` in any case, or all decimal
+zeros (``0``, ``00``). The decoded key and value are cut at the first
+NUL, and the key is case-folded, so hex (``0x1``, ``0X1``), a NUL-cut
+value (``yes%00``, ``true%00x``), a NUL-cut key (``immutable%00junk=1``),
+and a later enabling occurrence (``immutable=0&immutable=1``,
+``IMMUTABLE=0&immutable=1``) all count. Over-refusing ``0x0`` is intended.
+SQLite itself matches that key with strcmp and keeps the first value; the
+guard refuses any enabling occurrence.
 
 Snap noise is only a regular file named ``<sibling>.box-store-snap-<digits>``
 whose sibling entry is in the same directory. A directory of that name, a
@@ -471,58 +476,53 @@ def _sqlite_mode_values(database: object) -> list[str] | None:
     return [value for key, value in pairs if key == "mode"]
 
 
-def _sqlite_atoi(value: str) -> int:
-    """SQLite's atoi: leading whitespace, an optional sign, then digits."""
-    index = 0
-    while index < len(value) and value[index] in " \t\n\r\v\f":
-        index += 1
-    if index >= len(value):
-        return 0
-    sign = 1
-    if value[index] == "-":
-        sign = -1
-        index += 1
-    elif value[index] == "+":
-        index += 1
-    number = 0
-    saw_digit = False
-    while index < len(value) and value[index].isdigit():
-        saw_digit = True
-        number = number * 10 + int(value[index])
-        index += 1
-        if number > 2**63:
-            break
-    if not saw_digit:
-        return 0
-    return sign * number
+def _cut_at_nul(text: str) -> str:
+    """Drop the bytes after the first NUL.
 
-
-def _sqlite_uri_boolean(value: str) -> bool:
-    """True when sqlite3_uri_boolean would enable a flag whose default is false.
-
-    ``yes``, ``on``, and ``true`` (any case) are true. ``no``, ``off``, and
-    ``false`` (any case) are false. Anything else follows atoi: non-zero is true.
+    ``sqlite3ParseUri`` writes a decoded ``%00`` into the key or value and
+    the C string ends there. ``yes%00x`` is ``yes``. ``immutable%00junk``
+    is ``immutable``.
     """
-    folded = value.casefold()
-    if folded in {"yes", "on", "true"}:
-        return True
-    if folded in {"no", "off", "false"}:
+    end = text.find("\x00")
+    if end < 0:
+        return text
+    return text[:end]
+
+
+def _sqlite_immutable_value_enables(value: str) -> bool:
+    """True unless ``value`` is clearly false.
+
+    Clearly false is empty, ``no`` / ``off`` / ``false`` in any case, or a
+    run of decimal zeros (``0``, ``00``). Hex such as ``0x1`` and ``0x0``
+    is not clearly false. Over-refusing ``0x0`` is intended.
+    """
+    if value == "":
         return False
-    return _sqlite_atoi(value) != 0
+    if value.casefold() in {"no", "off", "false"}:
+        return False
+    if all(character == "0" for character in value):
+        return False
+    return True
 
 
 def _sqlite_immutable_enabled(database: object) -> bool:
-    """True when any query parameter would turn SQLite's immutable flag on.
+    """True when any ``immutable`` parameter enables the flag.
 
-    The key is case-folded and the query is percent-decoded, so
-    ``IMMUTABLE=1``, ``immutable=%31``, and ``%69mmutable=1`` all count.
-    Every enabling value counts, not only the first. ``immutable=0`` and
-    ``immutable=false`` do not.
+    Each decoded key and value is cut at the first NUL before the
+    comparison. The key match is case-insensitive. Any enabling
+    occurrence counts, not only the first: ``IMMUTABLE=0&immutable=1``
+    and ``immutable=0&immutable=1`` both enable. ``immutable=0``,
+    ``immutable=00``, and ``immutable=false`` do not.
     """
     pairs = _sqlite_query_pairs(database)
     if not pairs:
         return False
-    return any(key.casefold() == "immutable" and _sqlite_uri_boolean(value) for key, value in pairs)
+    for key, value in pairs:
+        if _cut_at_nul(key).casefold() != "immutable":
+            continue
+        if _sqlite_immutable_value_enables(_cut_at_nul(value)):
+            return True
+    return False
 
 
 def _sqlite_is_readonly(database: object, uri: bool) -> bool:
@@ -536,9 +536,10 @@ def _sqlite_is_readonly(database: object, uri: bool) -> bool:
 def _hooked_sqlite_connect(database, *args, **kwargs):
     """Refuse a writable or immutable open under a watched root.
 
-    A URI with exactly one ``mode=ro`` passes through. ``immutable=1`` does
-    not, including case and percent-encoding variants. An immutable URI
-    outside a watched root is left alone.
+    A URI with exactly one ``mode=ro`` passes through unless an ``immutable``
+    parameter enables. Hex (``0x1``), a NUL-cut ``yes`` or ``true``, and a
+    NUL-cut key all enable, and so does a later enabling occurrence.
+    An immutable URI outside a watched root is left alone.
     """
     uri = _connect_uri(args, kwargs)
     immutable = bool(uri) and _sqlite_immutable_enabled(database)

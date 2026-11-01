@@ -342,10 +342,14 @@ class CacheGuardTests(unittest.TestCase):
             _remove_temp_tree(root)
 
     def test_sqlite_uri_with_immutable_is_refused(self) -> None:
-        """``immutable=1`` is refused, including case and percent-encoding variants.
+        """An enabling ``immutable`` value is refused, including later keys.
 
-        ``mode=ro`` still reads. ``immutable=0`` and ``immutable=false`` are not
-        the flag SQLite turns on. A path outside the watched root is left alone.
+        Hex (``0x1``, ``0X1``), a value cut at NUL (``yes%00``, ``true%00x``),
+        and a key cut at NUL (``immutable%00junk=1``) all enable. So does any
+        later enabling occurrence, ``IMMUTABLE=0&immutable=1`` and
+        ``immutable=0&immutable=1``. ``mode=ro`` still reads. Empty, ``no`` /
+        ``off`` / ``false``, and all-decimal zeros (``0``, ``00``) do not
+        enable. A path outside the watched root is left alone.
         """
         self.assertIsNotNone(cache_guard.current_run(), "the suite hook is not armed")
         root = _temp_root()
@@ -380,6 +384,13 @@ class CacheGuardTests(unittest.TestCase):
                     "?immutable=1&mode=ro",
                     "?mode=ro&immutable=1&immutable=0",
                     "?mode=ro&immutable=01",
+                    "?mode=ro&immutable=0x1",
+                    "?mode=ro&immutable=0X1",
+                    "?mode=ro&immutable=yes%00",
+                    "?mode=ro&immutable=true%00x",
+                    "?mode=ro&immutable%00junk=1",
+                    "?mode=ro&IMMUTABLE=0&immutable=1",
+                    "?mode=ro&immutable=0&immutable=1",
                 )
                 for query in refused:
                     with self.subTest(query=query):
@@ -400,6 +411,9 @@ class CacheGuardTests(unittest.TestCase):
                     "?mode=ro&immutable=false",
                     "?mode=ro&immutable=FALSE",
                     "?mode=ro&immutable=",
+                    "?mode=ro&immutable=00",
+                    "?mode=ro&immutable=no",
+                    "?mode=ro&immutable=off",
                     "?mode=ro&IMMUTABLE=0",
                 )
                 for query in allowed:
