@@ -49,10 +49,10 @@ Cache-guard nits from the #92 review. Tests and reports only.
 Full suite on `38c5363e663eb823c3e8de99e18a768b7f05f8cb`, host `preached-sandbox`: **Ran 1156 tests in 252.721s, OK (skipped=12)**. The skip count is this machine's empty temp cache at that sha. 0 failures. `find /cache -xdev` before and after: 132823 lines both times, sha256 `55cb67aa9dcf532de1b634f4af32d4b03569f43e6afee472065eb34610e14c45`, no differences. `app/`, `src/`, and `docs/` are untouched, so DEPLOY.md cites stay as they are.
 
 ```
- reports/43-W8-GUARD-NITS.md              |  0 +
+ reports/43-W8-GUARD-NITS.md              | 58 ++++++++++++++++++++++++++++++++
  reports/W8-GUARD-FOLLOWUPS-2.md          |  2 +-
- tests/cache_guard.py                     |  4 ++--
- tests/test_cache_guard.py                |  3 ++-
- tests/test_cache_guard_immutable_fuzz.py |  4 ++--
- 5 files changed, 0 insertions(+), 6 deletions(-)
+ tests/cache_guard.py                     |  4 +--
+ tests/test_cache_guard.py                |  3 +-
+ tests/test_cache_guard_immutable_fuzz.py |  4 +--
+ 5 files changed, 65 insertions(+), 6 deletions(-)
 ```
