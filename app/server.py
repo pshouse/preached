@@ -2447,6 +2447,16 @@ class _Connection:
         self.reserved = reserved
 
 
+# Listen backlog. socketserver's default of 5 lets a burst of simultaneous
+# connects overflow the accept queue while the accept thread is busy; the
+# kernel drops the SYN and the client retries after about 1 s. Over-cap
+# connections are answered on the accept thread, so a burst is exactly when
+# it is busy. 128 is four times the default connection cap (32) and the
+# most the queue needs to absorb one burst; the kernel clamps it to
+# net.core.somaxconn. Bounded, so a flood still cannot queue without limit.
+LISTEN_BACKLOG = 128
+
+
 class PreachedServer(ThreadingHTTPServer):
     """Threaded server with a global cap and a per-client cap.
 
@@ -2482,6 +2492,7 @@ class PreachedServer(ThreadingHTTPServer):
     """
 
     allow_reuse_address = True
+    request_queue_size = LISTEN_BACKLOG
     # Handler threads are not daemons and are kept (block_on_close), so
     # neither server_close nor interpreter exit runs while a handler still
     # uses the index or the ONNX session. drain() stops them first.
