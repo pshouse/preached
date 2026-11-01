@@ -359,12 +359,14 @@ Index: one SQLite file, opened `mode=ro` with `query_only`. The build copies
 it with SQLite's backup API and sets `journal_mode=DELETE`, so the bundle
 has no `-wal` or `-shm` and the file opens from a directory the process
 cannot write. Serving the WAL-mode `/cache` index straight from a checkout
-on a read-only mount is unsupported; use `copy_index` (it checkpoints and
-converts to `journal_mode=DELETE`) for that. Never use `immutable=1` (it
-gives silent stale reads and missed reloads). `/healthz` `index_version` is
-the `chunks_sha256` meta value and `model_sha256` is the digest of the fp32
-graph that was loaded; each is `null` unless it is 64 hex characters.
-Neither is a path.
+on a read-only mount is unsupported; use `copy_index` (it copies the index
+with the SQLite backup API and switches the copy to rollback-journal
+(`DELETE`) mode, so it can be served from a read-only directory; the source
+is opened read-only and is not checkpointed) for that. Never use
+`immutable=1` (it gives silent stale reads and missed reloads). `/healthz`
+`index_version` is the `chunks_sha256` meta value and `model_sha256` is the
+digest of the fp32 graph that was loaded; each is `null` unless it is 64
+hex characters. Neither is a path.
 
 Static files, and only these: `index.html` (the page), `app.js`, `app.css`,
 `favicon.svg`. There is no directory listing.
