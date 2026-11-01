@@ -92,8 +92,12 @@ Suite on `preached-sandbox` (24 cores, Python 3.12.16), scratch dirs for `PREACH
 
 ```
 git diff --stat origin/main..HEAD
+ app/server.py                    |  67 +++++++++++++++++++------
+ docs/DEPLOY.md                   |   4 +-
+ reports/W5-A11Y-PR-A-503-PAGE.md | 103 +++++++++++++++++++++++++++++++++++++++
+ tests/test_deploy.py             |  65 +++++++++++++++++++++++-
+ tests/test_html_503.py           |  60 +++++++++++++++++++++--
+ 5 files changed, 276 insertions(+), 23 deletions(-)
 ```
-
-STAT
 
 No new dependencies.
