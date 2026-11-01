@@ -77,17 +77,37 @@ Finish greps: `grep -nE '56 ?ms|68 ?ms|pinn' docs/DEMO-SCRIPT.md docs/SUBMISSION
 
 Cites kept (read at this head): `reports/W3-CPU.md:79` / `:148` are now cited only for the 960 MiB pre-#26 RSS figure; the other report and test cites are unchanged from the prior head, whose lines this commit does not move.
 
+## CTO latency ruling R3 (99-WL)
+
+Base head before this change: `5e0a8da9e9edd46b8c0fcca1f5813149e46849c5` (the 99-WK head).
+
+Supersedes the 99-WK-R2 section above: the dry-run-2 72/86 ms figures cannot be reproduced (the 8 demo queries were lost), so they appear in neither doc.
+
+`reports/W3-CPU.md` lines relied on (quoted; tree-relative):
+
+- Method line (under "Latency, RSS, install size, cold start"): "`/api/search` hybrid, k=10, 40 queries × 3 repeats, one warmup excluded."
+- Table row: "ONNX fp32, 4 threads, full chip | 28.2 ms | 34.5 ms" (p50, p95).
+
+The word "pinned" comes only from the neighbouring 1-thread row, which the docs do not cite and nothing is attributed to it. W3-CPU.md does not say whether the queries ran back-to-back. The bench is that report's 40-query set, not the demo queries.
+
+Option chosen: keep "under a tenth of a second on a desktop CPU" (p95 34.5 ms < 100 ms on the full-chip row) and cite W3-CPU.md with its method. No new benchmark was run.
+
+Changed lines:
+
+- `docs/DEMO-SCRIPT.md:65`: after the latency phrase, added the W3-CPU.md row, p50 28.2 / p95 34.5 ms, the method quote, a note that the report does not say back-to-back, and "do not read the numbers out on camera".
+- `docs/SUBMISSION-DRAFT.md:35`: dropped "1 thread" (the cited row is 4 threads); added the same row, numbers and method after the phrase.
+- Narration at `DEMO-SCRIPT.md:64` and `SUBMISSION-DRAFT.md:21` unchanged.
+
+Finish grep (`72|86 ?ms|56 ?ms|68 ?ms|pinn|well under`) has one hit: `docs/DEMO-SCRIPT.md:100`, the chunk id `wesley-026-c0072`, unrelated.
+
 ## README quote check (CTO #74 SF)
 
 The church/publish-gate paragraph ("`--your-church` sets `meta.role` ... a sermon appears only when it is approved (`--ack-review`)") is byte-identical on `origin/main` (README.md:39) and on `origin/docs/w4-readme-quickstart` (README.md:73, PR #74). The two quoted fragments in SUBMISSION-DRAFT.md:41 occur verbatim in both. The quote is tree-relative; no change needed. (Other README paragraphs, e.g. the `--library` one, differ between the two; they are not quoted.)
 
 ## PR BODY
 
-Docs-only. Applies the CTO amended latency ruling (see section above); README quote verified on main and PR #74. Stat is `git diff --stat 9fe33ca..HEAD` (the branch base; `origin/main` has since moved).
+Docs-only. Applies CTO latency ruling R3 (see section above); README quote verified on main and PR #74.
 
 ```
- docs/DEMO-SCRIPT.md                |   9 ++--
- docs/SUBMISSION-DRAFT.md           |  10 ++--
- reports/W4-SUBMIT-DRYRUN2-EDITS.md |  93 ++++++++++++++++++++++++++++++++++++++
- 3 files changed, 103 insertions(+), 9 deletions(-)
+STAT
 ```
