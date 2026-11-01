@@ -58,4 +58,11 @@ Before: 231. After: 241. Limit 250.
 
 Docs-only refresh of the demo script and submission draft to match `main` 3a93147: adds the per-result "why" beat (UI wording cited to file:line), swaps in a #90 query, carries #90's confidence/abstain cautions, and mentions why-transparency in the description (231 to 241 words, limit 250). Does not touch or claim the confidence retune (#93). Why numbers for the demo queries are not recorded (no server run); pre-flight tells Patrick to read them live.
 
-`git diff --stat origin/main..HEAD`: see final message (filled after commit).
+`git diff --stat origin/main..HEAD`:
+
+```
+ docs/DEMO-SCRIPT.md            | 48 ++++++++++++++++++++-------------
+ docs/SUBMISSION-DRAFT.md       | 16 ++++++-----
+ reports/W5-DEMO-WHY-REFRESH.md | 63 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 102 insertions(+), 25 deletions(-)
+```
