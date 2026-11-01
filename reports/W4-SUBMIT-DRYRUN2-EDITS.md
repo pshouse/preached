@@ -111,6 +111,6 @@ Docs-only. Applies CTO latency ruling R3 (see section above); README quote verif
 ```
  docs/DEMO-SCRIPT.md                |   9 +--
  docs/SUBMISSION-DRAFT.md           |  10 ++--
- reports/W4-SUBMIT-DRYRUN2-EDITS.md | 113 +++++++++++++++++++++++++++++++++++++
- 3 files changed, 123 insertions(+), 9 deletions(-)
+ reports/W4-SUBMIT-DRYRUN2-EDITS.md | 116 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 126 insertions(+), 9 deletions(-)
 ```
