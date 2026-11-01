@@ -16,5 +16,5 @@ scratch `HOME` and `XDG_CACHE_HOME` temp directories.
 `tests/test_subproc_env_guard.py` fails any `subprocess` call with `env=` that
 does not go through it. `tests/test_child_home_guard.py` runs the hybrid server
 and an import-onnxruntime-first child in a fresh `HOME` with a real model; it
-needs `PREACHED_GUARD_REAL_SRC` (a read-only copy or bind mount of a cache root)
+needs `PREACHED_GUARD_REAL_SRC` (a read-only copy or bind mount of a cache root, never a writable live cache; the guard refuses a writable source, a non-empty `-wal` or an existing `-journal`)
 and skips with that reason otherwise.

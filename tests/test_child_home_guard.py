@@ -5,10 +5,17 @@ env that kept the real HOME and dropped ORT_DISABLE_TELEMETRY and
 XDG_CACHE_HOME, so the hybrid server child wrote $HOME/.cache/Microsoft. It
 only happens with a real index and ONNX model, so these tests need both.
 
-Rule 5 forbids pointing PREACHED_CACHE at a real cache. Set
-PREACHED_GUARD_REAL_SRC to a cache root (for example a read-only bind mount);
-the tests copy only the Wesley index and the pinned fp32 export from it into a
-temp directory and use the copy. Without it, or without those files, the tests
+Rule 5 forbids pointing PREACHED_CACHE at a real cache. PREACHED_GUARD_REAL_SRC
+must be a read-only bind mount or a pre-made copy of a cache root, never a
+writable live cache. The tests only byte-copy index/wesley.sqlite and the fp32
+export into a temp directory and use the copy; they never open the source in
+place. tests/README.md says the same ("a read-only copy or bind mount").
+
+The guard refuses a source it cannot trust and skips with the reason: a source
+file the test process can write to (unless PREACHED_GUARD_ALLOW_RW_SRC=1), a
+non-empty index/wesley.sqlite-wal, or an existing index/wesley.sqlite-journal.
+Only the main db file is copied, so committed WAL frames would silently be
+missing from the copy. Without the variable, or without the files, the tests
 skip and say why.
 """
 
@@ -37,17 +44,43 @@ _REV = test_shutdown.GRANITE_REVISION
 _NAMES = test_shutdown._fp32_export_names()
 
 
-def _skip_reason() -> str | None:
-    if not _SRC:
+ALLOW_RW_ENV = "PREACHED_GUARD_ALLOW_RW_SRC"
+
+
+def _source_files(root: Path) -> list[Path]:
+    folder = root / "models" / "granite-english-r2-onnx" / _REV
+    return [root / "index" / "wesley.sqlite", *(folder / name for name in _NAMES)]
+
+
+def _skip_reason_for(src: str | None, environ=os.environ) -> str | None:
+    if not src:
         return f"{SRC_ENV} is not set: no real index and ONNX model to copy (rule 5 forbids using a real cache directly)"
-    root = Path(_SRC)
+    root = Path(src)
     if not (root / "index" / "wesley.sqlite").is_file():
-        return f"{SRC_ENV}={_SRC} has no index/wesley.sqlite"
+        return f"{SRC_ENV}={src} has no index/wesley.sqlite"
     folder = root / "models" / "granite-english-r2-onnx" / _REV
     missing = [name for name in _NAMES if not (folder / name).is_file()]
     if missing:
-        return f"{SRC_ENV}={_SRC} lacks {missing} under models/granite-english-r2-onnx/{_REV}"
+        return f"{SRC_ENV}={src} lacks {missing} under models/granite-english-r2-onnx/{_REV}"
+    db = root / "index" / "wesley.sqlite"
+    wal = db.with_name(db.name + "-wal")
+    if wal.exists() and wal.stat().st_size > 0:
+        return f"{SRC_ENV}={src} has a non-empty {wal.name}: only the main db is copied, so committed WAL frames would be missing"
+    journal = db.with_name(db.name + "-journal")
+    if journal.exists():
+        return f"{SRC_ENV}={src} has a {journal.name}: the db may be mid-transaction"
+    if environ.get(ALLOW_RW_ENV) != "1":
+        writable = [str(p.relative_to(root)) for p in _source_files(root) if os.access(p, os.W_OK)]
+        if writable:
+            return (
+                f"{SRC_ENV}={src} is writable by this process ({writable[0]}"
+                f"{' and others' if len(writable) > 1 else ''}): use a read-only bind mount or copy, or set {ALLOW_RW_ENV}=1"
+            )
     return None
+
+
+def _skip_reason() -> str | None:
+    return _skip_reason_for(_SRC)
 
 
 def microsoft_dirs(root: Path) -> list[str]:
@@ -130,6 +163,59 @@ class RealModelChildHomeTests(unittest.TestCase):
         subprocess.run([test_shutdown._python(), "-c", code], cwd=ROOT, env=env, check=True, timeout=300)
         for key in ("HOME", "XDG_CACHE_HOME"):
             self.assertEqual(microsoft_dirs(Path(env[key])), [])
+
+
+class SourceRefusalTests(unittest.TestCase):
+    """The source checks run on a fake cache root in a temp dir, so they need no real model."""
+
+    def _root(self) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="preached-homeguard-src-")).resolve()
+        assert Path(tempfile.gettempdir()).resolve() in tmp.parents
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "index").mkdir()
+        (tmp / "index" / "wesley.sqlite").write_bytes(b"db")
+        folder = tmp / "models" / "granite-english-r2-onnx" / _REV
+        folder.mkdir(parents=True)
+        for name in _NAMES:
+            (folder / name).write_bytes(b"x")
+        for path in _source_files(tmp):
+            path.chmod(0o444)
+        # Directories stay writable so cleanup works; the files are what the guard checks.
+        return tmp
+
+    def test_read_only_source_is_accepted(self) -> None:
+        root = self._root()
+        if os.access(root / "index" / "wesley.sqlite", os.W_OK):
+            self.skipTest("this process can write to 0444 files (running as root)")
+        self.assertIsNone(_skip_reason_for(str(root), {}))
+
+    def test_writable_source_is_refused_unless_allowed(self) -> None:
+        root = self._root()
+        (root / "index" / "wesley.sqlite").chmod(0o644)
+        reason = _skip_reason_for(str(root), {})
+        self.assertIsNotNone(reason)
+        self.assertIn("writable", reason)
+        self.assertIn(ALLOW_RW_ENV, reason)
+        self.assertIsNone(_skip_reason_for(str(root), {ALLOW_RW_ENV: "1"}))
+
+    def test_non_empty_wal_is_refused_even_when_rw_is_allowed(self) -> None:
+        root = self._root()
+        (root / "index" / "wesley.sqlite-wal").write_bytes(b"frames")
+        reason = _skip_reason_for(str(root), {ALLOW_RW_ENV: "1"})
+        self.assertIsNotNone(reason)
+        self.assertIn("-wal", reason)
+
+    def test_empty_wal_is_not_a_refusal(self) -> None:
+        root = self._root()
+        (root / "index" / "wesley.sqlite-wal").write_bytes(b"")
+        self.assertIsNone(_skip_reason_for(str(root), {ALLOW_RW_ENV: "1"}))
+
+    def test_existing_journal_is_refused_even_when_rw_is_allowed(self) -> None:
+        root = self._root()
+        (root / "index" / "wesley.sqlite-journal").write_bytes(b"")
+        reason = _skip_reason_for(str(root), {ALLOW_RW_ENV: "1"})
+        self.assertIsNotNone(reason)
+        self.assertIn("-journal", reason)
 
 
 if __name__ == "__main__":
