@@ -136,8 +136,8 @@ Branch note: the brief names `fix/w5-a11y-side-notices`; this PR is `fix/w5-a11y
 STATFILL
 ```
 
-- Focused (`tests.test_app_js tests.test_mobile_ux tests.test_parity_hash`): `Ran 35 tests in 17.851s, OK (skipped=0)` on tree `e5829b94a5acb5878e8b0f6f96e9f9ba844910c7` (the code is unchanged by the report commit), host `preached-sandbox`.
-- Full: `Ran 1172 tests in 279.843s, OK (skipped=12)`, same tree and host. No `test_every_cited_file_line_holds_its_string` failure.
+- Focused (`tests.test_app_js tests.test_mobile_ux tests.test_parity_hash`): `Ran 35 tests in 17.851s, OK (skipped=0)` on merge `e5da0b8` plus the re-pin (run before the final report commit; no code changed since), host `preached-sandbox`.
+- Full: `Ran 1172 tests in 279.843s, OK (skipped=12)`, same content and host. No `test_every_cited_file_line_holds_its_string` failure.
 - Mutants (each alone, run, revert, `cmp` identical):
 
 | Mutant | Result |
