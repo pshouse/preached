@@ -1,28 +1,52 @@
 """Fail a unittest run that writes under a real cache.
 
-The suite reads PREACHED_CACHE. It must not create or change anything
-there. Tool caches (XDG_CACHE_HOME, DENO_DIR) are pointed at a temp directory
-so deno and ONNX Runtime do not use /cache/xdg.
+The six cache variables are PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME,
+DENO_DIR, XDG_CACHE_HOME, and UV_CACHE_DIR. The suite reads PREACHED_CACHE.
+It must not create or change anything there. ``install`` points the tool
+caches XDG_CACHE_HOME and DENO_DIR at a temp directory so deno and ONNX
+Runtime do not use /cache/xdg. PREACHED_ONNX_DIR, HF_HOME, and UV_CACHE_DIR
+stay as the process set them; a suite run points those at temp directories
+too.
 
 A before/after listing catches files left behind, including a same-size
 replace, a chmod, a new symlink, an empty directory, and a SQLite -wal
-file written by a connection that is still open. Write-mode opens are
-recorded as they happen, so a file created under the cache and removed
-before the run ends still fails the run. A writable sqlite3.connect under
-a watched root is refused; mode=ro URIs are left alone.
+file written by a connection that is still open. A file created under a
+watched root and deleted before the run ends leaves no trace in that
+listing (b2): the path is absent from both snapshots. Write-mode opens,
+including the built-in ``open()``, are recorded as they happen, so that
+create-then-delete still fails the run. Directory inode and mode are
+compared, so a chmod or ``os.replace`` of a protected directory is caught
+too. A writable sqlite3.connect under a watched root is refused. A URI is
+left alone only when it has exactly one ``mode`` parameter and that value
+is ``ro``; ``mode=ro&mode=rw``, ``mode=ro&mode=ro``, and any other mode
+are refused.
 
-Arming: import the tests package (``python -m unittest tests.<module>``)
-or discover the suite (``python -m unittest discover -s tests`` from any
-directory). Discovery loads ``test_cache_guard``, which calls ``install``
-without going through the package. ``python -m unittest test_x`` with the
-working directory inside tests/ does not arm the guard.
+Snap noise is only a regular file named ``<sibling>.box-store-snap-<digits>``
+whose sibling entry is in the same directory. A directory of that name, a
+symlink of that name, or a file of that name with no sibling is a real
+entry and is not ignored.
+
+Arming: ``install`` is idempotent per process, not per module object.
+``tests.cache_guard`` and top-level ``cache_guard`` are one module: the
+second import aliases itself to the first. A sentinel on
+``unittest.result.TestResult`` stops a second ``install`` from wrapping
+the result hooks again. The real ``builtins.open`` and ``io.open`` are
+captured when that first instance is imported, and restore puts those
+originals back. Every test module calls ``install`` with one import line,
+so these invocations are armed: ``python -m unittest discover -s tests``
+(including ``-p`` patterns that do not load ``test_cache_guard``),
+``python -m unittest test_x`` with the working directory inside ``tests/``,
+and ``python tests/test_x.py``. ``python -m unittest tests.<module>`` also
+arms through this package's ``__init__``.
 """
 
 from __future__ import annotations
 
 import atexit
-import fnmatch
+import builtins
+import io
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -31,23 +55,52 @@ import unittest
 import urllib.parse
 from pathlib import Path
 
+# Second import name (tests.cache_guard vs top-level cache_guard) must not
+# build its own hooks. The import system returns sys.modules[__name__] after
+# this body finishes, so replacing that entry hands the caller the first copy.
+_GUARD_MODULE = "_preached_cache_guard_module"
+_GUARD_INSTALLED = "_preached_cache_guard_installed"
+
+
+def _adopt_loaded_guard() -> None:
+    """Alias this import name to the guard already loaded in the process."""
+    me = sys.modules.get(__name__)
+    for name in ("cache_guard", "tests.cache_guard"):
+        other = sys.modules.get(name)
+        if other is None or other is me:
+            continue
+        if getattr(other, _GUARD_MODULE, False):
+            sys.modules[__name__] = other
+            return
+    if me is not None:
+        setattr(me, _GUARD_MODULE, True)
+
+
+_adopt_loaded_guard()
+
+# Captured at import of the first instance, before any hook is installed.
+# A second copy of this file may still execute, but its globals are discarded
+# when the alias above wins, and install() refuses to hook twice. Restore
+# always writes these originals back, including after a second run.
+_real_builtin_open = builtins.open
+_real_io_open = io.open
+_real_os_open = os.open
+_real_sqlite_connect = sqlite3.connect
+
 # Top-level directories that other tools rewrite. -shm changes when a
 # read-only connection opens a WAL index, so those sidecars are ignored.
 # -wal is the log itself: an insert or update with the connection still
-# open changes only that file. The box snapshot daemon's
-# *.box-store-snap-* names are noise. Everything else must stay put.
+# open changes only that file. Snap noise is decided by _snap_noise_file,
+# not by a name glob: a real directory or file must stay visible.
 _EXCLUDED_DIRS = frozenset({"uv", "uv-python", "venvs", "xdg", "demo-kill"})
-_SNAP_NOISE = "*.box-store-snap-*"
+# <sibling>.box-store-snap-<digits>. The sibling group is non-empty.
+_SNAP_FILE_RE = re.compile(r"^(.+)\.box-store-snap-(\d+)$")
 _REAL_CACHE = Path("/cache")
 
 _installed = False
 _tool_root: Path | None = None
 _depth = 0
 _run: "_Run | None" = None
-_real_builtin_open = open
-_real_os_open = os.open
-_real_io_open = None
-_real_sqlite_connect = sqlite3.connect
 _hooks_on = False
 _in_hook = False
 
@@ -99,10 +152,36 @@ class _Run:
 
 
 def _ignored_name(name: str) -> bool:
-    if fnmatch.fnmatch(name, _SNAP_NOISE):
-        return True
     # -shm only. -wal of a watched database is itself watched.
+    # Snap names are not decided here. A directory, a symlink, or a real
+    # file that merely looks like snap noise must stay visible, and that
+    # depends on the parent directory and on the file type.
     return name.endswith("-shm")
+
+
+def _snap_noise_file(directory: str, name: str) -> bool:
+    """True when ``name`` is daemon noise beside its sibling.
+
+    The entry must be a regular file named ``<sibling>.box-store-snap-<digits>``,
+    and ``<sibling>`` must already be an entry in ``directory``. A directory
+    or a symlink with that name is real. A file with that name and no sibling
+    is real. A creating open of a not-yet-existing path is noise only when
+    the sibling is already there, which is how the snapshot daemon writes.
+    """
+    match = _SNAP_FILE_RE.fullmatch(name)
+    if match is None:
+        return False
+    path = os.path.join(directory, name)
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        pass
+    else:
+        # On disk and not a regular file: a directory or a symlink is real.
+        if not stat.S_ISREG(mode):
+            return False
+    sibling = match.group(1)
+    return os.path.lexists(os.path.join(directory, sibling))
 
 
 def _ignored_rel(rel: str) -> bool:
@@ -168,6 +247,8 @@ def snapshot_tree(root: Path) -> dict[str, Entry]:
         for name in filenames:
             rel = name if not prefix else prefix + name
             if _ignored_rel(rel):
+                continue
+            if _snap_noise_file(dirpath, name):
                 continue
             entry = _entry(os.path.join(dirpath, name))
             if entry is not None:
@@ -240,6 +321,8 @@ def classify_write(path: object, roots: list[tuple[str, Path]]) -> str | None:
         except ValueError:
             continue
         if _ignored_rel(rel):
+            continue
+        if _snap_noise_file(os.fspath(resolved.parent), resolved.name):
             continue
         return f"{label} write {rel}"
     return None
@@ -353,21 +436,34 @@ def _sqlite_fs_path(database: object, uri: bool) -> str | None:
     return text
 
 
-def _sqlite_is_readonly(database: object, uri: bool) -> bool:
-    """True only for a URI whose mode parameter is ro."""
-    if not uri:
-        return False
+def _sqlite_mode_values(database: object) -> list[str] | None:
+    """Every ``mode`` query value, or None when ``database`` has no query string.
+
+    The key and the value are exact. ``Mode`` is not ``mode``, and ``RO`` is
+    not ``ro``. Repeated keys stay repeated: ``mode=ro&mode=ro`` is two values.
+    """
     try:
         text = os.fspath(database)  # type: ignore[arg-type]
     except TypeError:
-        return False
+        return None
     if isinstance(text, bytes):
         text = os.fsdecode(text)
     if not isinstance(text, str) or "?" not in text:
-        return False
+        return None
     query = text.split("?", 1)[1].split("#", 1)[0]
-    modes = [item.strip().lower() for item in urllib.parse.parse_qs(query).get("mode", [])]
-    return bool(modes) and all(mode == "ro" for mode in modes)
+    return [
+        value
+        for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True, separator="&")
+        if key == "mode"
+    ]
+
+
+def _sqlite_is_readonly(database: object, uri: bool) -> bool:
+    """True only for a URI with exactly one mode parameter whose value is ``ro``."""
+    if not uri:
+        return False
+    modes = _sqlite_mode_values(database)
+    return modes is not None and len(modes) == 1 and modes[0] == "ro"
 
 
 def _hooked_sqlite_connect(database, *args, **kwargs):
@@ -384,13 +480,11 @@ def _hooked_sqlite_connect(database, *args, **kwargs):
 
 
 def _install_write_hooks() -> None:
-    global _hooks_on, _real_io_open
+    global _hooks_on
     if _hooks_on:
         return
-    import builtins
-    import io
-
-    _real_io_open = io.open
+    # Rebind both names. io.open and builtins.open start as one object, so
+    # replacing only io.open would leave open() unhooked.
     builtins.open = _hooked_builtin_open
     io.open = _hooked_io_open
     os.open = _hooked_os_open
@@ -501,10 +595,19 @@ def _patch_result() -> None:
 
 
 def install() -> None:
-    """Point tool caches at a temp dir and arm the suite hook. Idempotent."""
+    """Point tool caches at a temp dir and arm the suite hook.
+
+    Idempotent per process. A second module object shares this one's hooks
+    via the import alias, and the TestResult sentinel stops a second wrap
+    if that alias was not the module the caller invoked.
+    """
+    from unittest.result import TestResult
+
     global _installed
-    if _installed:
+    if getattr(TestResult, _GUARD_INSTALLED, False):
+        _installed = True
         return
+    setattr(TestResult, _GUARD_INSTALLED, True)
     _installed = True
     _redirect_tool_caches()
     _patch_result()

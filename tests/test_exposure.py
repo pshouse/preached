@@ -6,6 +6,8 @@ test can be several clients by binding 127.0.0.2, 127.0.0.3, and so on.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
 import ipaddress
 import json
 import socket
