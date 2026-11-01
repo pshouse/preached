@@ -62,6 +62,25 @@ No doc edit needed; the 99-WG head (`8976d5d`) already satisfies all three rulin
 
 Finish run: `uv run python -m unittest tests.test_deploy_alerts tests.test_deploy_regex` with PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME, DENO_DIR, XDG_CACHE_HOME, UV_CACHE_DIR in fresh temp dirs: `Ran 17 tests`, `OK (skipped=1)`. Real `/cache` listing (paths, sizes, mtimes), 132,677 lines before and after: no difference.
 
+## CTO amended latency ruling (99-WK-R2)
+
+Exact phrase everywhere: "under a tenth of a second on a desktop CPU", optionally followed by "(p50 72 / p95 86 ms in a demo-style run, unpinned, k=5)". Not "well under"; no 56/68 ms figure, no pinning attribution. Changed lines at this head:
+
+- `docs/DEMO-SCRIPT.md:64` (narration): "well under a tenth of a second" -> "under a tenth of a second on a desktop CPU".
+- `docs/DEMO-SCRIPT.md:65` (backing): removed the 56 ms / 68 ms one-core pinned figure and the "do not say 56 ms on camera unless pinned" warning; now gives the exact phrase plus the optional unpinned 72 / 86 ms parenthetical (`reports/W4-DEMO-DRYRUN-2.md`). Also "on my desktop CPU, limited to one core" -> "on my desktop CPU".
+- `docs/SUBMISSION-DRAFT.md:21`: "well under a tenth of a second per search on a desktop CPU" -> "under a tenth of a second on a desktop CPU (p50 72 / p95 86 ms in a demo-style run, unpinned, k=5)".
+- `docs/SUBMISSION-DRAFT.md:35`: removed the 56/68 ms one-core pinned measurement and the "unpinned, warm, 1 ORT thread" wording; replaced with the exact phrase and parenthetical.
+
+Earlier table rows 2, 3, 8 and 9 and the "CTO wording check (99-WH)" item 1 describe the superseded wording; this section replaces them.
+
+Finish greps: `grep -nE '56 ?ms|68 ?ms|pinn' docs/DEMO-SCRIPT.md docs/SUBMISSION-DRAFT.md` and `grep -n 'well under' ...` print nothing. Test count stays "more than 1,000 tests". No `PREACHED_CACHE=` in either doc; no cache env was touched (docs-only, no tests run).
+
+Cites kept (read at this head): `reports/W3-CPU.md:79` / `:148` are now cited only for the 960 MiB pre-#26 RSS figure; the other report and test cites are unchanged from the prior head, whose lines this commit does not move.
+
+## README quote check (CTO #74 SF)
+
+The church/publish-gate paragraph ("`--your-church` sets `meta.role` ... a sermon appears only when it is approved (`--ack-review`)") is byte-identical on `origin/main` (README.md:39) and on `origin/docs/w4-readme-quickstart` (README.md:73, PR #74). The two quoted fragments in SUBMISSION-DRAFT.md:41 occur verbatim in both. The quote is tree-relative; no change needed. (Other README paragraphs, e.g. the `--library` one, differ between the two; they are not quoted.)
+
 ## PR BODY
 
 Docs-only. CTO wording check found no changes needed; this commit adds the check to the report.
