@@ -6,8 +6,8 @@ It must not create or change anything there. ``install`` points the tool
 caches XDG_CACHE_HOME and DENO_DIR at a temp directory so deno and ONNX
 Runtime do not use /cache/xdg. PREACHED_ONNX_DIR and HF_HOME stay as the
 process set them; a suite run points those at temp directories too.
-The uv cache is excluded from the guard: a top-level directory named
-``uv`` under a watched root is not snapshotted and is not a refused write.
+Top-level ``uv``, ``uv-python``, ``venvs``, ``xdg``, and ``demo-kill``
+are excluded: not snapshotted, and a write under them is not refused.
 
 A before/after listing catches files left behind, including a same-size
 replace, a chmod, a new symlink, an empty directory, and a SQLite -wal

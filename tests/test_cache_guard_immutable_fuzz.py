@@ -4,7 +4,7 @@ URIs are generated from a fixed seed. Real SQLite (the unhooked
 ``sqlite3.connect``) decides which ones open immutable, by reading through
 an EXCLUSIVE lock held by another connection. Every one of those must be
 refused by the armed guard under a watched root. The guard may refuse
-more than SQLite opens immutable. The test skips when this SQLite build
+more than SQLite opens immutable. The test fails when this SQLite build
 has no URI support.
 """
 
@@ -236,7 +236,7 @@ class SqliteImmutableDifferentialTests(unittest.TestCase):
             oracle_db = root / "oracle.sqlite"
             _seed_db(oracle_db)
             if not _uri_supported(oracle_db):
-                self.skipTest("SQLite build lacks URI support")
+                self.fail("SQLite build lacks URI support")
             watched = root / "watched"
             guard_db = watched / "sample.sqlite"
             _seed_db(guard_db)
