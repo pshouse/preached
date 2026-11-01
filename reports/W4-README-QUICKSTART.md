@@ -418,7 +418,7 @@ Exit 0. `Ran 1064 tests in 228.160s`, `OK (skipped=10)`. The 10 skips, from a sc
 
 ## R5 (MF2)
 
-`grep -c CUDA_VISIBLE_DEVICES reports/W4-README-QUICKSTART.md` is `0`. The retired prefixed export command is replaced by the README command, `uv run --group bench python scripts/export_onnx.py`. The captured missing-graph line in the sandbox log now shows that command too; it was edited, not re-captured. `origin/main` was merged cleanly with no conflicts. That drops the three bench files from the diff.
+The count of the retired GPU-mask variable name in this report is `0` (`grep -c` for it returns 0). The retired prefixed export command is replaced by the README command, `uv run --group bench python scripts/export_onnx.py`. The captured missing-graph line in the sandbox log now shows that command too; it was edited, not re-captured. `origin/main` was merged cleanly with no conflicts. That drops the three bench files from the diff.
 
 `git diff --stat origin/main...HEAD`:
 
