@@ -48,7 +48,7 @@ Wall time is the wrapper around each command (`date +%s.%N`). Unittest's own `Ra
 | validate | 0 | 136.736 | `uv run python eval/validate.py` |
 | bench | 0 | 154.637 | `uv run --group bench search/bench.py --models granite-english-r2` |
 | sync bench | 0 | 0.009 | `uv sync --group bench` |
-| export | 0 | 14.885 | `uv run --group bench python scripts/export_onnx.py` |
+| export | 0 | 14.885, measured with the previous command (see R5) | `uv run --group bench python scripts/export_onnx.py` (edited; see R5) |
 | query hybrid | 0 | 1.543 | `uv run search/query.py "how should a Christian use money" --mode hybrid -k 5` |
 | sync runtime | 0 | 0.594 | `uv sync` |
 | server hybrid | 0 | 3.038 | `uv run app/server.py` after the export |
@@ -102,7 +102,7 @@ The church column printed `Nothing from your church yet.`
 
 `corpus/chunk_sermons.py` does not create SQLite. The server started before the bench exited 1 in 2.013 s with only `missing index /cache/w4-readme-quickstart/index/wesley.sqlite`. The README order runs the bench, which builds the index, before the server.
 
-After that index existed, the same server command with `PREACHED_ONNX_DIR` pointed at an empty directory printed, in order:
+After that index existed, the same server command with `PREACHED_ONNX_DIR` pointed at an empty directory printed, in order (edited; see R5):
 
 ```
 ERROR embedding model unavailable; serving BM25 only
@@ -429,3 +429,11 @@ The count of the retired GPU-mask variable name in this report is `0` (`grep -c`
  tests/test_api_path.py          |  25 +++
  4 files changed, 517 insertions(+), 21 deletions(-)
 ```
+
+## R6 (CTO CONDITIONAL at ffd31a5)
+
+CTO marked `ffd31a5` conditional. R5 replaced the export command in two places and left the surrounding words as if the new command had been timed and printed. This round does not re-time or re-capture.
+
+The §3 export row still shows wall 14.885 s next to `uv run --group bench python scripts/export_onnx.py`. That time was measured with the previous command (see R5). The row is labeled with that phrase, and the command cell is marked (edited; see R5).
+
+The missing-graph block is introduced as what the server printed. The build command inside the block was edited in R5, not re-captured. That introduction now says (edited; see R5).
