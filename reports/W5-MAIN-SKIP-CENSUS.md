@@ -58,7 +58,7 @@ Other guards that did not fire on this machine, unchanged since `9fe33ca` (files
 
 ## Changes vs 9fe33ca
 
-`git diff 9fe33ca..HEAD --stat` for the skip files: only `tests/test_coverage.py` (+10/-?), `tests/test_embed_backend.py` and `tests/test_shutdown.py` changed. `test_onnx_pin_repro.py`, `test_eval_leak.py`, `test_deploy_regex.py`, `test_app_js.py`, `test_mobile_ux.py`, `test_privacy_wire_fix.py` and `test_privacy_merge.py` are unchanged.
+`git diff 9fe33ca..HEAD --stat` for the skip files: only `tests/test_coverage.py` (+10 lines), `tests/test_embed_backend.py` and `tests/test_shutdown.py` changed. `test_onnx_pin_repro.py`, `test_eval_leak.py`, `test_deploy_regex.py`, `test_app_js.py`, `test_mobile_ux.py`, `test_privacy_wire_fix.py` and `test_privacy_merge.py` are unchanged.
 
 - `tests/test_coverage.py` (#78): the guard was `Path("/cache/asr-repro/c01.wav").exists()` and is now `PREACHED_CACHE/asr-repro/c01.wav`. It also gained a per-clip `skipTest` (:301). The decorator is still at :291. On scratch caches this test now skips; at `9fe33ca` it ran against the hard-coded `/cache`.
 - `tests/test_shutdown.py` (#78, with the follow-up in `6935b2d`): `REAL_INDEX` and `ONNX_DIR` follow `PREACHED_CACHE`. The `skipUnless` decorator (:173 at `9fe33ca`) became an in-body `hybrid_load_ready` check, with the skip at :224-225. An empty ONNX directory now skips instead of failing. New tests were added: `test_empty_onnx_dir_skips_hybrid_load` and `test_hybrid_load_ready_follows_the_loader_filenames`. On scratch caches the hybrid test now skips.
@@ -105,5 +105,6 @@ Report only: a fresh suite run and a skip-source census on current `main` (`44dc
 - `/cache` snapshot: one mtime change on `/cache/index/cc-speech.sqlite-shm`, not caused by this run's commands (see report).
 
 ```
-STAT_PLACEHOLDER
+ reports/W5-MAIN-SKIP-CENSUS.md | 109 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 109 insertions(+)
 ```
