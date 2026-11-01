@@ -82,3 +82,15 @@ The ambient shell has `UV_CACHE_DIR=/cache/uv`, `XDG_CACHE_HOME=/cache/xdg` and 
 `PREACHED_REQUIRE_DENO=1 uv run python -m unittest discover -s tests` with temp caches: Ran 1086 tests, OK (skipped=10). Zero `test_every_cited_file_line_holds_its_string` failures.
 
 ## PR BODY
+Raise the listen backlog from socketserver's 5 to a named `LISTEN_BACKLOG = 128` so a burst of simultaneous connects is queued, not dropped. R2: the FIN test now has a real-path case with a body above the 73 728-byte read bound (sent from a thread), the 503 and 200 arrival limits are 2 s (connect stays 0.5 s), and the DEPLOY.md tree sentence is tree-relative. `origin/main` moved after the first fetch (cache guard, #8x); merged as a merge commit with no conflicts. No cite moved.
+
+Full suite after the merge, temp caches: Ran 1105 tests, OK (skipped=12). `/cache` before vs after: only `/cache/index/cc-speech.sqlite-shm` mtime differs.
+
+`git diff --stat origin/main..HEAD`:
+
+     app/server.py                |  11 ++
+     docs/DEPLOY.md               |  35 ++++---
+     reports/W3-LISTEN-BACKLOG.md |  ~100 +++
+     tests/test_deploy_alerts.py  |  24 ++---
+     tests/test_listen_backlog.py | 233 +++++
+     5 files changed
