@@ -55,8 +55,25 @@ Follow-up to #102: guard hardening (SF2), plain imports (SF3), README nit, child
 
 Head: code head f1f5c31fb80dda0446ef7c916a35705f06fdc7be on test/w5-subproc-followup (the report commit follows it).
 
-`git diff --stat origin/main...HEAD`: see the PR "Files changed"; in-scope files only (the stat is in the report commit message).
+`git diff --stat origin/main...HEAD`: the stat block at the end of the report (in-scope files only).
 
 See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` sections 1-3 for one line per item with file:line and the test or mutant that proves it. Tests: targeted `Ran 76 tests` `OK (skipped=3)`; full suite on preached-sandbox at f1f5c31fb80dda0446ef7c916a35705f06fdc7be `Ran 1217 tests in 259.444s` `OK (skipped=15)`. /cache before/after: 132824 lines each, sha256 3ca707d7aba4f2aa682a6497f9e481bad4c8087d9304142444a746ace64bca64 both, diff none. DEPLOY cites are untouched (no cited file changed).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## Stat (git diff --stat origin/main...HEAD, head b98fdb7d6f50dab7aae4d5e82bd25c109c269c54 plus this stat block)
+
+```
+ reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md |  67 ++++
+ reports/W5-SUBPROC-ENV-HELPER.md           |   6 +-
+ scripts/compare_responses.py               |   2 +-
+ tests/README.md                            |  16 +-
+ tests/test_child_home_guard.py             | 128 ++++++-
+ tests/test_deploy.py                       |   5 +-
+ tests/test_embed_backend.py                |   5 +-
+ tests/test_hard_conditions.py              |   5 +-
+ tests/test_onnx_pin_repro.py               |   5 +-
+ tests/test_shutdown.py                     |   5 +-
+ tests/test_subproc_env_guard.py            | 563 ++++++++++++++++++++++++-----
+ 11 files changed, 699 insertions(+), 108 deletions(-)
+```
