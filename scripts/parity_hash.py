@@ -41,8 +41,9 @@ shortest round-trip repr.
 
 Prints ``SET HASH`` lines in a fixed order. stderr gets the index_version,
 model_sha256 and harness hash (SHA-256 of this file, a NUL, then the
-inputs file; first 16 hex digits). ``--expect SET=HASH`` exits 1 on any
-mismatch. The rate limits are lifted and ``PREACHED_DISABLED``,
+inputs file; first 16 hex digits). ``--expect SET=HASH`` (16 hex digits) exits 1 on any
+mismatch. A ``--strip`` name that is no dict key in any set exits 1 naming it;
+a non-positive-int ``k`` or a duplicate query in the inputs is refused. The rate limits are lifted and ``PREACHED_DISABLED``,
 ``PREACHED_KILL_FILE`` and ``PREACHED_TRUSTED_PROXIES`` are unset while it
 runs. Importing the test builders arms ``tests/cache_guard`` (tool caches
 go to a temp dir).
@@ -55,6 +56,7 @@ import hashlib
 import http.client
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -109,6 +111,40 @@ def strip(value, names: frozenset):
     if isinstance(value, (list, tuple)):
         return [strip(v, names) for v in value]
     return value
+
+
+def keys_in(value, found: set) -> set:
+    if isinstance(value, dict):
+        found.update(value)
+        for item in value.values():
+            keys_in(item, found)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            keys_in(item, found)
+    return found
+
+
+def check_strip(parts: dict, requested) -> None:
+    """Refuse a ``--strip`` name that is a key nowhere in any set (a typo would hash unstripped)."""
+    present = keys_in(list(parts.values()), set())
+    for name in requested:
+        if name not in ALWAYS_STRIP and name not in present:
+            raise SystemExit(f"--strip {name}: no such key in any response")
+
+
+def load_inputs(path: Path) -> dict:
+    """Read the request file; refuse a ``k`` that is not a positive int and duplicate queries."""
+    inputs = json.loads(path.read_text(encoding="utf-8"))
+    for field in ("k", "side_k"):
+        value = inputs.get(field)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise SystemExit(f"{path}: {field} must be a positive integer, got {value!r}")
+    seen = set()
+    for item in inputs["queries"]:
+        if item["q"] in seen:
+            raise SystemExit(f"{path}: duplicate query {item['q']!r}")
+        seen.add(item["q"])
+    return inputs
 
 
 def harness_sha256(inputs: Path) -> str:
@@ -285,7 +321,7 @@ def compute(index: Path, args, loader=None) -> tuple[dict, dict]:
     """``(hashes, about)``: one hash per set, and what the gate records beside them."""
     from tests.test_church_wire import QUERIES, build_church
 
-    inputs = json.loads(args.inputs.read_text(encoding="utf-8"))
+    inputs = load_inputs(args.inputs)
     names = frozenset((*ALWAYS_STRIP, *args.strip))
     requests = plan(inputs, QUERIES)
     scratch = Path(tempfile.mkdtemp(prefix="parity-church-"))
@@ -315,6 +351,7 @@ def compute(index: Path, args, loader=None) -> tuple[dict, dict]:
         "side": served["side"],
         "church": served["church"],
     }
+    check_strip(parts, args.strip)
     hashes = {name: digest(strip(parts[name], names)) for name in SETS}
     about = {
         "index_version": health[0]["result"].get("index_version"),
@@ -343,8 +380,8 @@ def parse_args(argv):
     expected = {}
     for item in args.expect:
         name, _, value = item.partition("=")
-        if name not in SETS or not value:
-            parser.error(f"--expect {item!r}: want SET=HASH, SET one of {', '.join(SETS)}")
+        if name not in SETS or not re.fullmatch(r"[0-9a-f]{16}", value):
+            parser.error(f"--expect {item!r}: want SET=HASH (16 lowercase hex digits), SET one of {', '.join(SETS)}")
         expected[name] = value
     args.expected = expected
     return args

@@ -29,9 +29,11 @@ Records:
 2. The set's list of records is serialised with `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)` and encoded as UTF-8. Floats use Python's shortest round-trip `repr`.
 3. The set's hash is the first 16 hex digits of the SHA-256 of those bytes.
 
-The output does not depend on `PYTHONHASHSEED`: sermon ids are sorted and dict keys are sorted. The script prints `SET HASH` lines in the order of the table above. On stderr it prints `index_version=… model_sha256=… harness=… strip=…`, with the first two read from `App.health()`.
+The output does not depend on `PYTHONHASHSEED`: sermon ids are sorted and dict keys are sorted. A `--strip` name that is a dict key in no record of any set exits 1 with `--strip NAME: no such key in any response`, so a misspelt strip cannot silently compare unstripped hashes. `--expect` takes exactly 16 hex digits. The request file is refused if `k` or `side_k` is not a positive integer or a query is duplicated.
 
-**Harness hash:** the first 16 hex digits of the SHA-256 of `scripts/parity_hash.py`, a NUL byte, then `eval/parity/requests.json`. For the harness in this commit it is `8af46977119c0dde`. `tests/test_parity_hash.py` checks that this page names the current value. The church builder is imported from `tests/`, so a change to `build_church` or `QUERIES` can move the hashes without changing the harness hash.
+The script prints `SET HASH` lines in the order of the table above. On stderr it prints `index_version=… model_sha256=… harness=… strip=…`, with the first two read from `App.health()`.
+
+**Harness hash:** the first 16 hex digits of the SHA-256 of `scripts/parity_hash.py`, a NUL byte, then `eval/parity/requests.json`. For the harness in this commit it is `9bbe1a503f36136f`. `tests/test_parity_hash.py` checks that this page names the current value. The church builder is imported from `tests/`, so a change to `build_church` or `QUERIES` can move the hashes without changing the harness hash.
 
 ## Inputs
 
@@ -43,58 +45,49 @@ The output does not depend on `PYTHONHASHSEED`: sermon ids are sorted and dict k
 
 **Not a copy of the CTO's list.** The reference hashes below came from an HTTP query list that existed only as uncommitted scratch on the CTO's machine. That list, and the harness that hashed it, were never committed, and earlier reports describe only uncommitted `/tmp` parity scripts. So the exact list cannot be reproduced. The list above is a new definition, rebuilt from the frozen eval queries and the in-repo probe list. Nothing in this repo shows that this harness reproduces the reference hashes.
 
-## Reference hashes (Wesley + ONNX)
+## Reference hashes (canonical definition, Wesley + ONNX)
 
-These were computed by the CTO with the CTO's uncommitted harness on the **CTO's box index**. They were not computed with this harness. The CTO's harness hash is not known.
+This harness is the canonical parity definition (CTO ruling, #97). The refs computed earlier with the CTO's uncommitted harness (`d3fe8813…` and the rest, and the pre-#88 `why`-stripped set) are retired: they stay in the gate history and are not compared against this harness.
+
+Baseline computed with this harness on the reviewer box:
 
 | Field | Value |
 |---|---|
-| index | the CTO's box `wesley.sqlite` |
-| `index_version` | the CTO's box value, not supplied with the refs (to be recorded on the first host-gate run) |
-| `model_sha256` | not supplied with the refs; expected to be the fp32 graph pin `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (`src/preached/artifacts.py`), not confirmed |
-| harness | the CTO's uncommitted harness (sha unknown) |
+| main | `83121da314137c4d611d1725a814374c7d2bb6fb` |
+| machine | `grok-bot-vm-181711960` (8× Intel Xeon, Python 3.12.15, onnxruntime 1.31.1) |
+| index | box-built Wesley classic index (8383 chunks, 141 sermons; placeholder `audio_url`/`reader`), not `/cache` |
+| `index_version` | `154875b509d6dc22d326d8386f1751b449be4c97f7aa69149d5aa48cc88f8a93` |
+| `model_sha256` | `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9` (fp32 ONNX graph, read from the model file and `/healthz`) |
+| church side | synthetic `tests/test_church_wire.build_church` fixture, keyword only |
+| harness | `9bbe1a503f36136f` |
 
-**Current** (in effect since #88 merged; responses include `why`):
+| Set | With `why` | `--strip why` |
+|---|---|---|
+| `http` | `27d7cb2bbe8a82d3` | `5aa8821e0ecc7d22` |
+| `no-church` | `e1fa9ccca05c5aec` | `b393295f9ae9b309` |
+| `in-process` | `b2acb9b6b450a470` | `1ea2b8a087d9f371` |
+| `in-process-no-health` | `17be2c66569fab1e` | `72d157b749864101` |
+| `search+sermon` | `e38ec8cba9ddca3e` | `8f6508ffaf72af35` |
+| `side` | `026f0ce37111e4ec` | `e6f28abb5f3866f7` |
+| `church` | `43dd3d71a14c50bf` | `94ddac6334e3c2fb` |
 
-| Set | Hash |
-|---|---|
-| `http` | `d3fe8813830860a1` |
-| `no-church` | `313ac936f1811fbf` |
-| `in-process` | `b3e434a21913b4cd` |
-| `in-process-no-health` | `fe4fdf509d56a137` |
-| `search+sermon` | `dc560eb5a85dd9e6` |
-| `side` | `62cd3faaa859af26` |
-| `church` | `2b50990e34509d44` |
+These were identical across 3 runs and under `PYTHONHASHSEED=0` and `12345`. With `--strip why`, pre-#88 `e434539` gives the same `in-process`, `in-process-no-health`, `search+sermon`, `side` and `church`. Its `http` (`e691bd2fc5678ce9`) and `no-church` (`3d82fdb5538a768e`) differ only in the `/` and `/static/app.js` byte hashes, which #88 changed (`1da012a`, `e6bec88`).
 
-**Pre-#88, `why` stripped:**
+The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any UI-only change moves those two sets.
 
-| Set | Hash |
-|---|---|
-| `http` | `61da36467ca1042b` |
-| `no-church` | `1d128a7f66432c67` |
-| `in-process` | `cb0fb974bcf7cc81` |
-| `in-process-no-health` | not given |
-| `search+sermon` | `c67732e881e24dca` |
-| `side` | `51fd70ee78f12981` |
-| `church` | `faea2e776c6112de` |
-
-**Other hosts.** omarchy's index differs: its `index_version` is `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2` (`docs/DEMO-SCRIPT.md`). These refs do not apply there. A gate on omarchy needs its own baseline.
+**Other hosts.** The hashes hold only for the `index_version` and `model_sha256` above. A host with a different index (the CTO box `/cache/index/wesley.sqlite`, or omarchy, `index_version` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`) needs its own baseline from this harness on its own main, recorded here with the same fields.
 
 ## Host gate command
 
-Only the host gate runs this against the real `/cache`. Agents and CI must not. On the CTO's box, from the checkout under test:
+From the checkout under test, against the index the baseline was taken on:
 
-```
-uv run python scripts/parity_hash.py --index /cache/index/wesley.sqlite \
-  --expect http=d3fe8813830860a1 --expect no-church=313ac936f1811fbf \
-  --expect in-process=b3e434a21913b4cd --expect in-process-no-health=fe4fdf509d56a137 \
-  --expect search+sermon=dc560eb5a85dd9e6 --expect side=62cd3faaa859af26 \
-  --expect church=2b50990e34509d44
-```
+    uv run python scripts/parity_hash.py --index PATH/TO/wesley.sqlite \
+      --expect http=27d7cb2bbe8a82d3 --expect no-church=e1fa9ccca05c5aec \
+      --expect in-process=b2acb9b6b450a470 --expect in-process-no-health=17be2c66569fab1e \
+      --expect search+sermon=e38ec8cba9ddca3e --expect side=026f0ce37111e4ec \
+      --expect church=43dd3d71a14c50bf
 
-To check that #88 changed only `why`, use the same command with `--strip why` and the pre-#88 values (with no `in-process-no-health` expectation). The script exits 1 and prints a `MISMATCH` line for each set that differs. Record the stderr `index_version`, `model_sha256` and `harness` values next to any new baseline.
-
-**First run.** The refs came from a different harness, so the first host-gate run of this script may differ on every set without any change in behaviour. If it does, the CTO decides whether to re-baseline to this harness's values on the same index and code. Record the new values here with their `index_version`, `model_sha256` and harness hash. Keep the old refs for history.
+The script exits 1 and prints a `MISMATCH` line for each set that differs. Check that the stderr `index_version`, `model_sha256` and `harness` equal the table first. If any differs, the refs do not apply. A change meant to alter responses re-baselines here, recording all fields and keeping the old rows for history.
 
 ## CI check
 

@@ -138,6 +138,49 @@ class PinTests(unittest.TestCase):
         self.assertIn("MISMATCH side: got ", err)
 
 
+class RefusalTests(unittest.TestCase):
+    def refused(self, *extra: str) -> tuple[object, str]:
+        err = StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit) as caught:
+            run(*extra)
+        return caught.exception.code, err.getvalue()
+
+    def test_strip_of_a_key_no_response_has_exits_nonzero_naming_it(self) -> None:
+        code, _ = self.refused("--strip", "nosuchfield")
+        self.assertIn("--strip nosuchfield: no such key in any response", str(code))
+        code, _ = self.refused("--strip", "Why")
+        self.assertIn("--strip Why", str(code))
+
+    def test_strip_of_took_ms_and_why_is_accepted(self) -> None:
+        self.assertEqual(run("--strip", "took_ms")[0], 0)
+
+    def test_expect_wants_exactly_16_hex_digits(self) -> None:
+        for bad in ("side=abc", "side=" + "0" * 17, "side=" + "g" * 16, "side=" + "A" * 16):
+            err = StringIO()
+            with redirect_stderr(err), self.assertRaises(SystemExit) as caught:
+                parity_hash.parse_args(["--index", "x", "--expect", bad])
+            self.assertEqual(caught.exception.code, 2, bad)
+            self.assertIn("16 lowercase hex digits", err.getvalue())
+
+    def test_loader_rejects_string_k_zero_k_and_duplicate_queries(self) -> None:
+        base = json.loads(parity_hash.INPUTS.read_text(encoding="utf-8"))
+        cases = {
+            "string k": {"k": "10"},
+            "k=0": {"k": 0},
+            "side_k=0": {"side_k": 0},
+            "bool k": {"k": True},
+            "duplicate": {"queries": base["queries"] + base["queries"][:1]},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, change in cases.items():
+                path = Path(tmp) / "requests.json"
+                path.write_text(json.dumps({**base, **change}), encoding="utf-8")
+                with self.assertRaises(SystemExit, msg=label):
+                    parity_hash.load_inputs(path)
+            path.write_text(json.dumps(base), encoding="utf-8")
+            self.assertEqual(parity_hash.load_inputs(path), base)
+
+
 class InputsTests(unittest.TestCase):
     def test_inputs_are_the_frozen_eval_queries_and_probes(self) -> None:
         inputs = json.loads(parity_hash.INPUTS.read_text(encoding="utf-8"))
