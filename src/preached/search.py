@@ -15,7 +15,7 @@ import logging
 import math
 import re
 import sqlite3
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -59,6 +59,37 @@ def play_start(start_s: float | None) -> float | None:
     return max(0.0, round(value - PREROLL_S, 2))
 
 
+@dataclass(frozen=True)
+class Why:
+    """Why a hit is on the list: its place in each candidate list the ranker used.
+
+    Ranks are 1-based positions in the gated BM25 (``keyword_rank``) and
+    dense (``meaning_rank``) lists of this search; None when the hit is not
+    in that list or the mode did not run it. ``similarity`` is the dense
+    cosine from the same list, rounded to 3 decimals. Built only in
+    ``Searcher._pack`` from the lists ``_lexical`` and ``_semantic`` returned
+    through the publish gate, so a hidden row never moves a visible rank.
+    """
+
+    keyword_rank: int | None
+    meaning_rank: int | None
+    similarity: float | None
+
+    @property
+    def found_by(self) -> str:
+        if self.keyword_rank is not None and self.meaning_rank is not None:
+            return "both"
+        return "keyword" if self.keyword_rank is not None else "meaning"
+
+    def as_dict(self) -> dict:
+        return {
+            "keyword_rank": self.keyword_rank,
+            "meaning_rank": self.meaning_rank,
+            "similarity": self.similarity,
+            "found_by": self.found_by,
+        }
+
+
 @dataclass
 class Hit:
     rowid: int
@@ -82,6 +113,9 @@ class Hit:
     # Every chunk in this passage, in reading order, when dedupe_adjacent
     # merged overlapping neighbours into it. Empty means just chunk_id.
     merged_ids: tuple[str, ...] = ()
+    # Set by Searcher._pack (see Why). Not part of equality: two hits with
+    # the same row and score are the same passage however they were found.
+    why: Why | None = field(default=None, compare=False)
 
     @property
     def chunk_ids(self) -> list[str]:
@@ -185,10 +219,22 @@ class Searcher:
     def _where(self) -> str | None:
         return visible_sql(self.connection, "chunks", gated=self.gated, library=self.library)
 
-    def _pack(self, scored: list[tuple[int, float]], limit: int, where: str | None) -> list[Hit]:
+    def _pack(
+        self,
+        scored: list[tuple[int, float]],
+        limit: int,
+        where: str | None,
+        lexical: list[tuple[int, float]] | None = None,
+        semantic: list[tuple[int, float]] | None = None,
+    ) -> list[Hit]:
+        """Rows for the top ``limit`` of ``scored``. ``lexical`` and
+        ``semantic`` are the candidate lists ``scored`` came from (None when
+        the mode did not run one); each hit's ``why`` is read off them."""
         scored = scored[:limit]
         if not scored:
             return []
+        keyword = {rowid: rank for rank, (rowid, _) in enumerate(lexical or (), start=1)}
+        meaning = {rowid: (rank, cosine) for rank, (rowid, cosine) in enumerate(semantic or (), start=1)}
         rows = {}
         wanted = [rowid for rowid, _ in scored]
         sql = f"SELECT * FROM chunks WHERE rowid IN ({', '.join('?' * len(wanted))})"
@@ -196,7 +242,15 @@ class Searcher:
             sql += f" AND {where}"
         for row in self.connection.execute(sql, wanted):
             rows[int(row["rowid"])] = row
-        return [hit_from_row(rows[rowid], score) for rowid, score in scored if rowid in rows]
+        hits = []
+        for rowid, score in scored:
+            if rowid not in rows:
+                continue
+            rank, cosine = meaning.get(rowid, (None, None))
+            hit = hit_from_row(rows[rowid], score)
+            hit.why = Why(keyword.get(rowid), rank, None if cosine is None else round(float(cosine), 3))
+            hits.append(hit)
+        return hits
 
     def _lexical(self, query: str, limit: int, where: str | None) -> list[tuple[int, float]]:
         """BM25 over chunks visible now.
@@ -255,7 +309,8 @@ class Searcher:
 
     def bm25(self, query: str, limit: int) -> list[Hit]:
         where = self._where()
-        return self._pack(self._lexical(query, limit, where), limit, where)
+        lexical = self._lexical(query, limit, where)
+        return self._pack(lexical, limit, where, lexical=lexical)
 
     def visible_count(self) -> int:
         return visible_count(self.connection, gated=self.gated, library=self.library)
@@ -265,7 +320,8 @@ class Searcher:
         if self._matrix is None or self._rowids is None:
             raise RuntimeError("dense search needs a model index")
         where = self._where()
-        return self._pack(self._semantic(vector, limit, where), limit, where)
+        semantic = self._semantic(vector, limit, where)
+        return self._pack(semantic, limit, where, semantic=semantic)
 
     def hybrid(
         self,
@@ -292,7 +348,7 @@ class Searcher:
             )
         else:
             raise RuntimeError(f"unknown fusion {fusion}")
-        return self._pack(fused, limit, where)
+        return self._pack(fused, limit, where, lexical=lexical, semantic=semantic)
 
 
 FTS_TOKENIZE = re.compile(r"tokenize\s*=\s*'((?:[^']|'')*)'", re.IGNORECASE)
