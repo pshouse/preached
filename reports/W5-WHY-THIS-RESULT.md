@@ -72,7 +72,7 @@ None added.
 
 **Conflicts.** None. Git merged every file cleanly. Both sides changed `README.md`, `src/preached/search.py`, `docs/DEPLOY.md`, `tests/test_app_js.py`, `tests/test_deploy_alerts.py`, `tests/test_embed_backend.py`, `tests/test_server.py` and `tests/test_side.py`, but in hunks that do not overlap. I read each merged file to check that both sides are kept:
 - `README.md`: main's quickstart rewrite (`$PREACHED_CACHE` paths, export steps, `SLUG`) is all there, and this branch's "Reading a search result" section still follows the `--library SLUG` paragraph.
-- `src/preached/search.py`: main's `_VERSE_REF` / `PARAGRAPH_NUMBER` change (around line 700) sits next to this branch's `Why` dataclass, `Hit.why` and `_pack` lists. They do not interact: `why` is built from rowids and ranks, not from excerpt text.
+- `src/preached/search.py`: main's `_VERSE_REF` / `PARAGRAPH_NUMBER` change (`_VERSE_REF` at line 729) sits next to this branch's `Why` dataclass, `Hit.why` and `_pack` lists. They do not interact: `why` is built from rowids and ranks, not from excerpt text.
 - `docs/DEPLOY.md`: main's temp-dir suite command and `copy_index` paragraph are kept, along with this branch's re-pinned cites.
 - the four test files: main's `cache_guard` arming line is kept, along with this branch's additions.
 
@@ -133,15 +133,15 @@ Example (`hybrid`, read-only temp copy of the Wesley index, fields trimmed; the 
  app/static/app.js             |  30 +++++
  app/static/index.html         |  14 +++
  docs/DEPLOY.md                | 112 ++++++++---------
- reports/W5-WHY-THIS-RESULT.md | 111 +++++++++++++++++
+ reports/W5-WHY-THIS-RESULT.md | 147 ++++++++++++++++++++++
  src/preached/search.py        |  68 ++++++++++-
  tests/test_app_js.py          |  57 +++++++++
  tests/test_deploy_alerts.py   |  86 ++++++-------
  tests/test_embed_backend.py   |   1 +
  tests/test_server.py          |   1 +
  tests/test_side.py            |   1 +
- tests/test_why_this_result.py | 276 ++++++++++++++++++++++++++++++++++++++++++
- 14 files changed, 702 insertions(+), 107 deletions(-)
+ tests/test_why_this_result.py | 278 ++++++++++++++++++++++++++++++++++++++++++
+ 14 files changed, 740 insertions(+), 107 deletions(-)
 ```
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
