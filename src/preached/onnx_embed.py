@@ -34,13 +34,6 @@ from preached.text_tokens import encode_texts
 
 log = logging.getLogger(__name__)
 
-# onnxruntime 1.29+ Linux wheels ship Microsoft 1DS telemetry, on by default:
-# a device ID and event DB under $XDG_CACHE_HOME/Microsoft/DeveloperTools and
-# uploads to Microsoft. Preached turns it off. The variable has to be set
-# before ORT initialises, so it is set here, before any import of onnxruntime.
-os.environ.setdefault("ORT_DISABLE_TELEMETRY", "1")
-
-
 def _open_hashed_graph(path: Path, expected: str, pinned: str) -> tuple[int, str]:
     """Open ``path`` without following a symlink; check and hash it through that fd.
 
@@ -248,8 +241,9 @@ class OnnxEmbedder:
         import onnxruntime as ort
         from tokenizers import Tokenizer
 
-        # Belt and braces with ORT_DISABLE_TELEMETRY above; older ORT builds
-        # have no such call.
+        # Backup only: it does not stop the device ID or DB write. The real
+        # switch is ORT_DISABLE_TELEMETRY=1, set in preached/__init__.py
+        # before this import. Older ORT builds have no such call.
         if hasattr(ort, "disable_telemetry_events"):
             ort.disable_telemetry_events()
 
