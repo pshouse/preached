@@ -87,7 +87,7 @@ Docs-only. Applies the CTO amended latency ruling (see section above); README qu
 
 ```
  docs/DEMO-SCRIPT.md                |   9 ++--
- docs/SUBMISSION-DRAFT.md           |  10 ++---
+ docs/SUBMISSION-DRAFT.md           |  10 ++--
  reports/W4-SUBMIT-DRYRUN2-EDITS.md |  93 ++++++++++++++++++++++++++++++++++++++
  3 files changed, 103 insertions(+), 9 deletions(-)
 ```
