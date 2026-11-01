@@ -460,9 +460,10 @@ sets `PREACHED_CACHE` to the bundle root, opens
 
 The server process is started with `env -i` and an allow-list (PATH, HOME,
 LANG, LC_ALL, TMPDIR, the `PREACHED_*` variables the process reads, the
-offline Hub flags, and `ORT_DISABLE_TELEMETRY`). `PREACHED_CHURCH_SIDE` is not on it. A token exported in
-the shell is not in the server's environment. `app/server.py` refuses to run
-as root. There is no `PREACHED_ALLOW_ROOT` and no `PREACHED_PYTHON` override.
+offline Hub flags, and `ORT_DISABLE_TELEMETRY`). `PREACHED_CHURCH_SIDE` is not
+on it. A token exported in the shell is not in the server's environment.
+`app/server.py` refuses to run as root. There is no `PREACHED_ALLOW_ROOT` and no
+`PREACHED_PYTHON` override.
 
 ### Privacy: ONNX Runtime telemetry is off
 
@@ -485,8 +486,14 @@ To verify on the host: after the service has loaded the model, check that
 `find "$XDG_CACHE_HOME" "$HOME/.cache" -path '*Microsoft/DeveloperTools*'`
 prints nothing, and that
 `tr '\0' '\n' < /proc/<server pid>/environ | grep ORT_DISABLE_TELEMETRY`
-shows `ORT_DISABLE_TELEMETRY=1`. `tests/test_ort_telemetry_off.py` checks the
-first part against a scratch cache.
+shows `ORT_DISABLE_TELEMETRY=1`. That `environ` check only proves the setting
+for a `serve.sh` start; a direct start gets it from `src/preached/__init__.py`
+(lines 5-10) instead. `tests/test_ort_telemetry_off.py` checks the first part
+against a scratch cache.
+
+Limit: a process that imports onnxruntime before any preached module is not
+covered by `__init__.py`; only the environment (e.g. `serve.sh`) covers it. No
+product or serve path does this (grep at 7b523c6).
 
 ### What a direct start does and does not guarantee
 

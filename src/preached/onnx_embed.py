@@ -34,6 +34,7 @@ from preached.text_tokens import encode_texts
 
 log = logging.getLogger(__name__)
 
+
 def _open_hashed_graph(path: Path, expected: str, pinned: str) -> tuple[int, str]:
     """Open ``path`` without following a symlink; check and hash it through that fd.
 
