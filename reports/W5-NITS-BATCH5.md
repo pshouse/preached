@@ -117,3 +117,105 @@ Fixed only the one in `AGENTS.md`. Left as written:
 - `reports/W3-CONFIRMATORY.md:25`, `:28`, `:193`, `:200`, `:209`
 
 `reports/W4-FRESH-CLONE-QA.md:11` uses `PREACHED_CACHE=/cache/fresh-clone-qa`, not `/cache`.
+
+## R3
+
+CTO r2 on `3480388` (PR #79) is CHANGES. `git fetch origin && git merge origin/main` is merge commit `f2c22f7` (second parent `9fe33ca`). No rebase and no force-push. This round edits `AGENTS.md`, `reports/W3-DEPLOY-REGEX-PIN.md`, and this report. `docs/DEPLOY.md` and `docs/SUBMISSION-DRAFT.md` were not edited.
+
+Head: the commit that adds this section (`git rev-parse HEAD` on `chore/w5-nits-batch5`). A report cannot name its own commit. Parent of this round: `f2c22f7`. Ahead/behind vs `origin/main`: 5 ahead, 0 behind.
+
+### MF1
+
+The cache-safety bullet in `AGENTS.md` (rule 5) now:
+
+- lists `DENO_DIR` and `XDG_CACHE_HOME` with `PREACHED_CACHE`, `PREACHED_ONNX_DIR` and `HF_HOME`;
+- requires that real private data is read only via an explicit read-only copy or read-only bind mount (the "stays possible" wording is gone);
+- states in the bullet that the only suite run against the real `/cache` is Chief of Staff's host verify-merge gate.
+
+Those env vars are temp dirs only, not even to read. Section 7 item 2 lists `DENO_DIR` and `XDG_CACHE_HOME` in the full-suite command, each `$(mktemp -d)`.
+
+### Nit
+
+`reports/W3-DEPLOY-REGEX-PIN.md` line 29 and line 35 read `OK (skipped=1; the infra-yaml check on a machine where the file is absent)`.
+
+### Proof
+
+`uv lock --check` with `UV_CACHE_DIR` under `/tmp`: Resolved 79 packages in 0.50ms.
+
+Full suite, `PREACHED_REQUIRE_DENO=1`, `HF_HUB_OFFLINE=1`, plus `-v` so each skip is named. Temp dirs: `PREACHED_CACHE`, `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `PREACHED_ONNX_DIR`, `DENO_DIR`, `XDG_CACHE_HOME`, `UV_CACHE_DIR`, `TORCH_HOME`, `TMPDIR`, all under `/tmp/w5-nits-r3`. The process ran under `bwrap` as uid 1000. `/cache` was an empty tmpfs except a read-only bind of `/cache/uv-python` (the interpreter). `~/.cache` was a scratch bind, because one bundle test runs `uv run` with an env that drops `UV_CACHE_DIR` and otherwise writes `~/.cache/uv`. A `touch /cache/nope` inside that sandbox did not appear on the host.
+
+```
+PREACHED_REQUIRE_DENO=1 uv run python -m unittest discover -s tests -v
+```
+
+Ran 1081 tests in 236.322s. OK (skipped=12). 0 failures, 0 errors.
+
+Skips:
+
+1. `test_coverage.CorruptedAsrFixtureTests.test_envelope_matches_the_audio` — clips not in `/cache/asr-repro` (the real cache was not mounted).
+2. `test_deploy_regex.DeployRegexTests.test_infra_yaml_matches_when_the_file_is_present` — infra alerts yaml absent.
+3. `test_embed_backend.FdLoadTests.test_load_refuses_a_symlinked_graph` — granite ONNX artifacts not in the temp dir.
+4. `test_embed_backend.FdLoadTests.test_real_graph_has_no_external_data` — same.
+5. `test_embed_backend.ImportGuardTests.test_youtube_embed_path_does_not_import_torch` — same.
+6. `test_embed_backend.RealOnnxTests.test_cached_fp32_and_tokenizer_match_the_pins` — same.
+7. `test_embed_backend.RealOnnxTests.test_fp32_directory_without_int8_loads` — same.
+8. `test_embed_backend.RealOnnxTests.test_fp32_query_is_unit_normalized` — same.
+9. `test_eval_leak.TitleLeakTest.test_confirmed_quotes_resolve_to_exactly_their_sheet_chunk` — chunks not in the temp `PREACHED_CACHE`.
+10. `test_onnx_pin_repro.ExportIsByteIdenticalTests.test_exports_under_any_ambient_seed_are_byte_identical_and_are_the_pin` — Granite weights not in the temp `PREACHED_CACHE`.
+11. `test_onnx_pin_repro.MutantGraphTests.test_one_flipped_initializer_value_is_refused` — same.
+12. `test_shutdown.LoadedSigtermTests.test_sigterm_under_hybrid_load_exits_zero_and_cleans_up` — `/cache/index/wesley.sqlite` was not visible and the ONNX dir was empty.
+
+`test_every_cited_file_line_holds_its_string` passed. `app/server.py`, `docs/DEPLOY.md` and `tests/test_deploy_alerts.py` were not edited, so no cite re-pin. No new dependencies.
+
+### Cache
+
+Snapshots are `find /cache -printf '%p\t%s\t%T@\n' | sort`. This run's env vars did not point at `/cache`. Deno wrote under `/tmp/w5-nits-r3/suite2/deno` (`dep_analysis_cache_v2` and `v8_code_cache_v2`).
+
+Final suite window (before 132677 paths, after 132682): added 5, removed 0, changed 20. The adds are five Claude MCP logs under `/cache/xdg/claude-cli-nodejs/-work-preached/`. Changes are mtime or size on `/cache/index/cc-speech.sqlite-shm`, the `/cache/models` directory, onnxruntime `db-shm`/`db-wal` (wal size stayed 4120032), those Claude log dirs, and deno shm/wal under `/cache/xdg/deno` (`dep_analysis_cache_v2-wal` 1627432 -> 1680992, `v8_code_cache_v2-wal` 3312512 -> 3436112). The sandbox's `/cache` was a tmpfs, so these are other writers on the host.
+
+Session window (before any command here, 132661 paths; after the suite, 132682): added 21, removed 0, changed 16. Every add is under `/cache/xdg`. Nothing was added under `/cache/uv`.
+
+### Diff stat
+
+`git diff --stat origin/main..HEAD` after this commit. Only this PR's five files:
+
+```
+ AGENTS.md                         |   8 +-
+ reports/W3-DEPLOY-REGEX-PIN.md    |   8 +-
+ reports/W5-BENCH-FAILCLOSED-R2.md |   4 +-
+ reports/W5-NITS-BATCH5.md         | 221 ++++++++++++++++++++++++++++++++++++++
+ search/bench.py                   |   5 +-
+ 5 files changed, 237 insertions(+), 9 deletions(-)
+```
+
+This round vs the merge commit (`git diff --stat f2c22f7..HEAD`):
+
+```
+ AGENTS.md                      |   4 +-
+ reports/W3-DEPLOY-REGEX-PIN.md |   4 +-
+ reports/W5-NITS-BATCH5.md      | 102 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 106 insertions(+), 4 deletions(-)
+```
+
+### PR BODY
+
+CTO r2 on PR #79. Docs only.
+
+- Cache-safety bullet lists `DENO_DIR` and `XDG_CACHE_HOME` with `PREACHED_CACHE`, `PREACHED_ONNX_DIR` and `HF_HOME`, and forbids pointing them at a real cache even to read.
+- Real private data is read only via an explicit read-only copy or read-only bind mount.
+- The bullet states that the only suite run against the real `/cache` is Chief of Staff's host verify-merge gate.
+- Section 7 item 2 lists `DENO_DIR` and `XDG_CACHE_HOME` as temp dirs in the full-suite command.
+- `reports/W3-DEPLOY-REGEX-PIN.md` lines 29 and 35 read `OK (skipped=1; ...)`.
+- Merged `origin/main` (`9fe33ca`) as `f2c22f7`. No rebase, no force-push. `docs/DEPLOY.md` and `docs/SUBMISSION-DRAFT.md` untouched.
+- Full suite: Ran 1081 tests in 236.322s. OK (skipped=12). 0 failures, 0 errors. `test_every_cited_file_line_holds_its_string` passed.
+
+`git diff --stat origin/main..HEAD`:
+
+```
+ AGENTS.md                         |   8 +-
+ reports/W3-DEPLOY-REGEX-PIN.md    |   8 +-
+ reports/W5-BENCH-FAILCLOSED-R2.md |   4 +-
+ reports/W5-NITS-BATCH5.md         | 221 ++++++++++++++++++++++++++++++++++++++
+ search/bench.py                   |   5 +-
+ 5 files changed, 237 insertions(+), 9 deletions(-)
+```

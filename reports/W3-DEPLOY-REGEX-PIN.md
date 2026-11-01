@@ -26,13 +26,13 @@ Infra check: `test_infra_yaml_matches_when_the_file_is_present` compares those r
 
 ## Proofs
 
-Trial-merge of `86e4ef8` with `origin/fix/w3-keepalive-cap` (#72), scratch tree `5788f83`, not this branch. Clean merge. The side pattern is on line 821. With the marker and this test file, `tests.test_deploy_regex`: Ran 10 tests, OK. The skipped=1 on that run is the infra-yaml check on a machine where the file is absent. A loosened regex passes wherever the infra yaml is absent.
+Trial-merge of `86e4ef8` with `origin/fix/w3-keepalive-cap` (#72), scratch tree `5788f83`, not this branch. Clean merge. The side pattern is on line 821. With the marker and this test file, `tests.test_deploy_regex`: Ran 10 tests, OK (skipped=1; the infra-yaml check on a machine where the file is absent). A loosened regex passes wherever the infra yaml is absent.
 
 The previous test, pointed at #72's `DEPLOY.md`, fails:
 
 `no producer for DEPLOY.md pattern DEPLOY.md:821: add one, do not skip it`
 
-Blank line inserted at the top of a scratch copy of that merged `DEPLOY.md`: Ran 10 tests, OK. The skipped=1 on that run is the infra-yaml check on a machine where the file is absent. A loosened regex passes wherever the infra yaml is absent. Names stay `side-access`, `D2b`, `stamp`.
+Blank line inserted at the top of a scratch copy of that merged `DEPLOY.md`: Ran 10 tests, OK (skipped=1; the infra-yaml check on a machine where the file is absent). A loosened regex passes wherever the infra yaml is absent. Names stay `side-access`, `D2b`, `stamp`.
 
 Marker removed from a scratch copy:
 
