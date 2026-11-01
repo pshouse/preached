@@ -19,7 +19,12 @@ compared, so a chmod or ``os.replace`` of a protected directory is caught
 too. A writable sqlite3.connect under a watched root is refused. A URI is
 left alone only when it has exactly one ``mode`` parameter and that value
 is ``ro``; ``mode=ro&mode=rw``, ``mode=ro&mode=ro``, and any other mode
-are refused.
+are refused. The ``mode`` key and value are exact: ``Mode`` and ``RO`` do
+not match. An ``immutable`` parameter that SQLite would turn on is refused
+as well, including a case-folded key or boolean word and a percent-encoded
+key or value (``IMMUTABLE=1``, ``immutable=TRUE``, ``immutable=%31``,
+``%69mmutable=1``). SQLite itself matches that key with strcmp and keeps
+the first value; the guard refuses any enabling value.
 
 Snap noise is only a regular file named ``<sibling>.box-store-snap-<digits>``
 whose sibling entry is in the same directory. A directory of that name, a
@@ -436,11 +441,11 @@ def _sqlite_fs_path(database: object, uri: bool) -> str | None:
     return text
 
 
-def _sqlite_mode_values(database: object) -> list[str] | None:
-    """Every ``mode`` query value, or None when ``database`` has no query string.
+def _sqlite_query_pairs(database: object) -> list[tuple[str, str]] | None:
+    """Decoded query pairs, or None when ``database`` has no query string.
 
-    The key and the value are exact. ``Mode`` is not ``mode``, and ``RO`` is
-    not ``ro``. Repeated keys stay repeated: ``mode=ro&mode=ro`` is two values.
+    Percent-encoding is decoded. ``+`` is a space, matching ``parse_qsl``.
+    The fragment after ``#`` is not part of the query.
     """
     try:
         text = os.fspath(database)  # type: ignore[arg-type]
@@ -451,11 +456,73 @@ def _sqlite_mode_values(database: object) -> list[str] | None:
     if not isinstance(text, str) or "?" not in text:
         return None
     query = text.split("?", 1)[1].split("#", 1)[0]
-    return [
-        value
-        for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True, separator="&")
-        if key == "mode"
-    ]
+    return urllib.parse.parse_qsl(query, keep_blank_values=True, separator="&")
+
+
+def _sqlite_mode_values(database: object) -> list[str] | None:
+    """Every ``mode`` query value, or None when ``database`` has no query string.
+
+    The key and the value are exact. ``Mode`` is not ``mode``, and ``RO`` is
+    not ``ro``. Repeated keys stay repeated: ``mode=ro&mode=ro`` is two values.
+    """
+    pairs = _sqlite_query_pairs(database)
+    if pairs is None:
+        return None
+    return [value for key, value in pairs if key == "mode"]
+
+
+def _sqlite_atoi(value: str) -> int:
+    """SQLite's atoi: leading whitespace, an optional sign, then digits."""
+    index = 0
+    while index < len(value) and value[index] in " \t\n\r\v\f":
+        index += 1
+    if index >= len(value):
+        return 0
+    sign = 1
+    if value[index] == "-":
+        sign = -1
+        index += 1
+    elif value[index] == "+":
+        index += 1
+    number = 0
+    saw_digit = False
+    while index < len(value) and value[index].isdigit():
+        saw_digit = True
+        number = number * 10 + int(value[index])
+        index += 1
+        if number > 2**63:
+            break
+    if not saw_digit:
+        return 0
+    return sign * number
+
+
+def _sqlite_uri_boolean(value: str) -> bool:
+    """True when sqlite3_uri_boolean would enable a flag whose default is false.
+
+    ``yes``, ``on``, and ``true`` (any case) are true. ``no``, ``off``, and
+    ``false`` (any case) are false. Anything else follows atoi: non-zero is true.
+    """
+    folded = value.casefold()
+    if folded in {"yes", "on", "true"}:
+        return True
+    if folded in {"no", "off", "false"}:
+        return False
+    return _sqlite_atoi(value) != 0
+
+
+def _sqlite_immutable_enabled(database: object) -> bool:
+    """True when any query parameter would turn SQLite's immutable flag on.
+
+    The key is case-folded and the query is percent-decoded, so
+    ``IMMUTABLE=1``, ``immutable=%31``, and ``%69mmutable=1`` all count.
+    Every enabling value counts, not only the first. ``immutable=0`` and
+    ``immutable=false`` do not.
+    """
+    pairs = _sqlite_query_pairs(database)
+    if not pairs:
+        return False
+    return any(key.casefold() == "immutable" and _sqlite_uri_boolean(value) for key, value in pairs)
 
 
 def _sqlite_is_readonly(database: object, uri: bool) -> bool:
@@ -467,15 +534,27 @@ def _sqlite_is_readonly(database: object, uri: bool) -> bool:
 
 
 def _hooked_sqlite_connect(database, *args, **kwargs):
-    """Refuse a writable open under a watched root. mode=ro URIs pass through."""
+    """Refuse a writable or immutable open under a watched root.
+
+    A URI with exactly one ``mode=ro`` passes through. ``immutable=1`` does
+    not, including case and percent-encoding variants. An immutable URI
+    outside a watched root is left alone.
+    """
     uri = _connect_uri(args, kwargs)
-    if not _sqlite_is_readonly(database, uri):
+    immutable = bool(uri) and _sqlite_immutable_enabled(database)
+    if immutable or not _sqlite_is_readonly(database, uri):
         path = _sqlite_fs_path(database, uri)
         if path is not None and _run is not None and not _in_hook:
             note = classify_write(path, _run.live_roots)
             if note is not None:
                 _record(path)
-                raise sqlite3.OperationalError(f"cache guard: refusing a writable SQLite open ({note})")
+                if immutable:
+                    raise sqlite3.OperationalError(
+                        f"cache guard: refusing an immutable SQLite open ({note})"
+                    )
+                raise sqlite3.OperationalError(
+                    f"cache guard: refusing a writable SQLite open ({note})"
+                )
     return _real_sqlite_connect(database, *args, **kwargs)
 
 

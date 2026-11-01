@@ -10,6 +10,9 @@ are one module object.
 
 from __future__ import annotations
 
+__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()
+
+import ast
 import os
 import sqlite3
 import stat
@@ -24,8 +27,6 @@ try:
     from . import cache_guard
 except ImportError:  # discover -s tests loads this file as a top-level module
     import cache_guard
-
-cache_guard.install()
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -291,7 +292,7 @@ class CacheGuardTests(unittest.TestCase):
             shutil.rmtree(resolved)
             outside = root.parent / f"{root.name}-outside.sqlite"
             if outside.exists():
-                outside.unlink()
+                _assert_under_temp(outside).unlink()
         # Both opens hit the same path, so the note set keeps one line.
         self.assertEqual(len(notes), 1, notes)
         self.assertIn("index/wesley.sqlite", notes[0])
@@ -339,6 +340,130 @@ class CacheGuardTests(unittest.TestCase):
                 cache_guard.pop_root(label)
         finally:
             _remove_temp_tree(root)
+
+    def test_sqlite_uri_with_immutable_is_refused(self) -> None:
+        """``immutable=1`` is refused, including case and percent-encoding variants.
+
+        ``mode=ro`` still reads. ``immutable=0`` and ``immutable=false`` are not
+        the flag SQLite turns on. A path outside the watched root is left alone.
+        """
+        self.assertIsNotNone(cache_guard.current_run(), "the suite hook is not armed")
+        root = _temp_root()
+        label = f"fixture-{root.name}"
+        outside = root.parent / f"{root.name}-outside.sqlite"
+
+        def seed(path: Path) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            setup = sqlite3.connect(path)
+            setup.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+            setup.execute("INSERT INTO t(v) VALUES ('base')")
+            setup.commit()
+            setup.close()
+
+        try:
+            db = root / "index" / "wesley.sqlite"
+            seed(db)
+            _assert_under_temp(outside)
+            seed(outside)
+            base = db.resolve().as_uri()
+            cache_guard.push_root(label, root)
+            try:
+                refused = (
+                    "?mode=ro&immutable=1",
+                    "?mode=ro&IMMUTABLE=1",
+                    "?mode=ro&Immutable=1",
+                    "?mode=ro&immutable=TRUE",
+                    "?mode=ro&immutable=%31",
+                    "?mode=ro&%69mmutable=1",
+                    "?mode=ro&%69%6D%6d%75%74%61%62%6C%65=%31",
+                    "?mode=ro&immutable=%74%72%75%65",
+                    "?immutable=1&mode=ro",
+                    "?mode=ro&immutable=1&immutable=0",
+                    "?mode=ro&immutable=01",
+                )
+                for query in refused:
+                    with self.subTest(query=query):
+                        conn = None
+                        try:
+                            with self.assertRaises(sqlite3.OperationalError) as caught:
+                                conn = sqlite3.connect(base + query, uri=True)
+                            message = str(caught.exception)
+                            self.assertIn("cache guard", message)
+                            self.assertIn("immutable", message)
+                        finally:
+                            if conn is not None:
+                                conn.close()
+                allowed = (
+                    "?mode=ro",
+                    "?mode=ro&cache=shared",
+                    "?mode=ro&immutable=0",
+                    "?mode=ro&immutable=false",
+                    "?mode=ro&immutable=FALSE",
+                    "?mode=ro&immutable=",
+                    "?mode=ro&IMMUTABLE=0",
+                )
+                for query in allowed:
+                    with self.subTest(query=query):
+                        reader = sqlite3.connect(base + query, uri=True)
+                        try:
+                            self.assertEqual(reader.execute("SELECT v FROM t").fetchall(), [("base",)])
+                        finally:
+                            reader.close()
+                other = sqlite3.connect(outside.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+                try:
+                    self.assertEqual(other.execute("SELECT v FROM t").fetchall(), [("base",)])
+                finally:
+                    other.close()
+            finally:
+                cache_guard.pop_root(label)
+        finally:
+            _remove_temp_tree(root)
+            if outside.exists():
+                _assert_under_temp(outside).unlink()
+
+    def test_remove_temp_tree_refuses_a_path_outside_the_temp_dir(self) -> None:
+        """The temp-dir assert in ``_remove_temp_tree`` runs before rmtree.
+
+        Every other caller passes a temp directory, so deleting the assert
+        would leave the suite green and would delete a real path.
+        """
+        root = _temp_root()
+        (root / "marker").write_bytes(b"ok")
+        _remove_temp_tree(root)
+        self.assertFalse(root.exists())
+
+        outside = Path("/preached-guard-not-under-temp")
+        resolved = outside.resolve()
+        temp = Path(tempfile.gettempdir()).resolve()
+        self.assertFalse(resolved.is_relative_to(temp), resolved)
+        self.assertFalse(resolved.exists(), resolved)
+        cache = Path("/cache")
+        if cache.exists():
+            cache_resolved = cache.resolve()
+            self.assertFalse(
+                resolved == cache_resolved or resolved.is_relative_to(cache_resolved),
+                resolved,
+            )
+
+        import shutil
+
+        calls: list[str] = []
+        real_rmtree = shutil.rmtree
+
+        def record(path, *args, **kwargs):
+            calls.append(os.fspath(path))
+            raise AssertionError(f"rmtree must not run: {path}")
+
+        shutil.rmtree = record
+        try:
+            with self.assertRaises(AssertionError) as caught:
+                _remove_temp_tree(outside)
+            message = str(caught.exception)
+            self.assertIn("outside the temp dir", message)
+            self.assertNotIn("rmtree must not run", message)
+            self.assertEqual(calls, [])
+        finally:
+            shutil.rmtree = real_rmtree
 
     def test_same_size_same_mtime_replace_is_caught(self) -> None:
         root = _temp_root()
@@ -618,6 +743,35 @@ class CacheGuardTests(unittest.TestCase):
 _ARM = '__import__("importlib").import_module("tests.cache_guard" if __package__ else "cache_guard").install()'
 
 
+def _is_arming_statement(stmt: ast.stmt) -> bool:
+    """True when ``stmt`` is the arming call, compared as syntax not as text."""
+    expected = ast.parse(_ARM).body[0]
+    return ast.dump(stmt) == ast.dump(expected)
+
+
+def _arming_is_first_import(tree: ast.AST) -> bool:
+    """True when the arming call is the first import.
+
+    A module docstring and ``from __future__`` imports may precede it.
+    Any other statement, including a plain ``import`` or a string that
+    merely contains the line, means the module is not armed first.
+    """
+    if not isinstance(tree, ast.Module):
+        return False
+    body = list(tree.body)
+    index = 0
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        index = 1
+    while index < len(body) and isinstance(body[index], ast.ImportFrom) and body[index].module == "__future__":
+        index += 1
+    return index < len(body) and _is_arming_statement(body[index])
+
+
 def _probe_source() -> str:
     return (
         '"""Deliberate write under PREACHED_CACHE; the guard must fail the run."""\n'
@@ -736,14 +890,27 @@ class ArmingInvocationTests(unittest.TestCase):
         for path in sorted((ROOT / "tests").glob("test_*.py")):
             if path.name == "test_arming_probe.py":
                 continue
-            text = path.read_text()
-            if path.name == "test_cache_guard.py":
-                if "cache_guard.install()" not in text:
-                    missing.append(path.name)
-                continue
-            if _ARM not in text:
+            tree = ast.parse(path.read_text(), filename=str(path))
+            if not _arming_is_first_import(tree):
                 missing.append(path.name)
         self.assertEqual(missing, [])
+
+    def test_arming_order_rejects_an_import_before_the_line(self) -> None:
+        """A substring match is not enough. The arming call has to be the first import."""
+        self.assertTrue(_arming_is_first_import(ast.parse(_ARM + "\nimport os\n")))
+        self.assertTrue(
+            _arming_is_first_import(
+                ast.parse('"""doc"""\nfrom __future__ import annotations\n' + _ARM + "\nimport os\n")
+            )
+        )
+        self.assertFalse(_arming_is_first_import(ast.parse("import os\n" + _ARM + "\n")))
+        self.assertFalse(
+            _arming_is_first_import(
+                ast.parse("from __future__ import annotations\nimport os\n" + _ARM + "\n")
+            )
+        )
+        self.assertFalse(_arming_is_first_import(ast.parse("def arm():\n    " + _ARM + "\n")))
+        self.assertFalse(_arming_is_first_import(ast.parse("import os\n_ARM = " + repr(_ARM) + "\n")))
 
 
 # Importing these modules is what ``python -m unittest <module>`` does before
@@ -860,6 +1027,78 @@ _TWICE_SCRIPT = textwrap.dedent(
 )
 
 
+_SENTINEL_SCRIPT = textwrap.dedent(
+    """\
+    import sys
+
+    sys.path.insert(0, sys.argv[1])
+    import cache_guard
+    from unittest.result import TestResult
+
+    cache_guard.install()
+    flag = cache_guard._GUARD_INSTALLED
+    if getattr(TestResult, flag, None) is not True:
+        sys.stderr.write(
+            "sentinel missing after install: %r\\n" % (getattr(TestResult, flag, None),)
+        )
+        sys.exit(2)
+    start = TestResult.startTestRun
+    stop = TestResult.stopTestRun
+    cache_guard.install()
+    if TestResult.startTestRun is not start or TestResult.stopTestRun is not stop:
+        sys.stderr.write("second install rewrapped while the sentinel was set\\n")
+        sys.exit(3)
+    if cache_guard._installed is not True:
+        sys.stderr.write("module flag was not set\\n")
+        sys.exit(4)
+    delattr(TestResult, flag)
+    cache_guard.install()
+    if TestResult.startTestRun is start or TestResult.stopTestRun is stop:
+        sys.stderr.write("clearing only the sentinel did not rewrap\\n")
+        sys.exit(5)
+    sys.stdout.write("sentinel-ok\\n")
+    """
+)
+
+_IO_OPEN_SCRIPT = textwrap.dedent(
+    """\
+    import sys
+
+    sys.path.insert(0, sys.argv[1])
+    import io
+
+    original = io.open
+    import cache_guard
+
+    if cache_guard._real_io_open is not original:
+        sys.stderr.write("io.open was not captured at import\\n")
+        sys.exit(2)
+
+    def wrapped(file, mode="r", *args, **kwargs):
+        return original(file, mode, *args, **kwargs)
+
+    io.open = wrapped
+    if cache_guard._real_io_open is not original:
+        sys.stderr.write("import-time capture changed when io.open was replaced\\n")
+        sys.exit(3)
+    cache_guard._install_write_hooks()
+    try:
+        if cache_guard._real_io_open is not original:
+            sys.stderr.write("hook install recaptured io.open\\n")
+            sys.exit(4)
+        if io.open is not cache_guard._hooked_io_open:
+            sys.stderr.write("io.open was not hooked\\n")
+            sys.exit(5)
+    finally:
+        cache_guard._remove_write_hooks()
+    if io.open is not original or cache_guard._real_io_open is not original:
+        sys.stderr.write("restore did not put back the import-time io.open\\n")
+        sys.exit(6)
+    sys.stdout.write("io-open-import-time-ok\\n")
+    """
+)
+
+
 class ProcessGuardTests(unittest.TestCase):
     """``python -m unittest tests.test_coverage`` and ``tests.test_church_harden``.
 
@@ -912,6 +1151,49 @@ class ProcessGuardTests(unittest.TestCase):
         self.assertNotIn("RecursionError", blob)
         self.assertEqual((write_dir / "ok.txt").read_text(encoding="utf-8"), "hello")
         self.assertEqual((write_dir / "after.txt").read_text(encoding="utf-8"), "after")
+
+    def test_testresult_sentinel_blocks_a_second_wrap_on_its_own(self) -> None:
+        """The TestResult attribute is what stops a second wrap.
+
+        ``_installed`` is already true on the second call. Clearing only the
+        sentinel must wrap ``startTestRun`` again. A module-flag check would
+        not, and the depth counter hides a missing sentinel from the other tests.
+        """
+        _scratch, env = self._env()
+        result = self._run(_SENTINEL_SCRIPT, [str(ROOT / "tests")], env)
+        blob = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, blob)
+        self.assertIn("sentinel-ok", result.stdout)
+
+    def test_io_open_is_captured_at_import_time(self) -> None:
+        """``io.open`` is bound when the module is imported, not when the hook is installed."""
+        source = (ROOT / "tests" / "cache_guard.py").read_text()
+        tree = ast.parse(source)
+        found = [
+            stmt
+            for stmt in tree.body
+            if isinstance(stmt, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "_real_io_open" for target in stmt.targets)
+        ]
+        self.assertEqual(len(found), 1)
+        value = found[0].value
+        self.assertIsInstance(value, ast.Attribute)
+        self.assertEqual(value.attr, "open")
+        self.assertIsInstance(value.value, ast.Name)
+        self.assertEqual(value.value.id, "io")
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Assign) and any(
+                    isinstance(target, ast.Name) and target.id == "_real_io_open" for target in sub.targets
+                ):
+                    self.fail(f"{node.name} assigns _real_io_open")
+        _scratch, env = self._env()
+        result = self._run(_IO_OPEN_SCRIPT, [str(ROOT / "tests")], env)
+        blob = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, blob)
+        self.assertIn("io-open-import-time-ok", result.stdout)
 
 
 if __name__ == "__main__":
