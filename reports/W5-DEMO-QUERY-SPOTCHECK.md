@@ -80,7 +80,7 @@ Banner: acceptable; the reference match is lexical ("Rom"), so Rom 7 outranks th
 - The Use of Money | Luke 16:9 | 0.0325 | 0. Different parable (unjust steward).
 - Awake, Thou That Sleepest | Eph 5:14 | 0.024 | 0. Awakening sermon, no prodigal.
 - The Important Question | Matt 16:26 | 0.016 | 0. Not related.
-Banner: wrong. Strong confidence on three misses. Probably the corpus has no sermon on Luke 15, which makes this a good abstain/weak case that the heuristic missed.
+Banner: wrong. Strong confidence on three misses. This is also a retrieval miss, not only a banner problem: re-querying "prodigal" shows the word appears in 5 chunks across 4 sermons (The Use of Money c0000, The Reward of the Righteous c0046 and c0047, Original Sin c0044, Awake, Thou That Sleepest c0037; counted from `/api/search` results, bm25 and hybrid, k=25). "the prodigal son" has 2 content terms ("the" is a stopword), so they are ANDed and only 2 chunks match (bm25_hits 2). Those mentions are passing ones, so there is probably no sermon on Luke 15, but a better engine would surface the passing mentions rather than unrelated sermons. My grade 0 for The Use of Money and Awake is for the excerpt shown, which does not show the mention.
 
 ### 7. Sermon on the Mount (strong; dense_top 0.840, bm25 100)
 - Upon our Lord's Sermon on the Mount, Discourse 1 | Matt 5:1-4 | 0.031 | 2. Opening of the series.
@@ -178,13 +178,13 @@ Note shown: "These passages may not answer your question. They are the closest m
 - On Love | 1 Cor 13:3 | 0.023 | 0. A battle-death anecdote.
 - The General Spread of the Gospel | Is 11:9 | 0.020 | 0. Luther on revival.
 - The Important Question | Matt 16:26 | 0.017 | 0.
-Banner: should have been `none`/abstain. bm25_hits is 100 even though nothing sensible matches, so common words ("who", "last", "year") likely drive that signal.
+Banner: should have been `none`/abstain. Cause (verified in code, see (c)): the query has 5 content terms (won, Super, Bowl, last, year), so `to_fts_query` ORs them (`src/preached/fts.py:151`); the OR matches 100 chunks and some shown hit is in both lists, which counts as agreement (`src/preached/abstain.py:135`). Stopwords ("who", "the") are removed by `fts.content_terms` and are not the cause; the OR-ed ordinary words "won", "last", "year" are.
 
 ### 23. best chocolate chip cookie recipe (weak, NOT abstain; dense_top 0.752, bm25 100)
 - On Obedience to Parents | Col 3:20 | 0.025 | 0. Child rearing.
 - Catholic Spirit | 2 Ki 10:15 | 0.024 | 0. Conscience.
 - On Attending the Church Service | 1 Sam 2:17 | 0.022 | 0.
-Banner: same failure as 22; "best" and "recipe"-adjacent words give lexical hits.
+Banner: same failure as 22. Content terms are best, chocolate, chip, cookie, recipe (5), so the query switches to OR (`src/preached/fts.py:151`), matches 100 chunks, and a shown hit counts as agreement (`src/preached/abstain.py:135`).
 
 ### 24. What is the current price of bitcoin? (none / ABSTAIN; dense_top 0.746, bm25 0)
 - On the Danger of Increasing Riches | Ps 62:10 | 0.0164 | 0. Wealth and charity, not price.
@@ -209,40 +209,47 @@ Pair with one abstention for contrast: **What is the current price of bitcoin?**
 Avoid on camera: "the prodigal son", "Why does God allow suffering?", "How should I treat my enemies?", and both Super Bowl/cookie queries.
 
 ## (b) Weakest queries and hunches (all hunches, not verified in code)
-- **the prodigal son** (0,0,0 yet strong). Hunch: the corpus has no Luke 15 sermon, and the "strong" label came from the dense score (0.82) plus a tiny agreement signal, not from relevance. The top hit's score (0.0325) equals the maximum RRF for a rank-1-in-both-lists chunk, so both retrievers agreed on a wrong answer ("son"/"money" semantics).
+- **the prodigal son** (0,0,0 yet strong). Both a banner problem and a retrieval miss: "prodigal" occurs in 5 chunks across 4 sermons (see query 6) and none was ranked into the top 3 as an on-point hit. Hunch: the "strong" label came from the dense score (0.82) plus a tiny agreement signal, not from relevance. The top hit's score (0.0325) equals the maximum RRF for a rank-1-in-both-lists chunk, so both retrievers agreed on a wrong answer ("son"/"money" semantics).
 - **Why does God allow suffering?** (0,0,1 yet strong). Hunch: dense retrieval latches onto "good/pleasure/happiness" in "The Important Question" (appears twice); the doubled hits from one sermon also crowd out better sermons.
 - **How should I treat my enemies?** (relevant material exists, abstained). Hunch: bm25_hits was only 2 and the RRF scores are all the single-list value 0.0164, i.e. the lexical list and dense list had no overlap. The abstain rule seems to key on agreement or a dense_top threshold around 0.81, which this relevant query just fell under. Wesley's wording is "love your enemies"/"them that persecute you", far from the query's vocabulary.
 - **the good Samaritan**: honest weak. Hunch: no dedicated sermon; the parable is probably only mentioned in passing.
 - **Under-confident weak banners (pray when anxious, doubt, money and riches)**: all have bm25_hits 0 and every result at score 0.0164 (= 1/61, dense-only rank 1). Hunch: the rule treats "no lexical hit" as weak regardless of dense_top (0.86 to 0.89, as high as the strong queries). Conversational phrasing that does not share Wesley's vocabulary is penalized.
 - **Repeated chunks from one sermon**: queries 7, 11, 15 return three chunks of the same sermon in the top 3. Hunch: no per-sermon diversification (the full result list of 10 may do better, but top 3 is what the video shows).
-- **Romans 8** ranks a Romans 7 sermon first. Hunch: reference queries are handled as plain text; no scripture-reference parsing against the `scripture` field.
+- **Romans 8** ranks a Romans 7 sermon first. `scripture_match` (`src/preached/fts.py:110`) only parses `Book chapter:verse`, so "Romans 8" with no verse is not a scripture query; it becomes plain "Romans" (the digit is dropped by `content_terms`) and matches any chunk containing "Romans", which is why Romans 7 ranks first.
 
 ## (c) Did abstention behave?
 Partly.
 - True abstains: bitcoin (24) and bicycle (25) correctly returned `abstain: true`, level `none`. Both had dense_top about 0.75 and bm25_hits 0.
-- Missed abstains: Super Bowl (22) and cookie recipe (23) returned level `weak`, `abstain: false`, with a gentler "closest matches" note, even though nothing relevant was returned. Their dense_top (0.755, 0.752) is as low as the two true abstains; the difference is bm25_hits=100, so lexical hits on common words appear to turn off abstention. If the video shows an off-topic query, use the bitcoin or bicycle one, not a sports or food one.
+- Missed abstains: Super Bowl (22) and cookie recipe (23) returned level `weak`, `abstain: false`, with a gentler "closest matches" note, even though nothing relevant was returned. Their dense_top (0.755, 0.752) is as low as the two true abstains. The cause is not stopword hits (stopwords are removed by `fts.content_terms`). Both queries have exactly 5 content terms, and `to_fts_query` uses OR above 4 (`src/preached/fts.py:151`), so the lexical list fills to 100 with chunks that contain any one ordinary word. A shown hit that is in both lists counts as `agreement` (`src/preached/abstain.py:135`), and `decide` then gives `weak` rather than `none` (`abstain.py:162-164`: no agreement and low is `none`; low alone is `weak`). The 100 OR hits therefore count as agreement. If the video shows an off-topic query, use the bitcoin or bicycle one (both have fewer than 5 content terms, so AND with zero matches, bm25_hits 0), not a sports or food one.
 - False abstain: "How should I treat my enemies?" (13) abstained although the corpus has relevant sermons.
 - On-topic but unanswerable queries ("the prodigal son") did not abstain at all and were labelled strong.
+- Narration must NOT generalise the bitcoin abstain into "it knows when it can't answer": 2 of 4 off-topic queries did not abstain, and the bitcoin results shown on screen are riches passages (the user still sees them under the banner).
 - Net: out of 4 off-topic queries, 2 abstained (50%), and 1 of 21 on-topic queries abstained wrongly. Heuristic wording in the note ("a rough automatic check") is honest about this.
 
 ## (d) Latency (informational)
 Client wall time per request (curl, local, includes HTTP): p50 64 ms, p95 69 ms, min 55, max 84 (n=25).
 Server `took_ms`: p50 56 ms, p95 62 ms, min 47, max 77 (n=25).
+Not for camera. On camera say only "under a tenth of a second on a desktop CPU".
 Requests were serial and spaced; this says nothing about concurrent load. First query was not noticeably slower than the rest (the service was already warm).
 
 ## Recommendations (no code changed here)
-1. Retune the confidence rule so a high dense_top with bm25_hits 0 is not automatically weak, and so a very low dense_top (under about 0.78) abstains even when bm25_hits is large (stopword hits). Check whether bm25_hits should ignore stopwords.
+1. Retune the confidence rule so a high dense_top with bm25_hits 0 is not automatically weak, and so a very low dense_top (under about 0.78) abstains even when the OR fallback fills bm25_hits to 100. Consider not counting agreement from an OR query (more than 4 content terms), or requiring agreement from a hit that matches several terms. Stopwords are already removed, so that is not the fix.
 2. Consider a per-sermon cap or merge in the top results.
-3. Consider parsing scripture references ("Romans 8") to boost the `scripture` field match.
+3. Consider parsing chapter-only references ("Romans 8"); `scripture_match` (`src/preached/fts.py:110`) requires a verse, so these fall through to plain "Romans".
 4. If a `why` explanation is expected in the UI, it is not in the API response today; confirm whether that is intended.
+
+## R2 (CTO CONDITIONAL at e3ee723)
+- MF1: section (d) now says "Not for camera. On camera say only 'under a tenth of a second on a desktop CPU'." right under the numbers.
+- MF2: the stopword explanation was wrong and is replaced in query 22, query 23, section (b)/(c) and rec 1. Verified lines: `src/preached/fts.py:151` is the `" AND " if len(terms) <= 4 else " OR "` joiner (Super Bowl: won, Super, Bowl, last, year; cookie: best, chocolate, chip, cookie, recipe; both 5, so OR, 100 hits); `src/preached/abstain.py:135` is `agreement=any(hit.rowid in both for hit in shown)`; `abstain.py:162-164` turns agreement plus low dense_top into `weak` instead of `none`. Stopwords are removed by `fts.content_terms`. Rec 1 no longer says to ignore stopwords. Merged origin/main first; those lines hold on the merged tree (read, not computed).
+- S1: noted under "Romans 8" and rec 3: `fts.py:110` (`scripture_match`) parses `Book ch:v` only, so "Romans 8" becomes plain "Romans".
+- S2: "prodigal" is in 5 chunks across 4 sermons (counted live via `/api/search`, bm25 and hybrid), so query 6 is also a retrieval miss.
+- Narration line added in (c): do NOT generalise the bitcoin abstain into "it knows when it can't answer".
+- Demo picks unchanged (approved).
 
 ## PR BODY
 
 Report-only spot check of 25 queries against the live demo, to pick demo-video queries. Adds `reports/W5-DEMO-QUERY-SPOTCHECK.md` only.
 
-`git diff --stat origin/main...HEAD`:
+R2: corrected the cause of the Super Bowl/cookie non-abstains (5 content terms switch `to_fts_query` to OR, `fts.py:151`; the 100 OR hits count as agreement, `abstain.py:135`; stopwords are removed, so not the cause). Added the latency "not for camera" line, the "Romans 8" no-verse note, "prodigal" as a retrieval miss (5 chunks, 4 sermons), and a no-generalising-the-bitcoin-abstain narration warning.
 
-```
- reports/W5-DEMO-QUERY-SPOTCHECK.md | 248 ++++++++++++++++++++++++++++++++++++
- 1 file changed, 248 insertions(+)
-```
+STAT_PLACEHOLDER
