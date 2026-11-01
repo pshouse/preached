@@ -248,6 +248,10 @@ DEFAULT_MAX_CLIENT_CONNECTIONS = 4
 # In-flight requests per client key. Through a trusted proxy many clients
 # share one peer, so this is the per-client cap there.
 DEFAULT_MAX_CLIENT_REQUESTS = 4
+# /healthz slots_stuck counts keys that have sat at that cap for longer than
+# this. A count only: the search table and the /healthz table are separate,
+# and the field never carries a key or an address. 0 and below fall back.
+DEFAULT_SLOT_CAP_STUCK_S = 30.0
 # Once a quarter of the connection slots or fewer are free, a connection
 # waiting for its next request line gets this long, not the full deadline.
 SCARCE_IDLE_S = 2.0
@@ -2306,6 +2310,10 @@ def make_handler(app: App):
                 return
             if path == "/healthz":
                 payload = app.health()
+                # Ordinary /healthz only. The kill-switch body is sent in
+                # _blocked and stays {"ok": false, "disabled": true}.
+                if payload.get("ok"):
+                    payload["slots_stuck"] = self.server.slots_stuck_at_cap()
                 self._send_json(200 if payload.get("ok") else 503, payload, include_body)
                 return
             if path in ("/api/search", "/api/side"):
@@ -2359,11 +2367,16 @@ def make_handler(app: App):
                 return
             self._send_json(200, meta, include_body)
 
-        def _respond(self, include_body: bool) -> None:
+        def _respond(self, include_body: bool, *, reject_method: bool = False) -> None:
+            # GET, HEAD and the 405 methods share this finally. _blocked
+            # acquires the in-flight slot; this is the only place that releases it.
             self._slot_key = None
             self._slot_health = False
             try:
-                self._respond_inner(include_body)
+                if reject_method:
+                    self._send_method_not_allowed()
+                else:
+                    self._respond_inner(include_body)
             finally:
                 if self._slot_key is not None:
                     self.server.release_slot(self._slot_key, health=self._slot_health)
@@ -2392,7 +2405,7 @@ def make_handler(app: App):
         def do_HEAD(self) -> None:
             self._respond(False)
 
-        def _reject_method(self) -> None:
+        def _send_method_not_allowed(self) -> None:
             try:
                 if self._blocked(True):
                     return
@@ -2416,6 +2429,9 @@ def make_handler(app: App):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
+
+        def _reject_method(self) -> None:
+            self._respond(True, reject_method=True)
 
         def do_POST(self) -> None:
             self._reject_method()
@@ -2515,6 +2531,10 @@ class PreachedServer(ThreadingHTTPServer):
         self._conns: dict[object, _Connection] = {}
         self._slots_by_key: dict[str, int] = {}
         self._health_slots_by_key: dict[str, int] = {}
+        # monotonic time a key first reached the in-flight cap. Cleared when
+        # it drops below. Not a client key published anywhere.
+        self._capped_since: dict[str, float] = {}
+        self._health_capped_since: dict[str, float] = {}
         self.refusals = RefusalLog()
         try:
             reserved = int(os.environ.get("PREACHED_HEALTH_RESERVED_CONNECTIONS", ""))
@@ -2531,6 +2551,9 @@ class PreachedServer(ThreadingHTTPServer):
         self.max_requests_per_client = _positive_int(
             os.environ.get("PREACHED_MAX_CLIENT_REQUESTS"),
             DEFAULT_MAX_CLIENT_REQUESTS,
+        )
+        self.slot_cap_stuck_s = _positive_float(
+            os.environ.get("PREACHED_SLOT_CAP_STUCK_S"), DEFAULT_SLOT_CAP_STUCK_S
         )
         self.header_deadline_s = _positive_float(
             os.environ.get("PREACHED_HEADER_DEADLINE_S"), HEADER_DEADLINE_S
@@ -2706,23 +2729,57 @@ class PreachedServer(ThreadingHTTPServer):
             return conn is not None and conn.reserved
 
     def acquire_slot(self, key: str, *, health: bool = False) -> bool:
-        """One in-flight request for ``key``. /healthz has its own table."""
+        """One in-flight request for ``key``. /healthz has its own table.
+
+        The request that fills the cap records the time. A later release
+        below the cap clears it, so the clock starts over if the key fills
+        the cap again.
+        """
         table = self._health_slots_by_key if health else self._slots_by_key
+        capped = self._health_capped_since if health else self._capped_since
         with self._conn_lock:
             held = table.get(key, 0)
             if held >= self.max_requests_per_client:
                 return False
-            table[key] = held + 1
+            held += 1
+            table[key] = held
+            if held >= self.max_requests_per_client:
+                capped.setdefault(key, time.monotonic())
             return True
 
     def release_slot(self, key: str, *, health: bool = False) -> None:
         table = self._health_slots_by_key if health else self._slots_by_key
+        capped = self._health_capped_since if health else self._capped_since
         with self._conn_lock:
             left = table.get(key, 0) - 1
             if left <= 0:
                 table.pop(key, None)
             else:
                 table[key] = left
+            if left < self.max_requests_per_client:
+                capped.pop(key, None)
+
+    def slots_stuck_at_cap(self, *, now: float | None = None) -> int:
+        """Keys still at an in-flight cap for longer than ``slot_cap_stuck_s``.
+
+        Search and ``/healthz`` are separate, so one key at both caps counts
+        as two. The return value is that count: not a key and not an address.
+        ``now`` is monotonic time; the request path leaves it unset.
+        """
+        moment = time.monotonic() if now is None else now
+        limit = self.slot_cap_stuck_s
+        cap = self.max_requests_per_client
+        with self._conn_lock:
+            stuck = 0
+            pairs = (
+                (self._slots_by_key, self._capped_since),
+                (self._health_slots_by_key, self._health_capped_since),
+            )
+            for table, capped in pairs:
+                for key, started in capped.items():
+                    if table.get(key, 0) >= cap and moment - started > limit:
+                        stuck += 1
+            return stuck
 
     def process_request(self, request, client_address) -> None:
         if not self._acquire_connection(request, client_address[0]):
