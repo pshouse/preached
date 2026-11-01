@@ -1,6 +1,6 @@
 # W5-F01: 405 releases the in-flight slot
 
-Branch `fix/w5-405-slot-release`, cut from `origin/main` at `e434539`, resynced onto `origin/main` `8d46f14` (see the last section). Audit F-01 (High) in `reports/W5-HTTP-SECURITY-AUDIT.md` on `origin/qa/w5-http-security-audit`. Cause checked on that main before the edit.
+Branch `fix/w5-405-slot-release`, cut from `origin/main` at `e434539`, resynced onto `origin/main` `8d46f14` (see the last section). Audit F-01 (High) in `reports/W5-HTTP-SECURITY-AUDIT.md` (merged on main by PR #91, merge commit `1a0a340`; F-01 at `:62` and `:70`). Cause checked on that main before the edit.
 
 ## Cause
 
@@ -33,7 +33,7 @@ FAILED (failures=2)
 
 GREEN on this branch: the same module, 10 tests, OK in 7.984s. That includes four then eight POSTs to `/api/search` and to `/healthz`, then a GET that is 200 with both tables and both cap clocks empty. A gated `release_slot` shows the 405 body is readable while the slot is still held, and the table is empty once the gate opens. The cap clock counts only when the key has sat at the cap for more than N seconds (exactly N stays 0). `/healthz` shows the count and the body contains no client address.
 
-The property test covers every method in GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS and TRACE, every path in `/`, `/healthz`, `/api/search`, `/api/side`, `/api/sermon/wesley-001`, `/static/favicon.svg` and `/no/such`, and every branch in handled, disabled, busy, 429, bad request and exception. After each request both `_slots_by_key` and `_health_slots_by_key` are `{}`, and both cap clocks are empty.
+The property test covers every method in GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS and TRACE, every path in `/`, `/healthz`, `/api/search`, `/api/side`, `/api/sermon/wesley-001`, `/static/favicon.svg` and `/no/such`, and every branch in handled, disabled, busy, reserved (a reserved /healthz connection refused on any other path), 429, bad request and exception. After each request both `_slots_by_key` and `_health_slots_by_key` are `{}`, and both cap clocks are empty.
 
 ## DEPLOY cites
 
@@ -45,7 +45,7 @@ Full suite, with `PREACHED_CACHE`, `PREACHED_ONNX_DIR`, `HF_HOME`, `DENO_DIR`, `
 
 ```
 Ran 1130 tests in 275.341s
-OK (skipped=12)
+OK (skipped=12) (machine not recorded; tree `8d46f14` + branch)
 ```
 
 `test_every_cited_file_line_holds_its_string` is in that run. The suite exited 0, so that test has no failure from this change.
@@ -56,8 +56,8 @@ OK (skipped=12)
 
 `origin/main` merged into this branch with a normal merge commit (no rebase). The branch was based on `e434539`; the merge base with `origin/main` (`8d46f14`) is the new base. Main changed `app/server.py` by two lines since `e434539` (the `why` field: `"why"` in the hit field list and `"why": hit.why.as_dict() ...` in the hit dict). Both are present after the merge, and no F-01 hunk was touched: the diff of `app/server.py` against `origin/main` is the same set of added and removed lines as this branch's own diff against `e434539`. The `why` field's responses are not changed by the merge.
 
-Conflicts were in `docs/DEPLOY.md` (cites) and `tests/test_deploy_alerts.py` (CITED pins) only. They were resolved by editing, not by picking a side: main's text kept, then every `app/server.py` cite and pin re-derived against the merged `app/server.py` by finding each pinned string, then the cites read by `test_every_cited_file_line_holds_its_string` and `test_the_runbook_cites_exactly_the_pinned_lines`. The slot-fairness row, the "W5 405 in-flight slot" note and the tree-relative sentence ("this tree's `app/server.py`, the copy beside this document") are kept.
+Conflicts were in `docs/DEPLOY.md` (cites) and `tests/test_deploy_alerts.py` (CITED pins) only. They were resolved by editing, not by picking a side: main's text kept, then every `app/server.py` cite and pin re-derived against the merged `app/server.py` by finding each pinned string, then the cites read by `test_every_cited_file_line_holds_its_string` and `test_the_runbook_cites_exactly_the_pinned_lines`. The slot-fairness row, the "W5 405 in-flight slot" note and the tree-relative sentence ("this tree's `app/server.py`, the copy beside this document") are kept. Exception: `docs/DEPLOY.md:812` was a side-pick of the branch wording, not an edit; both sides had rewritten the line (see `reports/W5-F01-FOLLOWUPS.md` N1).
 
 Burst tests on the merged branch: RED with `app/server.py` swapped for `origin/main`'s copy (restored after), both four-POST halves fail with `(False, 503) != (True, 200)` and `body=b'{"error": "unavailable"}'`; GREEN on the merged tree, `test_reject_method_slot` 10 tests OK.
 
-Full suite on temp caches (all seven variables on fresh `mktemp -d` dirs): `Ran 1146 tests in 253.312s`, `OK (skipped=12)`. No `test_every_cited_file_line_holds_its_string` failure. `/cache` listing (`find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort`, 1640 lines) is identical before and after.
+Full suite on temp caches (all seven variables on fresh `mktemp -d` dirs): `Ran 1146 tests in 253.312s`, `OK (skipped=12)` (machine not recorded; tree `8d46f14` + branch). No `test_every_cited_file_line_holds_its_string` failure. `/cache` listing (`find /cache -maxdepth 3 -printf '%p %s %T@\n' | sort`, 1640 lines) is identical before and after.
