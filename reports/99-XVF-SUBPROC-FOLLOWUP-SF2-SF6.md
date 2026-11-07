@@ -133,3 +133,20 @@ Code head e37f0f710eb17a49400a7a88d8812ce171bccb56 on test/w5-subproc-followup (
 See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` R2 for file:line and the DetectorTest/mutant that proves each item. Tests: targeted `Ran 88 tests` `OK (skipped=3)`; full suite on preached-sandbox at e37f0f710eb17a49400a7a88d8812ce171bccb56 `Ran 1229 tests in 260.362s` `OK (skipped=15)`. /cache before/after: 139814 lines each, sha256 d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7 both, diff none. DEPLOY cites are untouched (no cited file changed).
 
 `git diff --stat origin/main...HEAD` (in-scope files only; refreshed after this report commit in the stat block below).
+
+## R2 stat (`git diff --stat origin/main...HEAD`, head cf31325d9a52fa9eaa619e1ff5743cd86b24af39 plus this stat block)
+
+```
+ reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md | 135 ++++++
+ reports/W5-SUBPROC-ENV-HELPER.md           |   6 +-
+ scripts/compare_responses.py               |   2 +-
+ tests/README.md                            |  16 +-
+ tests/test_child_home_guard.py             | 128 ++++-
+ tests/test_deploy.py                       |   5 +-
+ tests/test_embed_backend.py                |   5 +-
+ tests/test_hard_conditions.py              |   5 +-
+ tests/test_onnx_pin_repro.py               |   5 +-
+ tests/test_shutdown.py                     |   5 +-
+ tests/test_subproc_env_guard.py            | 725 +++++++++++++++++++++++++----
+ 11 files changed, 917 insertions(+), 120 deletions(-)
+```
