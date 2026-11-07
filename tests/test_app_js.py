@@ -662,8 +662,14 @@ document.getElementById = function (id) { return nodes[id] || null; };
 document.createElement = function (tag) { return new FakeNode(tag); };
 document.querySelector = function (sel) { return sel === ".wrap" ? nodes.wrap : null; };
 
+function noFocusMove(label) {
+  eq(nodes.note.focused, false, label + ": #note not focused");
+  eq(nodes.confidence.focused, false, label + ": #confidence not focused");
+}
+
 var payload = { classic: classic, church: churchLow };
 showSides(payload);
+noFocusMove("low church side");
 eq(nodes.sides.hidden, false, "sides shown");
 eq(nodes.results.hidden, true, "single list hidden");
 eq(nodes.sides.children.length, 2, "two columns");
@@ -683,6 +689,7 @@ walk(nodes.sides, []).forEach(function (node) {
 var churchCards = nodes.sides.children[1].children.filter(function (node) { return node.className === "results"; })[0];
 eq(churchCards.children.length, 1, "low church cards shown");
 toggleLowConfidence();
+noFocusMove("toggle");
 churchCards = nodes.sides.children[1].children.filter(function (node) { return node.className === "results"; })[0];
 var classicCards = nodes.sides.children[0].children.filter(function (node) { return node.className === "results"; })[0];
 eq(churchCards.children.length, 0, "toggle hides only the low side");
@@ -693,11 +700,13 @@ eq(nodes.confidence.textContent, "", "banner text cleared");
 
 var classicBm25 = Object.assign({}, classic, { note: "Embeddings are not loaded; results are BM25 only." });
 showSides({ classic: classicBm25, church: churchMissing });
+noFocusMove("bm25 classic side");
 eq(nodes.note.hidden, false, "fallback note announced in .notices");
 eq(nodes.note.textContent, "Classic library: John Wesley: Embeddings are not loaded; results are BM25 only.", "fallback note names its side");
 eq(nodes.confidence.hidden, true, "no banner for unrated classic");
 
 showSides({ classic: classic, church: churchMissing });
+noFocusMove("plain sides");
 eq(nodes["hide-low"].hidden, true, "nothing to hide when church is missing");
 var missingStatus = nodes.sides.children[1].children.filter(function (node) { return node.className === "status"; })[0];
 eq(missingStatus.textContent, CHURCH_EMPTY, "column says nothing yet");
@@ -705,6 +714,32 @@ eq(nodes.note.hidden, true, "plain sides leave note hidden");
 eq(nodes.note.textContent, "", "plain sides leave note empty");
 eq(nodes.confidence.hidden, true, "plain sides leave banner hidden");
 eq(nodes.confidence.textContent, "", "plain sides leave banner empty");
+
+/* Two sides at once: classic then church, joined with one space. */
+hideLowConfidence = false;
+var churchNote = "Church search used keywords only.";
+var churchLowNoted = Object.assign({}, churchLow, { note: churchNote });
+showSides({ classic: classicBm25, church: churchLowNoted });
+noFocusMove("two notes");
+eq(nodes.note.hidden, false, "two fallback notes announced");
+eq(nodes.note.textContent,
+  "Classic library: John Wesley: " + classicBm25.note + " Your church (sample data): " + churchNote,
+  "two notes: classic then church, single-space join");
+
+var classicWeak = Object.assign({}, classic, { confidence: { level: "weak", note: null } });
+showSides({ classic: classicWeak, church: churchLow });
+noFocusMove("two banners");
+eq(nodes.confidence.hidden, false, "two banners announced");
+eq(nodes.confidence.textContent,
+  "Classic library: John Wesley: " + MESSAGES.weak + " Your church (sample data): " + MESSAGES.low,
+  "two banners: classic then church, single-space join");
+
+/* Back to classic view: the raw note and banner, no side heading, no columns. */
+var classicNote = "Embeddings are not loaded; results are BM25 only.";
+showResults(Object.assign({}, classic, { note: classicNote, abstain: true }));
+eq(nodes.note.textContent, classicNote, "classic view note has no side heading");
+eq(nodes.confidence.textContent, MESSAGES.low, "classic view banner has no side heading");
+eq(nodes.sides.hidden, true, "classic view hides the columns");
 console.log("ok");
 """
 

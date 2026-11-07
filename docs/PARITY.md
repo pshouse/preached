@@ -63,13 +63,15 @@ Baseline computed with this harness on the reviewer box (machine `grok-bot-vm`; 
 
 | Set | With `why` | `--strip why` |
 |---|---|---|
-| `http` | `29e0c0786acacc68` | `b72c4dec54111ca1` |
-| `no-church` | `218d30828042a711` | `f76209cb54d87862` |
+| `http` | `e21a19b25cc1af12` | `5acbc46ef2a6794d` |
+| `no-church` | `1601bf8f271e5192` | `eb3d32449ac95d39` |
 | `in-process` | `b2acb9b6b450a470` | `1ea2b8a087d9f371` |
 | `in-process-no-health` | `17be2c66569fab1e` | `72d157b749864101` |
 | `search+sermon` | `e38ec8cba9ddca3e` | `8f6508ffaf72af35` |
 | `side` | `026f0ce37111e4ec` | `e6f28abb5f3866f7` |
 | `church` | `43dd3d71a14c50bf` | `94ddac6334e3c2fb` |
+
+`http` and `no-church` were re-taken for PR #103 on the reviewer box (`grok-bot-vm-181711960`, Python 3.12.16, onnxruntime 1.31.1, same index, model and harness, `PYTHONHASHSEED=12345`) on trial merge `f17e4f5` (main `ebc058d` + PR head `3c9b0eb`). The other five rows reproduced unchanged on main `ebc058d`.
 
 These were identical across 3 runs and under `PYTHONHASHSEED=0` and `12345`. With `--strip why`, pre-#88 `e434539` gives the same `in-process`, `in-process-no-health`, `search+sermon`, `side` and `church`. Its `http` (`e691bd2fc5678ce9`) and `no-church` (`3d82fdb5538a768e`) differ only in the `/` and `/static/app.js` byte hashes, which #88 changed (`1da012a`, `e6bec88`).
 
@@ -77,7 +79,7 @@ The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any U
 
 **History: the `83121da` baseline.** On main `83121da314137c4d611d1725a814374c7d2bb6fb` (Python 3.12.15, same box, index, model and harness) `http` was `27d7cb2bbe8a82d3` / `5aa8821e0ecc7d22` (`--strip why`) and `no-church` was `e1fa9ccca05c5aec` / `b393295f9ae9b309`; the other five rows were the same as above. Main `3aef7ca` moved only these two because #96 (`5244dc9`) added `slots_stuck` to HTTP `/healthz`; `--strip slots_stuck` gives back the `83121da` values exactly.
 
-**History: PR #103 (PR-C, audit F-03), intended move.** PR #103 edits only `app/static/app.js` (`showSides` now writes the column warnings into `#note` and `#confidence`). On the synthetic index, `/static/app.js` is the only record that differs, in `http` and `no-church` (body sha256 `0e21b3b3…dac62` on main `484e682` to `3a08bf55…0dd9f`). The five other sets, and `/`, are identical. The CI pins moved so: `PINNED["http"]` `b198c5b3546ef6eb` to `a698343bd83ea865`, `PINNED["no-church"]` `29f0c7e50f011dea` to `153267cefae0f1df`, `PINNED_NO_WHY["http"]` `87598c3cb97e7a4e` to `692ae6d888dc2fb7`, `PINNED_NO_WHY["no-church"]` `cc0f371a6b6cdf27` to `15c9ee63ad285b64`. The reference table above is the reviewer-box (Wesley + ONNX) baseline on main `3aef7ca`. It was not recomputed here, because that index is not available to this change. Its `http` and `no-church` rows apply to the tree before PR #103, and the reviewer box must re-take them on the merged main, keeping these rows as history.
+**History: PR #103 (PR-C, audit F-03), intended move.** PR #103 edits only `app/static/app.js` (`showSides` now writes the column warnings into `#note` and `#confidence`). On the synthetic index, `/static/app.js` is the only record that differs, in `http` and `no-church` (body sha256 `0e21b3b3…dac62` on main `484e682` to `3a08bf55…0dd9f`). The five other sets, and `/`, are identical. The CI pins moved so: `PINNED["http"]` `b198c5b3546ef6eb` to `a698343bd83ea865`, `PINNED["no-church"]` `29f0c7e50f011dea` to `153267cefae0f1df`, `PINNED_NO_WHY["http"]` `87598c3cb97e7a4e` to `692ae6d888dc2fb7`, `PINNED_NO_WHY["no-church"]` `cc0f371a6b6cdf27` to `15c9ee63ad285b64`. Before PR #103 the reviewer-box rows (main `3aef7ca`, reproduced unchanged on `ebc058d`) were `http` `29e0c0786acacc68` / `b72c4dec54111ca1` (`--strip why`) and `no-church` `218d30828042a711` / `f76209cb54d87862`. On that real index too, `/static/app.js` is the only differing record.
 
 **Other hosts.** The hashes hold only for the `index_version` and `model_sha256` above. A host with a different index (the CTO box `/cache/index/wesley.sqlite`, or omarchy, `index_version` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`) needs its own baseline from this harness on its own main, recorded here with the same fields.
 
@@ -86,7 +88,7 @@ The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any U
 From the checkout under test, against the index the baseline was taken on:
 
     uv run python scripts/parity_hash.py --index PATH/TO/wesley.sqlite \
-      --expect http=29e0c0786acacc68 --expect no-church=218d30828042a711 \
+      --expect http=e21a19b25cc1af12 --expect no-church=1601bf8f271e5192 \
       --expect in-process=b2acb9b6b450a470 --expect in-process-no-health=17be2c66569fab1e \
       --expect search+sermon=e38ec8cba9ddca3e --expect side=026f0ce37111e4ec \
       --expect church=43dd3d71a14c50bf
