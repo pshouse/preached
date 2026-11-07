@@ -523,9 +523,20 @@ function showSides(data) {
   lastView = "side";
   var classicState = describeSide(data && data.classic, hideLowConfidence, "classic");
   var churchState = describeSide(data && data.church, hideLowConfidence, "church");
+  var states = [classicState, churchState];
+  var noteParts = [];
+  var confidenceParts = [];
+  for (var n = 0; n < states.length; n += 1) {
+    if (states[n].fallbackNote) noteParts.push(states[n].heading + ": " + states[n].fallbackNote);
+    if (states[n].confidenceNote && states[n].showResults === true) {
+      confidenceParts.push(states[n].heading + ": " + states[n].confidenceNote);
+    }
+  }
+  setText("note", noteParts.join(" "));
   document.getElementById("status").textContent =
     classicState.heading + ". " + classicState.status + " " +
     churchState.heading + ". " + churchState.status;
+  setText("confidence", confidenceParts.join(" "));
   var results = document.getElementById("results");
   results.hidden = true;
   var sides = document.getElementById("sides");
