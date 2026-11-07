@@ -16,7 +16,10 @@ In tests/, an env value passes when it is
 - a name or attribute assigned in the same file, where every assignment passes
   and nothing later touches the flag (``pop``, ``del``, ``update``, ``clear``,
   a store of another value, or a store under a non-constant key), also through
-  an alias of the name.
+  an alias of the name. For-loop, ``with``, unpacking and walrus targets count
+  as assignments of an unknown value. Attribute mutations are collected over
+  the whole file, so a ``self.e``/``cls.e`` write in ``setUp`` or another
+  method is seen at a later call.
 
 In scripts/ (which run standalone and cannot import the helper) the call itself
 must pass: a dict that sets ORT_DISABLE_TELEMETRY to "1" after any ``**``
@@ -52,7 +55,12 @@ SUBPROCESS_ENV_INDEX = 10  # Popen(args, bufsize, executable, stdin, stdout, std
 ASYNCIO_CALLS = {"create_subprocess_exec", "create_subprocess_shell"}
 OS_ENV_LAST = {"execle", "execlpe", "spawnle", "spawnlpe"}  # env is the last positional
 OS_ENV_INDEX = {"execve": 2, "execvpe": 2, "spawnve": 3, "spawnvpe": 3, "posix_spawn": 2, "posix_spawnp": 2}
-MODULE_CALLS = {"subprocess": SUBPROCESS_CALLS, "asyncio": ASYNCIO_CALLS, "os": OS_ENV_LAST | set(OS_ENV_INDEX)}
+MODULE_CALLS = {
+    "subprocess": SUBPROCESS_CALLS,
+    "asyncio": ASYNCIO_CALLS,
+    "asyncio.subprocess": ASYNCIO_CALLS,
+    "os": OS_ENV_LAST | set(OS_ENV_INDEX),
+}
 
 # (file, function) -> why its env may lack the flag. "Class.method" for methods.
 ALLOW = {
@@ -75,23 +83,52 @@ class _Calls:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name in MODULE_CALLS:
-                        self.modules[alias.asname or alias.name] = alias.name
+                        local = alias.asname or alias.name.split(".")[0]
+                        self.modules[local] = alias.name if alias.asname else alias.name.split(".")[0]
             elif isinstance(node, ast.ImportFrom) and node.module in MODULE_CALLS and not node.level:
                 for alias in node.names:
                     if alias.name == "*":
                         self.functions.update({n: (node.module, n) for n in MODULE_CALLS[node.module]})
                     elif alias.name in MODULE_CALLS[node.module]:
                         self.functions[alias.asname or alias.name] = (node.module, alias.name)
-        for node in ast.walk(tree):  # run = subprocess.run
-            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute):
-                module = self._module_of(node.value.value)
-                if module and node.value.attr in MODULE_CALLS[module]:
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            self.functions[target.id] = (module, node.value.attr)
+        grew = True
+        while grew:  # sp = subprocess; P = Popen; r = sp.run
+            grew = False
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    value, targets = node.value, node.targets
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    value, targets = node.value, [node.target]
+                else:
+                    continue
+                for target in targets:
+                    if not isinstance(target, ast.Name):
+                        continue
+                    if isinstance(value, ast.Name):
+                        if value.id in self.modules and self.modules.get(target.id) != self.modules[value.id]:
+                            self.modules[target.id] = self.modules[value.id]
+                            grew = True
+                        elif value.id in self.functions and self.functions.get(target.id) != self.functions[value.id]:
+                            self.functions[target.id] = self.functions[value.id]
+                            grew = True
+                    elif isinstance(value, ast.Attribute):
+                        module = self._module_of(value.value)
+                        if module and value.attr in MODULE_CALLS[module]:
+                            pair = (module, value.attr)
+                            if self.functions.get(target.id) != pair:
+                                self.functions[target.id] = pair
+                                grew = True
 
     def _module_of(self, node: ast.AST) -> str | None:
-        return self.modules.get(node.id) if isinstance(node, ast.Name) else None
+        if isinstance(node, ast.Name):
+            return self.modules.get(node.id)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            parent = self.modules.get(node.value.id)
+            if parent is None:
+                return None
+            dotted = f"{parent}.{node.attr}"
+            return dotted if dotted in MODULE_CALLS else None
+        return None
 
     def classify(self, call: ast.Call) -> tuple[str, str] | None:
         func = call.func
@@ -111,12 +148,14 @@ class _Calls:
         args = call.args
         hidden = any(k.arg is None for k in call.keywords)
         starred = [i for i, a in enumerate(args) if isinstance(a, ast.Starred)]
-        if module == "asyncio":
+        if name in ASYNCIO_CALLS:
             index = None  # env is keyword-only; *args are the command's own arguments
         elif name in OS_ENV_LAST:
             index = len(args) - 1
+        elif name in SUBPROCESS_CALLS:
+            index = SUBPROCESS_ENV_INDEX
         else:
-            index = SUBPROCESS_ENV_INDEX if module == "subprocess" else OS_ENV_INDEX[name]
+            index = OS_ENV_INDEX[name]
         if index is not None:
             if starred and (name in OS_ENV_LAST and starred[-1] == index or name not in OS_ENV_LAST and starred[0] <= index):
                 hidden = True
@@ -133,19 +172,46 @@ def _target_key(node: ast.AST) -> str | None:
     return None
 
 
+def _unknown_value(at: ast.AST) -> ast.Constant:
+    """A value the scan does not trust: for/with targets, unpacking, walrus."""
+    node = ast.Constant(value=0)
+    for attr in ("lineno", "col_offset", "end_lineno", "end_col_offset"):
+        if hasattr(at, attr):
+            setattr(node, attr, getattr(at, attr))
+    return node
+
+
+def _record_bound(assigned: dict[str, list[ast.AST]], target: ast.AST, value: ast.AST) -> None:
+    """Record names/attrs bound by ``target``. Unpacking is an unknown value."""
+    key = _target_key(target)
+    if key:
+        assigned.setdefault(key, []).append(value)
+        return
+    if isinstance(target, ast.Starred):
+        _record_bound(assigned, target.value, _unknown_value(target))
+        return
+    if isinstance(target, (ast.Tuple, ast.List)):
+        unknown = _unknown_value(target)
+        for elt in target.elts:
+            _record_bound(assigned, elt, unknown)
+
+
 def _assignments(scope: ast.AST) -> dict[str, list[ast.AST]]:
     assigned: dict[str, list[ast.AST]] = {}
     for node in ast.walk(scope):
         if isinstance(node, ast.Assign):
-            targets, value = node.targets, node.value
+            for target in node.targets:
+                _record_bound(assigned, target, node.value)
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            targets, value = [node.target], node.value
-        else:
-            continue
-        for target in targets:
-            key = _target_key(target)
-            if key:
-                assigned.setdefault(key, []).append(value)
+            _record_bound(assigned, node.target, node.value)
+        elif isinstance(node, ast.NamedExpr):
+            _record_bound(assigned, node.target, _unknown_value(node))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            _record_bound(assigned, node.target, _unknown_value(node))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    _record_bound(assigned, item.optional_vars, _unknown_value(item))
     return assigned
 
 
@@ -202,6 +268,7 @@ def _helper_names(tree: ast.AST) -> tuple[set[str], set[str]]:
 
 class _Module:
     def __init__(self, tree: ast.AST, scripts: bool = False) -> None:
+        self.tree = tree
         self.scripts = scripts
         self.attributes = _assignments(tree)  # every assignment in the file, for self.x
         self.functions: dict[str, list[ast.AST]] = {}
@@ -222,7 +289,11 @@ class _Module:
         )
 
     def ok(self, expr: ast.AST, scope: ast.AST, seen: frozenset[str] = frozenset(), line: int = 0) -> bool:
-        """``scope`` is the function holding ``expr``; a bare name is looked up there only."""
+        """``scope`` is the function holding ``expr``; a bare name is looked up there only.
+
+        Attribute envs and their flag marks are file-wide: a ``self.e`` write in
+        ``setUp`` is seen at a call in another method.
+        """
         if isinstance(expr, ast.Constant) and expr.value is None:
             return True  # env=None inherits the parent's env, which has the flag set
         if self.scripts and self.sets_flag(expr):
@@ -242,7 +313,7 @@ class _Module:
         values = table.get(key)
         if not values:
             return False
-        marks = self.flag_marks(scope, key, is_attr)
+        marks = self.flag_marks(self.tree if is_attr else scope, key, is_attr)
         if self.scripts:
             # the last `env[FLAG] = "1"` after the final assignment and before the call, with no other write after it
             last = max(getattr(v, "lineno", 0) for v in values)
@@ -521,6 +592,73 @@ class DetectorTests(unittest.TestCase):
         self.assertEqual(self.flagged(source), 1)
         source = IMPORT + "class T:\n    def setUp(self):\n        self.env = child_env()\n    def t(self):\n        self.env.pop('ORT_DISABLE_TELEMETRY')\n        subprocess.run(['x'], env=self.env)\n"
         self.assertEqual(self.flagged(source), 1)
+
+    def test_flags_attribute_env_pop_in_setup(self) -> None:
+        source = IMPORT + "class T:\n    def setUp(self):\n        self.e = child_env()\n        self.e.pop('ORT_DISABLE_TELEMETRY')\n    def t(self):\n        subprocess.run(['x'], env=self.e)\n"
+        self.assertEqual(self.flagged(source), 1)
+
+    def test_flags_attribute_env_del_in_setup(self) -> None:
+        source = IMPORT + "class T:\n    def setUp(self):\n        self.e = child_env()\n        del self.e['ORT_DISABLE_TELEMETRY']\n    def t(self):\n        subprocess.run(['x'], env=self.e)\n"
+        self.assertEqual(self.flagged(source), 1)
+
+    def test_flags_attribute_env_update_in_another_method(self) -> None:
+        source = IMPORT + "class T:\n    def setUp(self):\n        self.e = child_env()\n    def tweak(self):\n        self.e.update(ORT_DISABLE_TELEMETRY='0')\n    def t(self):\n        subprocess.run(['x'], env=self.e)\n"
+        self.assertEqual(self.flagged(source), 1)
+
+    def test_flags_cls_env_mutated_in_setupclass(self) -> None:
+        source = IMPORT + "class T:\n    @classmethod\n    def setUpClass(cls):\n        cls.e = child_env()\n        cls.e.pop('ORT_DISABLE_TELEMETRY')\n    def t(self):\n        subprocess.run(['x'], env=self.e)\n"
+        self.assertEqual(self.flagged(source), 1)
+
+    def test_passes_attribute_env_assigned_in_setup_and_not_mutated(self) -> None:
+        source = IMPORT + "class T:\n    def setUp(self):\n        self.e = child_env()\n    def t(self):\n        subprocess.run(['x'], env=self.e)\n"
+        self.assertEqual(self.flagged(source), 0)
+
+    def test_flags_env_rebound_by_for_target(self) -> None:
+        source = IMPORT + "def f(xs):\n    e = child_env()\n    for e in xs:\n        subprocess.run(['x'], env=e)\n"
+        self.assertEqual(self.flagged(source), 1)
+        source = IMPORT + "async def f(xs):\n    e = child_env()\n    async for e in xs:\n        subprocess.run(['x'], env=e)\n"
+        self.assertEqual(self.flagged(source), 1)
+        self.assertEqual(self.flagged(IMPORT + "def f(xs):\n    e = child_env()\n    for e in xs:\n        subprocess.run(['x'], env=e)\n", scripts=True), 1)
+
+    def test_flags_env_rebound_by_with_target(self) -> None:
+        source = IMPORT + "def f(cm):\n    e = child_env()\n    with cm as e:\n        subprocess.run(['x'], env=e)\n"
+        self.assertEqual(self.flagged(source), 1)
+        source = IMPORT + "async def f(cm):\n    e = child_env()\n    async with cm as e:\n        subprocess.run(['x'], env=e)\n"
+        self.assertEqual(self.flagged(source), 1)
+
+    def test_flags_env_rebound_by_tuple_unpacking(self) -> None:
+        for bind in ("e, o = {}, 1", "[e, o] = {}, 1", "*e, o = {}, 1"):
+            source = IMPORT + f"def f():\n    e = child_env()\n    {bind}\n    subprocess.run(['x'], env=e)\n"
+            self.assertEqual(self.flagged(source), 1, bind)
+
+    def test_flags_env_rebound_by_walrus(self) -> None:
+        source = IMPORT + "def f():\n    e = child_env()\n    (e := {})\n    subprocess.run(['x'], env=e)\n"
+        self.assertEqual(self.flagged(source), 1)
+
+    def test_flags_subprocess_module_alias_by_assignment(self) -> None:
+        self.assertEqual(self.flagged("import subprocess\nsp = subprocess\nsp.run(['x'], env={})\n"), 1)
+        self.assertEqual(self.flagged(IMPORT + "sp = subprocess\nsp.run(['x'], env=child_env())\n"), 0)
+
+    def test_flags_name_to_name_function_alias(self) -> None:
+        self.assertEqual(self.flagged("from subprocess import Popen\nP = Popen\nP(['x'], env={})\n"), 1)
+        self.assertEqual(self.flagged(IMPORT + "from subprocess import Popen\nP = Popen\nP(['x'], env=child_env())\n"), 0)
+
+    def test_flags_asyncio_subprocess_submodule(self) -> None:
+        self.assertEqual(
+            self.flagged("import asyncio\nasync def f():\n    await asyncio.subprocess.create_subprocess_exec('x', env={})\n"), 1
+        )
+        self.assertEqual(
+            self.flagged("from asyncio.subprocess import create_subprocess_exec\nasync def f():\n    await create_subprocess_exec('x', env={})\n"), 1
+        )
+        self.assertEqual(
+            self.flagged("import asyncio.subprocess as asp\nasync def f():\n    await asp.create_subprocess_exec('x', env={})\n"), 1
+        )
+        self.assertEqual(
+            self.flagged(
+                IMPORT + "import asyncio\nasync def f():\n    await asyncio.subprocess.create_subprocess_exec('x', env=child_env())\n"
+            ),
+            0,
+        )
 
     def test_flags_a_function_that_calls_the_helper_but_returns_a_plain_dict(self) -> None:
         source = IMPORT + "def make():\n    child_env()\n    return {'A': '1'}\nsubprocess.run(['x'], env=make())\n"
