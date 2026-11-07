@@ -80,7 +80,7 @@ See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` sections 1-3 for one line per i
 
 ## R2 (PR #107 must-fix: MF1 + MF2 + cheap SHOULDs)
 
-Machine: preached-sandbox. Branch: test/w5-subproc-followup. Started from origin/test/w5-subproc-followup 6dd75ca9d7f663318156b42272765e677142a3ab (confirmed). Did not merge main. Code head (the commit before this report commit): e37f0f710eb17a49400a7a88d8812ce171bccb56. The report commit follows it; the final head is the branch tip printed on the PR.
+Machine: preached-sandbox. Branch: test/w5-subproc-followup. Started from origin/test/w5-subproc-followup 6dd75ca9d7f663318156b42272765e677142a3ab (confirmed). Did not merge main. Code head: e37f0f710eb17a49400a7a88d8812ce171bccb56. The r2 report commits follow it; the final head is the branch tip (sha40 on the PR).
 
 `/work/preached` was dirty on `fix/w5-a11y-503-page` (unstaged `app/server.py`, `docs/DEPLOY.md`, `tests/test_deploy.py`, `tests/test_html_503.py`). Those files were left untouched. Work was in `/work/preached/.worktrees/test/w5-subproc-followup` (clean at 6dd75ca before edits). Full suite ran in a private `/tmp/pf-r2` detached worktree of e37f0f7 with an in-tree `.venv`.
 
@@ -128,16 +128,16 @@ None.
 
 PR #107 r2: MF1 (attribute env mutations in setUp/setUpClass/other methods), MF2 (for/with/unpacking/walrus rebinding), and three cheap static SHOULDs (`sp = subprocess`, `P = Popen`, `asyncio.subprocess.create_subprocess_exec`).
 
-Code head e37f0f710eb17a49400a7a88d8812ce171bccb56 on test/w5-subproc-followup (the report commit follows it). Did not merge main. ALLOW unchanged. Guard still 0 offenders on the tree.
+Code head e37f0f710eb17a49400a7a88d8812ce171bccb56 on test/w5-subproc-followup (the r2 report commits follow it; final head is the branch tip). Did not merge main. ALLOW unchanged. Guard still 0 offenders on the tree.
 
 See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` R2 for file:line and the DetectorTest/mutant that proves each item. Tests: targeted `Ran 88 tests` `OK (skipped=3)`; full suite on preached-sandbox at e37f0f710eb17a49400a7a88d8812ce171bccb56 `Ran 1229 tests in 260.362s` `OK (skipped=15)`. /cache before/after: 139814 lines each, sha256 d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7 both, diff none. DEPLOY cites are untouched (no cited file changed).
 
 `git diff --stat origin/main...HEAD` (in-scope files only; refreshed after this report commit in the stat block below).
 
-## R2 stat (`git diff --stat origin/main...HEAD`, head cf31325d9a52fa9eaa619e1ff5743cd86b24af39 plus this stat block)
+## R2 stat (`git diff --stat origin/main...HEAD`; 11 files, in-scope)
 
 ```
- reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md | 135 ++++++
+ reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md | 152 ++++++
  reports/W5-SUBPROC-ENV-HELPER.md           |   6 +-
  scripts/compare_responses.py               |   2 +-
  tests/README.md                            |  16 +-
@@ -148,5 +148,5 @@ See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` R2 for file:line and the Detect
  tests/test_onnx_pin_repro.py               |   5 +-
  tests/test_shutdown.py                     |   5 +-
  tests/test_subproc_env_guard.py            | 725 +++++++++++++++++++++++++----
- 11 files changed, 917 insertions(+), 120 deletions(-)
+ 11 files changed, 934 insertions(+), 120 deletions(-)
 ```
