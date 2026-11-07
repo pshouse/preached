@@ -63,8 +63,8 @@ Baseline computed with this harness on the reviewer box (machine `grok-bot-vm`; 
 
 | Set | With `why` | `--strip why` |
 |---|---|---|
-| `http` | `e21a19b25cc1af12` | `5acbc46ef2a6794d` |
-| `no-church` | `1601bf8f271e5192` | `eb3d32449ac95d39` |
+| `http` | `0bb6b339b9f2923c` | `b56d7ec6e9e42e46` |
+| `no-church` | `aae9e913a27365f3` | `e06b4ab3a12a01c0` |
 | `in-process` | `b2acb9b6b450a470` | `1ea2b8a087d9f371` |
 | `in-process-no-health` | `17be2c66569fab1e` | `72d157b749864101` |
 | `search+sermon` | `e38ec8cba9ddca3e` | `8f6508ffaf72af35` |
@@ -80,6 +80,8 @@ The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any U
 **History: the `83121da` baseline.** On main `83121da314137c4d611d1725a814374c7d2bb6fb` (Python 3.12.15, same box, index, model and harness) `http` was `27d7cb2bbe8a82d3` / `5aa8821e0ecc7d22` (`--strip why`) and `no-church` was `e1fa9ccca05c5aec` / `b393295f9ae9b309`; the other five rows were the same as above. Main `3aef7ca` moved only these two because #96 (`5244dc9`) added `slots_stuck` to HTTP `/healthz`; `--strip slots_stuck` gives back the `83121da` values exactly.
 
 **History: PR #103 (PR-C, audit F-03), intended move.** PR #103 edits only `app/static/app.js` (`showSides` now writes the column warnings into `#note` and `#confidence`). On the synthetic index, `/static/app.js` is the only record that differs, in `http` and `no-church` (body sha256 `0e21b3b3…dac62` on main `484e682` to `3a08bf55…0dd9f`). The five other sets, and `/`, are identical. The CI pins moved so: `PINNED["http"]` `b198c5b3546ef6eb` to `a698343bd83ea865`, `PINNED["no-church"]` `29f0c7e50f011dea` to `153267cefae0f1df`, `PINNED_NO_WHY["http"]` `87598c3cb97e7a4e` to `692ae6d888dc2fb7`, `PINNED_NO_WHY["no-church"]` `cc0f371a6b6cdf27` to `15c9ee63ad285b64`. Before PR #103 the reviewer-box rows (main `3aef7ca`, reproduced unchanged on `ebc058d`) were `http` `29e0c0786acacc68` / `b72c4dec54111ca1` (`--strip why`) and `no-church` `218d30828042a711` / `f76209cb54d87862`. On that real index too, `/static/app.js` is the only differing record.
+
+**History: PR #108 (PR-B, F-02/F-11), intended move.** PR #108 edits `app/static/app.js`, `app/static/index.html` and `app/static/app.css` (the audio player is named by `aria-labelledby`, a quiet `#player-announce` status element is added, and the Play button's `aria-label` changes to `Play from H:MM:SS, sermon N`). On the synthetic index, of the 225 records in `http` and in `no-church`, only `/` (body sha256 `ec6bcef6…ddd86b` to `0ccef28d…dc64492`) and `/static/app.js` (`3a08bf55…00dd9f` to `ad3991a5…16c920f0`) differ, in `body` only. The five other sets are identical. The CI pins moved so: `PINNED["http"]` `a698343bd83ea865` to `c363a549de93f186`, `PINNED["no-church"]` `153267cefae0f1df` to `7cfd21c9ce280113`, `PINNED_NO_WHY["http"]` `692ae6d888dc2fb7` to `d1e5c9832709db14`, `PINNED_NO_WHY["no-church"]` `15c9ee63ad285b64` to `1bc8dd0a6b324fd7`. Before PR #108 the reviewer-box rows (above, after PR #103) were `http` `e21a19b25cc1af12` / `5acbc46ef2a6794d` (`--strip why`) and `no-church` `1601bf8f271e5192` / `eb3d32449ac95d39`. The reviewer-box rows above are now the reviewer's values on PR #108 head `eb5cd06` (machine `grok-bot-vm-181711960`, same harness); the five other rows are unchanged. The omarchy `http` and `no-church` rows are not yet re-taken for PR #108 and still hold the PR #103 values until a host log exists.
 
 **omarchy host, main 484e682, index 198339132f68…, model 3861025a…, harness 9bbe1a503f36136f, Python 3.12.16, ORT 1.31.1**
 

@@ -226,11 +226,58 @@ As in §2 above, with everything under one `mktemp -d` (`/tmp/prb-merge.QfiA` on
 
 None.
 
+## R2 stage 1 (docs only: MF1b and MF3; MF2 still OPEN)
+
+Task 99-XX7-PR108-R2-STAGE1-DOCS. Worktree `/work/preached/.worktrees/fix-w5-a11y-player-name`, `git status` clean and HEAD = `origin/fix/w5-a11y-player-name` = `eb5cd06463fbc475fb0d8e648972221ddf8f48db` before any edit. `origin/main` is still `5dd32a0871cacf3ba09936066d71b925773ab777` (no move); main was not merged this round. The new head sha40 is in the hand-off message, since a commit cannot name its own sha.
+
+**Scope.** Only `docs/PARITY.md` (MF1b) and this report (MF3). No code, test, DEPLOY or DEPLOY-cited file changed, so no cite re-pin applies. No omarchy row or value was added or changed, and there is no `PARITY-MOVE` fence.
+
+**MF1b.** `docs/PARITY.md`: the reviewer-box `http`/`no-church` rows now hold the reviewer's values on `eb5cd06`, and a "History: PR #108 (PR-B, F-02/F-11), intended move" paragraph follows the #103 history paragraph. Exact diff of that file:
+
+```diff
+diff --git a/docs/PARITY.md b/docs/PARITY.md
+index 588d117..76e4bf8 100644
+--- a/docs/PARITY.md
++++ b/docs/PARITY.md
+@@ -63,8 +63,8 @@ Baseline computed with this harness on the reviewer box (machine `grok-bot-vm`;
+ 
+ | Set | With `why` | `--strip why` |
+ |---|---|---|
+-| `http` | `e21a19b25cc1af12` | `5acbc46ef2a6794d` |
+-| `no-church` | `1601bf8f271e5192` | `eb3d32449ac95d39` |
++| `http` | `0bb6b339b9f2923c` | `b56d7ec6e9e42e46` |
++| `no-church` | `aae9e913a27365f3` | `e06b4ab3a12a01c0` |
+ | `in-process` | `b2acb9b6b450a470` | `1ea2b8a087d9f371` |
+ | `in-process-no-health` | `17be2c66569fab1e` | `72d157b749864101` |
+ | `search+sermon` | `e38ec8cba9ddca3e` | `8f6508ffaf72af35` |
+@@ -81,6 +81,8 @@ The `/` and `/static/app.js` byte hashes are in `http` and `no-church`, so any U
+ 
+ **History: PR #103 (PR-C, audit F-03), intended move.** PR #103 edits only `app/static/app.js` (`showSides` now writes the column warnings into `#note` and `#confidence`). On the synthetic index, `/static/app.js` is the only record that differs, in `http` and `no-church` (body sha256 `0e21b3b3…dac62` on main `484e682` to `3a08bf55…0dd9f`). The five other sets, and `/`, are identical. The CI pins moved so: `PINNED["http"]` `b198c5b3546ef6eb` to `a698343bd83ea865`, `PINNED["no-church"]` `29f0c7e50f011dea` to `153267cefae0f1df`, `PINNED_NO_WHY["http"]` `87598c3cb97e7a4e` to `692ae6d888dc2fb7`, `PINNED_NO_WHY["no-church"]` `cc0f371a6b6cdf27` to `15c9ee63ad285b64`. Before PR #103 the reviewer-box rows (main `3aef7ca`, reproduced unchanged on `ebc058d`) were `http` `29e0c0786acacc68` / `b72c4dec54111ca1` (`--strip why`) and `no-church` `218d30828042a711` / `f76209cb54d87862`. On that real index too, `/static/app.js` is the only differing record.
+ 
++**History: PR #108 (PR-B, F-02/F-11), intended move.** PR #108 edits `app/static/app.js`, `app/static/index.html` and `app/static/app.css` (the audio player is named by `aria-labelledby`, a quiet `#player-announce` status element is added, and the Play button's `aria-label` changes to `Play from H:MM:SS, sermon N`). On the synthetic index, of the 225 records in `http` and in `no-church`, only `/` (body sha256 `ec6bcef6…ddd86b` to `0ccef28d…dc64492`) and `/static/app.js` (`3a08bf55…00dd9f` to `ad3991a5…16c920f0`) differ, in `body` only. The five other sets are identical. The CI pins moved so: `PINNED["http"]` `a698343bd83ea865` to `c363a549de93f186`, `PINNED["no-church"]` `153267cefae0f1df` to `7cfd21c9ce280113`, `PINNED_NO_WHY["http"]` `692ae6d888dc2fb7` to `d1e5c9832709db14`, `PINNED_NO_WHY["no-church"]` `15c9ee63ad285b64` to `1bc8dd0a6b324fd7`. Before PR #108 the reviewer-box rows (above, after PR #103) were `http` `e21a19b25cc1af12` / `5acbc46ef2a6794d` (`--strip why`) and `no-church` `1601bf8f271e5192` / `eb3d32449ac95d39`. The reviewer-box rows above are now the reviewer's values on PR #108 head `eb5cd06` (machine `grok-bot-vm-181711960`, same harness); the five other rows are unchanged. The omarchy `http` and `no-church` rows are not yet re-taken for PR #108 and still hold the PR #103 values until a host log exists.
++
+ **omarchy host, main 484e682, index 198339132f68…, model 3861025a…, harness 9bbe1a503f36136f, Python 3.12.16, ORT 1.31.1**
+ 
+ | Field | Value |
+```
+
+**MF3.** In the `## PR BODY` below: (a) the original base `2c8936583d3939ea5a8e5ae39c2af6eb62d7cbac` is named, and the original-branch result (`897a5cf` full suite 1194 OK, skipped=15, `preached-sandbox`) is kept apart from the merge result (`cd4fa4d`, 1198 OK, skipped=15, `preached-sandbox`); (b) the reviewed head `eb5cd06463fbc475fb0d8e648972221ddf8f48db` is named as a report-only commit on top of `cd4fa4d`, code-identical; (c) the Chromium 155.0.8059.84 results are attributed to `preached-sandbox` and `897a5cf`. The diff-stat block and the /cache line in the body were refreshed. The report diff itself is the body/report edits above and this section (a commit's own text cannot be shown exactly inside itself).
+
+**Code identity** (checked after the commit): `git diff --stat eb5cd06..HEAD` lists only `docs/PARITY.md` and `reports/W5-A11Y-PR-B-F02-F11.md`; `git diff eb5cd06..HEAD -- app tests src scripts` is empty; `git rev-parse HEAD:app/static/app.js` equals `git rev-parse eb5cd06:app/static/app.js` (`0af22bc565891324f827575089e8993dda08c1bd`).
+
+**Tests** (machine `preached-sandbox`, i9-12900K, Python 3.12.16, uv 0.13.6, deno 2.9.8; a detached `/tmp` worktree at `eb5cd06` with the two edited docs copied in, in-tree `.venv`, every cache and home env var under one `mktemp -d` in `/tmp`, `PREACHED_GUARD_REAL_SRC` unset, `PREACHED_REQUIRE_DENO=1`, `ORT_DISABLE_TELEMETRY=1`, `HF_HUB_OFFLINE=1`):
+- `tests.test_parity_hash`: `Ran 16 tests, OK`.
+- Full suite: `Ran 1198 tests in 261.077s, OK (skipped=15)`. The tree's code is identical to `eb5cd06`/`cd4fa4d`.
+
+**/cache** (`find /cache -xdev -printf '%p\t%s\t%T@\n' | LC_ALL=C sort`): before 139814 lines, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7`; after 139814 lines, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7`; diff: none. Nothing was opened under `/cache` with sqlite or ORT.
+
+**MF2 stays OPEN.** The omarchy cells need a host log. PR body ready for CoS sync (the `## PR BODY` section below).
+
 ## PR BODY
 
 **PR-B: a named and quiet audio player (audit F-02) and Label in Name on Play (audit F-11)**
 
-Branch `fix/w5-a11y-player-name`. It merges `origin/main` `5dd32a0871cacf3ba09936066d71b925773ab777` (after #103) with a normal merge commit, `cd4fa4deabada614482308d805decd05f274cd2a`; no rebase. Head: the report-only commit on top of `cd4fa4d` (it adds only `reports/W5-A11Y-PR-B-F02-F11.md`). Behind main 0, ahead 7.
+Branch `fix/w5-a11y-player-name`. Original base: `origin/main` `2c8936583d3939ea5a8e5ae39c2af6eb62d7cbac`. It merges `origin/main` `5dd32a0871cacf3ba09936066d71b925773ab777` (after #103 and #106) with a normal merge commit, `cd4fa4deabada614482308d805decd05f274cd2a` (parents `4a9376b`, `5dd32a0`); no rebase. The reviewed head `eb5cd06463fbc475fb0d8e648972221ddf8f48db` is a report-only commit on top of `cd4fa4d` (it adds only `reports/W5-A11Y-PR-B-F02-F11.md`), so its code is identical to `cd4fa4d`. Further docs-only commits (`docs/PARITY.md` and this report) may follow; they change no code. Behind main 0.
 
 ```
 $ git diff --stat origin/main...HEAD
@@ -238,11 +285,12 @@ $ git diff --stat origin/main...HEAD
  app/static/app.js               |  13 +-
  app/static/index.html           |   3 +-
  docs/DEMO-SCRIPT.md             |   4 +-
+ docs/PARITY.md                  |   6 +-
  docs/SUBMISSION-DRAFT.md        |   2 +-
- reports/W5-A11Y-PR-B-F02-F11.md | 322 ++++++++++++++++++++++++++++++++++++++++
- tests/test_mobile_ux.py         |  80 +++++++++-
+ reports/W5-A11Y-PR-B-F02-F11.md | 374 +++++++++++++++++++++++++++++++++++++++
+ tests/test_mobile_ux.py         |  80 ++++++++-
  tests/test_parity_hash.py       |   8 +-
- 8 files changed, 417 insertions(+), 17 deletions(-)
+ 9 files changed, 473 insertions(+), 19 deletions(-)
 ```
 
 **What changes**
@@ -261,10 +309,12 @@ $ git diff --stat origin/main...HEAD
 - `app/static/app.js` auto-merged with disjoint hunks: #108 `playClip`/`renderCard`, #103 `showSides` `.notices`. Both are kept and it was not edited.
 - Every #103/#106 file outside this PR's set is identical to main.
 - **No DEPLOY-cited file is touched**: `git diff origin/main HEAD -- docs/DEPLOY.md app/server.py tests/test_deploy_alerts.py` is empty.
-- `docs/PARITY.md` is identical to main, so #103's rows are kept.
+- `docs/PARITY.md` was identical to main at the merge, so #103's rows were kept. Stage 1 of r2 then edits it (see Parity below); every #103 row and history line is kept byte for byte.
 
-**Tests** (host `preached-sandbox`, i9-12900K, Python 3.12.16, deno 2.9.8, at merge `cd4fa4deabada614482308d805decd05f274cd2a`)
-- Full suite: `Ran 1198 tests in 255.712s, OK (skipped=15)`. That is zero `test_every_cited_file_line_holds_its_string` failures, and `PREACHED_REQUIRE_DENO=1` was set.
+**Tests**, all author results on machine `preached-sandbox` (i9-12900K, Python 3.12.16, deno 2.9.8). Original-branch results (on the original base `2c89365`) and merge results are kept apart.
+- Original branch, `897a5cf7407d0b44112d8b9f6962f285680d0ae3`: full suite `Ran 1194 tests, OK (skipped=15)`.
+- Merge `cd4fa4deabada614482308d805decd05f274cd2a` (also the code of reviewed head `eb5cd06`): the results below.
+- Full suite at the merge: `Ran 1198 tests in 255.712s, OK (skipped=15)`. That is zero `test_every_cited_file_line_holds_its_string` failures, and `PREACHED_REQUIRE_DENO=1` was set.
 - `tests.test_parity_hash`: `Ran 16 tests, OK`.
 - `tests.test_app_js`: `Ran 10 tests, OK`. #103's `SIDE_CHECKS` pass.
 - `tests.test_mobile_ux`: `Ran 10 tests, OK`.
@@ -303,7 +353,9 @@ Only the `/` and `/static/app.js` records move. Of 225 records in `http` and in 
 - `/`: `ec6bcef68ae1d70514f4e69c937e388b9bfd2665a19ee2f81f299d9999ddd86b` → `0ccef28d3c692acfe72f3702fad469c7fc52e2a55813fe6bb4e391488dc64492`
 - `/static/app.js`: `3a08bf550d5208b3eddecdd2a8a3b5006aab90a899be1c0dd12732d37a00dd9f` → `ad3991a5bf862b4ea432b9ab019cf0a319453ca315146c7c744ca16616c920f0`
 
-`docs/PARITY.md` is unchanged, because this run's `index_version`/`model_sha256` aren't the page's. The reviewer/host regenerates the `http`/`no-church` real-index rows.
+`docs/PARITY.md` (r2 stage 1): added a "History: PR #108 (PR-B, F-02/F-11), intended move" paragraph with the displaced CI pins above, and refreshed the reviewer-box `http`/`no-church` rows to the CTO reviewer's values on `eb5cd06` (machine `grok-bot-vm-181711960`: `http` `0bb6b339b9f2923c` / `b56d7ec6e9e42e46`, `no-church` `aae9e913a27365f3` / `e06b4ab3a12a01c0`; the displaced `e21a19b25cc1af12` / `5acbc46ef2a6794d` and `1601bf8f271e5192` / `eb3d32449ac95d39` moved into that history). The omarchy rows are **not** changed: they wait for a real host log (MF2).
+
+**Open: MF2.** There is no `PARITY-MOVE` fence in this body. The omarchy host cells for `eb5cd06` (tree `d182a60578e495ed627292bd58b90c8e33c7134f`) do not exist yet; they need a host log from omarchy that CoS or Infra Ops points to. No synthetic, sandbox or reviewer-box value stands in for them.
 
 **Doc cites**: the r1 re-pins still hold on the merged tree, so this merge made no re-pin edits. I re-read each one on the merged `app.js`, because #103's insertion is at line 532+, below them all:
 - `DEMO-SCRIPT.md:28` and `SUBMISSION-DRAFT.md:34`, `app.js:226-244`: `function whyLine(why) {` … `}`
@@ -311,11 +363,11 @@ Only the `/` and `/static/app.js` records move. Of 225 records in `http` and in 
 - `DEMO-SCRIPT.md:42`, `app.js:347`: `lowHidden: "Low-confidence results hidden.",`
 - The `index.html` cites `:63-75`, `:75` and `:78` are unchanged.
 
-**Headless Chromium** (from r1, on `897a5cf`; the merge does not touch these paths)
+**Headless Chromium** (from r1, on `897a5cf`, machine `preached-sandbox`, Chromium 155.0.8059.84; not re-run on the merge, which does not touch these paths)
 - At 390×844 and 1280×900, the Play AX name is `Play from 0:00:32, sermon 1` (prefix of the visible text). Focus stays on Play, the audio is 54px tall, and there is no `aria-pressed`/`aria-current`.
 - On an allowed Play the announcer is `""`. On a rejected Play it carries the held sentence.
 
-**/cache**: listing before and after, 139814 lines each, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7` both, no diff.
+**/cache** (machine `preached-sandbox`): listing before and after, 139814 lines each, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7` both, no diff.
 
 Not heard on a real screen reader (VoiceOver/TalkBack/NVDA).
 
