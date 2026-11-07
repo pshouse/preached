@@ -255,3 +255,148 @@ Tests on preached-sandbox at 1138b64: targeted `Ran 85 tests in 6.271s` `OK (ski
  tests/test_subproc_env_guard.py            | 658 ++++++++++++++++++++++++-----
  11 files changed, 975 insertions(+), 117 deletions(-)
 ```
+
+
+## R3 (PR #107: MF3' provenance wording, MF4 merge of main after #106)
+
+Machine: preached-sandbox. Branch: test/w5-subproc-followup. Started at origin/test/w5-subproc-followup 8853a7ac96016000fc57d9e940ced1a764e58eee (confirmed after fetch; `/work/preached` was on this branch, clean, 6 behind, and was fast-forwarded with `--ff-only`). Merge commit: 26d7f8f9e722c5ca788f94863e40b593d92328ed (parents 8853a7a and origin/main e51a616f3caa205a8c21e4818218844d3fc222f8, the #106 merge). The docs commit follows it and changes only this report, so the code tree is the one the suite and mutants ran on.
+
+### 1. What was done
+
+- **MF4 merge**: `git merge --no-ff origin/main`. It auto-merged with no conflicts. No `--ours`/`--theirs`, no side-pick, no rebase. Checks that #106 survived:
+  - `git diff 8853a7a HEAD --stat` is exactly #106's 8 files (785+, 12-), the same as `git diff --stat 8853a7a...origin/main`.
+  - `git diff origin/main HEAD` on the 3 overlap files (`tests/test_deploy.py`, `tests/test_onnx_pin_repro.py`, `tests/test_shutdown.py`) shows only #107's SF3 import hunk (`from .subproc_env import child_env`).
+  - #106's code is present: the `child_env(os.environ, **{"PATH": path, **extra})` interpreter-first PATH, `VENV = Path(sys.prefix)`, the serve.sh temp-tree fixture, `probe = [sys.executable, ...]`, `PYTHON = Path(sys.executable)`, and the `UV_PROJECT_ENVIRONMENT` scratch env.
+- **MF3' (docs only, no code change)**. `tests/test_subproc_env_guard.py` is byte-identical to 8853a7a. This is how the retained coverage got here:
+  - **Added by #107, not on main.** On main (e51a616), the guard's scan only sees `subprocess.<call>` and `from subprocess import <call>` names, with a "names the flag" exemption. It has no asyncio, no os.exec/spawn, no assignment aliases and no mutation tracking. #107 r1 (f1f5c31, SF2) added all of the following, and they stay in this PR:
+    - asyncio in `MODULE_CALLS` (`asyncio.create_subprocess_exec/shell`; test `test_flags_asyncio_subprocess`)
+    - the assignment-alias paths: `run = subprocess.run`, `import subprocess as sp`, `from subprocess import run as r`, `from subprocess import *` (tests `test_flags_an_aliased_bare_call`, `test_flags_an_aliased_subprocess_module`)
+    - local `child_env` subscript, `del` and `.clear()`/`pop`/`update`/`setdefault`/`popitem` coverage in `_Module.flag_marks` (tests `test_flags_the_flag_deleted_after_the_helper_returns`, `test_flags_a_mutation_through_an_alias_or_attribute`)
+  - r2 (e37f0f7) added the attribute-env (file-wide) and for/with/unpacking/walrus rebinding tracking. That is also #107-only.
+  - **What the R2-scope rollback (1138b64) did.** It removed only the round-50 extensions: the `asyncio.subprocess` submodule path, `sp = subprocess` (module Name-to-Name), `P = Popen` (callable Name-to-Name), and the dotted `_module_of` lookup, plus their 3 DetectorTests. It did **not** remove top-level asyncio `MODULE_CALLS`, the `run = subprocess.run` attribute-assignment alias, the import aliases, or the local `child_env` subscript/clear coverage. Any earlier wording in this report that reads otherwise, or that says those behaviours were already on main, is corrected by this section. In particular, the R2-scope PR BODY line "Still in the branch, from the #102 follow-up" means "added by this PR's r1", not "on main".
+  - **Follow-up ticket, not in this PR.** This is the remaining held gaps (environ/putenv/getattr/helper-param/posix) plus the earlier list:
+    - `os.environ` mutated directly
+    - `os.putenv`
+    - `getattr(subprocess|os|asyncio, ...)`
+    - an env mutated through a helper parameter
+    - `posix.execve`/`posix.spawn`
+    - `asyncio.subprocess` submodule paths
+    - `sp = subprocess` and `P = Popen` Name-to-Name aliases
+    - `functools.partial`
+    - a `subprocess.Popen` subclass
+    - SF4 copy/re-check extracted onto a fake root
+    - SF5 writable check over every model file
+    - Downgraded by the CTO 17:40 ruling, so these are follow-up too and not implemented: the r3 MF1 dunder mutators (`env.__ior__(...)`, `env.__init__(...)`) and the r3 MF2 comprehension/generator for-targets.
+- `tests/README.md` and `reports/W5-SUBPROC-ENV-HELPER.md` were left unchanged. Neither claims that main already had these behaviours or that the rollback removed them. The README lists only behaviour that is on the branch.
+
+### 2. How to run it
+
+Full suite on a private `/tmp` worktree of 26d7f8f (`git worktree add --detach`, issued from `/work/preached`). The in-tree `.venv` was built with `UV_PROJECT_ENVIRONMENT=<wt>/.venv uv sync --frozen` and scratch UV caches. Every rule-5 variable sits under one `mktemp -d`:
+
+    T=$(mktemp -d); env -u PREACHED_GUARD_REAL_SRC -u UV_PROJECT_ENVIRONMENT PREACHED_CACHE=$T/c PREACHED_ONNX_DIR=$T/o HF_HOME=$T/h DENO_DIR=$T/d XDG_CACHE_HOME=$T/x UV_CACHE_DIR=$T/u TORCH_HOME=$T/t UV_PYTHON_INSTALL_DIR=$T/p HOME=$T/home ORT_DISABLE_TELEMETRY=1 HF_HUB_OFFLINE=1 PREACHED_REQUIRE_DENO=1 .venv/bin/python -m unittest discover -s tests
+
+Mutants: a script outside the worktree copies `tests/test_subproc_env_guard.py` aside. For each cell it applies an exact single-occurrence replacement and asserts the file differs. It then runs `python -m unittest tests.test_subproc_env_guard` with the same variables, restores the file and asserts it is byte-identical. `git status` of the worktree was clean afterwards. Before removal, the worktree path was asserted to be under `tempfile.gettempdir()`.
+
+### 3. Results
+
+- Full suite, host preached-sandbox, tree 26d7f8f9e722c5ca788f94863e40b593d92328ed: `Ran 1230 tests in 252.326s`, `OK (skipped=15)`. 1226 is r2-scope plus #106's 4 `test_venv_hygiene` tests. Zero `test_every_cited_file_line_holds_its_string` failures (exit 0).
+- Guard module baseline: `Ran 40 tests`, `OK`. GREEN controls on the merged tree:
+  - `test_every_test_subprocess_env_carries_the_flag` (the whole-tree scan). It includes #106's new `env["PATH"] = ...` after `child_env` and the `child_env(os.environ, **{"PATH": ...})` composition, which is a legitimate composition and gets 0 offenders.
+  - `test_every_script_child_env_sets_the_flag_at_the_call`
+  - `test_every_allow_entry_still_matches_a_flagged_call`
+  - `test_passes_the_helper`, `test_passes_a_name_from_the_helper`, `test_passes_a_local_function_that_calls_the_helper`, `test_passes_the_helper_through_a_package_import`, `test_passes_a_harmless_write_after_the_helper`, `test_passes_attribute_env_assigned_in_setup_and_not_mutated`, `test_ignores_calls_without_env`
+
+Mutant table (each cell RED; the file was restored byte-identical after each):
+
+| Cell | Mutation | Failures | Failing tests |
+| --- | --- | --- | --- |
+| r2 MF1 | `flag_marks(scope, ...)` for attributes (caller only) | 4 | `test_flags_attribute_env_{pop,del}_in_setup`, `..._update_in_another_method`, `test_flags_cls_env_mutated_in_setupclass` |
+| r2 MF2 | NamedExpr / For / With not recorded in `_assignments` | 3 | `test_flags_env_rebound_by_{for,with}_target`, `test_flags_env_rebound_by_walrus` |
+| r2 MF2 | Starred / Tuple / List unpacking not recorded | 1 | `test_flags_env_rebound_by_tuple_unpacking` |
+| retained (#107) | `"asyncio"` dropped from `MODULE_CALLS` | 1 | `test_flags_asyncio_subprocess` |
+| retained (#107) | `run = subprocess.run` assignment-alias loop off | 1 | `test_flags_an_aliased_bare_call` |
+| retained (#107) | local `child_env` subscript store/del not marked | 5 | `test_flags_the_flag_deleted_after_the_helper_returns`, `test_flags_attribute_env_del_in_setup`, `test_script_env_must_set_the_flag_for_that_call`, `test_script_loop_key_over_literals_is_not_a_flag_write`, `test_every_script_child_env_sets_the_flag_at_the_call` |
+| retained (#107) | `.clear()` not marked | 2 | `test_flags_the_flag_deleted_after_the_helper_returns`, `test_script_env_must_set_the_flag_for_that_call` |
+
+- /cache snapshot (`find /cache -xdev -printf '%p\t%s\t%T@\n' | LC_ALL=C sort`):
+  - before: 139814 lines, sha256 d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7
+  - after: 139814 lines, the same sha256
+  - diff: none
+  - No test pointed at /cache, and `PREACHED_GUARD_REAL_SRC` was unset.
+- DEPLOY cites: this round's own commits touch only this report. The merge brought in #106's `tests/test_deploy.py`, `tests/test_onnx_pin_repro.py` and `tests/test_shutdown.py` changes as they already are on main. `git diff origin/main HEAD -- docs/DEPLOY.md app/ tests/test_deploy_alerts.py` is empty, and neither DEPLOY.md nor `test_deploy_alerts.py` names the guard or child-home tests. Nothing needed re-pinning.
+- Branch vs origin/main e51a616: behind 0, ahead 10 before the docs commit and 11 after it. origin/main is an ancestor of HEAD.
+
+### 4. Open issues, risks
+
+- The follow-up ticket list in section 1.
+- Real-model path of `test_child_home_guard` not exercised (`PREACHED_GUARD_REAL_SRC` unset).
+- Rule 3: the suite worktree was created with `git worktree add --detach` from `/work/preached` and removed afterwards. It was a private throwaway, not a shared dir.
+
+### 5. Dependencies
+
+None. #106 is merged into this branch.
+
+## PR BODY
+
+Follow-up to #102: subprocess-env guard hardening plus child-home guard re-checks. Updated for the CTO r2 ruling (2026-11-07 17:40 EST): MF3' and MF4.
+
+**Added by this PR (#107), not present on main.** On main e51a616 the guard only sees `subprocess.<call>` / `from subprocess import` names with a "names the flag" exemption. This PR adds:
+- SF2 (r1):
+  - `MODULE_CALLS` for `subprocess`, `os.exec*e`/`spawn*e`/`posix_spawn*` and top-level `asyncio.create_subprocess_*`
+  - the assignment-alias paths (`run = subprocess.run`, `import subprocess as sp`, `from subprocess import run as r`, `import *`)
+  - env hidden in `**kwargs`/`*args`, and positional Popen env
+  - local `child_env` subscript/`del`/`.clear()`/`pop`/`update`/`setdefault`/`popitem` mutation coverage, also through aliases and attributes
+  - return-all `function_ok`
+  - the fake-helper rejection
+  - all same-named methods must pass
+  - the per-call scripts rule
+  - the `(file, function)` `ALLOW` list
+- SF3: plain imports.
+- SF4: post-copy `-wal`/`-journal` and size/mtime re-check.
+- SF5: override and model-writable tests.
+- SF6: root note and `lexists`.
+- r2:
+  - attribute-env mutations seen file-wide (setUp, setUpClass, another method)
+  - for/with/unpacking/walrus rebinding
+
+The R2-scope rollback (1138b64) removed only the round-50 extensions: the `asyncio.subprocess` submodule, `sp = subprocess`, `P = Popen`, and the dotted `_module_of`. Top-level asyncio, the assignment aliases and the local-copy subscript/clear coverage are still in the PR.
+
+**Follow-up ticket (not in this PR):**
+- the remaining held gaps: direct `os.environ` mutation, `os.putenv`, `getattr(...)`, an env mutated through a helper parameter, `posix.*`
+- `asyncio.subprocess` submodule paths
+- `sp = subprocess` / `P = Popen` aliases
+- `functools.partial`
+- a Popen subclass
+- dunder mutators (`__ior__`/`__init__`) and comprehension/generator for-targets (both downgraded by the CTO)
+- SF4 copy/re-check on a fake root
+- SF5 every model file
+
+**MF4:** origin/main e51a616f3caa205a8c21e4818218844d3fc222f8 (#106) merged with a normal merge commit, 26d7f8f9e722c5ca788f94863e40b593d92328ed. There were no conflicts and no ours/theirs. Every #106 hunk survives (interpreter-first PATH into `child_env`, `VENV = sys.prefix`, the serve.sh temp tree, the `sys.executable` probes). Behind main 0. The docs commit after the merge changes only the report.
+
+**Tests on preached-sandbox at 26d7f8f9e722c5ca788f94863e40b593d92328ed:**
+- full suite: `Ran 1230 tests in 252.326s` `OK (skipped=15)`, with 0 cited-line failures
+- guard module: `Ran 40 tests` `OK`, with the GREEN controls including the whole-tree scan over #106's PATH composition
+- mutants, all RED: r2 MF1 attribute walk (4), r2 MF2 for/with/walrus (3), r2 MF2 unpacking (1), asyncio dropped (1), `run = subprocess.run` alias off (1), local subscript store off (5), `.clear()` off (2)
+
+/cache before/after: 139814 lines each, sha256 d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7 both, diff none. DEPLOY cites untouched: no DEPLOY-cited production file changed beyond what main brought in, and the DEPLOY.md / `test_deploy_alerts.py` diff vs main is empty.
+
+See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` R3.
+
+`git diff --stat origin/main...HEAD`:
+
+```
+ reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md | 402 ++++++++++++++++++
+ reports/W5-SUBPROC-ENV-HELPER.md           |   6 +-
+ scripts/compare_responses.py               |   2 +-
+ tests/README.md                            |  16 +-
+ tests/test_child_home_guard.py             | 128 +++++-
+ tests/test_deploy.py                       |   5 +-
+ tests/test_embed_backend.py                |   5 +-
+ tests/test_hard_conditions.py              |   5 +-
+ tests/test_onnx_pin_repro.py               |   5 +-
+ tests/test_shutdown.py                     |   5 +-
+ tests/test_subproc_env_guard.py            | 658 ++++++++++++++++++++++++-----
+ 11 files changed, 1120 insertions(+), 117 deletions(-)
+```
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
