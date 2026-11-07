@@ -42,7 +42,7 @@ from preached.store import connect  # noqa: E402
 child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
 
 SERVER = ROOT / "app" / "server.py"
-PYTHON = ROOT / ".venv" / "bin" / "python"
+PYTHON = Path(sys.executable)
 
 
 def _cache_root() -> Path:
