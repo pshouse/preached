@@ -391,7 +391,7 @@ blockquote {
   font-size: 0.92rem;
 }
 
-.player audio { width: 100%; }
+.player audio { width: 100%; min-height: 44px; }
 
 :focus-visible {
   outline: 3px solid var(--focus);

@@ -93,10 +93,11 @@
     </footer>
   </div>
 
+  <p id="player-announce" class="visually-hidden" role="status" aria-live="polite"></p>
   <div class="player" id="player-bar" hidden>
     <div class="player-inner">
       <p id="now-playing">Choose Play on a passage.</p>
-      <audio id="player" controls preload="none"></audio>
+      <audio id="player" controls preload="none" aria-labelledby="now-playing"></audio>
     </div>
   </div>
 </body>

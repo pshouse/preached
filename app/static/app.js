@@ -179,12 +179,20 @@ function seekWhenReady(audio) {
   }
 }
 
+/* The only text #player-announce ever carries, and only when play() is held.
+   It is a constant, never the caption or anything from the server. */
+var HELD_AUDIO = "Press play on the bar if the browser held the audio.";
+
 function playClip(url, start, button, caption) {
   var audio = document.getElementById("player");
   /* The bar stays hidden until the first Play, so on a phone it does not
      cover the page before there is anything to play. */
   var bar = document.getElementById("player-bar");
   if (bar) bar.hidden = false;
+  /* Cleared on every Play, so a second hold is announced again. Clearing
+     a live region does not speak; the success path announces nothing. */
+  var announce = document.getElementById("player-announce");
+  if (announce) announce.textContent = "";
   var token = ++playToken;
   var seconds = playStart(start);
   audio.dataset.token = String(token);
@@ -199,7 +207,8 @@ function playClip(url, start, button, caption) {
   audio.play().catch(function () {
     if (Number(audio.dataset.token) !== token) return;
     document.getElementById("now-playing").textContent =
-      caption + ". Press play on the bar if the browser held the audio.";
+      caption + ". " + HELD_AUDIO;
+    if (announce) announce.textContent = HELD_AUDIO;
   });
   var playing = document.querySelector(".play.is-playing");
   if (playing) playing.classList.remove("is-playing");
@@ -284,7 +293,7 @@ function renderCard(hit) {
       var button = el("button", "play", "Play from " + playLabel);
       button.type = "button";
       var sermonName = hit.sermon_number != null ? "sermon " + hit.sermon_number : (hit.sermon_title || "this sermon");
-      button.setAttribute("aria-label", "Play " + sermonName + " from " + playLabel);
+      button.setAttribute("aria-label", "Play from " + playLabel + ", " + sermonName);
       var caption = (hit.sermon_title || "Sermon");
       if (playLabel) caption += " · " + playLabel;
       if (spoken) caption += " · " + spoken;

@@ -103,6 +103,25 @@ class PhonePageStaticTests(unittest.TestCase):
         self.assertIn("hidden", bar)
         self.assertIn('document.getElementById("player-bar")', APP_JS.read_text())
 
+    def test_player_is_named_and_quiet(self) -> None:
+        # F-02: the audio takes its name from the caption, the caption is not
+        # live, and one polite announcer outside the player bar (in the tree
+        # from load, so it is heard when filled) says the held-audio sentence.
+        page = parse_page()
+        self.assertEqual(page.by_id("player")[1].get("aria-labelledby"), "now-playing")
+        _, caption = page.by_id("now-playing")
+        for attr in ("aria-live", "role", "aria-atomic"):
+            self.assertNotIn(attr, caption)
+        tag, announce = page.by_id("player-announce")
+        self.assertEqual(tag, "p")
+        self.assertEqual(announce.get("role"), "status")
+        self.assertEqual(announce.get("aria-live"), "polite")
+        self.assertEqual(announce.get("class"), "visually-hidden")
+        self.assertNotIn("hidden", announce)
+        for parent in ("player-bar", "player-inner", "results-section", "notices", "status"):
+            self.assertNotIn(parent, page.parents["player-announce"])
+        self.assertIn("min-height: 44px", css_block(CSS.read_text(), ".player audio"))
+
     def test_tap_targets_and_text_size(self) -> None:
         css = CSS.read_text()
         for selector in (".card .text-link a", ".card a.play", ".skip", "button"):
@@ -149,13 +168,13 @@ FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = String(v); }
 FakeNode.prototype.addEventListener = function (k, f) { this.listeners[k] = f; };
 FakeNode.prototype.getBoundingClientRect = function () { return { top: this.top }; };
 FakeNode.prototype.blur = function () { this.blurs += 1; };
-FakeNode.prototype.focus = function () {};
+FakeNode.prototype.focus = function () { this.focuses = (this.focuses || 0) + 1; };
 FakeNode.prototype.replaceChildren = function () { this.children = []; };
 FakeNode.prototype.requestSubmit = function () {};
 FakeNode.prototype.getAttribute = function (k) { return this.attrs[k] === undefined ? null : this.attrs[k]; };
 FakeNode.prototype.scrollIntoView = function (opts) { this.scrolled = opts; };
 var nodes = {};
-["results-section", "player-bar", "now-playing", "search-form", "q", "hide-low", "retry", "view",
+["results-section", "player-bar", "now-playing", "player-announce", "search-form", "q", "hide-low", "retry", "view",
  "status", "mode", "results", "note", "confidence"].forEach(function (id) { nodes[id] = new FakeNode("x"); });
 nodes["player-bar"].hidden = true;
 var audio = new FakeNode("audio");
@@ -205,7 +224,13 @@ eq(all.filter(function (n) { return n.tagName === "h3"; })[0].textContent, "Wand
 eq(all.filter(function (n) { return n.className === "timing"; })[0].textContent, "0:01:32–0:02:25", "range");
 var play = all.filter(function (n) { return n.className === "play"; });
 eq(play.length, 1, "one play control");
-eq(play[0].attrs["aria-label"], "Play sermon 41 from 0:01:32", "spoken label");
+// F-11 Label in Name: the spoken name starts with the visible text.
+eq(play[0].attrs["aria-label"], "Play from 0:01:32, sermon 41", "spoken label");
+eq(play[0].attrs["aria-label"].indexOf(play[0].textContent), 0, "spoken label starts with visible text");
+var untitled = walk(renderCard(Object.assign({}, base, { sermon_number: null })), [])
+  .filter(function (n) { return n.className === "play"; })[0];
+eq(untitled.attrs["aria-label"], "Play from 0:01:32, Wandering Thoughts", "spoken label without a number");
+eq(untitled.attrs["aria-label"].indexOf(untitled.textContent), 0, "unnumbered label starts with visible text");
 
 // Privacy: a withheld (flagged) passage has no play control, no link to the
 // recording and no times, even if the hit still carries an audio_url.
@@ -298,11 +323,54 @@ eq(emoji.length, 600, "no emoji split");
 eq(deepLink("short one"), "short one", "short link untouched");
 window.location.search = "";
 
-// Held-audio caption reads as two sentences.
+// Held-audio caption reads as two sentences, and only a hold is announced.
+var HELD = "Press play on the bar if the browser held the audio.";
+var MEDIA = "https://archive.org/download/x/y.mp3";
+function held() { return Promise.reject(new Error("held")); }
+function allowed() { return Promise.resolve(); }
+function quiet(label) {
+  eq(play[0].attrs["aria-pressed"], undefined, label + ": no aria-pressed");
+  eq(play[0].attrs["aria-current"], undefined, label + ": no aria-current");
+  [["audio", audio], ["player-bar", nodes["player-bar"]], ["now-playing", nodes["now-playing"]],
+   ["player-announce", nodes["player-announce"]], ["play", play[0]]].forEach(function (pair) {
+    eq(pair[1].focuses || 0, 0, label + ": no focus on " + pair[0]);
+  });
+}
 setTimeout(function () {
+  // 1. Held (the fake's default rejecting play).
   eq(nodes["now-playing"].textContent,
-     "Wandering Thoughts · 0:01:32. Press play on the bar if the browser held the audio.", "held caption");
-  console.log("ok");
+     "Wandering Thoughts · 0:01:32. " + HELD, "held caption");
+  eq(nodes["player-announce"].textContent, HELD, "held: announced");
+  quiet("held");
+  // 2. Allowed: the announcer is cleared and stays quiet.
+  audio.play = allowed;
+  playClip(MEDIA, 92.02, play[0], "Wandering Thoughts · 0:01:32");
+  eq(nodes["player-announce"].textContent, "", "allowed: cleared at once");
+  setTimeout(function () {
+    eq(nodes["player-announce"].textContent, "", "allowed: nothing announced");
+    eq(nodes["now-playing"].textContent, "Wandering Thoughts · 0:01:32", "allowed caption");
+    quiet("allowed");
+    // 3. Stale hold: an older held Play does not speak over a newer one.
+    audio.play = held;
+    playClip(MEDIA, 92.02, play[0], "Old");
+    audio.play = allowed;
+    playClip(MEDIA, 92.02, play[0], "New");
+    setTimeout(function () {
+      eq(nodes["player-announce"].textContent, "", "stale hold: not announced");
+      eq(nodes["now-playing"].textContent, "New", "stale hold: newer caption kept");
+      // 4. No announcer: a page without it still plays and sets the caption.
+      var announcer = nodes["player-announce"];
+      delete nodes["player-announce"];
+      audio.play = held;
+      playClip(MEDIA, 92.02, play[0], "Bare");
+      setTimeout(function () {
+        eq(nodes["now-playing"].textContent, "Bare. " + HELD, "no announcer: held caption");
+        nodes["player-announce"] = announcer;
+        quiet("no announcer");
+        console.log("ok");
+      }, 0);
+    }, 0);
+  }, 0);
 }, 0);
 """
 
