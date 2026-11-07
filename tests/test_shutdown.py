@@ -45,7 +45,7 @@ else:
     from subproc_env import child_env
 
 SERVER = ROOT / "app" / "server.py"
-PYTHON = ROOT / ".venv" / "bin" / "python"
+PYTHON = Path(sys.executable)
 
 
 def _cache_root() -> Path:
