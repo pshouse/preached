@@ -169,7 +169,15 @@ Base `origin/main` `2c8936583d3939ea5a8e5ae39c2af6eb62d7cbac`. Tested code head 
 
 ```
 $ git diff --stat origin/main...HEAD
-GIT_DIFF_STAT_PLACEHOLDER
+ app/static/app.css              |   2 +-
+ app/static/app.js               |  13 +-
+ app/static/index.html           |   3 +-
+ docs/DEMO-SCRIPT.md             |   4 +-
+ docs/SUBMISSION-DRAFT.md        |   2 +-
+ reports/W5-A11Y-PR-B-F02-F11.md | 254 ++++++++++++++++++++++++++++++++++++++++
+ tests/test_mobile_ux.py         |  80 ++++++++++++-
+ tests/test_parity_hash.py       |   8 +-
+ 8 files changed, 349 insertions(+), 17 deletions(-)
 ```
 
 **What changes**
