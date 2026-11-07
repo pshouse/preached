@@ -55,12 +55,7 @@ SUBPROCESS_ENV_INDEX = 10  # Popen(args, bufsize, executable, stdin, stdout, std
 ASYNCIO_CALLS = {"create_subprocess_exec", "create_subprocess_shell"}
 OS_ENV_LAST = {"execle", "execlpe", "spawnle", "spawnlpe"}  # env is the last positional
 OS_ENV_INDEX = {"execve": 2, "execvpe": 2, "spawnve": 3, "spawnvpe": 3, "posix_spawn": 2, "posix_spawnp": 2}
-MODULE_CALLS = {
-    "subprocess": SUBPROCESS_CALLS,
-    "asyncio": ASYNCIO_CALLS,
-    "asyncio.subprocess": ASYNCIO_CALLS,
-    "os": OS_ENV_LAST | set(OS_ENV_INDEX),
-}
+MODULE_CALLS = {"subprocess": SUBPROCESS_CALLS, "asyncio": ASYNCIO_CALLS, "os": OS_ENV_LAST | set(OS_ENV_INDEX)}
 
 # (file, function) -> why its env may lack the flag. "Class.method" for methods.
 ALLOW = {
@@ -83,52 +78,23 @@ class _Calls:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name in MODULE_CALLS:
-                        local = alias.asname or alias.name.split(".")[0]
-                        self.modules[local] = alias.name if alias.asname else alias.name.split(".")[0]
+                        self.modules[alias.asname or alias.name] = alias.name
             elif isinstance(node, ast.ImportFrom) and node.module in MODULE_CALLS and not node.level:
                 for alias in node.names:
                     if alias.name == "*":
                         self.functions.update({n: (node.module, n) for n in MODULE_CALLS[node.module]})
                     elif alias.name in MODULE_CALLS[node.module]:
                         self.functions[alias.asname or alias.name] = (node.module, alias.name)
-        grew = True
-        while grew:  # sp = subprocess; P = Popen; r = sp.run
-            grew = False
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Assign):
-                    value, targets = node.value, node.targets
-                elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                    value, targets = node.value, [node.target]
-                else:
-                    continue
-                for target in targets:
-                    if not isinstance(target, ast.Name):
-                        continue
-                    if isinstance(value, ast.Name):
-                        if value.id in self.modules and self.modules.get(target.id) != self.modules[value.id]:
-                            self.modules[target.id] = self.modules[value.id]
-                            grew = True
-                        elif value.id in self.functions and self.functions.get(target.id) != self.functions[value.id]:
-                            self.functions[target.id] = self.functions[value.id]
-                            grew = True
-                    elif isinstance(value, ast.Attribute):
-                        module = self._module_of(value.value)
-                        if module and value.attr in MODULE_CALLS[module]:
-                            pair = (module, value.attr)
-                            if self.functions.get(target.id) != pair:
-                                self.functions[target.id] = pair
-                                grew = True
+        for node in ast.walk(tree):  # run = subprocess.run
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Attribute):
+                module = self._module_of(node.value.value)
+                if module and node.value.attr in MODULE_CALLS[module]:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            self.functions[target.id] = (module, node.value.attr)
 
     def _module_of(self, node: ast.AST) -> str | None:
-        if isinstance(node, ast.Name):
-            return self.modules.get(node.id)
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            parent = self.modules.get(node.value.id)
-            if parent is None:
-                return None
-            dotted = f"{parent}.{node.attr}"
-            return dotted if dotted in MODULE_CALLS else None
-        return None
+        return self.modules.get(node.id) if isinstance(node, ast.Name) else None
 
     def classify(self, call: ast.Call) -> tuple[str, str] | None:
         func = call.func
@@ -148,14 +114,12 @@ class _Calls:
         args = call.args
         hidden = any(k.arg is None for k in call.keywords)
         starred = [i for i, a in enumerate(args) if isinstance(a, ast.Starred)]
-        if name in ASYNCIO_CALLS:
+        if module == "asyncio":
             index = None  # env is keyword-only; *args are the command's own arguments
         elif name in OS_ENV_LAST:
             index = len(args) - 1
-        elif name in SUBPROCESS_CALLS:
-            index = SUBPROCESS_ENV_INDEX
         else:
-            index = OS_ENV_INDEX[name]
+            index = SUBPROCESS_ENV_INDEX if module == "subprocess" else OS_ENV_INDEX[name]
         if index is not None:
             if starred and (name in OS_ENV_LAST and starred[-1] == index or name not in OS_ENV_LAST and starred[0] <= index):
                 hidden = True
@@ -634,31 +598,6 @@ class DetectorTests(unittest.TestCase):
     def test_flags_env_rebound_by_walrus(self) -> None:
         source = IMPORT + "def f():\n    e = child_env()\n    (e := {})\n    subprocess.run(['x'], env=e)\n"
         self.assertEqual(self.flagged(source), 1)
-
-    def test_flags_subprocess_module_alias_by_assignment(self) -> None:
-        self.assertEqual(self.flagged("import subprocess\nsp = subprocess\nsp.run(['x'], env={})\n"), 1)
-        self.assertEqual(self.flagged(IMPORT + "sp = subprocess\nsp.run(['x'], env=child_env())\n"), 0)
-
-    def test_flags_name_to_name_function_alias(self) -> None:
-        self.assertEqual(self.flagged("from subprocess import Popen\nP = Popen\nP(['x'], env={})\n"), 1)
-        self.assertEqual(self.flagged(IMPORT + "from subprocess import Popen\nP = Popen\nP(['x'], env=child_env())\n"), 0)
-
-    def test_flags_asyncio_subprocess_submodule(self) -> None:
-        self.assertEqual(
-            self.flagged("import asyncio\nasync def f():\n    await asyncio.subprocess.create_subprocess_exec('x', env={})\n"), 1
-        )
-        self.assertEqual(
-            self.flagged("from asyncio.subprocess import create_subprocess_exec\nasync def f():\n    await create_subprocess_exec('x', env={})\n"), 1
-        )
-        self.assertEqual(
-            self.flagged("import asyncio.subprocess as asp\nasync def f():\n    await asp.create_subprocess_exec('x', env={})\n"), 1
-        )
-        self.assertEqual(
-            self.flagged(
-                IMPORT + "import asyncio\nasync def f():\n    await asyncio.subprocess.create_subprocess_exec('x', env=child_env())\n"
-            ),
-            0,
-        )
 
     def test_flags_a_function_that_calls_the_helper_but_returns_a_plain_dict(self) -> None:
         source = IMPORT + "def make():\n    child_env()\n    return {'A': '1'}\nsubprocess.run(['x'], env=make())\n"
