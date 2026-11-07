@@ -131,6 +131,7 @@ def main() -> None:
         cmd.extend(["--index", args.index])
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ""
+    env["ORT_DISABLE_TELEMETRY"] = "1"  # the child imports onnxruntime; keep ORT telemetry off
     for name in ("PREACHED_RATE_LIMIT", "PREACHED_GLOBAL_RATE_LIMIT"):
         if not env.get(name, "").strip():  # unset and empty both mean "not chosen"
             env[name] = "1000000"

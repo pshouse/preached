@@ -39,7 +39,7 @@ PATHS = (
     "/static/favicon.svg",
     "/no/such",
 )
-BRANCHES = ("handled", "disabled", "busy", "429", "bad_request", "exception")
+BRANCHES = ("handled", "disabled", "busy", "reserved", "429", "bad_request", "exception")
 
 
 def _exchange(port: int, method: str, target: str, *, source: str, host: str = "127.0.0.1"):
@@ -416,6 +416,9 @@ class SlotReleaseMatrixTests(_Served):
                                 if branch == "handled" and method in HANDLED:
                                     # A handled request got past _blocked and took a slot.
                                     self.assertEqual(counts.acquired, before + 1)
+                                if branch == "reserved" and path != "/healthz" and method in HANDLED:
+                                    # Refused before the slot is taken: no acquire to balance.
+                                    self.assertEqual(counts.acquired, before)
                                 if status == 405:
                                     self.assertEqual(json.loads(body), {"error": "method not allowed"})
                                     self.assertIn("GET", headers.get("allow", ""))
@@ -433,6 +436,9 @@ class SlotReleaseMatrixTests(_Served):
             app.disabled = lambda: True
         elif branch == "busy":
             server.max_requests_per_client = 0
+        elif branch == "reserved":
+            # Every connection counts as admitted over the cap, for /healthz only.
+            server.is_reserved = lambda request: True
         elif branch == "429":
             for limiter in limits:
                 limiter.limit = 0
@@ -442,6 +448,7 @@ class SlotReleaseMatrixTests(_Served):
     def _disarm(self, app, server, limits, saved_limits, real_disabled, real_headers) -> None:
         app.disabled = real_disabled
         server.max_requests_per_client = 4
+        server.__dict__.pop("is_reserved", None)
         for limiter, limit in zip(limits, saved_limits):
             limiter.limit = limit
         server.RequestHandlerClass._security_headers = real_headers
@@ -460,7 +467,13 @@ class SlotReleaseMatrixTests(_Served):
                 self.assertEqual(payload, {"ok": False, "disabled": True})
             else:
                 self.assertEqual(payload, {"error": "unavailable"})
-        elif branch == "busy":
+        elif branch == "reserved" and path == "/healthz":
+            # /healthz is the one path a reserved connection serves.
+            if status == 405:
+                self.assertEqual(payload, {"error": "method not allowed"})
+            else:
+                self.assertTrue(payload["ok"])
+        elif branch in ("busy", "reserved"):
             self.assertEqual(payload, {"error": "unavailable"})
             self.assertEqual(headers.get("retry-after"), "1")
             self.assertEqual(headers.get("connection"), "close")
@@ -503,6 +516,8 @@ def _expected(method: str, path: str, branch: str) -> set:
     if method not in HANDLED:
         return {501}
     if branch == "disabled" or branch == "busy":
+        return {503}
+    if branch == "reserved" and path != "/healthz":
         return {503}
     if branch == "429":
         return {429}

@@ -41,6 +41,7 @@ from preached.models import MODELS, is_question
 from preached.pooling import pool_cls
 from preached.prefixes import prepare_documents, prepare_query
 from preached.text_tokens import encode_texts
+child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -643,8 +644,7 @@ class ImportGuardTests(unittest.TestCase):
             "if loaded:\n"
             "    raise SystemExit('torch imported: ' + ','.join(loaded))\n"
         )
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = ""
+        env = child_env(os.environ, CUDA_VISIBLE_DEVICES="")
         result = subprocess.run(
             [sys.executable, "-c", code, str(ROOT)],
             cwd=ROOT,
@@ -685,8 +685,7 @@ class ImportGuardTests(unittest.TestCase):
             "    'finite': bool(np.isfinite(matrix).all()),\n"
             "}))\n"
         )
-        env = os.environ.copy()
-        env["CUDA_VISIBLE_DEVICES"] = ""
+        env = child_env(os.environ, CUDA_VISIBLE_DEVICES="")
         result = subprocess.run(
             [sys.executable, "-c", code, str(ROOT)],
             cwd=ROOT,

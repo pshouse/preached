@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from preached.artifacts import GRANITE_REVISION, VARIANT_FILES, required_filenames  # noqa: E402
 from preached.store import connect  # noqa: E402
+child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
 
 SERVER = ROOT / "app" / "server.py"
 PYTHON = ROOT / ".venv" / "bin" / "python"
@@ -115,7 +116,6 @@ def _fixture_index(path: Path, rows: int = 400) -> Path:
 def _env(tmp: str) -> dict:
     env = {
         "PATH": os.environ["PATH"],
-        "HOME": os.environ.get("HOME", tmp),
         "TMPDIR": tmp,
         "PREACHED_RATE_LIMIT": "1000000",
         "PREACHED_MAX_CONNECTIONS": "64",
@@ -130,7 +130,7 @@ def _env(tmp: str) -> dict:
     for key in ("PREACHED_CACHE", "PREACHED_ONNX_DIR"):
         if key in os.environ:
             env[key] = os.environ[key]
-    return env
+    return child_env(env)
 
 
 class _Server:
@@ -146,7 +146,7 @@ class _Server:
                 + f"runpy.run_path({str(SERVER)!r}, run_name='__main__')\n"
             )
             command = [_python(), "-c", code]
-            env = {**_env(tmp), "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+            env = child_env(_env(tmp), PYTHONPATH=f"{ROOT}{os.pathsep}{ROOT / 'src'}")
         else:
             command = [_python(), str(SERVER), "--port", "0", *args]
             env = _env(tmp)
@@ -504,7 +504,7 @@ class _ScriptRun:
             + tail
         )
         with tempfile.TemporaryDirectory() as tmp:
-            env = {**_env(tmp), "PYTHONPATH": f"{ROOT}{os.pathsep}{ROOT / 'src'}"}
+            env = child_env(_env(tmp), PYTHONPATH=f"{ROOT}{os.pathsep}{ROOT / 'src'}")
             proc = subprocess.run([_python(), "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=120)
             return proc, list(Path(tmp).glob("preached-pycache-*"))
 
