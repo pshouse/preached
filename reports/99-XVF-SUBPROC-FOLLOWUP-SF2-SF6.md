@@ -150,3 +150,108 @@ See `reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md` R2 for file:line and the Detect
  tests/test_subproc_env_guard.py            | 725 +++++++++++++++++++++++++----
  11 files changed, 934 insertions(+), 120 deletions(-)
 ```
+
+
+## R2-scope (PR #107 scope correction)
+
+Machine: preached-sandbox. Branch: test/w5-subproc-followup. Head before this correction (round 50 tip, also origin/test/w5-subproc-followup at fetch): 89eb86890eafc5695904b2055a0853a5281d6b18. Did not merge main. Did not touch `/work/preached` (`fix/w5-a11y-503-page`, unstaged 503-page edits). Revert commit: 1138b6432b4bb4f8aef9343298f7da02200c2fdc. This report follows it; the final head is the branch tip.
+
+### 1. What was done
+
+Inventory of `6dd75ca9d7f663318156b42272765e677142a3ab..89eb868`. That range touches only `tests/test_subproc_env_guard.py` (e37f0f7) and this report (cf31325, 0d1eb6b, 89eb868). Line numbers in the table are on 89eb868, before the revert. Kept lines are where they sit after 1138b64.
+
+| Class | Hunk | At 89eb868 | Disposition |
+| --- | --- | --- | --- |
+| A | Module docstring: attribute mutations seen file-wide (`self.e` / `cls.e` in setUp or another method) | `tests/test_subproc_env_guard.py:19-22` (shares the paragraph with B) | Kept. Now :19-22 |
+| A | `self.tree = tree` | :271 | Kept. Now :235 |
+| A | `ok` docstring: attribute flag marks are file-wide | :292-295 | Kept. Now :256-260 |
+| A | `flag_marks(self.tree if is_attr else scope, ...)` | :316 | Kept. Now :280 |
+| A | DetectorTests: setUp pop, setUp del, other-method update, setUpClass `cls.e`, unmutated control | :596, :600, :604, :608, :612 | Kept. Now :560, :564, :568, :572, :576 |
+| B | `_unknown_value` / `_record_bound` (tuple, list, starred unpacking is an unknown value) | :175, :184 | Kept. Now :139, :148 |
+| B | `_assignments` records For/AsyncFor targets, with/async-with `optional_vars`, NamedExpr | :199-215 | Kept. Now :163-179 |
+| B | DetectorTests: for and async for (also scripts=True), with and async with, tuple/list/star unpack, walrus | :616, :623, :629, :634 | Kept. Now :580, :587, :593, :598 |
+| C | SF4: extract copy/re-check and test it on a fake root | no hunk in this range | Not present. Follow-up. Not claimed |
+| C | SF5: writable check over every model file | no hunk in this range | Not present. Follow-up. Not claimed |
+| C | Report stat-block pin (`origin/main...HEAD` counts) | this file, commits 0d1eb6b and 89eb868, stat block :137-152 | Kept in history |
+| D | `MODULE_CALLS["asyncio.subprocess"]` | :61 | Reverted in 1138b64 |
+| D | Dotted import split (`import asyncio.subprocess` / `as asp` stores the dotted module) | :86-87 | Reverted. Import line is the pre-round-50 assignment again (:81) |
+| D | Assignment fixpoint copies a module Name (`sp = subprocess`) and a function Name (`P = Popen`). The same loop accepted AnnAssign, which existed only so those aliases (and an annotated `run: T = subprocess.run`) were seen. No DetectorTest covered annotated attribute assignment alone | :94-120 | Reverted. Pre-round-50 `run = subprocess.run` Assign loop restored (:88-94). Split was safe: that loop does not implement the held aliases |
+| D | `_module_of` resolves `parent.attr` when that dotted name is a watched module | :122-131 | Reverted. Name-only lookup restored (:96-97) |
+| D | `env_args` keys off `name in ASYNCIO_CALLS` / `SUBPROCESS_CALLS` so module `asyncio.subprocess` still treats env as keyword-only | :151-158 | Reverted. `module == "asyncio"` / `module == "subprocess"` restored (:117-122). Equivalent for subprocess, asyncio, and os |
+| D | `test_flags_subprocess_module_alias_by_assignment` | :638 | Reverted |
+| D | `test_flags_name_to_name_function_alias` | :642 | Reverted |
+| D | `test_flags_asyncio_subprocess_submodule` (dotted call, `from asyncio.subprocess import`, `import asyncio.subprocess as asp`) | :646 | Reverted |
+
+No hunk mixed (D) with MF1/MF2 code in a way that had to stay. `posix`, `functools.partial`, a `subprocess.Popen` subclass, `getattr`, an env mutated through a helper parameter, and a direct `os.environ` write were not in the round-50 diff.
+
+Held gaps, follow-up only. None of these is fixed on this branch:
+
+- `x = module` aliases (`sp = subprocess`)
+- Name-to-Name callable aliases (`P = Popen`)
+- `asyncio.subprocess` module paths
+- `posix.execve` / `posix.spawn`
+- `functools.partial`
+- a `subprocess.Popen` subclass
+- `getattr(subprocess|os|asyncio, ...)`
+- an env passed into a helper that mutates it through a parameter
+- `os.environ` mutated directly
+- SF4: copy/re-check extracted and tested on a fake root
+- SF5: writable check over every model file
+
+The R2 "PR BODY" above claimed the three reverted SHOULDs as done. That claim is withdrawn. The PR BODY at the end of this section matches the tree.
+
+### 2. How to run it
+
+Targeted, every rule-5 variable under one temp dir, from an in-tree `.venv` whose environment lives under `/tmp`:
+
+    T=$(mktemp -d); env -u PREACHED_GUARD_REAL_SRC -u UV_PROJECT_ENVIRONMENT PREACHED_CACHE=$T/c PREACHED_ONNX_DIR=$T/o HF_HOME=$T/h DENO_DIR=$T/d XDG_CACHE_HOME=$T/x UV_CACHE_DIR=$T/u TORCH_HOME=$T/t UV_PYTHON_INSTALL_DIR=$T/p HOME=$T/home ORT_DISABLE_TELEMETRY=1 HF_HUB_OFFLINE=1 .venv/bin/python -m unittest tests.test_subproc_env_guard tests.test_child_home_guard tests.test_cache_guard
+
+Full suite: the same variables plus `PREACHED_REQUIRE_DENO=1`, `discover -s tests`. `UV_PROJECT_ENVIRONMENT` stays unset so children see `ROOT/.venv/bin/python`.
+
+### 3. Results
+
+- Targeted on the 1138b64 tree, host preached-sandbox, in-tree `.venv` symlink to a `/tmp` uv environment (CPython 3.12.16, onnxruntime 1.31.1), scratch caches, `PREACHED_GUARD_REAL_SRC` unset: `Ran 85 tests in 6.271s`, `OK (skipped=3)`. Round 50's 88 minus the 3 removed DetectorTests.
+- Full suite, host preached-sandbox, same tree, `PREACHED_REQUIRE_DENO=1`, temp caches: `Ran 1226 tests in 259.950s`, `OK (skipped=15)`. Round 50's 1229 minus those 3 tests. Zero `test_every_cited_file_line_holds_its_string` failures (the name is absent from the log; exit 0). The report commit after 1138b64 does not change code.
+- /cache snapshot (`find /cache -xdev -printf '%p\t%s\t%T@\n' | LC_ALL=C sort`): before 139814 lines sha256 d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7; after 139814 lines, same sha256; diff: none. No test pointed at /cache. `PREACHED_GUARD_REAL_SRC` was unset.
+- DEPLOY cites are untouched. This correction edits `tests/test_subproc_env_guard.py` and this report. `docs/DEPLOY.md` does not cite that test, and `tests/test_deploy_alerts.py` does not name it.
+
+### 4. Open issues, risks
+
+- The held gaps listed above are follow-up only.
+- Real-model path of `test_child_home_guard` not exercised (`PREACHED_GUARD_REAL_SRC` unset).
+- `/work/preached` stayed dirty with the 503-page edits found at the start. This correction did not read or write those files except to record `git diff --stat`.
+
+### 5. Dependencies
+
+None.
+
+## PR BODY
+
+PR #107 scope correction: keep MF1 and MF2 from the r2 scan, drop the held static gaps that round 50 also landed.
+
+Still in the branch, from the #102 follow-up: guard hardening (SF2), plain imports (SF3), child-home re-check (SF4), override and one writable model file (SF5), root note and `lexists` (SF6). Still in from r2: MF1 (attribute env mutations in setUp, setUpClass, and another method, file-wide) and MF2 (for/async-for, with/async-with, unpacking, walrus). DetectorTests for those stay.
+
+Not in this PR, follow-up only: `x = module` aliases, Name-to-Name callable aliases, `asyncio.subprocess` paths, `posix`, `functools.partial`, a Popen subclass, `getattr`, helper-parameter env mutation, direct `os.environ` mutation, extracting the SF4 copy/re-check onto a fake root, and walking every model file for SF5.
+
+Head before: 89eb86890eafc5695904b2055a0853a5281d6b18. Revert: 1138b6432b4bb4f8aef9343298f7da02200c2fdc on test/w5-subproc-followup. Did not merge main. ALLOW unchanged.
+
+Tests on preached-sandbox at 1138b64: targeted `Ran 85 tests in 6.271s` `OK (skipped=3)`; full suite `Ran 1226 tests in 259.950s` `OK (skipped=15)`. /cache before/after: 139814 lines each, sha256 d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7 both, diff none. DEPLOY cites untouched (no cited file changed).
+
+`git diff --stat origin/main...HEAD` (in-scope files only):
+
+## R2-scope stat (`git diff --stat origin/main...HEAD`; 11 files, in-scope)
+
+```
+ reports/99-XVF-SUBPROC-FOLLOWUP-SF2-SF6.md | 257 +++++++++++
+ reports/W5-SUBPROC-ENV-HELPER.md           |   6 +-
+ scripts/compare_responses.py               |   2 +-
+ tests/README.md                            |  16 +-
+ tests/test_child_home_guard.py             | 128 +++++-
+ tests/test_deploy.py                       |   5 +-
+ tests/test_embed_backend.py                |   5 +-
+ tests/test_hard_conditions.py              |   5 +-
+ tests/test_onnx_pin_repro.py               |   5 +-
+ tests/test_shutdown.py                     |   5 +-
+ tests/test_subproc_env_guard.py            | 658 ++++++++++++++++++++++++-----
+ 11 files changed, 975 insertions(+), 117 deletions(-)
+```
