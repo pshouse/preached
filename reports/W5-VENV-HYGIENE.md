@@ -58,3 +58,76 @@ The run counts the new guard tests (1174 on both sides includes them; main's num
 
 ## Notes
 - The three `HealthzSearchModeTests` errors only appear under `python -m unittest tests.test_onnx_pin_repro` (`No module named 'test_server'`); they also occur on main and pass under `discover -s tests`.
+
+---
+
+# r2 (99-XX1-PR106-MERGE-MAIN-MF1-MF3): merge of origin/main 2c89365, MF1-MF3 closed
+
+Code head under test: `b9fb0ee956c4a0153037c7e2a6eca47925951637` (merge commit `05d51a0`, then one follow-up commit; this report is committed on top, tests unchanged by it). Host: `preached-sandbox` (Linux 7.2.15-1-omarchy). Pre-merge head was `4e2b39921e42543c6a2eef9679924b4d91bd89b1` (confirmed). Normal merge commit, no rebase, no force-push.
+
+`git diff --stat origin/main...HEAD` (code head b9fb0ee; 0 behind / 4 ahead of origin/main 2c89365):
+```
+ reports/W5-VENV-HYGIENE.md   | 60 +++ (before this r2 section)
+ tests/test_deploy.py         | 39 +++++++++++++++-----
+ tests/test_onnx_pin_repro.py |  9 ++++-
+ tests/test_shutdown.py       |  2 +-
+ tests/test_venv_hygiene.py   | 86 ++++++++++++++++++++++++++++++++++++++++++++
+```
+Same five files as r1, plus `reports/` r2 text. No production code.
+
+## MF1 closed: conflicts composed, nothing side-picked
+Two conflict regions, both in tests/test_deploy.py, both resolved by editing (no `--ours/--theirs`):
+1. `BundleTests._env` (tests/test_deploy.py:451-455): `child_env(os.environ, **{"PATH": <sys.executable dir>:$PATH, **extra})`. Main's `child_env(os.environ, ...)` and the branch's interpreter-first PATH both survive; a caller-supplied `PATH` still wins.
+2. `test_planted_bytecode_does_not_run` (tests/test_deploy.py:1474-1475): `probe = [sys.executable, ...]` and `base = child_env(PYTHONPATH=...)`.
+test_onnx_pin_repro.py and test_shutdown.py auto-merged; main's other child_env hunks (ImportGuardTests, `_serve_env`, bundle checker calls, direct-server start/cleanup, `_sandbox_env`, shutdown helpers) are untouched. `git diff origin/main..HEAD -- tests/test_deploy.py` removes exactly one `child_env` line (`return child_env(os.environ, **extra)` in `_env`), replaced by the composed `child_env(...)` call above; no child_env call is net-removed. tests/test_subproc_env_guard.py (AST guard) is GREEN in both matrix runs.
+
+## MF2 closed
+### (a) Launcher/PATH audit (before -> after)
+| change | before | after | coverage of launcher fallback |
+|---|---|---|---|
+| planted-bytecode probe; two direct-start tests | `ROOT/.venv/bin/python` | `sys.executable` | already an explicit interpreter, not launcher lookup; direct `python`/`python -B`/`uv run` launcher variants still iterated in the direct-start test |
+| shutdown `PYTHON` | `ROOT/.venv/bin/python` | `Path(sys.executable)` | explicit interpreter; no launcher |
+| fixture `.venv` symlinks (source, bundle, `_serve_env`) | `ROOT/.venv` | `Path(sys.prefix)` | serve.sh `-x $ROOT/.venv/bin/python` branch (scripts/serve.sh:75) and build-bundle.sh `$SOURCE/.venv/bin/python` branch (:55) still taken, via the link |
+| `BundleTests._env`, `_serve_env` | inherited PATH | interpreter dir prepended | build-bundle.sh `command -v python3` fallback (:58) now resolves to the suite interpreter, never a bare one; the fallback line itself is unchanged and unreached by the suite |
+| secret-name serve test | `bash ROOT/scripts/serve.sh`, cwd ROOT | `bash <tmp>/tree/scripts/serve.sh`, cwd tmp tree with `.venv`->sys.prefix | exercises the same `-x .venv/bin/python` branch; the checkout's own `.venv`-absent `uv run` branch (serve.sh:76-77,165,214) is covered only by the existing direct-start `uv run` subtest (test_deploy.py ~1616) and was not a coverage target of the secret-name test |
+| ONNX export subprocess | args unchanged | adds `UV_PROJECT_ENVIRONMENT=<tmp>/uv-env` | `uv run` still used; env under tmp |
+`scripts/demo.sh` does not exist in this tree (scripts/ has serve.sh, build-bundle.sh, smoke-bundle.sh); nothing to audit there. docs/DEPLOY.md:454 ("uses `bundle/.venv/bin/python` when that exists") describes the unchanged scripts; no production script or DEPLOY cite changed, so no re-pin.
+
+Byte identity: the copied serve.sh is now asserted equal to `scripts/serve.sh` (tests/test_deploy.py, secret-name test).
+
+src/ and app/ symlink write-through (throwaway worktree, `find src app scripts` listing before/after the secret-name test): in a plain run `app/__pycache__/{__init__,server}.cpython-312.pyc` appeared. Cause isolated: merely `import tests.test_deploy` (the test process importing app.server) creates it, before app.server sets its pycache prefix; same on main. With `PYTHONDONTWRITEBYTECODE=1` in the outer env the before/after listings are `cmp`-identical, so serve.sh and the server it launches write nothing through the links. The pre-existing import-time .pyc is untracked/ignored; not changed here.
+
+### (b) Guard mutants
+The regex guard flagged comments/strings; I replaced it with an AST detector (`worktree_venv_lines`, tests/test_venv_hygiene.py) plus a spelling test and a comment/string false-positive test. Mutant = a line appended to tests/test_deploy.py, run `tests.test_venv_hygiene`, then restored from a copy (`cmp` identical, `git diff` empty):
+| mutant | result | after revert |
+|---|---|---|
+| `ROOT / ".venv" / "bin" / "python"` | RED (failures=1) | GREEN, cmp identical |
+| `ROOT / '.venv'` | RED | GREEN, cmp identical |
+| `ROOT.joinpath(".venv")` | RED | GREEN, cmp identical |
+| `ROOT.joinpath('.venv')` | RED | GREEN, cmp identical |
+| `# comment ROOT / ".venv"` (false-positive) | OK (not flagged) | GREEN |
+
+### (c) Full-suite matrix, sha b9fb0ee, host preached-sandbox
+Both: `uv run --frozen python -m unittest discover -s tests`, `env -i`, one `mktemp -d` base for PREACHED_CACHE, PREACHED_ONNX_DIR, HF_HOME, DENO_DIR, XDG_CACHE_HOME, HOME, TORCH_HOME, UV_CACHE_DIR, UV_PYTHON_INSTALL_DIR; `ORT_DISABLE_TELEMETRY=1`, `HF_HUB_OFFLINE=1`, `PREACHED_REQUIRE_DENO=1`; `PREACHED_GUARD_REAL_SRC` unset.
+| run | venv | result | checkout `git status` after |
+|---|---|---|---|
+| A: /tmp worktree, in-tree `.venv` (UV_PROJECT_ENVIRONMENT=<wt>/.venv) | in tree | Ran 1197, OK (skipped=15), exit 0 | clean |
+| B: separate /tmp worktree, no `.venv` in tree | UV_PROJECT_ENVIRONMENT outside repo | Ran 1197, OK (skipped=15), exit 0 | clean, no `.venv` created |
+
+### (d) /cache (rule 5 addendum)
+`find /cache -xdev -printf '%p\t%s\t%T@\n' | LC_ALL=C sort` before: 139814 lines, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7`; after: 139814 lines, same sha256; diff: none. (r1's 132824 count was a different `find` form.)
+
+### (e) gitleaks
+`gitleaks` is not on PATH in this sandbox (`which gitleaks` fails); not installed, not run.
+
+## MF3 closed
+Real position against merge base used (`origin/main` 2c89365; the old merge base was `ebc058d`): before the merge the branch was 19 behind / 2 ahead of origin/main; after the merge commit it is 0 behind / 4 ahead (`git rev-list --left-right --count origin/main...HEAD` = `0 4`). The ebc058d/b090554 counts (1174 OK/12 skipped; main+guard 39 failures/2 errors) are historical and not evidence for this merge; the evidence is the matrix above.
+
+## PR BODY
+Stop tests from writing a bare `.venv` into the worktree (later deploy/shutdown tests picked its numpy-less interpreter). Tests now link bundles to `sys.prefix`, pin `sys.executable`, and build the ONNX-export env under a temp dir. A guard test fails if a test names `ROOT/.venv` (AST-based, ignores comments/strings) or if the suite creates a worktree `.venv`. Test-only; no production code.
+
+r2: merged origin/main 2c89365 (normal merge commit). Two conflicts in tests/test_deploy.py composed by editing: `BundleTests._env` keeps `child_env(os.environ, ...)` and the interpreter-first PATH; the planted-bytecode probe uses `sys.executable` and `child_env(PYTHONPATH=...)`. All other main-side child_env changes are untouched; the AST child_env guard is green.
+
+Base: now 0 behind / 4 ahead of origin/main 2c89365 (was 19 behind / 2 ahead before the merge). The earlier ebc058d/b090554 results (1174 OK/12 skipped; main 39F/2E) are historical, not evidence for this merge.
+
+Evidence at b9fb0ee on preached-sandbox: full suite Ran 1197, OK (skipped=15) both with an in-tree /tmp `.venv` and with `UV_PROJECT_ENVIRONMENT` outside the repo; checkout clean after each. Guard mutants for `ROOT / ".venv"`, `ROOT / '.venv'`, `ROOT.joinpath(".venv")` and `ROOT.joinpath('.venv')` go RED then GREEN after revert; a comment/string is not flagged. The copied serve.sh is asserted byte-identical; src/app symlinks are not written through by serve.sh (listing identical with bytecode off). /cache listing unchanged (139814 lines, same sha256). gitleaks not available in the sandbox. Launcher/PATH audit table in reports/W5-VENV-HYGIENE.md.
