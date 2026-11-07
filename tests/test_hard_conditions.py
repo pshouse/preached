@@ -41,6 +41,7 @@ import preached.library as library  # noqa: E402
 from preached.library import _sidecar_problem, is_your_church, mark_your_church_exclusive  # noqa: E402
 from preached.store import UnsafeSidecar, open_readonly, open_readonly_or_exit  # noqa: E402
 from test_side import build_library, church_rows, classic_rows, reopen  # noqa: E402
+child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
 
 ROOT = Path(__file__).resolve().parents[1]
 HARDLINK = "has a -shm file with 2 hard links"
@@ -632,7 +633,7 @@ class ErrorLineTests(_PlantedWesley):
             with self.subTest(script=name):
                 before = self.wesley_state()
                 result = subprocess.run([sys.executable, *argv], capture_output=True, text=True, timeout=120,
-                                        check=False, env={**os.environ, "PREACHED_CACHE": str(self.root)})
+                                        check=False, env=child_env(os.environ, PREACHED_CACHE=str(self.root)))
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual(result.stderr.strip(), f"error: {index} {HARDLINK}; it is not opened")

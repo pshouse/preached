@@ -46,6 +46,7 @@ from preached.artifacts import (
     sha256_file,
     verify_manifest,
 )
+child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = Path(os.environ.get("PREACHED_CACHE", "/cache"))
@@ -277,8 +278,7 @@ def _sandbox_env(tmp: Path, **extra: str) -> dict[str, str]:
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
     )
-    env.update(extra)
-    return env
+    return child_env(env, **extra)
 
 
 def _tree(root: Path) -> list[str]:
@@ -295,7 +295,7 @@ class Avx2GuardTests(unittest.TestCase):
             "import export_onnx\n"
             "print(os.environ['ATEN_CPU_CAPABILITY'], 'torch' in sys.modules)\n"
         )
-        env = dict(os.environ, ATEN_CPU_CAPABILITY="default")
+        env = child_env(os.environ, ATEN_CPU_CAPABILITY="default")
         result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.split(), ["avx2", "False"])
@@ -578,8 +578,7 @@ class HfCacheDefaultTests(unittest.TestCase):
             "export_onnx._reexec_with_hashseed()\n"
         )
         drop = {"PYTHONHASHSEED", "HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "PREACHED_CACHE"}
-        env = {k: v for k, v in os.environ.items() if k not in drop}
-        env.update(env_set)
+        env = child_env({k: v for k, v in os.environ.items() if k not in drop}, **env_set)
         result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.split()
@@ -692,7 +691,7 @@ class TraceOrderTests(unittest.TestCase):
             f"export_onnx._check_trace_order(N(config=N(layer_types={LAYER_TYPES!r})))\n"
             "print('ok')\n"
         )
-        env = dict(os.environ, PYTHONHASHSEED=seed)
+        env = child_env(os.environ, PYTHONHASHSEED=seed)
         return subprocess.run(
             [sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60
         )
@@ -727,8 +726,7 @@ class HashSeedReexecTests(unittest.TestCase):
             "export_onnx._reexec_with_hashseed()\n"
             "print('NOEXEC', os.environ['PYTHONHASHSEED'])\n"
         )
-        env = dict(os.environ)
-        env.pop("PYTHONHASHSEED", None)
+        env = child_env({k: v for k, v in os.environ.items() if k != "PYTHONHASHSEED"})
         if ambient is not None:
             env["PYTHONHASHSEED"] = ambient
         result = subprocess.run(

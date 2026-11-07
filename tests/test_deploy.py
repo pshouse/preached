@@ -44,6 +44,7 @@ from app.server import (  # noqa: E402
 from preached.artifacts import FP32_ONNX_SHA256, GRANITE_REVISION  # noqa: E402
 from preached.search import Searcher  # noqa: E402
 from preached.store import connect  # noqa: E402
+child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
 
 SHA = "ab" * 32
 OTHER_SHA = "cd" * 32
@@ -438,7 +439,7 @@ class ImportGuardTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, "-c", code, str(ROOT), *FORBIDDEN_IMPORTS],
             cwd=ROOT,
-            env={**os.environ, "CUDA_VISIBLE_DEVICES": ""},
+            env=child_env(os.environ, CUDA_VISIBLE_DEVICES=""),
             capture_output=True,
             text=True,
             check=False,
@@ -448,12 +449,10 @@ class ImportGuardTests(unittest.TestCase):
 
 class BundleTests(unittest.TestCase):
     def _env(self, **extra) -> dict:
-        env = os.environ.copy()
         # build-bundle.sh falls back to `python3` on PATH when ROOT/.venv is
         # absent. Put the suite's interpreter first so it is never a bare one.
-        env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
-        env.update(extra)
-        return env
+        path = f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}"
+        return child_env(os.environ, **{"PATH": path, **extra})
 
     def _stand_in(self, root: Path) -> tuple[Path, Path]:
         model = root / "onnx" / GRANITE_REVISION
@@ -1181,8 +1180,7 @@ class BundleTests(unittest.TestCase):
         for name in list(env):
             if name.startswith("PREACHED_"):
                 env.pop(name)
-        env.update(extra)
-        return env
+        return child_env(env, **extra)
 
     def test_world_writable_bundle_is_refused_not_repaired(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1424,7 +1422,7 @@ class BundleTests(unittest.TestCase):
             broken = subprocess.run(
                 [sys.executable, "-I", "-B", str(checker), "check", str(out)],
                 cwd=out,
-                env={**os.environ, "PYTHONPATH": f"{ROOT / 'src'}:{ROOT}"},
+                env=child_env(os.environ, PYTHONPATH=f"{ROOT / 'src'}:{ROOT}"),
                 capture_output=True,
                 text=True,
                 check=False,
@@ -1474,7 +1472,7 @@ class BundleTests(unittest.TestCase):
             canary = root / "canary"
             self._plant_bytecode(out, canary)
             probe = [sys.executable, "-c", "import preached.paths"]
-            base = {"PATH": os.environ["PATH"], "PYTHONPATH": f"{out / 'src'}:{out}"}
+            base = child_env(PYTHONPATH=f"{out / 'src'}:{out}")
             # Control: without a cache prefix the planted bytecode does run.
             subprocess.run(probe, cwd=root, env=base, check=True, timeout=60)
             self.assertTrue(canary.exists())
@@ -1482,7 +1480,7 @@ class BundleTests(unittest.TestCase):
             # serve.sh's PYTHONPYCACHEPREFIX alone stops it.
             prefix = root / "pycache-prefix"
             prefix.mkdir()
-            subprocess.run(probe, cwd=root, env={**base, "PYTHONPYCACHEPREFIX": str(prefix)}, check=True, timeout=60)
+            subprocess.run(probe, cwd=root, env=child_env(base, PYTHONPYCACHEPREFIX=str(prefix)), check=True, timeout=60)
             self.assertFalse(canary.exists())
             # And the bundle check refuses the tree before anything imports.
             problem = bundle_problem(out / "index" / "wesley.sqlite", root=out)
@@ -1504,13 +1502,11 @@ class BundleTests(unittest.TestCase):
         """Start app/server.py without serve.sh: no PYTHONPYCACHEPREFIX, no
         stdlib pre-check. (listening, exit code or None, output)."""
         log = bundle.parent / f"{bundle.name}-direct.log"
-        env = {
-            "PATH": os.environ["PATH"],
-            "HOME": os.environ.get("HOME", "/tmp"),
-            "PREACHED_CACHE": str(bundle),
-            "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-            "UV_OFFLINE": "1",
-        }
+        env = child_env(
+            PREACHED_CACHE=str(bundle),
+            TMPDIR=os.environ.get("TMPDIR", "/tmp"),
+            UV_OFFLINE="1",
+        )
         args = ["app/server.py", "--index", str(bundle / "index" / "wesley.sqlite"), "--port", "0", "--bm25-only"]
         with log.open("w") as handle:
             proc = subprocess.Popen(command + args, cwd=bundle, env=env, stdout=handle, stderr=subprocess.STDOUT)
@@ -1541,7 +1537,7 @@ class BundleTests(unittest.TestCase):
             (shim / "argparse.py").write_text("import os, signal, time\nos.kill(os.getpid(), signal.SIGTERM)\ntime.sleep(30)\n")
             scratch = root / "tmp"
             scratch.mkdir()
-            env = {"PATH": os.environ["PATH"], "PYTHONPATH": str(shim), "TMPDIR": str(scratch)}
+            env = child_env(PYTHONPATH=str(shim), TMPDIR=str(scratch))
             proc = subprocess.run(
                 [sys.executable, str(ROOT / "app" / "server.py")], cwd=root, env=env, capture_output=True, timeout=60
             )
@@ -1558,7 +1554,7 @@ class BundleTests(unittest.TestCase):
             + f"runpy.run_path({str(ROOT / 'app' / 'server.py')!r}, run_name='__main__')\n"
         )
         with tempfile.TemporaryDirectory() as tmp:
-            env = {"PATH": os.environ["PATH"], "TMPDIR": tmp, "PYTHONPATH": str(ROOT)}
+            env = child_env(TMPDIR=tmp, PYTHONPATH=str(ROOT))
             proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, timeout=60)
             return proc, list(Path(tmp).glob("preached-pycache-*"))
 
@@ -1612,7 +1608,7 @@ class BundleTests(unittest.TestCase):
             self.assertTrue(pyc.is_file())
             # Control: a plain import does load the planted bytecode.
             probe = [python, "-B", "-c", "from app.bundle import bundle_problem; import sys; sys.exit(bundle_problem(sys.argv[1]) is not None)"]
-            subprocess.run(probe + [str(out / "index" / "wesley.sqlite")], cwd=out, env={"PATH": os.environ["PATH"]}, check=True, timeout=60)
+            subprocess.run(probe + [str(out / "index" / "wesley.sqlite")], cwd=out, env=child_env(), check=True, timeout=60)
             self.assertTrue(canary.exists())
             canary.unlink()
             commands = {"python": [python], "python -B": [python, "-B"]}
