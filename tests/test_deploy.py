@@ -1042,6 +1042,8 @@ class BundleTests(unittest.TestCase):
             script = tree / "scripts" / "serve.sh"
             script.write_bytes((ROOT / "scripts" / "serve.sh").read_bytes())
             script.chmod(0o755)
+            # The fixture must run the real launcher, byte for byte.
+            self.assertEqual(script.read_bytes(), (ROOT / "scripts" / "serve.sh").read_bytes())
             (tree / "src").symlink_to(ROOT / "src")
             (tree / "app").symlink_to(ROOT / "app")
             (tree / ".venv").symlink_to(VENV)
