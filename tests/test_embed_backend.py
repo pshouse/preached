@@ -41,7 +41,10 @@ from preached.models import MODELS, is_question
 from preached.pooling import pool_cls
 from preached.prefixes import prepare_documents, prepare_query
 from preached.text_tokens import encode_texts
-child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
+if __package__:
+    from .subproc_env import child_env
+else:
+    from subproc_env import child_env
 
 ROOT = Path(__file__).resolve().parents[1]
 

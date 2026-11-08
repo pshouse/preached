@@ -33,8 +33,8 @@ PATHS = ["/api/search?q=christian+perfection&k=5", "/api/search?q=grace&mode=key
 def start(tree, extra):
     env = {k: v for k, v in os.environ.items() if not k.startswith("PREACHED_")}
     env["PREACHED_CACHE"] = CACHE
-    env["ORT_DISABLE_TELEMETRY"] = "1"  # keep ORT telemetry off in both servers
     env.update(extra)
+    env["ORT_DISABLE_TELEMETRY"] = "1"  # keep ORT telemetry off in both servers; set last so extra cannot override it
     proc = subprocess.Popen(["uv", "run", "--project", tree, "python", f"{tree}/app/server.py", "--bm25-only",
                              "--port", "0"], cwd=tree, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True)

@@ -41,7 +41,10 @@ import preached.library as library  # noqa: E402
 from preached.library import _sidecar_problem, is_your_church, mark_your_church_exclusive  # noqa: E402
 from preached.store import UnsafeSidecar, open_readonly, open_readonly_or_exit  # noqa: E402
 from test_side import build_library, church_rows, classic_rows, reopen  # noqa: E402
-child_env = __import__("importlib").import_module("tests.subproc_env" if __package__ else "subproc_env").child_env
+if __package__:
+    from .subproc_env import child_env
+else:
+    from subproc_env import child_env
 
 ROOT = Path(__file__).resolve().parents[1]
 HARDLINK = "has a -shm file with 2 hard links"

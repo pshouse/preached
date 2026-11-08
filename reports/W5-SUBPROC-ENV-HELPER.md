@@ -14,8 +14,8 @@ Since #94, `src/preached/__init__.py` keeps ORT telemetry off for children that 
 - No `app/server.py` or DEPLOY-cited file changed, so no DEPLOY cites moved. DEPLOY.md mentions test files by name only, not by line.
 - R2: `test_shutdown._env` and every other builder already went through `child_env` in R1 (the audit found no allow-list builder left in `tests/` or `scripts/`; `scripts/` set the flag inline). `test_shutdown._env` no longer forwards the real `HOME`: `child_env` gives the hybrid server child a scratch `HOME` and `XDG_CACHE_HOME`.
 - R2: `tests/test_child_home_guard.py` (arms `cache_guard` first) runs test_shutdown's hybrid server child with a real index and the pinned fp32 model in a fresh temp HOME and asserts no `Microsoft`/`DeveloperTools` directory appears under HOME or XDG_CACHE_HOME. A second test runs a child that imports onnxruntime BEFORE preached and opens the model. A third proves the check can fail: the old shape (no flag, no XDG) writes a `Microsoft` dir. The tests need `PREACHED_GUARD_REAL_SRC`, which must be a read-only bind mount or a pre-made copy of a cache root, never a writable live cache; they byte-copy only the Wesley index and the fp32 export into a temp dir (rule 5), and skip with that reason when it is unset or the files are missing.
-- R3: the guard refuses a source file the test process can write to (unless `PREACHED_GUARD_ALLOW_RW_SRC=1`), a non-empty `index/wesley.sqlite-wal` and an existing `index/wesley.sqlite-journal` (only the main db is copied, so committed WAL frames would be missing). Each refusal has a test (`SourceRefusalTests`, fake cache root in a temp dir). The docstring and `tests/README.md` now say the same thing.
 - R2: `tests/README.md` states that allow-listed children inherit `HOME` and must use the shared helper.
+- R3: the guard refuses a source file the test process can write to (unless `PREACHED_GUARD_ALLOW_RW_SRC=1`), a non-empty `index/wesley.sqlite-wal` and an existing `index/wesley.sqlite-journal` (only the main db is copied, so committed WAL frames would be missing). Each refusal has a test (`SourceRefusalTests`, fake cache root in a temp dir). The docstring and `tests/README.md` now say the same thing.
 
 No new dependencies.
 
@@ -74,7 +74,7 @@ Machine preached-sandbox. Reviewed head e08d4dc9f566037d98646744c00e30690d405f35
  13 files changed, 647 insertions(+), 40 deletions(-)
 ```
 
-## Tests
+## Tests (R1, stale: superseded by the R2 and R3 runs above)
 
 Suite command (rule-5 temp caches, `uv run`): `PREACHED_REQUIRE_DENO=1 PREACHED_CACHE=$(mktemp -d) HF_HOME=$(mktemp -d) PREACHED_ONNX_DIR=$(mktemp -d) DENO_DIR=$(mktemp -d) XDG_CACHE_HOME=$(mktemp -d) UV_CACHE_DIR=$(mktemp -d) TORCH_HOME=$(mktemp -d) UV_PYTHON_INSTALL_DIR=$(mktemp -d) ORT_DISABLE_TELEMETRY=1 HF_HUB_OFFLINE=1 uv run python -m unittest discover -s tests`
 
@@ -82,6 +82,6 @@ Machine preached-sandbox, tree 3aef7ca plus this change: `Ran 1169 tests in 260.
 
 An earlier run found 5 church-test errors, because I had given `test_shutdown._env` a keyword that other tests' patched lambdas do not accept. I restored the signature and the rerun is clean.
 
-## Cache snapshot
+## Cache snapshot (R1, stale: superseded by the R2 and R3 snapshots above)
 
 `find /cache -printf '%p %s %T@\n' | sort` before and after the runs (132823 entries): no difference.
