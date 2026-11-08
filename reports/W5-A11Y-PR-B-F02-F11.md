@@ -295,24 +295,52 @@ Historical results above stay as written and are labelled by machine: base `2c89
 MF2 evidence is now present, pending the CTO gate. Not claiming MERGE-READY.
 
 
+## R3 (docs only: MF4 and MF5)
+
+**Scope.** Only `docs/PARITY.md` and this report. No code, test, DEPLOY or DEPLOY-cited file changed, so no cite re-pin applies. origin/main was still `92e20fe1c2ade7595602f6528a43a9a271e9bb33` at the start of this round. No merge, no rebase.
+
+- **MF4.** The unqualified "Behind main 0" and "+473/-19" stat in `## PR BODY` is replaced by an explicitly pinned historical diff-stat: as reviewed at head `bdf6a1b4061695403330c72f4351a6d172d20796` against main `92e20fe1c2ade7595602f6528a43a9a271e9bb33` (merge-base `5dd32a0871cacf3ba09936066d71b925773ab777`), 14 behind / 9 ahead, 9 files +506/-21, `docs/PARITY.md` 10 changed lines, report 405 lines. This section and the new head carry no counts of their own. Per-sha test-history lines are unchanged.
+- **MF5.** The `docs/PARITY.md` "Host gate command" now expects `http=0bb6b339b9f2923c` and `no-church=aae9e913a27365f3`. The displaced `e21a19b25cc1af12` / `1601bf8f271e5192` stay in the #108 History paragraph.
+
+**Identity proof** (against `bdf6a1b`): `git diff --stat bdf6a1b..HEAD` lists only `docs/PARITY.md` and this report; `git diff bdf6a1b..HEAD -- app tests src scripts search eval` is empty; `git rev-parse HEAD:app/static/app.js` = `0af22bc565891324f827575089e8993dda08c1bd`; `tests/test_parity_hash.py` is untouched, so its pins are unchanged.
+
+**PARITY.md diff** (`git diff bdf6a1b..HEAD -- docs/PARITY.md`, the only change there):
+
+```
+-      --expect http=e21a19b25cc1af12 --expect no-church=1601bf8f271e5192 \
++      --expect http=0bb6b339b9f2923c --expect no-church=aae9e913a27365f3 \
+```
+
+**Fence.** The `PARITY-MOVE` fence in `## PR BODY` appears exactly once, six lines including the final LF. Full-fence sha256 `10f1a1bff7882adbad52c28b6c595e5605439e3ab4b5a7c0a0f7b5d2b5b4f767`, interior sha256 `62662347bc17bf5b6743d3ba3bdfbba3cab0be9ea351453fbce224b50657993b`, both checked with `sha256sum`. The fence is byte-identical to the one at `bdf6a1b`. No harness line.
+
+**Tests** (machine `preached-sandbox`, Deno 2.9.8, in-tree `.venv` in a `/tmp` worktree, all cache variables under one `mktemp -d`, `PREACHED_GUARD_REAL_SRC` unset, `PREACHED_REQUIRE_DENO=1`, `HF_HUB_OFFLINE=1`, `ORT_DISABLE_TELEMETRY=1`). They ran on the commit `33769f7b01991f519f32648828b15725b76d2336`, which has the same two doc edits; the commit that carries this report section differs only by this section.
+- `tests.test_parity_hash tests.test_mobile_ux`: Ran 26 tests in 17.826s, OK.
+- Full suite: Ran 1198 tests in 257.315s, OK (skipped=15). Only `tests/test_parity_hash.py` reads `docs/PARITY.md`. No `test_every_cited_file_line_holds_its_string` failure.
+
+**/cache** (machine `preached-sandbox`): listing (`find /cache -xdev -printf '%p\t%s\t%T@\n' | LC_ALL=C sort`) before and after, 139814 lines each, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7` both; diff: none.
+
+PR body ready for CoS sync (see `## PR BODY` below). Not claiming MERGE-READY.
+
 ## PR BODY
 
 **PR-B: a named and quiet audio player (audit F-02) and Label in Name on Play (audit F-11)**
 
-Branch `fix/w5-a11y-player-name`. Original base: `origin/main` `2c8936583d3939ea5a8e5ae39c2af6eb62d7cbac`. It merges `origin/main` `5dd32a0871cacf3ba09936066d71b925773ab777` (after #103 and #106) with a normal merge commit, `cd4fa4deabada614482308d805decd05f274cd2a` (parents `4a9376b`, `5dd32a0`); no rebase. The reviewed head `eb5cd06463fbc475fb0d8e648972221ddf8f48db` is a report-only commit on top of `cd4fa4d` (it adds only `reports/W5-A11Y-PR-B-F02-F11.md`), so its code is identical to `cd4fa4d`. Further docs-only commits (`docs/PARITY.md` and this report) may follow; they change no code. Behind main 0.
+Branch `fix/w5-a11y-player-name`. Original base: `origin/main` `2c8936583d3939ea5a8e5ae39c2af6eb62d7cbac`. It merges `origin/main` `5dd32a0871cacf3ba09936066d71b925773ab777` (after #103 and #106) with a normal merge commit, `cd4fa4deabada614482308d805decd05f274cd2a` (parents `4a9376b`, `5dd32a0`); no rebase. The reviewed head `eb5cd06463fbc475fb0d8e648972221ddf8f48db` is a report-only commit on top of `cd4fa4d` (it adds only `reports/W5-A11Y-PR-B-F02-F11.md`), so its code is identical to `cd4fa4d`. Further docs-only commits (`docs/PARITY.md` and this report) may follow; they change no code.
+
+Pinned historical diff-stat. As reviewed at head `bdf6a1b4061695403330c72f4351a6d172d20796` against main `92e20fe1c2ade7595602f6528a43a9a271e9bb33` (merge-base `5dd32a0871cacf3ba09936066d71b925773ab777`): 14 behind / 9 ahead; 9 files +506/-21; `docs/PARITY.md` 10 changed lines; report 405 lines. Later docs-only commits are not counted here.
 
 ```
-$ git diff --stat origin/main...HEAD
+$ git diff --stat origin/main...bdf6a1b4061695403330c72f4351a6d172d20796   (pinned; main 92e20fe)
  app/static/app.css              |   2 +-
  app/static/app.js               |  13 +-
  app/static/index.html           |   3 +-
  docs/DEMO-SCRIPT.md             |   4 +-
- docs/PARITY.md                  |   6 +-
+ docs/PARITY.md                  |  10 +-
  docs/SUBMISSION-DRAFT.md        |   2 +-
- reports/W5-A11Y-PR-B-F02-F11.md | 374 +++++++++++++++++++++++++++++++++++++++
- tests/test_mobile_ux.py         |  80 ++++++++-
+ reports/W5-A11Y-PR-B-F02-F11.md | 405 ++++++++++++++++++++++++++++++++++++++++
+ tests/test_mobile_ux.py         |  80 +++++++-
  tests/test_parity_hash.py       |   8 +-
- 9 files changed, 473 insertions(+), 19 deletions(-)
+ 9 files changed, 506 insertions(+), 21 deletions(-)
 ```
 
 **What changes**

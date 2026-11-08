@@ -114,7 +114,7 @@ Taken by the host operator on byte copies of the index and model (sha256 of sour
 From the checkout under test, against the index the baseline was taken on:
 
     uv run python scripts/parity_hash.py --index PATH/TO/wesley.sqlite \
-      --expect http=e21a19b25cc1af12 --expect no-church=1601bf8f271e5192 \
+      --expect http=0bb6b339b9f2923c --expect no-church=aae9e913a27365f3 \
       --expect in-process=b2acb9b6b450a470 --expect in-process-no-health=17be2c66569fab1e \
       --expect search+sermon=e38ec8cba9ddca3e --expect side=026f0ce37111e4ec \
       --expect church=43dd3d71a14c50bf
