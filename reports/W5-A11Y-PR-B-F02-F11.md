@@ -273,6 +273,28 @@ index 588d117..76e4bf8 100644
 
 **MF2 stays OPEN.** The omarchy cells need a host log. PR body ready for CoS sync (the `## PR BODY` section below).
 
+## R2 stage 2 host cells (MF2 evidence, docs only)
+
+Task 99-XX8-PR108-R2-STAGE2-HOSTCELLS. Worktree `/work/preached/.worktrees/fix-w5-a11y-player-name`. Start state: `git status` clean, HEAD = `origin/fix/w5-a11y-player-name` = `29484cfc7cf63b3971f464bb92b6377c47df8598`; `origin/main` = `92e20fe1c2ade7595602f6528a43a9a271e9bb33`. CTO ruling: NO-MERGE-MAIN. Scope: only `docs/PARITY.md` and this report; no code, test or pin change.
+
+Host evidence (recorded by the Chief of Staff on machine `omarchy`; copied, not recomputed):
+- Method: CTO-approved diagnostic run of `verify-merge.sh` (sha256 `bbaa83b1e27782479cd283bf96f390af852299a1336b37e5b95b50e4a248b7de`), strict (no fence), 2026-11-07 19:50-20:00 EST. Expected and actual result: PARITY FAIL rc=93 / VERIFY_RC=1, CACHE: CLEAN. No PASS stamp, no parity sidecar, no pending baseline; host baseline `e94312da` unchanged. The rc=93 is the expected diagnostic outcome, not a defect.
+- Log: `~/agents/preached/logs/verify-20261107-195003-29484cf.log`, sha256 `f87f63fe10d110c055bfdbb28911cc432b4ab2bbb52d635874bcf946b0f642eb`, machine `omarchy`.
+- Inputs: trial merge mainfull `92e20fe1c2ade7595602f6528a43a9a271e9bb33`, headfull `29484cfc7cf63b3971f464bb92b6377c47df8598`; suite on the merged tree: Ran 1231 tests, OK (skipped=4); index `909afd60b3fcd91993686f9e2c08eab49cea35949fe841c45b1c818ae7fe972b`; model `3861025a186e45f0978c66b2ac86ae1c47afb245822e051cc9027edb112d8fa9`; `index_version` `198339132f6861f483ef7d00f616d69081f5b54456ba6cef7301746b43e363b2`; harness `9bbe1a503f36136f` (unchanged); venv_tree `9e00f77a…849a` ok; `uv.lock` `089d2849…` / `.python-version` `7b55f8e6…` ok.
+- Moved (only these four): `plain.http` `69e8cbb13791fdb1` to `8085771f52f581a7`; `plain.no-church` `5822f9705a1ae242` to `a6026d94bb00a9d2`; `strip-why.http` `dfbfbf9dc21de9c1` to `73589752c4028e79`; `strip-why.no-church` `83261d92460534e0` to `79c74d1327163ada`.
+- Unchanged (ok vs baseline): plain `in-process` `38348854d2174db3`, `in-process-no-health` `6b584c8f512f52fc`, `search+sermon` `706af7bccf0ce3e3`, `side` `839941f9bb77e43a`, `church` `25872f35ebd97d27`; strip-why `in-process` `cd1e87e6cf1df21a`, `in-process-no-health` `f04c1154aef1c232`, `search+sermon` `e8dc6bf53ca4a967`, `side` `f9e8df6ddc959fce`, `church` `b05573c7b06e0198`.
+
+Historical results above stay as written and are labelled by machine: base `2c89365`; `897a5cf` 1194 OK skipped=15 (`preached-sandbox`); `cd4fa4d` 1198 OK skipped=15 (`preached-sandbox`); `eb5cd06` report-only; `29484cf` stage-1 docs. The omarchy Ran 1231 / skipped=4 line is a different tree (merged with main `92e20fe`) and a different machine.
+
+**Tests** (machine `preached-sandbox` (not omarchy), Python 3.12.16, deno `/usr/bin/deno`; a detached `/tmp` worktree at `29484cf` with the two edited docs copied in, in-tree `.venv`, every cache and home variable under one `mktemp -d`, `PREACHED_GUARD_REAL_SRC` unset, `ORT_DISABLE_TELEMETRY=1`, `HF_HUB_OFFLINE=1`, `PREACHED_REQUIRE_DENO=1`). Code is identical to `29484cf`:
+- `tests.test_parity_hash`: `Ran 16 tests in 17.873s, OK`.
+- Full suite: `Ran 1198 tests in 260.811s, OK (skipped=15)`.
+
+**/cache** (`find /cache -xdev -printf '%p\t%s\t%T@\n' | LC_ALL=C sort`): before 139814 lines, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7`; after 139814 lines, sha256 `d2909d2092c778381ae84725728bd3df1c73e7ccd6ac1797d16d7eb7d566ceb7`; diff: none.
+
+MF2 evidence is now present, pending the CTO gate. Not claiming MERGE-READY.
+
+
 ## PR BODY
 
 **PR-B: a named and quiet audio player (audit F-02) and Label in Name on Play (audit F-11)**
@@ -355,7 +377,16 @@ Only the `/` and `/static/app.js` records move. Of 225 records in `http` and in 
 
 `docs/PARITY.md` (r2 stage 1): added a "History: PR #108 (PR-B, F-02/F-11), intended move" paragraph with the displaced CI pins above, and refreshed the reviewer-box `http`/`no-church` rows to the CTO reviewer's values on `eb5cd06` (machine `grok-bot-vm-181711960`: `http` `0bb6b339b9f2923c` / `b56d7ec6e9e42e46`, `no-church` `aae9e913a27365f3` / `e06b4ab3a12a01c0`; the displaced `e21a19b25cc1af12` / `5acbc46ef2a6794d` and `1601bf8f271e5192` / `eb3d32449ac95d39` moved into that history). The omarchy rows are **not** changed: they wait for a real host log (MF2).
 
-**Open: MF2.** There is no `PARITY-MOVE` fence in this body. The omarchy host cells for `eb5cd06` (tree `d182a60578e495ed627292bd58b90c8e33c7134f`) do not exist yet; they need a host log from omarchy that CoS or Infra Ops points to. No synthetic, sandbox or reviewer-box value stands in for them.
+**MF2 host cells (r2 stage 2).** The omarchy cells are recorded in `docs/PARITY.md` and in the report section "R2 stage 2 host cells". Method: a CTO-approved strict diagnostic run of `verify-merge.sh`, whose result PARITY FAIL rc=93 / VERIFY_RC=1 with CACHE: CLEAN was expected, because exactly these four cells move. No PASS stamp, parity sidecar or pending baseline was written, and the host baseline `e94312da` is unchanged. The harness is `9bbe1a503f36136f` (unchanged), so there is no harness line. PR body ready for CoS sync.
+
+Host log: machine `omarchy`, `~/agents/preached/logs/verify-20261107-195003-29484cf.log`, sha256 `f87f63fe10d110c055bfdbb28911cc432b4ab2bbb52d635874bcf946b0f642eb`.
+
+```PARITY-MOVE
+plain.http=8085771f52f581a7
+plain.no-church=a6026d94bb00a9d2
+strip-why.http=73589752c4028e79
+strip-why.no-church=79c74d1327163ada
+```
 
 **Doc cites**: the r1 re-pins still hold on the merged tree, so this merge made no re-pin edits. I re-read each one on the merged `app.js`, because #103's insertion is at line 532+, below them all:
 - `DEMO-SCRIPT.md:28` and `SUBMISSION-DRAFT.md:34`, `app.js:226-244`: `function whyLine(why) {` … `}`
