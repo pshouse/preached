@@ -3,8 +3,8 @@
 A browser that navigates again within a second of the last response is still
 over the per-IP cap (#72). The accept thread answers 503 before a handler
 starts. Chrome leaves a JSON body on screen. A request whose Accept includes
-text/html gets a static HTML page with Retry-After and a meta refresh of that
-same delay. Any other request keeps the JSON body exactly.
+text/html gets a static HTML page with Retry-After: 1 and a meta refresh of
+5 seconds, so the sentence can be read. Any other request keeps the JSON body.
 
 The accept thread reads only the bytes already buffered, without waiting
 (CTO r1 MF1). Headers that have not all arrived get the JSON 503; a silent
@@ -21,6 +21,8 @@ import socket
 import sys
 import time
 import unittest
+from http.client import parse_headers
+from io import BytesIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +30,13 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from app.server import MAX_HEADER_BYTES, _accept_includes_html, _read_over_cap_headers  # noqa: E402
+from app.server import (  # noqa: E402
+    MAX_HEADER_BYTES,
+    _BUSY_PAGE,
+    _accept_includes_html,
+    _message_accepts_html,
+    _read_over_cap_headers,
+)
 from test_exposure import _Served, _connect, _get, _read_response, _send  # noqa: E402
 
 # What Chrome sends on a top-level navigation. text/html is one type in the list.
@@ -154,6 +162,35 @@ class OverCapReadTests(unittest.TestCase):
         self.assertEqual(_read_over_cap_headers(ours), b"")
 
 
+def _parsed(*lines: str):
+    raw = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
+    return parse_headers(BytesIO(raw))
+
+
+class ParsedAcceptTests(unittest.TestCase):
+    """The kill switch uses the same Accept rule as the accept thread."""
+
+    def test_a_browser_accept_counts(self) -> None:
+        self.assertTrue(_message_accepts_html(_parsed("Accept: " + PAGE_ACCEPT)))
+        self.assertTrue(_message_accepts_html(_parsed("Accept: text/html")))
+        self.assertTrue(_message_accepts_html(_parsed("Accept: application/json", "Accept: text/html")))
+
+    def test_json_wildcards_and_q_zero_do_not(self) -> None:
+        self.assertFalse(_message_accepts_html(None))
+        self.assertFalse(_message_accepts_html(_parsed("Host: 127.0.0.1")))
+        self.assertFalse(_message_accepts_html(_parsed("Accept: application/json")))
+        self.assertFalse(_message_accepts_html(_parsed("Accept: */*")))
+        self.assertFalse(_message_accepts_html(_parsed("Accept: text/*")))
+        self.assertFalse(_message_accepts_html(_parsed("Accept: text/html;q=0")))
+
+    def test_a_crlf_in_the_value_is_not_a_second_header(self) -> None:
+        class _Injected:
+            def get_all(self, _name):
+                return ["text/plain\r\nAccept: text/html"]
+
+        self.assertFalse(_message_accepts_html(_Injected()))
+
+
 class OverCapHtmlTests(_Served):
     def _serve(self, **kwargs):
         port, app, server = super()._serve(**kwargs)
@@ -195,10 +232,23 @@ class OverCapHtmlTests(_Served):
         self.assertEqual(headers.get("connection"), "close")
         self.assertEqual(headers.get("cache-control"), "no-store")
         text = body.decode("utf-8")
-        self.assertIn('<meta http-equiv="refresh" content="1">', text)
-        self.assertIn(f'content="{headers["retry-after"]}"', text)
+        refresh = text.split('http-equiv="refresh" content="', 1)[1].split('"', 1)[0]
+        self.assertGreaterEqual(int(refresh), 5)
+        self.assertEqual(refresh, "5")
+        # Retry-After stays 1 for API clients. The refresh is not that header.
+        self.assertNotEqual(refresh, headers["retry-after"])
+        self.assertIn('<meta name="viewport" content="width=device-width, initial-scale=1">', text)
+        self.assertIn("<h1>", text)
+        self.assertIn("</h1>", text)
+        self.assertIn("Preached is busy. This page will try again in a moment.", text)
+        self.assertEqual(body, _BUSY_PAGE)
+        # A different query is the same bytes. Nothing from the request is copied.
+        again_status, _, again = self._over_cap("/?q=mercy&from=phone", PAGE_ACCEPT)
+        self.assertEqual(again_status, 503)
+        self.assertEqual(again, body)
         # The page is static. The query, the peer, and the JSON error stay out.
         self.assertNotIn("grace", text)
+        self.assertNotIn("mercy", text)
         self.assertNotIn("127.0.0.2", text)
         self.assertNotIn('{"error"', text)
         self.assertNotIn("<script", text.lower())

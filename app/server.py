@@ -2248,10 +2248,10 @@ def make_handler(app: App):
                 self._reserved = True
                 self.close_connection = True
             if app.disabled():
-                if path == "/healthz":
-                    self._send_json(503, {"ok": False, "disabled": True}, include_body)
-                else:
-                    self._send_json(503, {"error": "unavailable"}, include_body)
+                # /healthz stays {"ok": false, "disabled": true}. A browser
+                # GET or HEAD of / gets the shared busy page. /api/* and
+                # every other path stay {"error": "unavailable"}.
+                _send_disabled(self, path, include_body)
                 return "disabled"
             health = path == "/healthz"
             refusals = getattr(server, "refusals", None)
@@ -2482,7 +2482,7 @@ class PreachedServer(ThreadingHTTPServer):
     the cap, the connection is closed on the accept thread with a short 503
     and no handler thread is started. A request whose Accept includes
     text/html is a page navigation: that 503 is a static HTML page with a
-    meta refresh of the same delay, so the browser retries. Any other
+    meta refresh of 5 seconds (Retry-After stays 1). Any other
     request keeps the JSON body. Only bytes already buffered at accept are
     read, without waiting; headers not yet arrived get JSON. Nothing from
     the request is copied in.
@@ -2811,12 +2811,12 @@ class PreachedServer(ThreadingHTTPServer):
     def _reject_over_cap(self, request) -> None:
         """503 on the accept thread. No handler is started.
 
-        A page navigation (Accept includes text/html) gets the static HTML
+        A page navigation (Accept includes text/html) gets the shared busy
         page. Everyone else gets the same JSON body as before. The page is
         a constant: no request byte is copied into it.
         """
         if _accept_includes_html(_read_over_cap_headers(request)):
-            body = _OVER_CAP_HTML
+            body = _BUSY_PAGE
             content_type = b"text/html; charset=utf-8"
         else:
             body = b'{"error":"unavailable"}'
@@ -2912,14 +2912,14 @@ def _shutdown_socket(sock, how: int) -> None:
         pass
 
 
-# Retry-After and the meta refresh are this same delay. The page is built
-# from these constants only, so a request cannot change it.
-_OVER_CAP_RETRY = b"1"
-_OVER_CAP_HTML = (
+# Retry-After stays 1 for API clients. The meta refresh is 5 seconds, not
+# that 1 second, so the sentence can be read. Constants only; a request
+# cannot change the page.
+_OVER_CAP_RETRY, _BUSY_REFRESH = b"1", b"5"
+_BUSY_PAGE = (
     b"<!DOCTYPE html><html lang=en><head><meta charset=utf-8>"
-    b'<meta http-equiv="refresh" content="' + _OVER_CAP_RETRY + b'">'
-    b"<title>Unavailable</title></head>"
-    b"<body><p>Unavailable. Retrying.</p></body></html>"
+    b'<meta name="viewport" content="width=device-width, initial-scale=1">'
+    b'<meta http-equiv="refresh" content="' + _BUSY_REFRESH + b'"><title>Preached is busy</title></head><body><h1>Preached is busy</h1><p>Preached is busy. This page will try again in a moment.</p></body></html>'
 )
 
 
@@ -3443,6 +3443,45 @@ def serve_until_stopped(server: PreachedServer, app: App, connection) -> None:
             logging.info("stopped cleanly")
     if stuck:
         raise SystemExit(1)
+
+
+def _send_disabled(handler, path: str, include_body: bool) -> None:
+    """Kill-switch reply. The page is the same constant as an over-cap navigation.
+
+    ``/healthz`` stays ``{"ok": false, "disabled": true}``. A browser GET or
+    HEAD of ``/`` (Accept names text/html with a nonzero weight) gets
+    ``_BUSY_PAGE``. ``/api/*`` and every other path stay
+    ``{"error": "unavailable"}``. Nothing from the request is copied in.
+    """
+    if path == "/healthz":
+        handler._send_json(503, {"ok": False, "disabled": True}, include_body)
+        return
+    if path == "/" and handler.command in ("GET", "HEAD") and _message_accepts_html(handler.headers):
+        handler._send(503, _BUSY_PAGE, "text/html; charset=utf-8", include_body)
+        return
+    handler._send_json(503, {"error": "unavailable"}, include_body)
+
+
+def _message_accepts_html(headers) -> bool:
+    """True when parsed headers name text/html the way the accept thread does.
+
+    The same rules as an over-cap navigation: q=0, ``*/*`` and ``text/*`` do
+    not count. A missing or unreadable Accept does not count. A value with a
+    CR or LF is skipped so it cannot be a second header in the check.
+    """
+    if headers is None:
+        return False
+    try:
+        values = headers.get_all("Accept") or []
+    except Exception:
+        return False
+    lines = [b"GET / HTTP/1.1"]
+    for value in values:
+        raw = value.encode("latin-1", "replace") if isinstance(value, str) else bytes(value)
+        if b"\r" in raw or b"\n" in raw:
+            continue
+        lines.append(b"Accept: " + raw)
+    return _accept_includes_html(b"\r\n".join(lines) + b"\r\n\r\n")
 
 
 if __name__ == "__main__":
